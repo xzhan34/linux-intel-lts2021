@@ -178,12 +178,17 @@ struct intel_iov_relay {
  * @relay: data related to VF/PF communication based on GuC Relay messages.
  */
 struct intel_iov {
-	struct {
-		struct intel_iov_sysfs sysfs;
-		struct intel_iov_provisioning provisioning;
-		struct intel_iov_service service;
-		struct intel_iov_state state;
-	} pf;
+	union {
+		struct {
+			struct intel_iov_sysfs sysfs;
+			struct intel_iov_provisioning provisioning;
+			struct intel_iov_service service;
+			struct intel_iov_state state;
+		} pf;
+
+		struct {
+		} vf;
+	};
 
 	struct intel_iov_relay relay;
 };
