@@ -183,12 +183,24 @@ static int vf_check_guc_submission_support(struct drm_i915_private *i915)
 	return 0;
 }
 
+static void vf_tweak_device_info(struct drm_i915_private *i915)
+{
+	struct intel_device_info *info = mkwrite_device_info(i915);
+
+	/* Force PCH_NOOP. We have no access to display */
+	i915->pch_type = PCH_NOP;
+	memset(&info->display, 0, sizeof(info->display));
+	info->memory_regions &= ~(REGION_STOLEN_SMEM |
+				  REGION_STOLEN_LMEM);
+}
+
 /**
  * i915_sriov_early_tweaks - Perform early tweaks needed for SR-IOV.
  * @i915: the i915 struct
  *
  * This function should be called once and as soon as possible during
- * driver probe to perform early checks.
+ * driver probe to perform early checks and required tweaks to
+ * the driver data.
  */
 int i915_sriov_early_tweaks(struct drm_i915_private *i915)
 {
@@ -198,6 +210,7 @@ int i915_sriov_early_tweaks(struct drm_i915_private *i915)
 		err = vf_check_guc_submission_support(i915);
 		if (unlikely(err))
 			return err;
+		vf_tweak_device_info(i915);
 	}
 
 	return 0;
