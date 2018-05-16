@@ -782,6 +782,9 @@ void setup_private_pat(struct intel_gt *gt)
 
 	GEM_BUG_ON(GRAPHICS_VER(i915) < 8);
 
+	if (IS_SRIOV_VF(i915))
+		return;
+
 	if (gt->type == GT_MEDIA) {
 		xelpmp_setup_private_ppat(gt->uncore);
 	} else {
