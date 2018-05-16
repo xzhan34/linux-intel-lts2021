@@ -313,6 +313,9 @@ intel_gt_clear_error_registers(struct intel_gt *gt,
 	struct intel_uncore *uncore = gt->uncore;
 	u32 eir;
 
+	if (IS_SRIOV_VF(i915))
+		return;
+
 	if (GRAPHICS_VER(i915) != 2)
 		clear_register(uncore, PGTBL_ER);
 
@@ -460,6 +463,9 @@ void intel_gt_check_and_clear_faults(struct intel_gt *gt)
 	struct drm_i915_private *i915 = gt->i915;
 
 	if (gt->i915->quiesce_gpu)
+		return;
+
+	if (IS_SRIOV_VF(i915))
 		return;
 
 	/* From GEN8 onwards we only have one 'All Engine Fault Register' */
