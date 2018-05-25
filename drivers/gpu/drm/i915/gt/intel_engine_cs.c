@@ -375,6 +375,9 @@ static void __sprint_engine_name(struct intel_engine_cs *engine)
 
 void intel_engine_set_hwsp_writemask(struct intel_engine_cs *engine, u32 mask)
 {
+	if (IS_SRIOV_VF(engine->i915))
+		return;
+
 	if (engine->i915->quiesce_gpu)
 		return;
 
