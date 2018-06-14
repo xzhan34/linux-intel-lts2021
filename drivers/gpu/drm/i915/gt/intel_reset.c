@@ -713,7 +713,7 @@ static int __reset_guc(struct intel_gt *gt)
 
 static bool needs_wa_14015076503(struct intel_gt *gt, intel_engine_mask_t engine_mask)
 {
-	if (!IS_METEORLAKE(gt->i915) || !HAS_ENGINE(gt, GSC0))
+	if (!IS_METEORLAKE(gt->i915) || !HAS_ENGINE(gt, GSC0) || IS_SRIOV_VF(gt->i915))
 		return false;
 
 	if (!__HAS_ENGINE(engine_mask, GSC0))
