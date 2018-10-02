@@ -399,6 +399,7 @@ struct intel_engine_cs {
 	struct list_head barrier_tasks;
 
 	struct intel_context *kernel_context; /* pinned */
+	struct intel_context *blitter_context; /* pinned; exists for BCS only */
 
 	/**
 	 * pinned_contexts_list: List of pinned contexts. This list is only

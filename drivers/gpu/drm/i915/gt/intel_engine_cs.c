@@ -1275,6 +1275,12 @@ void intel_engine_destroy_pinned_context(struct intel_context *ce)
 	intel_context_put(ce);
 }
 
+static void destroy_pinned_context(struct intel_context *ce)
+{
+	if (ce)
+		intel_engine_destroy_pinned_context(ce);
+}
+
 static struct intel_context *
 create_kernel_context(struct intel_engine_cs *engine)
 {
@@ -1283,6 +1289,16 @@ create_kernel_context(struct intel_engine_cs *engine)
 	return intel_engine_create_pinned_context(engine, engine->gt->vm, SZ_4K,
 						  I915_GEM_HWS_SEQNO_ADDR,
 						  &kernel, "kernel_context");
+}
+
+static struct intel_context *
+create_blitter_context(struct intel_engine_cs *engine)
+{
+	static struct lock_class_key blitter;
+
+	return intel_engine_create_pinned_context(engine, engine->gt->vm, SZ_4K,
+						  I915_GEM_HWS_BLITTER_ADDR,
+						  &blitter, "blitter_context");
 }
 
 /**
@@ -1315,12 +1331,27 @@ static int engine_init_common(struct intel_engine_cs *engine)
 	if (IS_ERR(ce))
 		return PTR_ERR(ce);
 
+	engine->kernel_context = ce;
 	ret = measure_breadcrumb_dw(ce);
 	if (ret < 0)
 		goto err_context;
 
 	engine->emit_fini_breadcrumb_dw = ret;
-	engine->kernel_context = ce;
+
+	/*
+	 * The blitter context is used to quickly memset or migrate objects
+	 * in local memory, so it has to always be available.
+	 */
+	if (engine->class == COPY_ENGINE_CLASS &&
+	    ce->timeline != engine->legacy.timeline) {
+		ce = create_blitter_context(engine);
+		if (IS_ERR(ce)) {
+			ret = PTR_ERR(ce);
+			goto err_context;
+		}
+
+		engine->blitter_context = ce;
+	}
 
 	return 0;
 
@@ -1391,8 +1422,8 @@ void intel_engine_cleanup_common(struct intel_engine_cs *engine)
 	if (engine->default_state)
 		fput(engine->default_state);
 
-	if (engine->kernel_context)
-		intel_engine_destroy_pinned_context(engine->kernel_context);
+	destroy_pinned_context(engine->blitter_context);
+	destroy_pinned_context(engine->kernel_context);
 
 	GEM_BUG_ON(!list_empty(&engine->barrier_tasks));
 	cleanup_status_page(engine);
