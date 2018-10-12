@@ -1489,12 +1489,13 @@ static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		return -ENODEV;
 	}
 
-	/* Only bind to function 0 of the device. Early generations
-	 * used function 1 as a placeholder for multi-head. This causes
-	 * us confusion instead, especially on the systems where both
-	 * functions have the same PCI-ID!
+	/*
+	 * Don't bind to non-zero function, unless it is a virtual function.
+	 * Early generations used function 1 as a placeholder for multi-head.
+	 * This causes us confusion instead, especially on the systems where
+	 * both functions have the same PCI-ID!
 	 */
-	if (PCI_FUNC(pdev->devfn))
+	if (PCI_FUNC(pdev->devfn) && !pdev->is_virtfn)
 		return -ENODEV;
 
 	if (!intel_mmio_bar_valid(pdev, intel_info))
