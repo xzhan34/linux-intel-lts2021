@@ -381,6 +381,10 @@ struct i915_oa_config_bo {
 static struct ctl_table_header *sysctl_header;
 
 static enum hrtimer_restart oa_poll_check_timer_cb(struct hrtimer *hrtimer);
+static size_t max_oa_buffer_size(struct drm_i915_private *i915)
+{
+	return HAS_OA_BUF_128M(i915) ? SZ_128M : SZ_16M;
+}
 
 void i915_oa_config_release(struct kref *ref)
 {
@@ -1780,6 +1784,7 @@ static void gen12_init_oa_buffer(struct i915_perf_stream *stream)
 {
 	struct intel_uncore *uncore = stream->uncore;
 	u32 gtt_offset = i915_ggtt_offset(stream->oa_buffer.vma);
+	u32 size_exponent;
 	unsigned long flags;
 
 	spin_lock_irqsave(&stream->oa_buffer.ptr_lock, flags);
@@ -1796,10 +1801,17 @@ static void gen12_init_oa_buffer(struct i915_perf_stream *stream)
 	 *  register and after the OAHEADPTR register. This is
 	 *  to enable proper functionality of the overflow
 	 *  bit."
+	 *
+	 * On XEHPSDV OA buffer size goes up to 128Mb by toggling a bit in the
+	 * OAG_OA_DEBUG register meaning multiple base value by 8.
 	 */
+	size_exponent = (stream->oa_buffer.size_exponent > 24) ?
+		(stream->oa_buffer.size_exponent - 20) :
+		(stream->oa_buffer.size_exponent - 17);
+
 	intel_uncore_write(uncore, GEN12_OAG_OABUFFER, gtt_offset |
-			   OABUFFER_SIZE_16M | GEN8_OABUFFER_MEM_SELECT_GGTT |
-			   GEN7_OABUFFER_EDGE_TRIGGER);
+			   (size_exponent << GEN12_OAG_OABUFFER_BUFFER_SIZE_SHIFT) |
+			   GEN8_OABUFFER_MEM_SELECT_GGTT | GEN7_OABUFFER_EDGE_TRIGGER);
 	intel_uncore_write(uncore, GEN12_OAG_OATAILPTR,
 			   gtt_offset & GEN12_OAG_OATAILPTR_MASK);
 
@@ -1844,7 +1856,7 @@ static int alloc_oa_buffer(struct i915_perf_stream *stream, int size_exponent)
 	if (drm_WARN_ON(&i915->drm, stream->oa_buffer.vma))
 		return -ENODEV;
 
-	if (WARN_ON(size < SZ_128K || size > SZ_16M))
+	if (WARN_ON(size < SZ_128K || size > max_oa_buffer_size(stream->perf->i915)))
 		return -EINVAL;
 
 	bo = i915_gem_object_create_shmem(stream->perf->i915, size);
@@ -2839,6 +2851,13 @@ gen8_enable_metric_set(struct i915_perf_stream *stream,
 			      active);
 }
 
+static u32 oag_buffer_size_select(const struct i915_perf_stream *stream)
+{
+	return _MASKED_FIELD(XEHPSDV_OAG_OA_DEBUG_BUFFER_SIZE_SELECT,
+			     stream->oa_buffer.size_exponent > 24 ?
+			     XEHPSDV_OAG_OA_DEBUG_BUFFER_SIZE_SELECT : 0);
+}
+
 static u32 oag_report_ctx_switches(const struct i915_perf_stream *stream)
 {
 	return _MASKED_FIELD(GEN12_OAG_OA_DEBUG_DISABLE_CTX_SWITCH_REPORTS,
@@ -2878,7 +2897,13 @@ gen12_enable_metric_set(struct i915_perf_stream *stream,
 			    * If the user didn't require OA reports, instruct
 			    * the hardware not to emit ctx switch reports.
 			    */
-			   oag_report_ctx_switches(stream));
+			   oag_report_ctx_switches(stream) |
+
+			   /*
+			    * Need to set a special bit for OA buffer
+			    * sizes > 16Mb on XEHPSDV.
+			    */
+			   oag_buffer_size_select(stream));
 
 	intel_uncore_write(uncore, GEN12_OAG_OAGLBCTXCTRL, periodic ?
 			   (GEN12_OAG_OAGLBCTXCTRL_COUNTER_RESUME |
@@ -4126,7 +4151,8 @@ select_oa_buffer_exponent(struct drm_i915_private *i915,
 	if (!requested_size)
 		return order_base_2(SZ_16M);
 
-	order = order_base_2(clamp_t(u64, requested_size, SZ_128K, SZ_16M));
+	order = order_base_2(clamp_t(u64, requested_size, SZ_128K,
+				     max_oa_buffer_size(i915)));
 	if (requested_size != (1UL << order))
 		return -EINVAL;
 

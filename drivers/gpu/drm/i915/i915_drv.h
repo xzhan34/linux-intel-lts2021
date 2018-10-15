@@ -1398,6 +1398,7 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
  * GTT pages.
  */
 #define HAS_64K_PAGES(dev_priv) (INTEL_INFO(dev_priv)->has_64k_pages)
+#define HAS_OA_BUF_128M(dev_priv) (INTEL_INFO(dev_priv)->has_oa_buf_128m)
 
 #define HAS_GMD_ID(i915)	INTEL_INFO(i915)->has_gmd_id
 
