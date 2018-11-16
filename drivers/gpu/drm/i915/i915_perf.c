@@ -6021,6 +6021,8 @@ int i915_perf_init(struct drm_i915_private *i915)
 	struct i915_perf *perf = &i915->perf;
 
 	/* XXX const struct i915_perf_ops! */
+	if (IS_SRIOV_VF(i915))
+		return 0;
 
 	perf->oa_formats = oa_formats;
 	if (IS_HASWELL(i915)) {
