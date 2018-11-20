@@ -1339,6 +1339,9 @@ static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj)
 	const struct attribute * const *attrs;
 	int ret;
 
+	if (IS_SRIOV_VF(gt->i915))
+		return 0;
+
 	if (is_object_gt(kobj))
 		attrs = gen6_rps_attrs;
 	else
