@@ -268,6 +268,10 @@ u64 mtl_ggtt_pte_encode(dma_addr_t addr,
 	return pte;
 }
 
+static void nop_ggtt_invalidate(struct i915_ggtt *ggtt)
+{
+}
+
 u64 gen8_ggtt_pte_encode(dma_addr_t addr,
 			 unsigned int pat_index,
 			 u32 flags)
@@ -1473,6 +1477,43 @@ static int gen6_gmch_probe(struct i915_ggtt *ggtt)
 	return ggtt_probe_common(ggtt, size);
 }
 
+static int gen12vf_ggtt_probe(struct i915_ggtt *ggtt)
+{
+	struct drm_i915_private *i915 = ggtt->vm.i915;
+
+	GEM_BUG_ON(!IS_SRIOV_VF(i915));
+	GEM_BUG_ON(GRAPHICS_VER(i915) < 12);
+
+	/* there is no apperture on VFs */
+	ggtt->gmadr = (struct resource) DEFINE_RES_MEM(0, 0);
+	ggtt->mappable_end = 0;
+
+	ggtt->vm.alloc_pt_dma = alloc_pt_dma;
+	ggtt->vm.alloc_scratch_dma = alloc_pt_dma;
+
+	/* safe guess as native expects the same minimum */
+	ggtt->vm.total = 1ULL << (ilog2(GUC_GGTT_TOP - 1) + 1); /* roundup_pow_of_two(GUC_GGTT_TOP); */
+
+	if (IS_METEORLAKE(i915))
+		ggtt->vm.pte_encode = mtl_ggtt_pte_encode;
+	else
+		ggtt->vm.pte_encode = gen8_ggtt_pte_encode;
+	ggtt->vm.clear_range = nop_clear_range;
+	ggtt->vm.insert_page = gen8_ggtt_insert_page;
+	ggtt->vm.insert_entries = gen8_ggtt_insert_entries;
+	ggtt->vm.cleanup = gen6_gmch_remove;
+
+	ggtt->vm.vma_ops.bind_vma    = intel_ggtt_bind_vma;
+	ggtt->vm.vma_ops.unbind_vma  = intel_ggtt_unbind_vma;
+	ggtt->vm.vma_ops.set_pages   = ggtt_set_pages;
+	ggtt->vm.vma_ops.clear_pages = clear_pages;
+
+	ggtt->invalidate = nop_ggtt_invalidate;
+
+	return ggtt_probe_common(ggtt, sizeof(gen8_pte_t) *
+				 (ggtt->vm.total >> PAGE_SHIFT));
+}
+
 static int ggtt_probe_hw(struct i915_ggtt *ggtt, struct intel_gt *gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
@@ -1483,7 +1524,9 @@ static int ggtt_probe_hw(struct i915_ggtt *ggtt, struct intel_gt *gt)
 	ggtt->vm.dma = i915->drm.dev;
 	dma_resv_init(&ggtt->vm._resv);
 
-	if (GRAPHICS_VER(i915) >= 8)
+	if (IS_SRIOV_VF(i915))
+		ret = gen12vf_ggtt_probe(ggtt);
+	else if (GRAPHICS_VER(i915) >= 8)
 		ret = gen8_gmch_probe(ggtt);
 	else if (GRAPHICS_VER(i915) >= 6)
 		ret = gen6_gmch_probe(ggtt);
