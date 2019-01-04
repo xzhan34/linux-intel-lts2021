@@ -4470,6 +4470,12 @@ static bool guc_sched_engine_disabled(struct i915_sched_engine *sched_engine)
 	return sched_engine->tasklet.callback != guc_submission_tasklet;
 }
 
+static int vf_guc_resume(struct intel_engine_cs *engine)
+{
+	intel_breadcrumbs_reset(engine->breadcrumbs);
+	return 0;
+}
+
 static void guc_set_default_submission(struct intel_engine_cs *engine)
 {
 	engine->submit_request = guc_submit_request;
@@ -4717,6 +4723,9 @@ int intel_guc_submission_setup(struct intel_engine_cs *engine)
 
 	if (engine->flags & I915_ENGINE_HAS_RCS_REG_STATE)
 		rcs_submission_override(engine);
+
+	if (IS_SRIOV_VF(engine->i915))
+		engine->resume = vf_guc_resume;
 
 	lrc_init_wa_ctx(engine);
 
