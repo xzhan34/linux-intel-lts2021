@@ -594,6 +594,73 @@ static int query_hw_ip_version(struct drm_i915_private *i915,
 	return sizeof(ipver);
 }
 
+static int prelim_query_memregion_info(struct drm_i915_private *dev_priv,
+				       struct drm_i915_query_item *query_item)
+{
+	struct prelim_drm_i915_query_memory_regions __user *query_ptr =
+		u64_to_user_ptr(query_item->data_ptr);
+	struct prelim_drm_i915_memory_region_info __user *info_ptr =
+		&query_ptr->regions[0];
+	struct prelim_drm_i915_memory_region_info info = { };
+	struct prelim_drm_i915_query_memory_regions query;
+	u32 total_length;
+	int ret, i;
+
+	if (query_item->flags != 0)
+		return -EINVAL;
+
+	total_length = sizeof(query);
+	for (i = 0; i < ARRAY_SIZE(dev_priv->mm.regions); ++i) {
+		struct intel_memory_region *region = dev_priv->mm.regions[i];
+
+		if (!region)
+			continue;
+
+		if (region->private)
+			continue;
+
+		total_length += sizeof(info);
+	}
+
+	ret = copy_query_item(&query, sizeof(query), total_length, query_item);
+	if (ret != 0)
+		return ret;
+
+	if (query.num_regions)
+		return -EINVAL;
+
+	for (i = 0; i < ARRAY_SIZE(query.rsvd); ++i) {
+		if (query.rsvd[i])
+			return  -EINVAL;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(dev_priv->mm.regions); ++i) {
+		struct intel_memory_region *region = dev_priv->mm.regions[i];
+
+		if (!region)
+			continue;
+
+		if (region->private)
+			continue;
+
+		info.region.memory_class = region->type;
+		info.region.memory_instance = region->instance;
+		info.probed_size = region->total;
+		info.unallocated_size = region->avail;
+
+		if (__copy_to_user(info_ptr, &info, sizeof(info)))
+			return -EFAULT;
+
+		query.num_regions++;
+		info_ptr++;
+	}
+
+	if (__copy_to_user(query_ptr, &query, sizeof(query)))
+		return -EFAULT;
+
+	return total_length;
+}
+
 typedef int (* const i915_query_funcs_table)(struct drm_i915_private *dev_priv,
 						    struct drm_i915_query_item *query_item);
 
@@ -610,7 +677,7 @@ static i915_query_funcs_table i915_query_funcs[] = {
 static i915_query_funcs_table i915_query_funcs_prelim[] = {
 #define MAKE_TABLE_IDX(id)		[PRELIM_DRM_I915_QUERY_MASK(PRELIM_DRM_I915_QUERY_##id) - 1]
 
-	/* MAKE_TABLE_IDX(NEW_QUERY) = prelim_query_new_stuff; */
+	MAKE_TABLE_IDX(MEMORY_REGIONS) = prelim_query_memregion_info,
 
 #undef MAKE_TABLE_IDX
 };

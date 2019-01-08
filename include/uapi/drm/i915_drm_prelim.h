@@ -77,10 +77,65 @@ struct prelim_drm_i915_perf_oa_buffer_info {
 	__u64 rsvd;   /* mbz */
 };
 
+struct prelim_drm_i915_gem_memory_class_instance {
+	__u16 memory_class; /* see enum prelim_drm_i915_gem_memory_class */
+	__u16 memory_instance;
+};
+
 struct prelim_drm_i915_query_item {
 #define PRELIM_DRM_I915_QUERY			(1 << 16)
 #define PRELIM_DRM_I915_QUERY_MASK(x)		(x & 0xffff)
-/*#define PRELIM_DRM_I915_QUERY_NEW_STUFF	(PRELIM_DRM_I915_QUERY | <id>) */
+#define PRELIM_DRM_I915_QUERY_MEMORY_REGIONS	(PRELIM_DRM_I915_QUERY | 4)
+};
+
+enum prelim_drm_i915_gem_memory_class {
+	PRELIM_I915_MEMORY_CLASS_SYSTEM = 0,
+	PRELIM_I915_MEMORY_CLASS_DEVICE,
+};
+
+/**
+ * struct prelim_drm_i915_memory_region_info
+ *
+ * Describes one region as known to the driver.
+ */
+struct prelim_drm_i915_memory_region_info {
+	/** class:instance pair encoding */
+	struct prelim_drm_i915_gem_memory_class_instance region;
+
+	/** MBZ */
+	__u32 rsvd0;
+
+	/** MBZ */
+	__u64 caps;
+
+	/** MBZ */
+	__u64 flags;
+
+	/** Memory probed by the driver (-1 = unknown) */
+	__u64 probed_size;
+
+	/** Estimate of memory remaining (-1 = unknown) */
+	__u64 unallocated_size;
+
+	/** MBZ */
+	__u64 rsvd1[8];
+};
+
+/**
+ * struct prelim_drm_i915_query_memory_regions
+ *
+ * Region info query enumerates all regions known to the driver by filling in
+ * an array of struct prelim_drm_i915_memory_region_info structures.
+ */
+struct prelim_drm_i915_query_memory_regions {
+	/** Number of supported regions */
+	__u32 num_regions;
+
+	/** MBZ */
+	__u32 rsvd[3];
+
+	/* Info about each supported region */
+	struct prelim_drm_i915_memory_region_info regions[];
 };
 
 #endif /* __I915_DRM_PRELIM_H__ */
