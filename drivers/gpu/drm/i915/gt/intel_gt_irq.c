@@ -49,8 +49,15 @@ gen11_gt_engine_identity(struct intel_gt *gt,
 		return 0;
 	}
 
-	raw_reg_write(regs, GEN11_INTR_IDENTITY_REG(bank),
-		      GEN11_INTR_DATA_VALID);
+	/*
+	 * FIXME: on ICL all we need to write is GEN11_INTR_DATA_VALID and that
+	 * will ensure every bit gets set to zero. On XEHPSDV the documentation says
+	 * we need to write all the bits we serviced (pages 34152 and 19838),
+	 * and the simulator also behaves as the documentation mandates. It
+	 * would be good to check how real hardware will behave here, but it
+	 * seems there's no problem on using the XEHPSDV implementation for ICL.
+	 */
+	raw_reg_write(regs, GEN11_INTR_IDENTITY_REG(bank), ident);
 
 	return ident;
 }
