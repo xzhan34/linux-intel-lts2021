@@ -8,6 +8,7 @@
 #include "intel_iov_utils.h"
 #include "gem/i915_gem_object_blt.h"
 #include "gem/i915_gem_region.h"
+#include "gt/intel_gt.h"
 #include "gt/intel_gt_buffer_pool.h"
 #include "gt/uc/abi/guc_actions_pf_abi.h"
 #include "gt/uc/abi/guc_klvs_abi.h"
@@ -1773,37 +1774,59 @@ int intel_iov_provisioning_set_spare_lmem(struct intel_iov *iov, u64 size)
 
 static u64 pf_query_max_lmem(struct intel_iov *iov);
 
+static int pf_update_lmtt(struct intel_iov *iov, unsigned int id)
+{
+	struct intel_gt *gt = iov_to_gt(iov);
+	struct intel_guc *guc = &gt->uc.guc;
+	int ret;
+
+	ret = intel_lmtt_update_entries(&iov->pf.lmtt, id);
+
+	if (INTEL_GUC_SUPPORTS_TLB_INVALIDATION(guc))
+		intel_guc_invalidate_tlb_all(guc);
+
+	return ret;
+}
+
 static int pf_provision_lmem(struct intel_iov *iov, unsigned int id, u64 size)
 {
 	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
 	struct intel_iov_config *config = &provisioning->configs[id];
 	struct drm_i915_gem_object *obj = fetch_and_zero(&config->lmem_obj);
-	int err;
+	int err, ret;
 
 	if (check_round_up_overflow(size, (u64)SZ_2M, &size))
 		return -EOVERFLOW;
 
 	if (obj) {
-		if (size == obj->base.size)
-			goto done;
+		if (size == obj->base.size) {
+			config->lmem_obj = obj;
+			return 0;
+		}
 
 		i915_gem_object_unpin_pages(obj);
 		i915_gem_object_put(obj);
 	}
 
-	if (!size)
-		return 0;
+	if (!size) {
+		err = 0;
+		goto finish;
+	}
 
-	if (size > pf_query_max_lmem(iov))
-		return -EDQUOT;
+	if (size > pf_query_max_lmem(iov)) {
+		err = -EDQUOT;
+		goto finish;
+	}
 
 	obj = i915_gem_object_create_lmem(iov_to_gt(iov)->i915, size,
 					  I915_BO_ALLOC_USER | /* must clear */
 					  I915_BO_ALLOC_CHUNK_2M |
 					  I915_BO_ALLOC_VOLATILE |
 					  I915_BO_SYNC_HINT);
-	if (IS_ERR(obj))
-		return PTR_ERR(obj);
+	if (IS_ERR(obj)) {
+		err = PTR_ERR(obj);
+		goto finish;
+	}
 
 	err = i915_gem_object_pin_pages_unlocked(obj);
 	if (unlikely(err))
@@ -1815,15 +1838,16 @@ static int pf_provision_lmem(struct intel_iov *iov, unsigned int id, u64 size)
 
 	IOV_DEBUG(iov, "VF%u provisioned LMEM %zu (%zuM)\n",
 		  id, obj->base.size, obj->base.size / SZ_1M);
-done:
 	config->lmem_obj = obj;
-	return 0;
+	goto finish;
 
 err_unpin:
 	i915_gem_object_unpin_pages(obj);
 err_put:
 	i915_gem_object_put(obj);
-	return err;
+finish:
+	ret = pf_update_lmtt(iov, id);
+	return err ?: ret;
 }
 
 static bool pf_is_config_valid_lmem(struct intel_iov *iov, unsigned int id)

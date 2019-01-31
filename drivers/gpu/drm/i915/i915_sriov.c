@@ -4,6 +4,7 @@
  */
 
 #include "i915_sriov.h"
+#include "gt/intel_tlb.h"
 #include "i915_sriov_sysfs.h"
 #include "i915_debugger.h"
 #include "i915_drv.h"

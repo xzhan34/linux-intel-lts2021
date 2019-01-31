@@ -34,10 +34,18 @@ struct intel_lmtt_ops {
 	unsigned int (*lmtt_root_pd_level)(void);
 	unsigned int (*lmtt_pte_num)(unsigned int level);
 	resource_size_t (*lmtt_pte_size)(unsigned int level);
+	unsigned int (*lmtt_pte_shift)(unsigned int level);
+	unsigned int (*lmtt_pte_idx)(u64 addr, unsigned int level);
+	u64 (*lmtt_pte_encode)(unsigned long offset, u32 flags, unsigned int level);
+	void (*lmtt_pte_write)(void *pt_vaddr, u64 value, unsigned int n,
+			       unsigned int level);
+	struct intel_lmtt_pt *(*lmtt_leaf_pt)(struct intel_lmtt *lmtt, u64 addr,
+					      unsigned int vf);
 };
 
 int intel_lmtt_init(struct intel_lmtt *lmtt);
 void intel_lmtt_fini(struct intel_lmtt *lmtt);
 void intel_lmtt_init_hw(struct intel_lmtt *lmtt);
+int intel_lmtt_update_entries(struct intel_lmtt *lmtt, unsigned int vf);
 
 #endif

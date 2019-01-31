@@ -6,6 +6,7 @@
 #include "intel_lmtt.h"
 
 #include "i915_drv.h"
+#include "i915_scatterlist.h"
 #include "gt/intel_gt_mcr.h"
 #include "gt/intel_gt_regs.h"
 #include "gem/i915_gem_lmem.h"
@@ -79,6 +80,226 @@ lmtt_pt_free(struct intel_lmtt_pt *pt)
 
 	kfree(pt->entry);
 	kfree(pt);
+}
+
+static int
+__lmtt_alloc_range(struct intel_lmtt *lmtt, struct intel_lmtt_pt *pd,
+		   unsigned int pd_level, u64 start, u64 end)
+{
+	unsigned int pt_level = pd_level - 1;
+	u64 pte_addr_shift = BIT_ULL(lmtt->ops->lmtt_pte_shift(pd_level));
+	int ret = 0;
+	void *vaddr;
+	u64 offset;
+
+	GEM_BUG_ON(pd_level == 0);
+
+	vaddr = i915_gem_object_pin_map_unlocked(pd->obj, I915_MAP_WC);
+	if (IS_ERR(vaddr)) {
+		ret = PTR_ERR(vaddr);
+		goto out;
+	}
+
+	offset = start;
+	while (offset < end) {
+		struct intel_lmtt_pt *pt;
+		u64 next, pde, pt_offset;
+		unsigned int idx;
+
+		pt = lmtt_pt_alloc(lmtt, pt_level);
+		if (IS_ERR(pt)) {
+			ret = PTR_ERR(pt);
+			goto out_unpin;
+		}
+		pt_offset = i915_gem_object_lmem_offset(pt->obj);
+
+		idx = lmtt->ops->lmtt_pte_idx(offset, pd_level);
+		pde = lmtt->ops->lmtt_pte_encode(pt_offset,
+						 LMTT_PTE_VALID,
+						 pd_level);
+		lmtt->ops->lmtt_pte_write(vaddr, pde, idx, pd_level);
+		pd->entry[idx] = pt;
+
+		next = min(end, round_up(offset + 1, pte_addr_shift));
+
+		if (pt_level != 0) {
+			ret = __lmtt_alloc_range(lmtt, pt, pt_level,
+						 offset, next);
+			if (ret)
+				goto out_unpin;
+		}
+
+		offset = next;
+	}
+
+out_unpin:
+	i915_gem_object_unpin_map(pd->obj);
+out:
+	return ret;
+}
+
+static int
+lmtt_alloc_range(struct intel_lmtt *lmtt, unsigned int vf, u64 offset, u64 size)
+{
+	struct intel_lmtt_pt *pt, *pd = lmtt->pd;
+	unsigned int root_pd_level = lmtt->ops->lmtt_root_pd_level();
+	unsigned int pt_level = root_pd_level - 1;
+	void *vaddr;
+	u64 pde;
+	int err;
+
+	pt = lmtt_pt_alloc(lmtt, pt_level);
+	if (IS_ERR(pt)) {
+		err = PTR_ERR(pt);
+		goto out;
+	}
+
+	vaddr = i915_gem_object_pin_map_unlocked(pd->obj, I915_MAP_WC);
+	if (IS_ERR(vaddr)) {
+		err = PTR_ERR(vaddr);
+		goto out_free;
+	}
+
+	pde = lmtt->ops->lmtt_pte_encode(i915_gem_object_lmem_offset(pt->obj),
+					 LMTT_PTE_VALID,
+					 root_pd_level);
+	lmtt->ops->lmtt_pte_write(vaddr, pde, vf, root_pd_level);
+	pd->entry[vf] = pt;
+	i915_gem_object_unpin_map(pd->obj);
+
+	if (pt_level != 0) {
+		err = __lmtt_alloc_range(lmtt, pt, pt_level,
+					 offset, offset + size);
+		if (err)
+			goto out;
+	}
+
+	return 0;
+
+out_free:
+	lmtt_pt_free(pt);
+out:
+	return err;
+}
+
+static void
+__lmtt_clear(struct intel_lmtt *lmtt, struct intel_lmtt_pt *pd,
+	     unsigned int level)
+{
+	struct intel_lmtt_pt *pt;
+	unsigned int i;
+
+	if (level == 0)
+		return;
+
+	for (i = 0; i < lmtt->ops->lmtt_pte_num(level); i++) {
+		pt = fetch_and_zero(&pd->entry[i]);
+		if (!pt)
+			continue;
+
+		__lmtt_clear(lmtt, pt, level - 1);
+		lmtt_pt_free(pt);
+	}
+}
+
+static void
+lmtt_clear(struct intel_lmtt *lmtt, unsigned int vf)
+{
+	struct intel_lmtt_pt *pt, *pd = lmtt->pd;
+	unsigned int root_pd_level = lmtt->ops->lmtt_root_pd_level();
+	unsigned int pt_level = root_pd_level - 1;
+	void *vaddr;
+	u64 pde = lmtt->ops->lmtt_pte_encode(0, 0, root_pd_level);
+
+	vaddr = i915_gem_object_pin_map_unlocked(pd->obj, I915_MAP_WC);
+	lmtt->ops->lmtt_pte_write(vaddr, pde, vf, root_pd_level);
+	i915_gem_object_unpin_map(pd->obj);
+
+	pt = fetch_and_zero(&pd->entry[vf]);
+	if (!pt)
+		return;
+
+	__lmtt_clear(lmtt, pt, pt_level);
+	lmtt_pt_free(pt);
+}
+
+/*
+ * TODO: Pull offset from iov configuration if needed (currently it's RSVD)
+ */
+static u64 __lmtt_offset(struct intel_lmtt *lmtt, unsigned int vf)
+{
+	return 0;
+}
+
+static resource_size_t __lmtt_size(struct intel_lmtt *lmtt, unsigned int vf)
+{
+	struct intel_gt *gt = lmtt_to_gt(lmtt);
+	struct drm_i915_gem_object *obj;
+	resource_size_t size = 0;
+
+	obj = gt->iov.pf.provisioning.configs[vf].lmem_obj;
+	size = obj->base.size;
+
+	GEM_BUG_ON(!IS_ALIGNED(size, BIT_ULL(lmtt->ops->lmtt_pte_shift(0))));
+
+	return size;
+}
+
+static int
+__lmtt_insert_entries(struct intel_lmtt *lmtt, unsigned int vf,
+		      u64 start, struct sg_table *sg)
+{
+	struct intel_lmtt_pt *pt, *_pt = NULL;
+	struct sgt_iter iter;
+	void *vaddr;
+	u64 offset;
+
+	GEM_BUG_ON(!IS_ALIGNED(start, BIT_ULL(lmtt->ops->lmtt_pte_shift(0))));
+
+	pt = lmtt->ops->lmtt_leaf_pt(lmtt, start, vf);
+
+	vaddr = i915_gem_object_pin_map_unlocked(pt->obj, I915_MAP_WC);
+	if (IS_ERR(vaddr))
+		return PTR_ERR(vaddr);
+
+	__for_each_sgt_daddr(offset, iter, sg,
+			     BIT_ULL(lmtt->ops->lmtt_pte_shift(0))) {
+		_pt = lmtt->ops->lmtt_leaf_pt(lmtt, start, vf);
+		if (pt != _pt) {
+			i915_gem_object_unpin_map(pt->obj);
+			pt = _pt;
+			vaddr = i915_gem_object_pin_map_unlocked(pt->obj, I915_MAP_WC);
+			if (IS_ERR(vaddr))
+				return PTR_ERR(vaddr);
+		}
+		lmtt->ops->lmtt_pte_write(vaddr,
+					  lmtt->ops->lmtt_pte_encode(offset,
+								     LMTT_PTE_VALID, 0),
+					  lmtt->ops->lmtt_pte_idx(start, 0),
+					  0);
+		start += BIT_ULL(lmtt->ops->lmtt_pte_shift(0));
+	}
+	i915_gem_object_unpin_map(pt->obj);
+
+	return 0;
+}
+
+static int
+lmtt_insert_entries(struct intel_lmtt *lmtt, unsigned int vf, u64 start)
+{
+	struct intel_gt *gt = lmtt_to_gt(lmtt);
+	struct drm_i915_gem_object *obj;
+	struct sg_table *sg;
+	int err;
+
+	obj = gt->iov.pf.provisioning.configs[vf].lmem_obj;
+	sg = obj->mm.pages;
+
+	err = __lmtt_insert_entries(lmtt, vf, start, sg);
+	if (err)
+		return err;
+
+	return 0;
 }
 
 static void gt_set_lmtt_dir_ptr(struct intel_gt *gt, unsigned long offset)
@@ -171,4 +392,64 @@ void intel_lmtt_fini(struct intel_lmtt *lmtt)
 		return;
 
 	lmtt_pd_fini(lmtt);
+}
+
+static int lmtt_create_entries(struct intel_lmtt *lmtt, unsigned int vf)
+{
+	struct intel_gt *gt = lmtt_to_gt(lmtt);
+	struct drm_i915_private *i915 = gt->i915;
+	struct intel_runtime_pm *rpm = &i915->runtime_pm;
+	intel_wakeref_t wakeref;
+	int err;
+
+	wakeref = intel_runtime_pm_get(rpm);
+
+	err = lmtt_alloc_range(lmtt, vf, __lmtt_offset(lmtt, vf), __lmtt_size(lmtt, vf));
+	if (err)
+		goto err;
+
+	err = lmtt_insert_entries(lmtt, vf, __lmtt_offset(lmtt, vf));
+	if (err)
+		goto err;
+
+	intel_runtime_pm_put(rpm, wakeref);
+	return 0;
+
+err:
+	lmtt_clear(lmtt, vf);
+
+	intel_runtime_pm_put(rpm, wakeref);
+	return err;
+}
+
+static void lmtt_destroy_entries(struct intel_lmtt *lmtt, unsigned int vf)
+{
+	lmtt_clear(lmtt, vf);
+}
+
+/**
+ * intel_lmtt_update_entries - Create LMTT entries.
+ * @lmtt: the LMTT struct
+ * @vf: VF id
+ *
+ * This function updates LMTT entries for a given VF.
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_lmtt_update_entries(struct intel_lmtt *lmtt, unsigned int vf)
+{
+	int ret = 0;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(lmtt_to_gt(lmtt)->i915));
+	GEM_BUG_ON(!HAS_LMEM(lmtt_to_gt(lmtt)->i915));
+
+	if (!lmtt->pd)
+		return 0;
+
+	lmtt_destroy_entries(lmtt, vf);
+	if (__lmtt_size(lmtt, vf) != 0)
+		ret = lmtt_create_entries(lmtt, vf);
+
+	return ret;
 }
