@@ -133,6 +133,13 @@ static bool pf_verify_readiness(struct drm_i915_private *i915)
 	return true;
 }
 
+#else
+
+static int pf_reduce_totalvfs(struct drm_i915_private *i915, int limit)
+{
+	return 0;
+}
+
 #endif
 
 /**
@@ -182,6 +189,31 @@ static void pf_set_status(struct drm_i915_private *i915, int status)
 	GEM_WARN_ON(i915->sriov.pf.__status);
 
 	i915->sriov.pf.__status = status;
+}
+
+/**
+ * i915_sriov_pf_confirm - Confirm that PF is ready to enable VFs.
+ * @i915: the i915 struct
+ *
+ * This function shall be called by the PF when all necessary
+ * initialization steps were successfully completed and PF is
+ * ready to enable VFs.
+ */
+void i915_sriov_pf_confirm(struct drm_i915_private *i915)
+{
+	struct device *dev = i915->drm.dev;
+	int totalvfs = i915_sriov_pf_get_totalvfs(i915);
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	if (i915_sriov_pf_aborted(i915)) {
+		dev_notice(dev, "No VFs could be associated with this PF!\n");
+		pf_reduce_totalvfs(i915, 0);
+		return;
+	}
+
+	dev_info(dev, "%d VFs could be associated with this PF\n", totalvfs);
+	pf_set_status(i915, totalvfs);
 }
 
 /**

@@ -25,6 +25,7 @@ enum i915_iov_mode i915_sriov_probe(struct drm_i915_private *i915);
 void i915_sriov_print_info(struct drm_i915_private *i915, struct drm_printer *p);
 
 /* PF only */
+void i915_sriov_pf_confirm(struct drm_i915_private *i915);
 void i915_sriov_pf_abort(struct drm_i915_private *i915, int err);
 bool i915_sriov_pf_aborted(struct drm_i915_private *i915);
 int i915_sriov_pf_status(struct drm_i915_private *i915);
