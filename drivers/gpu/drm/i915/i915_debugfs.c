@@ -83,6 +83,16 @@ static int i915_capabilities_show(struct seq_file *m, void *data)
 	return 0;
 }
 
+static int sriov_info_show(struct seq_file *m, void *data)
+{
+	struct drm_i915_private *i915 = m->private;
+	struct drm_printer p = drm_seq_file_printer(m);
+
+	i915_sriov_print_info(i915, &p);
+
+	return 0;
+}
+
 static char get_tiling_flag(struct drm_i915_gem_object *obj)
 {
 	switch (i915_gem_object_get_tiling(obj)) {
@@ -1240,6 +1250,7 @@ DEFINE_I915_SHOW_ATTRIBUTE(i915_runtime_pm_status);
 DEFINE_I915_SHOW_ATTRIBUTE(i915_engine_info);
 DEFINE_I915_SHOW_ATTRIBUTE(i915_sseu_status);
 DEFINE_I915_SHOW_ATTRIBUTE(i915_rps_boost_info);
+DEFINE_I915_SHOW_ATTRIBUTE(sriov_info);
 DEFINE_I915_SHOW_ATTRIBUTE(workarounds);
 DEFINE_I915_SHOW_ATTRIBUTE(clear_lmem);
 DEFINE_I915_SHOW_ATTRIBUTE(lmem_alloc_limit_info);
@@ -1254,6 +1265,7 @@ static struct i915_debugfs_file i915_debugfs_list[] = {
 	{"i915_engine_info", &i915_engine_info_fops, NULL},
 	{"i915_sseu_status", &i915_sseu_status_fops, NULL},
 	{"i915_rps_boost_info", &i915_rps_boost_info_fops, NULL},
+	{"i915_sriov_info", &sriov_info_fops, NULL},
 	{"i915_workarounds", &workarounds_fops, NULL},
 	{"i915_clear_lmem", &clear_lmem_fops, NULL},
 	{"lmem_alloc_limit_info", &lmem_alloc_limit_info_fops, NULL},

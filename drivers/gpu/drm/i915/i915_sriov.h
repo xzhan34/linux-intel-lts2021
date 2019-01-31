@@ -10,6 +10,7 @@
 #include "i915_virtualization.h"
 
 struct drm_i915_private;
+struct drm_printer;
 
 #ifdef CONFIG_PCI_IOV
 #define IS_SRIOV_PF(i915) (IOV_MODE(i915) == I915_IOV_MODE_SRIOV_PF)
@@ -21,6 +22,7 @@ struct drm_i915_private;
 #define IS_SRIOV(i915) (IS_SRIOV_PF(i915) || IS_SRIOV_VF(i915))
 
 enum i915_iov_mode i915_sriov_probe(struct drm_i915_private *i915);
+void i915_sriov_print_info(struct drm_i915_private *i915, struct drm_printer *p);
 
 /* PF only */
 void i915_sriov_pf_abort(struct drm_i915_private *i915, int err);

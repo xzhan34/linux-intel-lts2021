@@ -229,3 +229,38 @@ int i915_sriov_pf_status(struct drm_i915_private *i915)
 
 	return i915->sriov.pf.__status ?: -EBUSY;
 }
+
+/**
+ * i915_sriov_print_info - Print SR-IOV information.
+ * @iov: the i915 struct
+ * @p: the DRM printer
+ *
+ * Print SR-IOV related info into provided DRM printer.
+ */
+void i915_sriov_print_info(struct drm_i915_private *i915, struct drm_printer *p)
+{
+	struct device *dev = i915->drm.dev;
+	struct pci_dev *pdev = to_pci_dev(dev);
+
+	drm_printf(p, "supported: %s\n", str_yes_no(HAS_SRIOV(i915)));
+	drm_printf(p, "enabled: %s\n", str_yes_no(IS_SRIOV(i915)));
+
+	if (!IS_SRIOV(i915))
+		return;
+
+	drm_printf(p, "mode: %s\n", i915_iov_mode_to_string(IOV_MODE(i915)));
+
+	if (IS_SRIOV_PF(i915)) {
+		int status = i915_sriov_pf_status(i915);
+
+		drm_printf(p, "status: %s\n", str_on_off(status > 0));
+		if (status < 0)
+			drm_printf(p, "error: %d (%pe)\n",
+				   status, ERR_PTR(status));
+
+		drm_printf(p, "device vfs: %u\n", i915_sriov_pf_get_device_totalvfs(i915));
+		drm_printf(p, "driver vfs: %u\n", i915_sriov_pf_get_totalvfs(i915));
+		drm_printf(p, "supported vfs: %u\n", pci_sriov_get_totalvfs(pdev));
+		drm_printf(p, "enabled vfs: %u\n", pci_num_vf(pdev));
+	}
+}
