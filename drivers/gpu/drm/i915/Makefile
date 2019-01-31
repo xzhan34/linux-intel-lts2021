@@ -245,6 +245,7 @@ iov-y += \
 	gt/iov/intel_iov.o \
 	gt/iov/intel_iov_debugfs.o \
 	gt/iov/intel_iov_provisioning.o \
+	gt/iov/intel_iov_relay.o \
 	gt/iov/intel_iov_sysfs.o
 i915-y += $(iov-y)
 

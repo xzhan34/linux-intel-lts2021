@@ -5,6 +5,7 @@
 
 #include "intel_iov.h"
 #include "intel_iov_provisioning.h"
+#include "intel_iov_relay.h"
 #include "intel_iov_utils.h"
 
 /**
@@ -17,6 +18,8 @@ void intel_iov_init_early(struct intel_iov *iov)
 {
 	if (intel_iov_is_pf(iov))
 		intel_iov_provisioning_init_early(iov);
+
+	intel_iov_relay_init_early(&iov->relay);
 }
 
 /**

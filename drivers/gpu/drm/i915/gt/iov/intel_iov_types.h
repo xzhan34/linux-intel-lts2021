@@ -7,6 +7,7 @@
 #define __INTEL_IOV_TYPES_H__
 
 #include <linux/mutex.h>
+#include <linux/spinlock.h>
 #include <drm/drm_mm.h>
 
 /**
@@ -78,15 +79,30 @@ struct intel_iov_provisioning {
 #define PFID		VFID(0)
 
 /**
+ * struct intel_iov_relay - IOV Relay Communication data.
+ * @lock: protects #pending_relays and #last_fence.
+ * @pending_relays: list of relay requests that await a response.
+ * @last_fence: fence used with last message.
+ */
+struct intel_iov_relay {
+	spinlock_t lock;
+	struct list_head pending_relays;
+	u32 last_fence;
+};
+
+/**
  * struct intel_iov - I/O Virtualization related data.
  * @pf.sysfs: sysfs data.
  * @pf.provisioning: provisioning data.
+ * @relay: data related to VF/PF communication based on GuC Relay messages.
  */
 struct intel_iov {
 	struct {
 		struct intel_iov_sysfs sysfs;
 		struct intel_iov_provisioning provisioning;
 	} pf;
+
+	struct intel_iov_relay relay;
 };
 
 #endif /* __INTEL_IOV_TYPES_H__ */
