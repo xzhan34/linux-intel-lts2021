@@ -1152,6 +1152,9 @@ static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 	case GUC_ACTION_GUC2PF_RELAY_FROM_VF:
 		ret = intel_iov_relay_process_guc2pf(&iov->relay, hxg, hxg_len);
 		break;
+	case GUC_ACTION_GUC2VF_RELAY_FROM_PF:
+		ret = intel_iov_relay_process_guc2vf(&iov->relay, hxg, hxg_len);
+		break;
 	case GUC_ACTION_GUC2PF_MMIO_RELAY_SERVICE:
 		ret = intel_iov_service_process_mmio_relay(iov, hxg, hxg_len);
 		break;

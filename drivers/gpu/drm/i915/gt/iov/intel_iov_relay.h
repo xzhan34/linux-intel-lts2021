@@ -25,7 +25,12 @@ int intel_iov_relay_reply_err_to_vf(struct intel_iov_relay *relay, u32 target,
 int intel_iov_relay_reply_error_to_vf(struct intel_iov_relay *relay, u32 target,
 				      u32 relay_id, u16 error, u16 hint);
 
+int intel_iov_relay_send_to_pf(struct intel_iov_relay *relay,
+			       const u32 *msg, u32 len, u32 *buf, u32 buf_size);
+
 int intel_iov_relay_process_guc2pf(struct intel_iov_relay *relay,
+				   const u32 *msg, u32 len);
+int intel_iov_relay_process_guc2vf(struct intel_iov_relay *relay,
 				   const u32 *msg, u32 len);
 
 #endif /* __INTEL_IOV_RELAY_H__ */

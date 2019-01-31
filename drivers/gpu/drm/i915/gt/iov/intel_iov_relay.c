@@ -108,6 +108,33 @@ retry:
 	return err;
 }
 
+static int vf_relay_send(struct intel_iov_relay *relay,
+			 u32 relay_id, const u32 *msg, u32 len)
+{
+	u32 request[VF2GUC_RELAY_TO_PF_REQUEST_MSG_MAX_LEN] = {
+		FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, GUC_ACTION_VF2GUC_RELAY_TO_PF),
+		FIELD_PREP(VF2GUC_RELAY_TO_PF_REQUEST_MSG_1_RELAY_ID, relay_id),
+	};
+	int err;
+
+	GEM_BUG_ON(!IS_SRIOV_VF(relay_to_i915(relay)));
+	GEM_BUG_ON(!len);
+	GEM_BUG_ON(len + VF2GUC_RELAY_TO_PF_REQUEST_MSG_MIN_LEN >
+		   VF2GUC_RELAY_TO_PF_REQUEST_MSG_MAX_LEN);
+
+	memcpy(&request[VF2GUC_RELAY_TO_PF_REQUEST_MSG_MIN_LEN], msg, 4 * len);
+
+retry:
+	err = intel_guc_send_nb(relay_to_guc(relay), request,
+				VF2GUC_RELAY_TO_PF_REQUEST_MSG_MIN_LEN + len, 0);
+	if (unlikely(err == -EBUSY))
+		goto retry;
+
+	return err;
+}
+
 static int relay_send(struct intel_iov_relay *relay, u32 target,
 		      u32 relay_id, const u32 *msg, u32 len)
 {
@@ -121,7 +148,7 @@ static int relay_send(struct intel_iov_relay *relay, u32 target,
 	if (target)
 		err = pf_relay_send(relay, target, relay_id, msg, len);
 	else
-		err = -EINVAL;
+		err = vf_relay_send(relay, relay_id, msg, len);
 
 	if (unlikely(err < 0))
 		RELAY_PROBE_ERROR(relay, "Failed to send %s.%u to %u (%pe) %*ph\n",
@@ -397,6 +424,41 @@ int intel_iov_relay_send_to_vf(struct intel_iov_relay *relay, u32 target,
 	return relay_send_and_wait(relay, target, relay_id, msg, len, buf, buf_size);
 }
 
+/**
+ * intel_iov_relay_send_to_pf - Send message to PF.
+ * @relay: the Relay struct
+ * @msg: message to be sent
+ * @len: length of the message (in dwords, can't be 0)
+ * @buf: placeholder for the response message
+ * @buf_size: size of the response message placeholder (in dwords)
+ *
+ * This function embed provided `IOV Message`_ into GuC relay.
+ *
+ * This function can only be used by driver running in SR-IOV VF mode.
+ *
+ * Return: Non-negative response length (in dwords) or
+ *         a negative error code on failure.
+ */
+int intel_iov_relay_send_to_pf(struct intel_iov_relay *relay,
+			       const u32 *msg, u32 len, u32 *buf, u32 buf_size)
+{
+	u32 relay_type;
+	u32 relay_id;
+
+	GEM_BUG_ON(!IS_SRIOV_VF(relay_to_i915(relay)));
+	GEM_BUG_ON(len < GUC_HXG_MSG_MIN_LEN);
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_MSG_0_ORIGIN, msg[0]) != GUC_HXG_ORIGIN_HOST);
+
+	relay_type = FIELD_GET(GUC_HXG_MSG_0_TYPE, msg[0]);
+	relay_id = relay_get_next_fence(relay);
+
+	if (relay_type == GUC_HXG_TYPE_EVENT)
+		return relay_send(relay, 0, relay_id, msg, len);
+
+	GEM_BUG_ON(relay_type != GUC_HXG_TYPE_REQUEST);
+	return relay_send_and_wait(relay, 0, relay_id, msg, len, buf, buf_size);
+}
+
 static int relay_handle_reply(struct intel_iov_relay *relay, u32 origin,
 			      u32 relay_id, int reply, const u32 *msg, u32 len)
 {
@@ -565,4 +627,44 @@ int intel_iov_relay_process_guc2pf(struct intel_iov_relay *relay, const u32 *msg
 	return relay_process_msg(relay, origin, relay_id,
 				 msg + GUC2PF_RELAY_FROM_VF_EVENT_MSG_MIN_LEN,
 				 len - GUC2PF_RELAY_FROM_VF_EVENT_MSG_MIN_LEN);
+}
+
+/**
+ * intel_iov_relay_process_guc2vf - Handle relay notification message from the GuC.
+ * @relay: the Relay struct
+ * @msg: message to be handled
+ * @len: length of the message (in dwords)
+ *
+ * This function will handle RELAY messages received from the GuC.
+ *
+ * This function can only be used if driver is running in SR-IOV VF mode.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_relay_process_guc2vf(struct intel_iov_relay *relay, const u32 *msg, u32 len)
+{
+	struct drm_i915_private *i915 = relay_to_i915(relay);
+	u32 relay_id;
+
+	if (unlikely(!IS_SRIOV_VF(i915)))
+		return -EPERM;
+
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_MSG_0_ORIGIN, msg[0]) != GUC_HXG_ORIGIN_GUC);
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_MSG_0_TYPE, msg[0]) != GUC_HXG_TYPE_EVENT);
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_EVENT_MSG_0_ACTION, msg[0]) != GUC_ACTION_GUC2VF_RELAY_FROM_PF);
+
+	if (unlikely(len < GUC2VF_RELAY_FROM_PF_EVENT_MSG_MIN_LEN))
+		return -EPROTO;
+
+	if (unlikely(len > GUC2VF_RELAY_FROM_PF_EVENT_MSG_MAX_LEN))
+		return -EMSGSIZE;
+
+	if (unlikely(FIELD_GET(GUC_HXG_EVENT_MSG_0_DATA0, msg[0])))
+		return -EPFNOSUPPORT;
+
+	relay_id = FIELD_GET(GUC2VF_RELAY_FROM_PF_EVENT_MSG_1_RELAY_ID, msg[1]);
+
+	return relay_process_msg(relay, 0, relay_id,
+				 msg + GUC2VF_RELAY_FROM_PF_EVENT_MSG_MIN_LEN,
+				 len - GUC2VF_RELAY_FROM_PF_EVENT_MSG_MIN_LEN);
 }
