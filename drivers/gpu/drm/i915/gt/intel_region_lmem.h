@@ -6,6 +6,8 @@
 #ifndef __INTEL_REGION_LMEM_H
 #define __INTEL_REGION_LMEM_H
 
+#include <linux/types.h>
+
 struct intel_gt;
 
 struct intel_memory_region *intel_gt_setup_lmem(struct intel_gt *gt);

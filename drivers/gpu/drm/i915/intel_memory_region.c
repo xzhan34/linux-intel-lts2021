@@ -25,6 +25,18 @@ static const struct {
 		.class = INTEL_MEMORY_LOCAL,
 		.instance = 0,
 	},
+	[INTEL_REGION_LMEM_1] = {
+		.class = INTEL_MEMORY_LOCAL,
+		.instance = 1,
+	},
+	[INTEL_REGION_LMEM_2] = {
+		.class = INTEL_MEMORY_LOCAL,
+		.instance = 2,
+	},
+	[INTEL_REGION_LMEM_3] = {
+		.class = INTEL_MEMORY_LOCAL,
+		.instance = 3,
+	},
 	[INTEL_REGION_STOLEN_SMEM] = {
 		.class = INTEL_MEMORY_STOLEN_SYSTEM,
 		.instance = 0,

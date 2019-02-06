@@ -1314,4 +1314,5 @@ err_alloc:
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftests/mock_gem_device.c"
 #include "selftests/i915_gem.c"
+#include "selftests/intel_remote_tiles.c"
 #endif

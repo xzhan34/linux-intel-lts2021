@@ -1091,6 +1091,9 @@ int intel_gt_tiles_init(struct drm_i915_private *i915)
 	int ret;
 
 	for_each_gt(gt, i915, id) {
+		if (id > i915->remote_tiles)
+			break;
+
 		if (GRAPHICS_VER(i915) >= 8)
 			setup_private_pat(gt);
 
