@@ -1040,7 +1040,9 @@ static const struct intel_device_info adl_p_info = {
 	.media.rel = 50
 
 #define REMOTE_TILE_FEATURES \
-	.has_remote_tiles = 1
+	.has_remote_tiles = 1, \
+	.memory_regions = REGION_SMEM | REGION_STOLEN_LMEM | REGION_LMEM | \
+			  REGION_LMEM1 | REGION_LMEM2 | REGION_LMEM3
 
 #define XE_HP_SDV_ENGINES \
 	BIT(RCS0) | BIT(BCS0) | \
