@@ -89,17 +89,30 @@ static int ggtt_init_hw(struct i915_ggtt *ggtt)
  */
 int i915_ggtt_init_hw(struct drm_i915_private *i915)
 {
+	struct intel_gt *gt;
+	unsigned int i;
 	int ret;
 
-	/*
-	 * Note that we use page colouring to enforce a guard page at the
-	 * end of the address space. This is required as the CS may prefetch
-	 * beyond the end of the batch buffer, across the page boundary,
-	 * and beyond the end of the GTT if we do not provide a guard.
-	 */
-	ret = ggtt_init_hw(to_gt(i915)->ggtt);
-	if (ret)
-		return ret;
+	for_each_gt(gt, i915, i) {
+		/*
+		 * Media GT shares primary GT's GGTT which is already
+		 * initialized
+		 */
+		if (gt->type == GT_MEDIA) {
+			drm_WARN_ON(&i915->drm, gt->ggtt != to_gt(i915)->ggtt);
+			continue;
+		}
+		/*
+		 * Note that we use page colouring to enforce a guard page at
+		 * the end of the address space. This is required as the CS may
+		 * prefetch beyond the end of the batch buffer, across the page
+		 * boundary, and beyond the end of the GTT if we do not provide
+		 * a guard.
+		 */
+		ret = ggtt_init_hw(gt->ggtt);
+		if (ret)
+			return ret;
+	}
 
 	return 0;
 }
@@ -690,19 +703,40 @@ static void fini_aliasing_ppgtt(struct i915_ggtt *ggtt)
 
 int i915_init_ggtt(struct drm_i915_private *i915)
 {
+	struct intel_gt *gt;
+	unsigned int i, j;
 	int ret;
 
-	ret = init_ggtt(to_gt(i915)->ggtt);
-	if (ret)
-		return ret;
+	for_each_gt(gt, i915, i) {
+		/*
+		 * Media GT shares primary GT's GGTT which is already
+		 * initialized
+		 */
+		if (gt->type == GT_MEDIA) {
+			drm_WARN_ON(&i915->drm, gt->ggtt != to_gt(i915)->ggtt);
+			continue;
+		}
+		ret = init_ggtt(gt->ggtt);
+		if (ret)
+			goto err;
+	}
 
 	if (INTEL_PPGTT(i915) == INTEL_PPGTT_ALIASING) {
 		ret = init_aliasing_ppgtt(to_gt(i915)->ggtt);
 		if (ret)
-			cleanup_init_ggtt(to_gt(i915)->ggtt);
+			goto err;
 	}
 
 	return 0;
+
+err:
+	for_each_gt(gt, i915, j) {
+		if (j == i)
+			break;
+		cleanup_init_ggtt(gt->ggtt);
+	}
+
+	return ret;
 }
 
 static void ggtt_cleanup_hw(struct i915_ggtt *ggtt)
@@ -744,11 +778,19 @@ static void ggtt_cleanup_hw(struct i915_ggtt *ggtt)
 void i915_ggtt_driver_release(struct drm_i915_private *i915)
 {
 	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
+	struct intel_gt *gt;
+	unsigned int i;
 
 	fini_aliasing_ppgtt(ggtt);
 
 	intel_ggtt_fini_fences(ggtt);
-	ggtt_cleanup_hw(ggtt);
+
+	for_each_gt(gt, i915, i) {
+		if (gt->type == GT_MEDIA)
+			continue;
+
+		ggtt_cleanup_hw(gt->ggtt);
+	}
 }
 
 /**
@@ -758,11 +800,20 @@ void i915_ggtt_driver_release(struct drm_i915_private *i915)
  */
 void i915_ggtt_driver_late_release(struct drm_i915_private *i915)
 {
-	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
+	struct intel_gt *gt;
+	unsigned int i;
 
-	GEM_WARN_ON(kref_read(&ggtt->vm.resv_ref) != 1);
-	dma_resv_fini(&ggtt->vm._resv);
-	kfree(ggtt);
+	for_each_gt(gt, i915, i) {
+		struct i915_ggtt *ggtt = gt->ggtt;
+
+		if (gt->type == GT_MEDIA)
+			continue;
+
+		GEM_WARN_ON(kref_read(&ggtt->vm.resv_ref) != 1);
+		dma_resv_fini(&ggtt->vm._resv);
+
+		kfree(ggtt);
+	}
 }
 
 static unsigned int gen6_get_total_gtt_size(u16 snb_gmch_ctl)
@@ -817,13 +868,11 @@ static unsigned int gen6_gttadr_offset(struct drm_i915_private *i915)
 static int ggtt_probe_common(struct i915_ggtt *ggtt, u64 size)
 {
 	struct drm_i915_private *i915 = ggtt->vm.i915;
-	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
 	phys_addr_t phys_addr;
 	u32 pte_flags;
 	int ret;
 
-	GEM_WARN_ON(pci_resource_len(pdev, GTTMMADR_BAR) != gen6_gttmmadr_size(i915));
-	phys_addr = pci_resource_start(pdev, GTTMMADR_BAR) + gen6_gttadr_offset(i915);
+	phys_addr = ggtt->vm.gt->phys_addr + gen6_gttadr_offset(i915);
 
 	/*
 	 * On BXT+/ICL+ writes larger than 64 bit to the GTT pagetable range
@@ -1137,10 +1186,13 @@ static int ggtt_probe_hw(struct i915_ggtt *ggtt, struct intel_gt *gt)
 		ggtt->mappable_end = ggtt->vm.total;
 	}
 
-	/* GMADR is the PCI mmio aperture into the global GTT. */
+	/*
+	 * GMADR is the PCI mmio aperture into the global GTT. Likely only
+	 * availale for non-local memory, 0-remote-tiled hw. Anyway this will
+	 * be initialized at least once as tile0.
+	 */
 	drm_dbg(&i915->drm, "GGTT size = %lluM\n", ggtt->vm.total >> 20);
-	drm_dbg(&i915->drm, "GMADR size = %lluM\n",
-		(u64)ggtt->mappable_end >> 20);
+	drm_dbg(&i915->drm, "GMADR size = %lluM\n", (u64)ggtt->mappable_end >> 20);
 	drm_dbg(&i915->drm, "DSM size = %lluM\n",
 		(u64)resource_size(&intel_graphics_stolen_res) >> 20);
 	INIT_LIST_HEAD(&ggtt->gt_list);
@@ -1153,32 +1205,39 @@ static int ggtt_probe_hw(struct i915_ggtt *ggtt, struct intel_gt *gt)
  */
 int i915_ggtt_probe_hw(struct drm_i915_private *i915)
 {
-	struct intel_gt *gt = to_gt(i915);
 	struct i915_ggtt *ggtt;
-	int ret, i;
+	struct intel_gt *gt;
+	unsigned int i;
+	int ret;
 
 	for_each_gt(gt, i915, i) {
+		ggtt = gt->ggtt;
+
 		/*
 		 * Media GT shares primary GT's GGTT
 		 */
 		if (gt->type == GT_MEDIA) {
-			gt->ggtt = to_gt(i915)->ggtt;
-			list_add_tail(&gt->ggtt_link, &gt->ggtt->gt_list);
+			ggtt = to_gt(i915)->ggtt;
+			intel_gt_init_ggtt(gt, ggtt);
 			continue;
 		}
 
-		ggtt = kzalloc(sizeof(*ggtt), GFP_KERNEL);
+		if (!ggtt)
+			ggtt = kzalloc(sizeof(*ggtt), GFP_KERNEL);
+
 		if (!ggtt) {
 			ret = -ENOMEM;
 			goto err;
 		}
 
 		ret = ggtt_probe_hw(ggtt, gt);
-		if (ret)
-			goto err_free;
+		if (ret) {
+			if (ggtt != gt->ggtt)
+				kfree(ggtt);
+			goto err;
+		}
 
-		gt->ggtt = ggtt;
-		list_add_tail(&gt->ggtt_link, &ggtt->gt_list);
+		intel_gt_init_ggtt(gt, ggtt);
 	}
 
 	if (i915_vtd_active(i915))
@@ -1186,9 +1245,14 @@ int i915_ggtt_probe_hw(struct drm_i915_private *i915)
 
 	return 0;
 
-err_free:
-	kfree(ggtt);
 err:
+	for_each_gt(gt, i915, i) {
+		if (gt->type == GT_MEDIA)
+			continue;
+
+		kfree(gt->ggtt);
+	}
+
 	return ret;
 }
 

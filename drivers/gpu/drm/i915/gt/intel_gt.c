@@ -109,6 +109,12 @@ static int intel_gt_probe_lmem(struct intel_gt *gt)
 	return 0;
 }
 
+void intel_gt_init_ggtt(struct intel_gt *gt, struct i915_ggtt *ggtt)
+{
+	gt->ggtt = ggtt;
+	list_add_tail(&gt->ggtt_link, &ggtt->gt_list);
+}
+
 int intel_gt_init_mmio(struct intel_gt *gt)
 {
 	intel_gt_init_clock_frequency(gt);
