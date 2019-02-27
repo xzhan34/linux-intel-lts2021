@@ -2132,6 +2132,10 @@ static void intel_engine_print_registers(struct intel_engine_cs *engine,
 	struct intel_engine_execlists * const execlists = &engine->execlists;
 	u64 addr;
 
+	/* VF can't access these registers */
+	if (IS_SRIOV_VF(dev_priv))
+		return;
+
 	if (engine->id == RENDER_CLASS && IS_GRAPHICS_VER(dev_priv, 4, 7))
 		drm_printf(m, "\tCCID: 0x%08x\n", ENGINE_READ(engine, CCID));
 	if (HAS_EXECLISTS(dev_priv)) {
