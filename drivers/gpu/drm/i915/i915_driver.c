@@ -1475,6 +1475,12 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* XXX find better place */
 	intel_iov_init_early(&to_gt(i915)->iov);
 
+	/* XXX: Can't run in VF mode yet - more stuff is needed */
+	if (IS_SRIOV_VF(i915)) {
+		ret = -ENODEV;
+		goto out_runtime_pm_put;
+	}
+
 	if (HAS_LMEM(i915))
 		i915_resize_lmem_bar(i915);
 
