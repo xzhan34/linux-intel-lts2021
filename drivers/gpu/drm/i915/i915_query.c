@@ -5,7 +5,9 @@
  */
 
 #include <linux/nospec.h>
+#include <linux/bits.h>
 
+#include "gt/intel_engine_user.h"
 #include "i915_drv.h"
 #include "i915_perf.h"
 #include "i915_query.h"
@@ -123,6 +125,54 @@ static int query_geometry_subslices(struct drm_i915_private *i915,
 	sseu = &engine->gt->info.sseu;
 
 	return fill_topology_info(sseu, query_item, sseu->geometry_subslice_mask);
+}
+
+static int
+query_distance_info(struct drm_i915_private *i915,
+		    struct drm_i915_query_item *query_item)
+{
+	struct prelim_drm_i915_query_distance_info __user *query_ptr =
+				u64_to_user_ptr(query_item->data_ptr);
+	struct prelim_drm_i915_query_distance_info query;
+	enum intel_memory_type mem_type;
+	s32 distance;
+	int ret;
+
+	ret = copy_query_item(&query, sizeof(query), sizeof(query), query_item);
+	if (ret != 0)
+		return ret;
+
+	if (query.rsvd[0] || query.rsvd[1] || query.rsvd[2])
+		return -EINVAL;
+
+	if (!intel_memory_region_lookup(i915,
+					query.region.memory_class,
+					query.region.memory_instance))
+		return -EINVAL;
+
+	if (!intel_engine_lookup_user(i915,
+				      query.engine.engine_class,
+				      query.engine.engine_instance))
+		return -EINVAL;
+
+	mem_type = query.region.memory_class;
+
+	if (!HAS_LMEM(i915))
+		distance = 0;
+	else if (mem_type == INTEL_MEMORY_SYSTEM)
+		distance = 10000;
+	else if (mem_type == INTEL_MEMORY_STOLEN_SYSTEM ||
+		 mem_type == INTEL_MEMORY_STOLEN_LOCAL)
+		/* FIXME determine the appropriate value */
+		distance = 0;
+	else
+		/* TODO: Handle engines on remote tiles. */
+		distance = 0;
+
+	if (put_user(distance, &query_ptr->distance))
+		return -EFAULT;
+
+	return sizeof(query);
 }
 
 static int
@@ -753,6 +803,7 @@ static i915_query_funcs_table i915_query_funcs_prelim[] = {
 #define MAKE_TABLE_IDX(id)		[PRELIM_DRM_I915_QUERY_MASK(PRELIM_DRM_I915_QUERY_##id) - 1]
 
 	MAKE_TABLE_IDX(MEMORY_REGIONS) = prelim_query_memregion_info,
+	MAKE_TABLE_IDX(DISTANCE_INFO) = query_distance_info,
 	MAKE_TABLE_IDX(HWCONFIG_TABLE) = query_hwconfig_blob,
 	MAKE_TABLE_IDX(GEOMETRY_SUBSLICES) = query_geometry_subslices,
 	MAKE_TABLE_IDX(COMPUTE_SUBSLICES) = query_compute_subslices,

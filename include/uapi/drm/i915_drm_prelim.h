@@ -191,6 +191,7 @@ struct prelim_drm_i915_query_item {
 #define PRELIM_DRM_I915_QUERY			(1 << 16)
 #define PRELIM_DRM_I915_QUERY_MASK(x)		(x & 0xffff)
 #define PRELIM_DRM_I915_QUERY_MEMORY_REGIONS	(PRELIM_DRM_I915_QUERY | 4)
+#define PRELIM_DRM_I915_QUERY_DISTANCE_INFO	(PRELIM_DRM_I915_QUERY | 5)
 /* Deprecated: HWConfig is now upstream, do not use the prelim version anymore */
 #define PRELIM_DRM_I915_QUERY_HWCONFIG_TABLE	(PRELIM_DRM_I915_QUERY | 6)
 	/**
@@ -502,6 +503,27 @@ struct prelim_drm_i915_query_memory_regions {
 
 	/* Info about each supported region */
 	struct prelim_drm_i915_memory_region_info regions[];
+};
+
+/**
+ * struct prelim_drm_i915_query_distance_info
+ *
+ * Distance info query returns the distance of given (class, instance)
+ * engine to the memory region id passed by the user. If the distance
+ * is -1 it means region is unreachable.
+ */
+struct prelim_drm_i915_query_distance_info {
+	/** Engine for which distance is queried */
+	struct i915_engine_class_instance engine;
+
+	/** Memory region to be used */
+	struct prelim_drm_i915_gem_memory_class_instance region;
+
+	/** Distance to region from engine */
+	__s32 distance;
+
+	/** Must be zero */
+	__u32 rsvd[3];
 };
 
 /**
