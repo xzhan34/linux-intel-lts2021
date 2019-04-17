@@ -2779,15 +2779,15 @@ hardware_error_type_to_str(const enum hardware_error hw_err)
 }
 
 static void
-gen12_gt_hw_error_handler(struct drm_i915_private * const i915,
+gen12_gt_hw_error_handler(struct intel_gt *gt,
 			  const enum hardware_error hw_err)
 {
-	void __iomem * const regs = i915->uncore.regs;
+	void __iomem * const regs = gt->uncore->regs;
 	const char *hw_err_str = hardware_error_type_to_str(hw_err);
 	u32 other_errors = ~(EU_GRF_ERROR | EU_IC_ERROR | SLM_ERROR);
 	u32 errstat;
 
-	lockdep_assert_held(&i915->irq_lock);
+	lockdep_assert_held(&gt->i915->irq_lock);
 
 	errstat = raw_reg_read(regs, ERR_STAT_GT_REG(hw_err));
 
@@ -2814,10 +2814,9 @@ gen12_gt_hw_error_handler(struct drm_i915_private * const i915,
 		DRM_ERROR("detected EU IC %s hardware error\n", hw_err_str);
 
 	if (errstat & SLM_ERROR) {
-		struct drm_i915_private *dev_priv = i915;
-
 		DRM_ERROR("detected %u SLM %s hardware error(s)\n",
-			  intel_uncore_read(&dev_priv->uncore, SLM_ECC_ERROR_CNTR(hw_err)),
+			  intel_uncore_read(gt->uncore,
+					    SLM_ECC_ERROR_CNTR(hw_err)),
 			  hw_err_str);
 	}
 
@@ -2835,14 +2834,14 @@ gen12_gt_hw_error_handler(struct drm_i915_private * const i915,
 }
 
 static void
-gen12_hw_error_source_handler(struct drm_i915_private * const i915,
+gen12_hw_error_source_handler(struct intel_gt *gt,
 			      const enum hardware_error hw_err)
 {
-	void __iomem * const regs = i915->uncore.regs;
+	void __iomem * const regs = gt->uncore->regs;
 	const char *hw_err_str = hardware_error_type_to_str(hw_err);
 	u32 errsrc;
 
-	spin_lock(&i915->irq_lock);
+	spin_lock(&gt->i915->irq_lock);
 	errsrc = raw_reg_read(regs, DEV_ERR_STAT_REG(hw_err));
 
 	if (unlikely(!errsrc)) {
@@ -2851,7 +2850,7 @@ gen12_hw_error_source_handler(struct drm_i915_private * const i915,
 	}
 
 	if (errsrc & DEV_ERR_STAT_GT_ERROR)
-		gen12_gt_hw_error_handler(i915, hw_err);
+		gen12_gt_hw_error_handler(gt, hw_err);
 
 	if (errsrc & ~DEV_ERR_STAT_GT_ERROR)
 		DRM_ERROR("non-GT hardware error(s) in DEV_ERR_STAT_REG_%s: 0x%08x\n",
@@ -2860,7 +2859,7 @@ gen12_hw_error_source_handler(struct drm_i915_private * const i915,
 	raw_reg_write(regs, DEV_ERR_STAT_REG(hw_err), errsrc);
 
 out_unlock:
-	spin_unlock(&i915->irq_lock);
+	spin_unlock(&gt->i915->irq_lock);
 }
 
 /*
@@ -2878,14 +2877,13 @@ out_unlock:
  *	   the class of error being serviced.
  */
 static void
-gen12_hw_error_irq_handler(struct drm_i915_private * const i915,
-			   const u32 master_ctl)
+gen12_hw_error_irq_handler(struct intel_gt *gt, const u32 master_ctl)
 {
 	enum hardware_error hw_err;
 
 	for (hw_err = 0; hw_err < HARDWARE_ERROR_MAX; hw_err++) {
 		if (master_ctl & GEN12_ERROR_IRQ(hw_err))
-			gen12_hw_error_source_handler(i915, hw_err);
+			gen12_hw_error_source_handler(gt, hw_err);
 	}
 }
 
@@ -3035,7 +3033,7 @@ static irqreturn_t dg1_irq_handler(int irq, void *arg)
 
 	gen11_gt_irq_handler(gt, master_ctl);
 
-	gen12_hw_error_irq_handler(i915, master_ctl);
+	gen12_hw_error_irq_handler(gt, master_ctl);
 
 	if (master_ctl & GEN11_DISPLAY_IRQ)
 		gen11_display_irq_handler(i915);
