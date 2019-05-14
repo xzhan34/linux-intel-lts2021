@@ -897,6 +897,24 @@ static struct i915_ppgtt *vm_alias(struct i915_address_space *vm)
 		return i915_vm_to_ppgtt(vm);
 }
 
+/*
+ * The token format in MI_SEMAPHORE_WAIT is just a number, when we're
+ * programming the context, the token becomes a bit number (1 << token).
+ */
+static u32 token_ctx_value(const struct intel_context *ce)
+{
+	const struct i915_gem_context *ctx;
+	u32 token = 0;
+
+	rcu_read_lock();
+	ctx = rcu_dereference(ce->gem_context);
+	if (ctx)
+		token = ctx->semaphore_token;
+	rcu_read_unlock();
+
+	return GEN12_ENGINE_SEMAPHORE_TOKEN_CTX_VALUE(token);
+}
+
 static void __reset_stop_ring(u32 *regs, const struct intel_engine_cs *engine)
 {
 	int x;
@@ -931,6 +949,9 @@ static void __lrc_init_regs(u32 *regs,
 
 	init_common_regs(regs, ce, engine, inhibit);
 	init_wa_bb_regs(regs, engine);
+
+	if (GRAPHICS_VER(engine->i915) >= 12)
+		regs[GEN12_CTX_SEMAPHORE_TOKEN] = token_ctx_value(ce);
 }
 
 void lrc_init_regs(const struct intel_context *ce,

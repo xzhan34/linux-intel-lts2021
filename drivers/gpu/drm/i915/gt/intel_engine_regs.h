@@ -197,6 +197,8 @@
 #define   GFX_FORWARD_VBLANK_ALWAYS		(1 << 5)
 #define   GFX_FORWARD_VBLANK_COND		(2 << 5)
 #define   GEN11_GFX_DISABLE_LEGACY_MODE		(1 << 3)
+#define GEN12_ENGINE_SEMAPHORE_TOKEN(engine)	_MMIO((engine)->mmio_base + 0x2b4)
+#define GEN12_ENGINE_SEMAPHORE_TOKEN_CTX_VALUE(tok) (1 << (tok))
 #define RING_TIMESTAMP(base)			_MMIO((base) + 0x358)
 #define RING_TIMESTAMP_UDW(base)		_MMIO((base) + 0x358 + 4)
 #define RING_CONTEXT_STATUS_PTR(base)		_MMIO((base) + 0x3a0)

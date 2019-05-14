@@ -30,6 +30,9 @@
 
 #define GEN9_CTX_RING_MI_MODE		0x54
 
+/* GEN12+ Reg State Context */
+#define GEN12_CTX_SEMAPHORE_TOKEN		(0x1a + 1)
+
 #define ASSIGN_CTX_PDP(ppgtt, reg_state, n) do { \
 	u32 *reg_state__ = (reg_state); \
 	const u64 addr__ = i915_page_dir_dma_addr((ppgtt), (n)); \

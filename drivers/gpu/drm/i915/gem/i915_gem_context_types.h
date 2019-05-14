@@ -199,6 +199,8 @@ struct i915_gem_context {
 	/** @sched: scheduler parameters */
 	struct i915_sched_attr sched;
 
+	u32 semaphore_token;
+
 	/** @guilty_count: How many times this context has caused a GPU hang. */
 	atomic_t guilty_count;
 	/**

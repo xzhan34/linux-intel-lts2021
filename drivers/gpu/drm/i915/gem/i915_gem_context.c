@@ -723,6 +723,21 @@ static int __context_set_protected(struct drm_i915_private *i915,
 	return ret;
 }
 
+/*
+ * FIXME: We want this to be more random.
+ */
+static u32 __contexts_get_next_token(struct drm_i915_private *i915)
+{
+	u32 token;
+
+	GEM_BUG_ON(GRAPHICS_VER(i915) < 12);
+
+	token = atomic_inc_return(&i915->gem.contexts.next_token);
+	token %= GEN12_ENGINE_SEMAPHORE_TOKEN_MAX;
+
+	return token;
+}
+
 static struct i915_gem_context *
 __create_context(struct drm_i915_private *i915)
 {
@@ -766,6 +781,9 @@ __create_context(struct drm_i915_private *i915)
 
 	for (i = 0; i < ARRAY_SIZE(ctx->hang_timestamp); i++)
 		ctx->hang_timestamp[i] = jiffies - CONTEXT_FAST_HANG_JIFFIES;
+
+	if (GRAPHICS_VER(i915) >= 12)
+		ctx->semaphore_token = __contexts_get_next_token(i915);
 
 	return ctx;
 
@@ -902,6 +920,8 @@ static void init_contexts(struct i915_gem_contexts *gc)
 {
 	spin_lock_init(&gc->lock);
 	INIT_LIST_HEAD(&gc->list);
+
+	atomic_set(&gc->next_token, 0);
 }
 
 void i915_gem_init__contexts(struct drm_i915_private *i915)
