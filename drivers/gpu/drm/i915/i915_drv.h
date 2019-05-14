@@ -822,6 +822,7 @@ struct drm_i915_private {
 			struct list_head list;
 
 #define GEN12_ENGINE_SEMAPHORE_TOKEN_MAX	27
+#define XEHPSDV_ENGINE_SEMAPHORE_TOKEN_MAX		256
 			/*
 			 * Used for gen12+ semaphore tokens.
 			 * This value is used to initialize our contexts, and is
@@ -1386,6 +1387,8 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 #define HAS_RUNTIME_PM(dev_priv) (INTEL_INFO(dev_priv)->has_runtime_pm)
 #define HAS_64BIT_RELOC(dev_priv) (INTEL_INFO(dev_priv)->has_64bit_reloc)
 
+#define HAS_SEMAPHORE_XEHPSDV(dev_priv) \
+	(INTEL_INFO(dev_priv)->has_semaphore_xehpsdv)
 #define HAS_OA_BPC_REPORTING(dev_priv) \
 	(INTEL_INFO(dev_priv)->has_oa_bpc_reporting)
 #define HAS_OA_SLICE_CONTRIB_LIMITS(dev_priv) \

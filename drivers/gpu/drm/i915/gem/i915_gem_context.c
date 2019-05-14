@@ -733,7 +733,10 @@ static u32 __contexts_get_next_token(struct drm_i915_private *i915)
 	GEM_BUG_ON(GRAPHICS_VER(i915) < 12);
 
 	token = atomic_inc_return(&i915->gem.contexts.next_token);
-	token %= GEN12_ENGINE_SEMAPHORE_TOKEN_MAX;
+	if (HAS_SEMAPHORE_XEHPSDV(i915))
+		token %= XEHPSDV_ENGINE_SEMAPHORE_TOKEN_MAX;
+	else
+		token %= GEN12_ENGINE_SEMAPHORE_TOKEN_MAX;
 
 	return token;
 }

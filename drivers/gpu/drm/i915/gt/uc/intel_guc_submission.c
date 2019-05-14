@@ -4600,6 +4600,9 @@ int intel_guc_submission_enable(struct intel_guc *guc)
 		intel_uncore_write(gt->uncore, GEN12_GUC_SEM_INTR_ENABLES,
 				   GUC_SEM_INTR_ROUTE_TO_GUC |
 				   GUC_SEM_INTR_ENABLE_ALL);
+	if (HAS_SEMAPHORE_XEHPSDV(gt->i915))
+		intel_uncore_write(gt->uncore, XEHP_GUC_SEM_INTR_MASK,
+				   GUC_SEM_INTR_MASK_NONE);
 
 	ret = guc_init_submission(guc);
 	if (ret)
@@ -4630,6 +4633,9 @@ void intel_guc_submission_disable(struct intel_guc *guc)
 	/* Disable and route to host */
 	if (GRAPHICS_VER(gt->i915) >= 12)
 		intel_uncore_write(gt->uncore, GEN12_GUC_SEM_INTR_ENABLES, 0x0);
+	if (HAS_SEMAPHORE_XEHPSDV(gt->i915))
+		intel_uncore_write(gt->uncore, XEHP_GUC_SEM_INTR_MASK,
+				   GUC_SEM_INTR_MASK_ALL);
 }
 
 static bool __guc_submission_supported(struct intel_guc *guc)

@@ -108,6 +108,10 @@
 #define   GUC_SEM_INTR_ROUTE_TO_GUC	BIT(31)
 #define   GUC_SEM_INTR_ENABLE_ALL	(0xff)
 
+#define XEHP_GUC_SEM_INTR_MASK		_MMIO(0xc718)
+#define   GUC_SEM_INTR_MASK_NONE	(0)
+#define   GUC_SEM_INTR_MASK_ALL		(0xff)
+
 #define GUC_NUM_DOORBELLS		256
 
 /* format of the HW-monitored doorbell cacheline */

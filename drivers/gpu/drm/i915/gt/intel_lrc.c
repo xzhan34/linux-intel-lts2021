@@ -900,6 +900,7 @@ static struct i915_ppgtt *vm_alias(struct i915_address_space *vm)
 /*
  * The token format in MI_SEMAPHORE_WAIT is just a number, when we're
  * programming the context, the token becomes a bit number (1 << token).
+ * For XEHPSDV slightly different, but similar conceptually.
  */
 static u32 token_ctx_value(const struct intel_context *ce)
 {
@@ -912,7 +913,10 @@ static u32 token_ctx_value(const struct intel_context *ce)
 		token = ctx->semaphore_token;
 	rcu_read_unlock();
 
-	return GEN12_ENGINE_SEMAPHORE_TOKEN_CTX_VALUE(token);
+	if (HAS_SEMAPHORE_XEHPSDV(ce->engine->i915))
+		return XEHPSDV_ENGINE_SEMAPHORE_TOKEN_CTX_VALUE(token);
+	else
+		return GEN12_ENGINE_SEMAPHORE_TOKEN_CTX_VALUE(token);
 }
 
 static void __reset_stop_ring(u32 *regs, const struct intel_engine_cs *engine)

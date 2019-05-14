@@ -198,7 +198,19 @@
 #define   GFX_FORWARD_VBLANK_COND		(2 << 5)
 #define   GEN11_GFX_DISABLE_LEGACY_MODE		(1 << 3)
 #define GEN12_ENGINE_SEMAPHORE_TOKEN(engine)	_MMIO((engine)->mmio_base + 0x2b4)
+/* In GEN12 prior to XEHPSDV the semaphore token register is a bit mask
+ * supporting 27 tokens. */
 #define GEN12_ENGINE_SEMAPHORE_TOKEN_CTX_VALUE(tok) (1 << (tok))
+/* In GEN12 >= XEHPSDV 256 tokens are supported by setting 1 token bit in one of
+ * 8 GuC registers on interrupt. 8 registers x 32 bits == 256 tokens.
+ * Programming the below register configures the interrupt flow. */
+#define XEHPSDV_ENGINE_SEMAPHORE_TOKEN_REG_MASK	GENMASK(7, 5)
+#define XEHPSDV_ENGINE_SEMAPHORE_TOKEN_NUM_MASK	GENMASK(4, 0)
+#define XEHPSDV_ENGINE_SEMAPHORE_TOKEN_CTX_VALUE(tok) ({		\
+	typeof(tok) _tok = (tok);				\
+	((_tok & XEHPSDV_ENGINE_SEMAPHORE_TOKEN_NUM_MASK) |		\
+	((_tok & XEHPSDV_ENGINE_SEMAPHORE_TOKEN_REG_MASK) << 22));	\
+})
 #define RING_TIMESTAMP(base)			_MMIO((base) + 0x358)
 #define RING_TIMESTAMP_UDW(base)		_MMIO((base) + 0x358 + 4)
 #define RING_CONTEXT_STATUS_PTR(base)		_MMIO((base) + 0x3a0)
