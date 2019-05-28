@@ -2534,6 +2534,7 @@ i915_gem_engines_iter_next(struct i915_gem_engines_iter *it)
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftests/mock_context.c"
 #include "selftests/i915_gem_context.c"
+#include "selftests/intel_semaphore_hw.c"
 #endif
 
 void i915_gem_context_module_exit(void)

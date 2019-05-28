@@ -60,5 +60,6 @@ selftest(slpc, intel_slpc_live_selftests)
 selftest(guc, intel_guc_live_selftests)
 selftest(guc_multi_lrc, intel_guc_multi_lrc_live_selftests)
 selftest(guc_hang, intel_guc_hang_check)
+selftest(semaphores, intel_semaphore_live_selftests)
 /* Here be dragons: keep last to run last! */
 selftest(late_gt_pm, intel_gt_pm_late_selftests)
