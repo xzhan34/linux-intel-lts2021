@@ -1338,6 +1338,8 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 	(INTEL_PPGTT(dev_priv) != INTEL_PPGTT_NONE)
 #define HAS_FULL_PPGTT(dev_priv) \
 	(INTEL_PPGTT(dev_priv) >= INTEL_PPGTT_FULL)
+#define HAS_RECOVERABLE_PAGE_FAULT(dev_priv) \
+	(INTEL_INFO(dev_priv)->has_recoverable_page_fault)
 
 #define HAS_PAGE_SIZES(dev_priv, sizes) ({ \
 	GEM_BUG_ON((sizes) == 0); \

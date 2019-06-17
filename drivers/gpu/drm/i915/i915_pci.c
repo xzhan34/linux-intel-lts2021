@@ -1155,6 +1155,7 @@ static const struct intel_device_info ats_m_info = {
 	.has_mem_sparing = 1, \
 	.has_mslice_steering = 0, \
 	.has_one_eu_per_fuse_bit = 1, \
+	.has_recoverable_page_fault = 1, \
 	.has_um_queues = 1, \
 	.ppgtt_msb = 56, \
 	.ppgtt_size = 57
