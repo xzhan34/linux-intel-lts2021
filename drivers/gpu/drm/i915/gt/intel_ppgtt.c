@@ -189,6 +189,9 @@ void ppgtt_bind_vma(struct i915_address_space *vm,
 {
 	u32 pte_flags;
 
+	if (!(flags & PIN_RESIDENT))
+		return;
+
 	if (!test_bit(I915_VMA_ALLOC_BIT, __i915_vma_flags(vma))) {
 		GEM_BUG_ON(vma->size > i915_vma_size(vma));
 		vm->allocate_va_range(vm, stash,
