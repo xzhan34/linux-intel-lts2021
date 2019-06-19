@@ -1156,7 +1156,6 @@ static const struct intel_gt_definition pvc_extra_gt[] = {
 	{}
 };
 
-__maybe_unused
 static const struct intel_device_info pvc_info = {
 	XE_HPC_FEATURES,
 	XE_HPM_FEATURES,
@@ -1294,6 +1293,7 @@ static const struct pci_device_id pciidlist[] = {
 	INTEL_DG2_IDS(&dg2_info),
 	INTEL_ATS_M_IDS(&ats_m_info),
 	INTEL_MTL_IDS(&mtl_info),
+	INTEL_PVC_IDS(&pvc_info),
 	{0, 0, 0}
 };
 MODULE_DEVICE_TABLE(pci, pciidlist);
