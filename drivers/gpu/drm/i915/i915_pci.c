@@ -1135,6 +1135,8 @@ static const struct intel_device_info ats_m_info = {
 	XE_HP_FEATURES, \
 	.dma_mask_size = 52, \
 	.has_3d_pipeline = 0, \
+	/* FIXME: remove as soon as PVC support for LMEM 4K pages is working */ \
+	.has_64k_pages = 1, \
 	.has_guc_deprivilege = 1, \
 	.has_guc_programmable_mocs = 1, \
 	.has_l3_ccs_read = 1, \
