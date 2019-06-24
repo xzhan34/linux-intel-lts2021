@@ -684,9 +684,15 @@ static void __setup_engine_capabilities(struct intel_engine_cs *engine)
 		if ((GRAPHICS_VER(i915) >= 11 &&
 		     (engine->gt->info.vdbox_sfc_access &
 		      BIT(engine->instance))) ||
-		    (GRAPHICS_VER(i915) >= 9 && engine->instance == 0))
+		    (!HAS_SLIM_VDBOX(i915) &&
+		     (GRAPHICS_VER(i915) >= 9 && engine->instance == 0)))
 			engine->uabi_capabilities |=
 				I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC;
+
+		/* PVC does not have VDENC on all except the first engine */
+		if (!HAS_SLIM_VDBOX(i915) || engine->instance == 0)
+			engine->uabi_capabilities |=
+				PRELIM_I915_VIDEO_CLASS_CAPABILITY_VDENC;
 	} else if (engine->class == VIDEO_ENHANCEMENT_CLASS) {
 		if (GRAPHICS_VER(i915) >= 9 &&
 		    engine->gt->info.sfc_mask & BIT(engine->instance))
@@ -779,11 +785,15 @@ bool gen11_vdbox_has_sfc(struct intel_gt *gt,
 	 * In Gen12, Even numbered physical instance always are connected
 	 * to an SFC. Odd numbered physical instances have SFC only if
 	 * previous even instance is fused off.
+	 * In PVC, none of the VDBOXes have access to an SFC.
 	 *
 	 * Starting with Xe_HP, there's also a dedicated SFC_ENABLE field
 	 * in the fuse register that tells us whether a specific SFC is present.
 	 */
 	if ((gt->info.sfc_mask & BIT(physical_vdbox / 2)) == 0)
+		return false;
+	else if (drm_WARN_ON(&i915->drm, HAS_SLIM_VDBOX(i915)))
+		 /* Should already be caught by the SFC fuse check */
 		return false;
 	else if (MEDIA_VER(i915) >= 12)
 		return (physical_vdbox % 2 == 0) ||
@@ -819,7 +829,13 @@ static void engine_mask_apply_media_fuses(struct intel_gt *gt)
 	vebox_mask = (media_fuse & GEN11_GT_VEBOX_DISABLE_MASK) >>
 		      GEN11_GT_VEBOX_DISABLE_SHIFT;
 
-	if (MEDIA_VER_FULL(i915) >= IP_VER(12, 50)) {
+	if (HAS_SLIM_VDBOX(i915)) {
+		/*
+		 * The SFC_ENABLE bits are broken on PVC and indicate that
+		 * SFC is present, even though PVC has no SFC support.
+		 */
+		gt->info.sfc_mask = 0;
+	} else if (MEDIA_VER_FULL(i915) >= IP_VER(12, 50)) {
 		fuse1 = intel_uncore_read(gt->uncore, HSW_PAVP_FUSE1);
 		gt->info.sfc_mask = REG_FIELD_GET(XEHP_SFC_ENABLE_MASK, fuse1);
 	} else {
@@ -970,7 +986,7 @@ static void setup_logical_ids(struct intel_gt *gt, u8 *logical_ids, u8 class)
 	 * Logical to physical mapping is needed for proper support
 	 * to split-frame feature.
 	 */
-	if (IS_PONTEVECCHIO(gt->i915) && class == VIDEO_DECODE_CLASS) {
+	if (HAS_SLIM_VDBOX(gt->i915) && class == VIDEO_DECODE_CLASS) {
 		const u8 map[] = { 0, 2, 1 };
 
 		populate_logical_ids(gt, logical_ids, class,

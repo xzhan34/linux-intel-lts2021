@@ -1195,6 +1195,7 @@ static const struct intel_device_info ats_m_info = {
 	.has_oac = 1, \
 	.has_one_eu_per_fuse_bit = 1, \
 	.has_recoverable_page_fault = 1, \
+	.has_slim_vdbox = 1, \
 	.has_um_queues = 1, \
 	.ppgtt_msb = 56, \
 	.ppgtt_size = 57
@@ -1203,7 +1204,7 @@ static const struct intel_device_info ats_m_info = {
 	BIT(BCS0) | BIT(BCS1) | BIT(BCS2) | BIT(BCS3) | \
 	BIT(BCS4) | BIT(BCS5) | BIT(BCS6) | BIT(BCS7) | \
 	BIT(BCS8) | \
-	BIT(VCS0) | \
+	BIT(VCS0) | BIT(VCS1) | BIT(VCS2) | \
 	BIT(CCS0) | BIT(CCS1) | BIT(CCS2) | BIT(CCS3)
 
 static const struct intel_gt_definition pvc_extra_gt[] = {

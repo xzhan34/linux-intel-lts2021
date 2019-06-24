@@ -1547,6 +1547,8 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 #define HAS_ASID_TLB_INVALIDATION(i915) \
 	(INTEL_INFO(i915)->has_asid_tlb_invalidation)
 
+#define HAS_SLIM_VDBOX(i915) (INTEL_INFO(i915)->has_slim_vdbox)
+
 #define HAS_CACHE_CLOS(i915) (INTEL_INFO(i915)->has_cache_clos)
 
 #define HAS_GUC_PROGRAMMABLE_MOCS(i915) (INTEL_INFO(i915)->has_guc_programmable_mocs)

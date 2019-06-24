@@ -1006,6 +1006,7 @@ struct prelim_drm_i915_engine_info {
 	__u64 capabilities;
 #define I915_VIDEO_CLASS_CAPABILITY_HEVC		(1 << 0)
 #define I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC	(1 << 1)
+#define PRELIM_I915_VIDEO_CLASS_CAPABILITY_VDENC	(1ull << 63)
 #define PRELIM_I915_COPY_CLASS_CAP_BLOCK_COPY		(1ull << 63)
 	/*
 	 * The following are capabilties of the copy engines, while all engines

@@ -191,6 +191,7 @@ enum intel_ppgtt_type {
 	func(has_runtime_pm); \
 	func(has_selective_tlb_invalidation); \
 	func(has_semaphore_xehpsdv); \
+	func(has_slim_vdbox); \
 	func(has_snoop); \
 	func(has_um_queues); \
 	func(tuning_thread_rr_after_dep); \

@@ -80,6 +80,7 @@ static struct i915_ext_attr mmio_attr =	{
 static const char * const vcs_caps[] = {
 	[ilog2(I915_VIDEO_CLASS_CAPABILITY_HEVC)] = "hevc",
 	[ilog2(I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC)] = "sfc",
+	[ilog2(PRELIM_I915_VIDEO_CLASS_CAPABILITY_VDENC)] = "vdenc",
 };
 
 static const char * const vecs_caps[] = {

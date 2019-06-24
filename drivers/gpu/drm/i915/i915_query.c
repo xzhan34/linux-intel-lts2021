@@ -448,7 +448,8 @@ prelim_query_engine_info(struct drm_i915_private *i915,
 		case I915_ENGINE_CLASS_VIDEO:
 			info.known_capabilities =
 				I915_VIDEO_CLASS_CAPABILITY_HEVC |
-				I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC;
+				I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC |
+				PRELIM_I915_VIDEO_CLASS_CAPABILITY_VDENC;
 			break;
 		case I915_ENGINE_CLASS_VIDEO_ENHANCE:
 			info.known_capabilities =
