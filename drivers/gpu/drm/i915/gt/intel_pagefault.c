@@ -2,6 +2,8 @@
 /*
  * Copyright © 2022 Intel Corporation
  */
+#include "gem/i915_gem_userptr.h"
+
 #include "i915_drv.h"
 #include "i915_trace.h"
 
@@ -9,6 +11,21 @@
 #include "intel_gt.h"
 #include "intel_gt_regs.h"
 #include "intel_pagefault.h"
+#include "uc/intel_guc.h"
+#include "uc/intel_guc_fwif.h"
+
+struct recoverable_page_fault_info {
+       u64 page_addr;
+       u32 asid;
+       u16 pdata;
+       u8 vfid;
+       u8 access_type;
+       u8 fault_type;
+       u8 fault_level;
+       u8 engine_class;
+       u8 engine_instance;
+       u8 fault_unsuccessful;
+};
 
 void intel_gt_pagefault_process_cat_error_msg(struct intel_gt *gt, u32 guc_ctx_id)
 {
@@ -77,5 +94,312 @@ int intel_gt_pagefault_process_page_fault_msg(struct intel_gt *gt, const u32 *ms
 			    RING_FAULT_LEVEL(fault_reg),
 			    !!(fault_reg & RING_FAULT_ACCESS_TYPE) ? "Write" : "Read");
 
+	return 0;
+}
+
+static void print_recoverable_fault(struct recoverable_page_fault_info *info)
+{
+	/*XXX: Move to trace_printk */
+	DRM_DEBUG_DRIVER("\n\tASID: %d\n"
+			 "\tVFID: %d\n"
+			 "\tPDATA: 0x%04x\n"
+			 "\tFaulted Address: 0x%08x_%08x\n"
+			 "\tFaultType: %d\n"
+			 "\tAccessType: %d\n"
+			 "\tFaultLevel: %d\n"
+			 "\tEngineClass: %d\n"
+			 "\tEngineInstance: %d\n",
+			 info->asid,
+			 info->vfid,
+			 info->pdata,
+			 upper_32_bits(info->page_addr),
+			 lower_32_bits(info->page_addr),
+			 info->fault_type,
+			 info->access_type,
+			 info->fault_level,
+			 info->engine_class,
+			 info->engine_instance);
+}
+
+static bool userptr_needs_rebind(struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	bool ret = false;
+
+	if (!i915_gem_object_is_userptr(obj))
+		return ret;
+	i915_gem_userptr_lock_mmu_notifier(i915);
+	if (i915_gem_object_userptr_submit_done(obj))
+		ret = true;
+	i915_gem_userptr_unlock_mmu_notifier(i915);
+	return ret;
+}
+
+static int validate_fault(struct i915_vma *vma, struct recoverable_page_fault_info *info)
+{
+	/* combined access_type and fault_type */
+	enum {
+		FAULT_READ_NOT_PRESENT = 0x0,
+		FAULT_WRITE_NOT_PRESENT = 0x1,
+		FAULT_ATOMIC_NOT_PRESENT = 0x2,
+		FAULT_WRITE_ACCESS_VIOLATION = 0x5,
+		FAULT_ATOMIC_ACCESS_VIOLATION = 0xa,
+	} err_code;
+	int err = 0;
+
+	err_code = (info->fault_type << 2) | info->access_type;
+
+	switch (err_code & 0xF) {
+	case FAULT_READ_NOT_PRESENT:
+		break;
+	case FAULT_WRITE_NOT_PRESENT:
+		if (i915_gem_object_is_readonly(vma->obj))
+			err = -EACCES;
+		break;
+	case FAULT_ATOMIC_NOT_PRESENT:
+		break;
+	case FAULT_WRITE_ACCESS_VIOLATION:
+		pr_err("Write Access Violation\n");
+		err = -EACCES;
+		break;
+	case FAULT_ATOMIC_ACCESS_VIOLATION:
+		pr_err("Atomic Access Violation\n");
+		err = -EACCES;
+		break;
+	default:
+		pr_err("Undefined Fault Type\n");
+		err = -EACCES;
+		break;
+	}
+
+	return err;
+}
+
+static struct i915_address_space *faulted_vm(struct intel_guc *guc, u32 asid)
+{
+	if (GEM_WARN_ON(asid >= I915_MAX_ASID))
+		return NULL;
+
+	return xa_load(&guc_to_gt(guc)->i915->asid_resv.xa, asid);
+}
+
+static struct intel_engine_cs *
+lookup_engine(struct intel_gt *gt, u8 class, u8 instance)
+{
+	if (class >= ARRAY_SIZE(gt->engine_class) ||
+	    instance >= ARRAY_SIZE(gt->engine_class[class]))
+		return NULL;
+
+	return gt->engine_class[class][instance];
+}
+
+static void
+mark_engine_as_active(struct intel_gt *gt,
+		      int engine_class, int engine_instance)
+{
+	struct intel_engine_cs *engine;
+
+	engine = lookup_engine(gt, engine_class, engine_instance);
+	if (!engine)
+		return;
+
+	WRITE_ONCE(engine->stats.irq_count,
+		   READ_ONCE(engine->stats.irq_count) + 1);
+}
+
+static struct dma_fence *
+handle_i915_mm_fault(struct intel_guc *guc,
+		     struct recoverable_page_fault_info *info)
+{
+	struct dma_fence *fence = NULL;
+	struct i915_address_space *vm;
+	struct i915_gem_ww_ctx ww;
+	struct i915_vma *vma;
+	int err = 0;
+
+	vm = faulted_vm(guc, info->asid);
+	/* The active context [asid] is protected while servicing a fault */
+	if (GEM_WARN_ON(!vm))
+		return ERR_PTR(-ENOENT);
+
+	if (!i915_vm_page_fault_enabled(vm))
+		return ERR_PTR(-ENOENT);
+
+	vma = i915_find_vma(vm, info->page_addr);
+	if (vma)
+		vma = i915_vma_tryget(vma);
+	if (GEM_WARN_ON(!vma))
+		return ERR_PTR( -ENOENT);
+
+	mark_engine_as_active(gt, info->engine_class, info->engine_instance);
+
+	err = validate_fault(vma, info);
+	if (err)
+		goto put_vma;
+
+	/*
+	 * With lots of concurrency to the same unbound VMA, HW will generate a storm
+	 * of page faults. Test this upfront so that the redundant fault requests
+	 * return as early as possible.
+	 */
+	if (i915_vma_is_bound(vma, PIN_RESIDENT))
+		goto put_vma;
+
+ retry_userptr:
+	if (i915_gem_object_is_userptr(vma->obj)) {
+		err = i915_gem_object_userptr_submit_init(vma->obj);
+		if (err)
+			goto put_vma;
+	}
+
+	i915_gem_ww_ctx_init(&ww, false);
+
+ retry:
+	err = i915_gem_object_lock(vma->obj, &ww);
+	if (err)
+		goto err_ww;
+
+	vma->obj->flags |= I915_BO_FAULT_CLEAR;
+
+	err = i915_vma_bind(vma, &ww);
+	if (!err && userptr_needs_rebind(vma->obj)) {
+		i915_gem_ww_ctx_fini(&ww);
+		goto retry_userptr;
+	}
+ err_ww:
+	if (err == -EDEADLK) {
+		err = i915_gem_ww_ctx_backoff(&ww);
+		if (!err)
+			goto retry;
+	}
+
+	i915_gem_ww_ctx_fini(&ww);
+put_vma:
+	if (i915_gem_object_is_userptr(vma->obj)) {
+		if (err == -EAGAIN)
+			/* Need to try again in the next page fault. */
+			err = 0;
+	}
+
+	fence = i915_active_fence_get_or_error(&vma->active.excl);
+
+	i915_vma_put(vma);
+
+	return fence ?: ERR_PTR(err);
+}
+
+static void get_fault_info(const u32 *payload, struct recoverable_page_fault_info *info)
+{
+	const struct intel_guc_pagefault_desc *desc;
+
+	desc = (const struct intel_guc_pagefault_desc *)payload;
+
+	info->fault_level = FIELD_GET(PAGE_FAULT_DESC_FAULT_LEVEL, desc->dw0);
+	info->engine_class = FIELD_GET(PAGE_FAULT_DESC_ENG_CLASS, desc->dw0);
+	info->engine_instance = FIELD_GET(PAGE_FAULT_DESC_ENG_INSTANCE, desc->dw0);
+	info->pdata = FIELD_GET(PAGE_FAULT_DESC_PDATA_HI,
+				desc->dw1) << PAGE_FAULT_DESC_PDATA_HI_SHIFT;
+	info->pdata |= FIELD_GET(PAGE_FAULT_DESC_PDATA_LO, desc->dw0);
+	info->asid =  FIELD_GET(PAGE_FAULT_DESC_ASID, desc->dw1);
+	info->vfid =  FIELD_GET(PAGE_FAULT_DESC_VFID, desc->dw2);
+	info->access_type = FIELD_GET(PAGE_FAULT_DESC_ACCESS_TYPE, desc->dw2);
+	info->fault_type = FIELD_GET(PAGE_FAULT_DESC_FAULT_TYPE, desc->dw2);
+	info->page_addr = (u64)(FIELD_GET(PAGE_FAULT_DESC_VIRTUAL_ADDR_HI,
+					  desc->dw3)) << PAGE_FAULT_DESC_VIRTUAL_ADDR_HI_SHIFT;
+	info->page_addr |= FIELD_GET(PAGE_FAULT_DESC_VIRTUAL_ADDR_LO,
+				     desc->dw2) << PAGE_FAULT_DESC_VIRTUAL_ADDR_LO_SHIFT;
+}
+
+struct fault_reply {
+	struct dma_fence_work base;
+	struct recoverable_page_fault_info info;
+	struct i915_sw_dma_fence_cb cb;
+	struct intel_guc *guc;
+	struct intel_gt *gt;
+	intel_wakeref_t wakeref;
+};
+
+static int fault_work(struct dma_fence_work *work)
+{
+	return 0;
+}
+
+static int send_fault_reply(const struct fault_reply *f)
+{
+	u32 action[] = {
+		INTEL_GUC_ACTION_PAGE_FAULT_RES_DESC,
+
+		(FIELD_PREP(PAGE_FAULT_REPLY_VALID, 1) |
+		 FIELD_PREP(PAGE_FAULT_REPLY_SUCCESS,
+			    f->info.fault_unsuccessful) |
+		 FIELD_PREP(PAGE_FAULT_REPLY_REPLY,
+			    PAGE_FAULT_REPLY_ACCESS) |
+		 FIELD_PREP(PAGE_FAULT_REPLY_DESC_TYPE,
+			    FAULT_RESPONSE_DESC) |
+		 FIELD_PREP(PAGE_FAULT_REPLY_ASID,
+			    f->info.asid)),
+
+		(FIELD_PREP(PAGE_FAULT_REPLY_VFID,
+			    f->info.vfid) |
+		 FIELD_PREP(PAGE_FAULT_REPLY_ENG_INSTANCE,
+			    f->info.engine_instance) |
+		 FIELD_PREP(PAGE_FAULT_REPLY_ENG_CLASS,
+			    f->info.engine_class) |
+		 FIELD_PREP(PAGE_FAULT_REPLY_PDATA,
+			    f->info.pdata)),
+	};
+
+	return intel_guc_send(f->guc, action, ARRAY_SIZE(action));
+}
+
+static void fault_complete(struct dma_fence_work *work)
+{
+	struct fault_reply *f = container_of(work, typeof(*f), base);
+
+	if (work->dma.error) {
+		print_recoverable_fault(&f->info);
+		f->info.fault_unsuccessful = true;
+	}
+
+	GEM_WARN_ON(send_fault_reply(f));
+	intel_gt_pm_put(f->gt, f->wakeref);
+}
+
+static const struct dma_fence_work_ops reply_ops = {
+	.name = "pagefault",
+	.work = fault_work,
+	.complete = fault_complete,
+};
+
+int intel_pagefault_req_process_msg(struct intel_guc *guc,
+				    const u32 *payload,
+				    u32 len)
+{
+	struct fault_reply *reply;
+	struct dma_fence *fence;
+
+	if (unlikely(len != 4))
+		return -EPROTO;
+
+	reply = kzalloc(sizeof(*reply), GFP_KERNEL);
+	if (!reply)
+		return -ENOMEM;
+
+	dma_fence_work_init(&reply->base, &reply_ops);
+	get_fault_info(payload, &reply->info);
+	reply->guc = guc;
+
+	reply->gt = guc_to_gt(guc);
+	reply->wakeref = intel_gt_pm_get(reply->gt);
+
+	fence = handle_i915_mm_fault(guc, &reply->info);
+	if (IS_ERR(fence)) {
+		i915_sw_fence_set_error_once(&reply->base.chain, PTR_ERR(fence));
+	} else if (fence) {
+		__i915_sw_fence_await_dma_fence(&reply->base.chain, fence, &reply->cb);
+		dma_fence_put(fence);
+	}
+
+	dma_fence_work_commit_imm(&reply->base);
 	return 0;
 }

@@ -1057,6 +1057,10 @@ static int vma_get_pages(struct i915_vma *vma)
 		err = i915_gem_object_pin_pages(vma->obj);
 		if (err)
 			return err;
+		/*
+		 * This is set such that we will unpin on error
+		 * or for the faultable VM case (see below).
+		 */
 		pinned_pages = true;
 	}
 
@@ -1070,7 +1074,14 @@ static int vma_get_pages(struct i915_vma *vma)
 		err = vma->ops->set_pages(vma);
 		if (err)
 			goto unlock;
-		pinned_pages = false;
+		/*
+		 * For faultable VM, always unpin on return as we
+		 * don't need object pinned beyond above set_pages().
+		 * Else this clears pinned_pages, so pin count will
+		 * persist until vma_put_pages()/vma_unbind_pages.
+		 */
+		if (!i915_vm_page_fault_enabled(vma->vm))
+			pinned_pages = false;
 	}
 	atomic_inc(&vma->pages_count);
 
@@ -1091,7 +1102,7 @@ static void __vma_put_pages(struct i915_vma *vma, unsigned int count)
 	if (atomic_sub_return(count, &vma->pages_count) == 0) {
 		vma->ops->clear_pages(vma);
 		GEM_BUG_ON(vma->pages);
-		if (vma->obj)
+		if (vma->obj && !i915_vm_page_fault_enabled(vma->vm))
 			i915_gem_object_unpin_pages(vma->obj);
 	}
 	mutex_unlock(&vma->pages_mutex);

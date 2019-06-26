@@ -35,6 +35,8 @@
 #include "intel_sa_media.h"
 #include "intel_tlb.h"
 #include "intel_uncore.h"
+#include "intel_pagefault.h"
+#include "intel_pm.h"
 #include "shmem_utils.h"
 #include "intel_gt_sysfs.h"
 #include "pxp/intel_pxp.h"

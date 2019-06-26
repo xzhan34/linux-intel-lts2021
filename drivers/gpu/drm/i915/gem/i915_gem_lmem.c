@@ -523,7 +523,7 @@ xy_emit_clear(struct i915_request *rq, u64 offset, u32 size, u32 page_shift)
 }
 
 static struct i915_request *
-chain_request(struct i915_request *rq, struct i915_request *chain)
+chain_request(struct i915_request *rq, struct i915_request *chain, int prio)
 {
 	struct intel_timeline *tl = rq->context->timeline;
 
@@ -543,7 +543,7 @@ chain_request(struct i915_request *rq, struct i915_request *chain)
 
 	trace_i915_request_add(rq);
 	__i915_request_commit(rq);
-	__i915_request_queue(rq, I915_PRIORITY_NORMAL);
+	__i915_request_queue(rq, prio);
 
 	if (chain) {
 		i915_sw_fence_complete(&chain->submit);
@@ -568,6 +568,7 @@ clear_blt(struct intel_context *ce,
 		!use_pvc_memset &&
 		flags & I915_BO_ALLOC_USER &&
 		HAS_FLAT_CCS(ce->engine->i915);
+	const int prio = flags & I915_BO_FAULT_CLEAR ? I915_PRIORITY_MAX : I915_PRIORITY_NORMAL;
 	struct sgt_iter it;
 	u64 offset;
 	int err;
@@ -619,7 +620,7 @@ clear_blt(struct intel_context *ce,
 			goto skip;
 
 skip:
-		*out = chain_request(rq, *out);
+		*out = chain_request(rq, *out, prio);
 		if (err)
 			break;
 	}

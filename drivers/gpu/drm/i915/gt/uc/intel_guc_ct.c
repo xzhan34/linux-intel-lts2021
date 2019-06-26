@@ -1083,6 +1083,9 @@ static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 	case INTEL_GUC_ACTION_ENGINE_FAILURE_NOTIFICATION:
 		ret = intel_guc_engine_failure_process_msg(guc, payload, len);
 		break;
+	case INTEL_GUC_ACTION_REPORT_PAGE_FAULT_REQ_DESC:
+		ret = intel_pagefault_req_process_msg(guc, payload, len);
+		break;
 	case INTEL_GUC_ACTION_NOTIFY_FLUSH_LOG_BUFFER_TO_FILE:
 		intel_guc_log_handle_flush_event(&guc->log);
 		ret = 0;

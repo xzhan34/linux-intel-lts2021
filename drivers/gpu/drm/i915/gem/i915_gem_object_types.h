@@ -305,7 +305,8 @@ struct drm_i915_gem_object {
 #define I915_BO_PROTECTED	BIT(9)
 #define I915_BO_SKIP_CLEAR	BIT(10)
 #define I915_BO_CPU_CLEAR	BIT(11)
-#define I915_BO_SYNC_HINT	BIT(12)
+#define I915_BO_FAULT_CLEAR	BIT(12)
+#define I915_BO_SYNC_HINT	BIT(13)
 
 	/**
 	 * @cache_level: The desired GTT caching level.

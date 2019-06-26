@@ -50,12 +50,15 @@ static int shmem_get_pages(struct drm_i915_gem_object *obj)
 		return -E2BIG;
 
 	/*
-	 * Assert that the object is not currently in any GPU domain. As it
-	 * wasn't in the GTT, there shouldn't be any way it could have been in
+	 * Assert that when recoverable page faults are not supported,
+	 * object is not currently in any GPU domain. As it wasn't in
+	 * the GTT, there shouldn't be any way it could have been in
 	 * a GPU cache
 	 */
-	GEM_BUG_ON(obj->read_domains & I915_GEM_GPU_DOMAINS);
-	GEM_BUG_ON(obj->write_domain & I915_GEM_GPU_DOMAINS);
+	if (!HAS_RECOVERABLE_PAGE_FAULT(i915)) {
+		GEM_BUG_ON(obj->read_domains & I915_GEM_GPU_DOMAINS);
+		GEM_BUG_ON(obj->write_domain & I915_GEM_GPU_DOMAINS);
+	}
 
 	/*
 	 * If there's no chance of allocating enough pages for the whole
