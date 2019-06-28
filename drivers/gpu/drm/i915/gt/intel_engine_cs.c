@@ -352,9 +352,10 @@ static void __sprint_engine_name(struct intel_engine_cs *engine)
 	 * we still would like to keep track of this engine in the debug logs.
 	 * We throw in a ' here as a reminder that this isn't its final name.
 	 */
-	GEM_WARN_ON(snprintf(engine->name, sizeof(engine->name), "%s'%u",
+	GEM_WARN_ON(snprintf(engine->name, sizeof(engine->name), "%s'%u.%u",
 			     intel_engine_class_repr(engine->class),
-			     engine->instance) >= sizeof(engine->name));
+			     engine->instance,
+			     engine->gt->info.id) >= sizeof(engine->name));
 }
 
 void intel_engine_set_hwsp_writemask(struct intel_engine_cs *engine, u32 mask)

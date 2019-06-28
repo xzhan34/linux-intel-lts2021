@@ -63,6 +63,11 @@ static int engine_cmp(void *priv, const struct list_head *A,
 	if (uabi_classes[a->class] > uabi_classes[b->class])
 		return 1;
 
+	if (a->gt->info.id < b->gt->info.id)
+		return -1;
+	else if (a->gt->info.id > b->gt->info.id)
+		return 1;
+
 	if (a->instance < b->instance)
 		return -1;
 	if (a->instance > b->instance)
@@ -151,7 +156,6 @@ const char *intel_engine_class_repr(u8 class)
 }
 
 struct legacy_ring {
-	struct intel_gt *gt;
 	u8 class;
 	u8 instance;
 };
@@ -180,21 +184,22 @@ static int legacy_ring_idx(const struct legacy_ring *ring)
 static void add_legacy_ring(struct legacy_ring *ring,
 			    struct intel_engine_cs *engine)
 {
-	if (engine->gt != ring->gt || engine->class != ring->class) {
-		ring->gt = engine->gt;
+	if (engine->class != ring->class) {
 		ring->class = engine->class;
 		ring->instance = 0;
 	}
 
 	engine->legacy_idx = legacy_ring_idx(ring);
-	if (engine->legacy_idx != INVALID_ENGINE)
+	if (engine->legacy_idx != INVALID_ENGINE) {
+		engine->legacy_idx += engine->gt->info.id * I915_NUM_ENGINES;
 		ring->instance++;
+	}
 }
 
 void intel_engines_driver_register(struct drm_i915_private *i915)
 {
-	struct legacy_ring ring = {};
-	u8 uabi_instances[5] = {};
+	struct legacy_ring ring[I915_MAX_GT] = { };
+	u8 uabi_instances[PRELIM_I915_ENGINE_CLASS_COMPUTE + 1] = {};
 	struct list_head *it, *next;
 	struct rb_node **p, *prev;
 	LIST_HEAD(engines);
@@ -233,7 +238,7 @@ void intel_engines_driver_register(struct drm_i915_private *i915)
 						    engine->uabi_instance) != engine);
 
 		/* Fix up the mapping to match default execbuf::user_map[] */
-		add_legacy_ring(&ring, engine);
+		add_legacy_ring(&ring[engine->gt->info.id], engine);
 
 		prev = &engine->uabi_node;
 		p = &prev->rb_right;

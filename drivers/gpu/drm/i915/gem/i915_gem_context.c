@@ -354,7 +354,7 @@ static struct i915_gem_engines *alloc_engines(unsigned int count)
 
 static struct i915_gem_engines *default_engines(struct i915_gem_context *ctx)
 {
-	const unsigned int max = I915_NUM_ENGINES;
+	const unsigned int max = I915_MAX_GT * I915_NUM_ENGINES;
 	struct intel_engine_cs *engine;
 	struct i915_gem_engines *e;
 

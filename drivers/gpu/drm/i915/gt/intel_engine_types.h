@@ -295,7 +295,7 @@ struct intel_engine_execlists {
 	I915_SELFTEST_DECLARE(struct st_preempt_hang preempt_hang;)
 };
 
-#define INTEL_ENGINE_CS_MAX_NAME 8
+#define INTEL_ENGINE_CS_MAX_NAME 10
 
 struct intel_engine_execlists_stats {
 	/**
