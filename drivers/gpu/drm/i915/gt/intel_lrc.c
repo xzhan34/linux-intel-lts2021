@@ -1280,6 +1280,11 @@ int lrc_alloc(struct intel_context *ce, struct intel_engine_cs *engine)
 		ce->timeline = tl;
 	}
 
+	if (GEM_WARN_ON(ce->timeline->gt->ggtt != engine->gt->ggtt)) {
+		err = -EINVAL;
+		goto err_ring;
+	}
+
 	ce->ring = ring;
 	ce->state = vma;
 
