@@ -11,3 +11,5 @@ below the "INTEL DRM INTERNAL BRANCH STARTING POINT" commit so they can be
 "collected" by the next move of dii-baseline. Use
 `git cherry-pick -x <commit-in-upstream>` when moving the patch out of this
 section and into dii-baseline branch.
+
+END
