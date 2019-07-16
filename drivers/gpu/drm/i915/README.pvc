@@ -1,4 +1,4 @@
-PONTE VECCHIO GENERAL SUPPORT
+PONTE VECCHIO GENERAL SUPPORT (done)
 T:	drm/i915/pvc
 
 The patches in this section cover general PVC enablement (i.e., without major
