@@ -858,6 +858,25 @@ i915_drop_caches_get(void *data, u64 *val)
 	return 0;
 }
 
+static int
+gt_idle(struct intel_gt *gt, u64 val)
+{
+	int ret;
+
+	if (val & (DROP_RETIRE | DROP_IDLE))
+		intel_gt_retire_requests(gt);
+
+	if (val & DROP_IDLE) {
+		ret = intel_gt_pm_wait_for_idle(gt);
+		if (ret)
+			return ret;
+
+		i915_vma_clock_flush(&gt->vma_clock);
+	}
+
+	return 0;
+}
+
 static void reset_active(struct intel_gt *gt)
 {
 	struct intel_engine_cs *engine;
@@ -895,9 +914,6 @@ gt_drop_caches(struct intel_gt *gt, u64 val)
 {
 	int ret;
 
-	if (val & DROP_RESET_ACTIVE)
-		reset_active(gt);
-
 	if (val & DROP_RETIRE)
 		intel_gt_retire_requests(gt);
 
@@ -905,14 +921,6 @@ gt_drop_caches(struct intel_gt *gt, u64 val)
 		ret = intel_gt_wait_for_idle(gt, MAX_SCHEDULE_TIMEOUT);
 		if (ret)
 			return ret;
-	}
-
-	if (val & DROP_IDLE) {
-		ret = intel_gt_pm_wait_for_idle(gt);
-		if (ret)
-			return ret;
-
-		i915_vma_clock_flush(&gt->vma_clock);
 	}
 
 	if (val & DROP_RESET_ACTIVE && intel_gt_terminally_wedged(gt))
@@ -929,14 +937,32 @@ i915_drop_caches_set(void *data, u64 val)
 {
 	struct drm_i915_private *i915 = data;
 	intel_wakeref_t wakeref;
+	struct intel_gt *gt;
+	unsigned int i;
 	int ret;
 
 	DRM_DEBUG("Dropping caches: 0x%08llx [0x%08llx]\n",
 		  val, val & DROP_ALL);
 
-	ret = gt_drop_caches(to_gt(i915), val);
-	if (ret)
-		return ret;
+	/* Reset all GT first before doing any waits/flushes */
+	if (val & DROP_RESET_ACTIVE) {
+		for_each_gt(gt, i915, i)
+			reset_active(gt);
+	}
+
+	/* Flush all the active requests across both GT ... */
+	for_each_gt(gt, i915, i) {
+		ret = gt_drop_caches(gt, val);
+		if (ret)
+			return ret;
+	}
+
+	/* ... before waiting for idle as there may be cross-gt wakerefs. */
+	for_each_gt(gt, i915, i) {
+		ret = gt_idle(gt, val);
+		if (ret)
+			return ret;
+	}
 
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
 		fs_reclaim_acquire(GFP_KERNEL);
