@@ -15,9 +15,9 @@
 #include "i915_trace.h"
 #include "i915_user_extensions.h"
 
-static u32 object_max_page_size(struct drm_i915_gem_object *obj)
+u32 i915_gem_object_max_page_size(struct drm_i915_gem_object *obj)
 {
-	u32 max_page_size = 0;
+	u32 max_page_size = I915_GTT_PAGE_SIZE_4K;
 	int i;
 
 	for (i = 0; i < obj->mm.n_placements; i++) {
@@ -27,7 +27,6 @@ static u32 object_max_page_size(struct drm_i915_gem_object *obj)
 		max_page_size = max_t(u32, max_page_size, mr->min_page_size);
 	}
 
-	GEM_BUG_ON(!max_page_size);
 	return max_page_size;
 }
 
@@ -91,7 +90,7 @@ setup_object(struct drm_i915_gem_object *obj, u64 size)
 	struct intel_memory_region *mr = obj->mm.placements[0];
 	int ret;
 
-	size = round_up(size, object_max_page_size(obj));
+	size = round_up(size, i915_gem_object_max_page_size(obj));
 	if (size == 0)
 		return -EINVAL;
 

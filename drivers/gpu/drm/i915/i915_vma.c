@@ -28,6 +28,7 @@
 #include "display/intel_frontbuffer.h"
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_tiling.h"
+#include "gem/i915_gem_vm_bind.h"
 #include "gt/intel_engine.h"
 #include "gt/intel_engine_heartbeat.h"
 #include "gt/intel_gt.h"
@@ -252,6 +253,7 @@ vma_create(struct drm_i915_gem_object *obj,
 
 	spin_unlock(&obj->vma.lock);
 
+	INIT_LIST_HEAD(&vma->vm_bind_link);
 	return vma;
 
 err_unlock:
@@ -1294,6 +1296,7 @@ void i915_vma_release(struct kref *ref)
 
 	GEM_BUG_ON(i915_vma_is_active(vma));
 	GEM_BUG_ON(drm_mm_node_allocated(&vma->node));
+	GEM_BUG_ON(!list_empty(&vma->vm_bind_link));
 
 	i915_vm_put(vma->vm);
 

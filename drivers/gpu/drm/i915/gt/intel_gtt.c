@@ -11,6 +11,8 @@
 
 #include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_lmem.h"
+#include "gem/i915_gem_vm_bind.h" /* XXX */
+
 #include "i915_trace.h"
 #include "i915_utils.h"
 #include "intel_gt.h"
@@ -100,6 +102,8 @@ static void __i915_vm_close(struct i915_address_space *vm)
 {
 	struct i915_vma *vma, *vn;
 
+	i915_gem_vm_unbind_all(vm);
+
 	mutex_lock(&vm->mutex);
 	list_for_each_entry_safe(vma, vn, &vm->bound_list, vm_link)
 		i915_vma_unpublish(vma);
@@ -126,6 +130,8 @@ void i915_address_space_fini(struct i915_address_space *vm)
 
 	drm_mm_takedown(&vm->mm);
 	mutex_destroy(&vm->mutex);
+	GEM_BUG_ON(!RB_EMPTY_ROOT(&vm->va.rb_root));
+	mutex_destroy(&vm->vm_bind_lock);
 }
 
 /**
@@ -244,6 +250,11 @@ void i915_address_space_init(struct i915_address_space *vm, int subclass)
 	vm->mm.head_node.color = I915_COLOR_UNEVICTABLE;
 
 	INIT_LIST_HEAD(&vm->bound_list);
+
+	vm->va = RB_ROOT_CACHED;
+	INIT_LIST_HEAD(&vm->vm_bind_list);
+	INIT_LIST_HEAD(&vm->vm_bound_list);
+	mutex_init(&vm->vm_bind_lock);
 
 	i915_active_init(&vm->active, __i915_vm_active, __i915_vm_retire, 0);
 }

@@ -29,6 +29,7 @@ static inline bool i915_gem_object_size_2big(u64 size)
 }
 
 void i915_gem_init__objects(struct drm_i915_private *i915);
+u32 i915_gem_object_max_page_size(struct drm_i915_gem_object *obj);
 
 void i915_objects_module_exit(void);
 int i915_objects_module_init(void);

@@ -69,6 +69,7 @@
 #include "gem/i915_gem_ioctls.h"
 #include "gem/i915_gem_mman.h"
 #include "gem/i915_gem_pm.h"
+#include "gem/i915_gem_vm_bind.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_gt_regs.h"
@@ -2095,13 +2096,16 @@ static int i915_gem_vm_bind_ioctl(struct drm_device *dev, void *data,
 {
 	struct prelim_drm_i915_gem_vm_bind *args = data;
 	struct i915_address_space *vm;
+	int ret;
 
 	vm = i915_address_space_lookup(file->driver_priv, args->vm_id);
 	if (unlikely(!vm))
 		return -ENOENT;
 
+	ret = i915_gem_vm_bind_obj(vm, args, file);
+
 	i915_vm_put(vm);
-	return -EINVAL;
+	return ret;
 }
 
 static int i915_gem_vm_unbind_ioctl(struct drm_device *dev, void *data,
@@ -2109,13 +2113,16 @@ static int i915_gem_vm_unbind_ioctl(struct drm_device *dev, void *data,
 {
 	struct prelim_drm_i915_gem_vm_bind *args = data;
 	struct i915_address_space *vm;
+	int ret;
 
 	vm = i915_address_space_lookup(file->driver_priv, args->vm_id);
 	if (unlikely(!vm))
 		return -ENOENT;
 
+	ret = i915_gem_vm_unbind_obj(vm, args);
+
 	i915_vm_put(vm);
-	return -EINVAL;
+	return ret;
 }
 
 static const struct drm_ioctl_desc i915_ioctls[] = {
