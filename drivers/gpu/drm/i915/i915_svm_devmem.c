@@ -98,6 +98,69 @@ i915_devmem_page_free_locked(struct drm_i915_private *dev_priv,
 	put_page(page);
 }
 
+static int i915_migrate_cpu_copy(struct i915_devmem_migrate *migrate)
+{
+	const unsigned long *src = migrate->args->src;
+	unsigned long *dst = migrate->args->dst;
+	struct drm_i915_private *i915 = migrate->i915;
+	struct intel_memory_region *mem;
+	void *src_vaddr, *dst_vaddr;
+	u64 src_addr, dst_addr;
+	struct page *page;
+	int i, ret = 0;
+
+	/* XXX: Copy multiple pages at a time */
+	for (i = 0; !ret && i < migrate->npages; i++) {
+		if (!dst[i])
+			continue;
+
+		page = migrate_pfn_to_page(dst[i]);
+		mem = i915->mm.regions[migrate->dst_id];
+		dst_addr = page_to_pfn(page);
+		if (migrate->dst_id != INTEL_REGION_SMEM)
+			dst_addr -= mem->devmem->pfn_first;
+		dst_addr <<= PAGE_SHIFT;
+
+		if (migrate->dst_id == INTEL_REGION_SMEM)
+			dst_vaddr = phys_to_virt(dst_addr);
+		else
+			dst_vaddr = io_mapping_map_atomic_wc(&mem->iomap,
+							     dst_addr);
+		if (unlikely(!dst_vaddr))
+			return -ENOMEM;
+
+		page = migrate_pfn_to_page(src[i]);
+		mem = i915->mm.regions[migrate->src_id];
+		src_addr = page_to_pfn(page);
+		if (migrate->src_id != INTEL_REGION_SMEM)
+			src_addr -= mem->devmem->pfn_first;
+		src_addr <<= PAGE_SHIFT;
+
+		if (migrate->src_id == INTEL_REGION_SMEM)
+			src_vaddr = phys_to_virt(src_addr);
+		else
+			src_vaddr = io_mapping_map_atomic_wc(&mem->iomap,
+							     src_addr);
+
+		if (likely(src_vaddr))
+			memcpy(dst_vaddr, src_vaddr, PAGE_SIZE);
+		else
+			ret = -ENOMEM;
+
+		if (migrate->dst_id != INTEL_REGION_SMEM)
+			io_mapping_unmap_atomic(dst_vaddr);
+
+		if (migrate->src_id != INTEL_REGION_SMEM && src_vaddr)
+			io_mapping_unmap_atomic(src_vaddr);
+
+		DRM_DEBUG_DRIVER("src [%d] 0x%llx, dst [%d] 0x%llx\n",
+				 migrate->src_id, src_addr,
+				 migrate->dst_id, dst_addr);
+	}
+
+	return ret;
+}
+
 static int
 i915_devmem_migrate_alloc_and_copy(struct i915_devmem_migrate *migrate,
 				   struct i915_gem_ww_ctx *ww)
@@ -158,6 +221,8 @@ i915_devmem_migrate_alloc_and_copy(struct i915_devmem_migrate *migrate,
 
 	/* Copy the pages */
 	migrate->npages = npages;
+	/* XXX: Flush the caches? */
+	ret = i915_migrate_cpu_copy(migrate);
 migrate_out:
 	if (unlikely(ret)) {
 		for (i = 0; i < npages; i++) {
@@ -253,6 +318,7 @@ i915_devmem_fault_alloc_and_copy(struct i915_devmem_migrate *migrate)
 {
 	struct migrate_vma *args = migrate->args;
 	struct page *dpage, *spage;
+	int err;
 
 	DRM_DEBUG_DRIVER("start 0x%lx\n", args->start);
 	/* Allocate host page */
@@ -269,6 +335,12 @@ i915_devmem_fault_alloc_and_copy(struct i915_devmem_migrate *migrate)
 
 	/* Copy the pages */
 	migrate->npages = 1;
+	err = i915_migrate_cpu_copy(migrate);
+	if (unlikely(err)) {
+		__free_page(dpage);
+		args->dst[0] = 0;
+		return VM_FAULT_SIGBUS;
+	}
 
 	return 0;
 }
