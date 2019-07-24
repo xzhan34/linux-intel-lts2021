@@ -962,6 +962,95 @@ static void gen8_ppgtt_alloc_wa_bcs(struct i915_address_space *vm,
 	}
 }
 
+#ifdef CONFIG_DRM_I915_DUMP_PPGTT
+static void __gen8_ppgtt_dump(struct i915_address_space * const vm,
+			      struct i915_page_directory * const pd,
+			      u64 start, u64 end, int lvl)
+{
+	char *prefix[5] = { "\t\t\t\t\t", "\t\t\t\t", "\t\t\t", "\t\t", "\t"};
+	char *format = "%s [0x%03x] 0x%llx: 0x%llx\n";
+	unsigned int idx, len;
+	gen8_pte_t *vaddr;
+	unsigned int pdpe;
+	bool is_large;
+
+	GEM_BUG_ON(end > vm->total >> GEN8_PTE_SHIFT);
+
+	len = gen8_pd_range(start, end, lvl--, &idx);
+	GEM_BUG_ON(!len || (idx + len - 1) >> gen8_pd_shift(1));
+
+	spin_lock(&pd->lock);
+	GEM_BUG_ON(!atomic_read(px_used(pd))); /* Must be pinned! */
+	do {
+		struct i915_page_table *pt = pd->entry[idx];
+
+		if (!pt) {
+			start += BIT_ULL(gen8_pd_shift(lvl + 1));
+			continue;
+		}
+
+		vaddr = px_vaddr(pd, NULL);
+		pdpe = gen8_pd_index(start, lvl + 1);
+		DRM_DEBUG_DRIVER(format, prefix[lvl + 1], pdpe,
+				 start, vaddr[pdpe]);
+		is_large = (vaddr[pdpe] & GEN8_PDE_PS_2M);
+		if (is_large) {
+			start += BIT_ULL(gen8_pd_shift(lvl + 1));
+			continue;
+		}
+
+		if (lvl) {
+			atomic_inc(&pt->used);
+			spin_unlock(&pd->lock);
+
+			__gen8_ppgtt_dump(vm, as_pd(pt),
+					  start, end, lvl);
+
+			start += BIT_ULL(gen8_pd_shift(lvl + 1));
+			spin_lock(&pd->lock);
+			atomic_dec(&pt->used);
+			GEM_BUG_ON(!atomic_read(&pt->used));
+		} else {
+			unsigned int count = gen8_pt_count(start, end);
+
+			pdpe = gen8_pd_index(start, lvl);
+			vaddr = px_vaddr(pt, NULL);
+			while (count) {
+				if (vaddr[pdpe] != vm->scratch[lvl]->encode)
+					DRM_DEBUG_DRIVER(format, prefix[lvl],
+							 pdpe, start,
+							 vaddr[pdpe]);
+				start++;
+				count--;
+				pdpe++;
+			}
+
+			GEM_BUG_ON(atomic_read(&pt->used) > I915_PDES);
+		}
+	} while (idx++, --len);
+	spin_unlock(&pd->lock);
+}
+
+static void gen8_ppgtt_dump(struct i915_address_space *vm,
+			    u64 start, u64 length)
+{
+	GEM_BUG_ON(!IS_ALIGNED(start, BIT_ULL(GEN8_PTE_SHIFT)));
+	GEM_BUG_ON(!IS_ALIGNED(length, BIT_ULL(GEN8_PTE_SHIFT)));
+	GEM_BUG_ON(range_overflows(start, length, vm->total));
+
+	start >>= GEN8_PTE_SHIFT;
+	length >>= GEN8_PTE_SHIFT;
+	GEM_BUG_ON(length == 0);
+
+	DRM_DEBUG_DRIVER("PPGTT dump: start 0x%llx length 0x%llx\n",
+			 start, length);
+	__gen8_ppgtt_dump(vm, i915_vm_to_ppgtt(vm)->pd,
+			  start, start + length, vm->top);
+}
+#else
+#define gen8_ppgtt_dump   NULL
+#endif
+
 static void xehpsdv_ppgtt_color_adjust(const struct drm_mm_node *node,
 				   unsigned long color,
 				   u64 *start,
@@ -2086,6 +2175,7 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt, u32 flags)
 	ppgtt->vm.clear_range = gen8_ppgtt_clear;
 	ppgtt->vm.foreach = gen8_ppgtt_foreach;
 	ppgtt->vm.cleanup = gen8_ppgtt_cleanup;
+	ppgtt->vm.dump_va_range = gen8_ppgtt_dump;
 
 	ppgtt->vm.bind_async_flags = I915_VMA_LOCAL_BIND | PIN_RESIDENT;
 	if (i915_is_mem_wa_enabled(gt->i915, I915_WA_USE_FLAT_PPGTT_UPDATE)) {

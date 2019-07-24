@@ -4277,6 +4277,7 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 		sfence = NULL;
 	}
 
+	ppgtt_dump(eb.context->vm, 0, eb.context->vm->total);
 	err = eb_submit(&eb);
 
 err_request:

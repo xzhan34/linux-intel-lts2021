@@ -397,6 +397,8 @@ struct i915_address_space {
 	void (*clear_range)(struct i915_address_space *vm,
 			    u64 start, u64 length);
 	void (*scratch_range)(struct i915_address_space *vm,
+			    u64 start, u64 length);
+	void (*dump_va_range)(struct i915_address_space *vm,
 			      u64 start, u64 length);
 	void (*insert_page)(struct i915_address_space *vm,
 			    dma_addr_t addr,
@@ -813,6 +815,18 @@ static inline struct sgt_dma {
 	max = addr + min_t(u64, (sg_dma_len(sg) - offset), vma->size);
 	return (struct sgt_dma) { sg, addr, max, vma->size };
 }
+
+#ifdef CONFIG_DRM_I915_DUMP_PPGTT
+static inline void ppgtt_dump(struct i915_address_space *vm,
+			      u64 start, u64 length)
+{
+	if (vm->dump_va_range)
+		vm->dump_va_range(vm, start, length);
+}
+#else
+static inline void ppgtt_dump(struct i915_address_space *vm,
+			      u64 start, u64 length) { }
+#endif
 
 /* SVM UAPI */
 #define I915_GTT_SVM_READONLY  BIT(0)

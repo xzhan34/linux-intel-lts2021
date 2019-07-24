@@ -303,3 +303,17 @@ config DRM_I915_DEBUG_CONTIGUOUS
 	  For hardware validation only.
 
 	  If in doubt, say "N".
+
+config DRM_I915_DUMP_PPGTT
+        bool "Enable PPGTT Page Table dump support"
+        depends on DRM_I915
+        default n
+        help
+	  Choose this option to enable PPGTT page table dump support.
+	  The page table snapshot helps developers to debug page table
+	  related issues. This will affect performance and dumps a lot of
+	  information, so only recommended for developer debug.
+
+          Recommended for driver developers only.
+
+	  If in doubt, say "N".
