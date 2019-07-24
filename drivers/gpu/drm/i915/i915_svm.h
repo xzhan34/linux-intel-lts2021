@@ -35,6 +35,11 @@ static inline bool i915_vm_is_svm_enabled(struct i915_address_space *vm)
 	return vm->svm;
 }
 
+int i915_svm_copy_blt(struct intel_context *ce,
+		      struct i915_gem_ww_ctx *ww,
+		      u64 src_start, u64 dst_start, u64 size,
+		      struct dma_fence **fence);
+
 int i915_dmem_convert_pfn(struct drm_i915_private *dev_priv,
 			  struct hmm_range *range);
 int i915_gem_vm_prefetch_ioctl(struct drm_device *dev, void *data,
