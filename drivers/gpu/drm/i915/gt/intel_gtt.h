@@ -263,6 +263,8 @@ struct i915_vma_ops {
 	void (*clear_pages)(struct i915_vma *vma);
 };
 
+struct i915_svm;
+
 struct i915_address_space {
 	struct kref ref;
 	struct rcu_work rcu;
@@ -341,6 +343,10 @@ struct i915_address_space {
 		struct i915_vma *vma;
 		struct drm_i915_gem_object *obj;
 	} mfence;
+
+	/* SVM */
+	struct i915_svm *svm;
+	struct mutex svm_mutex; /* protects svm enabling */
 
 	unsigned long flags;
 #define I915_VM_HAS_PERSISTENT_BINDS 0

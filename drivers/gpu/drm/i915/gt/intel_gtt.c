@@ -15,6 +15,7 @@
 #include "gem/i915_gem_region.h"
 #include "gem/i915_gem_vm_bind.h" /* XXX */
 
+#include "i915_svm.h"
 #include "i915_trace.h"
 #include "i915_utils.h"
 #include "intel_gt.h"
@@ -155,6 +156,7 @@ void i915_address_space_fini(struct i915_address_space *vm)
 		GEM_WARN_ON(!xa_erase(&vm->i915->asid_resv.xa, vm->asid));
 
 	mutex_destroy(&vm->mutex);
+	mutex_destroy(&vm->svm_mutex);
 	i915_gem_object_put(vm->root_obj);
 	GEM_BUG_ON(!RB_EMPTY_ROOT(&vm->va.rb_root));
 	mutex_destroy(&vm->vm_bind_lock);
@@ -183,6 +185,7 @@ static void __i915_vm_release(struct work_struct *work)
 	struct i915_address_space *vm =
 		container_of(work, struct i915_address_space, rcu.work);
 
+	i915_svm_unbind_mm(vm);
 	vm->cleanup(vm);
 	i915_address_space_fini(vm);
 
@@ -258,6 +261,7 @@ int i915_address_space_init(struct i915_address_space *vm, int subclass)
 	 * attempt holding the lock is immediately reported by lockdep.
 	 */
 	mutex_init(&vm->mutex);
+	mutex_init(&vm->svm_mutex);
 	lockdep_set_subclass(&vm->mutex, subclass);
 
 	if (!intel_vm_no_concurrent_access_wa(vm->i915)) {
@@ -341,6 +345,7 @@ int i915_address_space_init(struct i915_address_space *vm, int subclass)
 		vm->asid = asid;
 	}
 
+	RCU_INIT_POINTER(vm->svm, NULL);
 	return 0;
 }
 

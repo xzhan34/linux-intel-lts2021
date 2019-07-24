@@ -99,6 +99,7 @@
 #include "i915_perf_stall_cntr.h"
 #include "i915_query.h"
 #include "i915_suspend.h"
+#include "i915_svm.h"
 #include "i915_switcheroo.h"
 #include "i915_sysfs.h"
 #include "i915_sysrq.h"
@@ -2506,7 +2507,12 @@ static int i915_gem_vm_bind_ioctl(struct drm_device *dev, void *data,
 	if (unlikely(!vm))
 		return -ENOENT;
 
-	ret = i915_gem_vm_bind_obj(vm, args, file);
+	if (!(args->flags & PRELIM_I915_GEM_VM_BIND_FD))
+		ret = i915_gem_vm_bind_obj(vm, args, file);
+	else if (args->fd == -1)
+		ret = i915_gem_vm_bind_svm_buffer(vm, args);
+	else
+		ret = -EINVAL;
 
 	i915_vm_put(vm);
 	return ret;
@@ -2523,7 +2529,12 @@ static int i915_gem_vm_unbind_ioctl(struct drm_device *dev, void *data,
 	if (unlikely(!vm))
 		return -ENOENT;
 
-	ret = i915_gem_vm_unbind_obj(vm, args);
+	if (!(args->flags & PRELIM_I915_GEM_VM_BIND_FD))
+		ret = i915_gem_vm_unbind_obj(vm, args);
+	else if (args->fd == -1)
+		ret = i915_gem_vm_unbind_svm_buffer(vm, args);
+	else
+		ret = -EINVAL;
 
 	i915_vm_put(vm);
 	return ret;

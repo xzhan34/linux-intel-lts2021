@@ -1158,8 +1158,11 @@ struct prelim_drm_i915_gem_vm_bind {
 	/** vm to [un]bind **/
 	__u32 vm_id;
 
-	/** BO handle **/
-	__u32 handle; /* For unbind, it is reserved and must be 0 */
+	/** BO handle or file descriptor. Set 'fd' to -1 for system pages **/
+	union {
+		__u32 handle; /* For unbind, it is reserved and must be 0 */
+		__s32 fd;
+	};
 
 	/** VA start to [un]bind **/
 	__u64 start;
@@ -1176,6 +1179,7 @@ struct prelim_drm_i915_gem_vm_bind {
 #define PRELIM_I915_GEM_VM_BIND_READONLY	(1ull << 62)
 #define PRELIM_I915_GEM_VM_BIND_CAPTURE		(1ull << 61)
 #define PRELIM_I915_GEM_VM_BIND_MAKE_RESIDENT	(1ull << 60)
+#define PRELIM_I915_GEM_VM_BIND_FD		(1ull << 59)
 
 	__u64 extensions;
 };
