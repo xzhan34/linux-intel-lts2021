@@ -199,6 +199,7 @@ struct prelim_i915_user_extension {
 #define PRELIM_DRM_I915_GEM_VM_UNBIND		0x5c
 #define PRELIM_DRM_I915_GEM_VM_ADVISE		0x5b
 #define PRELIM_DRM_I915_GEM_WAIT_USER_FENCE	0x5a
+#define PRELIM_DRM_I915_GEM_VM_PREFETCH		0x59
 #define PRELIM_DRM_I915_UUID_REGISTER		0x58
 #define PRELIM_DRM_I915_UUID_UNREGISTER		0x57
 #define PRELIM_DRM_I915_DEBUGGER_OPEN		0x56
@@ -212,6 +213,7 @@ struct prelim_i915_user_extension {
 #define PRELIM_DRM_IOCTL_I915_GEM_VM_UNBIND		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_UNBIND, struct prelim_drm_i915_gem_vm_bind)
 #define PRELIM_DRM_IOCTL_I915_GEM_VM_ADVISE		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_ADVISE, struct prelim_drm_i915_gem_vm_advise)
 #define PRELIM_DRM_IOCTL_I915_GEM_WAIT_USER_FENCE	DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_WAIT_USER_FENCE, struct prelim_drm_i915_gem_wait_user_fence)
+#define PRELIM_DRM_IOCTL_I915_GEM_VM_PREFETCH		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_PREFETCH, struct prelim_drm_i915_gem_vm_prefetch)
 #define PRELIM_DRM_IOCTL_I915_UUID_REGISTER		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_UUID_REGISTER, struct prelim_drm_i915_uuid_control)
 #define PRELIM_DRM_IOCTL_I915_UUID_UNREGISTER		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_UUID_UNREGISTER, struct prelim_drm_i915_uuid_control)
 #define PRELIM_DRM_IOCTL_I915_DEBUGGER_OPEN		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_DEBUGGER_OPEN, struct prelim_drm_i915_debugger_open_param)
@@ -1397,6 +1399,25 @@ struct prelim_drm_i915_gem_cache_reserve {
 	__u16 cache_level; /* e.g. 3 for L3 */
 	__u16 num_ways;
 	__u16 pad16;
+};
+
+/**
+ * struct prelim_drm_i915_gem_vm_prefetch
+ *
+ * Prefetch an address range to a memory region.
+ */
+struct prelim_drm_i915_gem_vm_prefetch {
+	/** Memory region to prefetch to **/
+	__u32 region;
+
+	/** Reserved **/
+	__u32 rsvd;
+
+	/** VA start to prefetch **/
+	__u64 start;
+
+	/** VA length to prefetch **/
+	__u64 length;
 };
 
 #endif /* __I915_DRM_PRELIM_H__ */

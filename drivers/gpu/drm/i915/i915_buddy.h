@@ -11,6 +11,9 @@
 #include <linux/llist.h>
 #include <linux/slab.h>
 
+/* 512 bits (one per pages) supports 2MB blocks */
+#define I915_BUDDY_MAX_PAGES   512
+
 struct i915_buddy_block {
 #define I915_BUDDY_HEADER_OFFSET GENMASK_ULL(63, 12)
 #define I915_BUDDY_HEADER_STATE  GENMASK_ULL(11, 10)
@@ -45,6 +48,15 @@ struct i915_buddy_block {
 	 * use.
 	 */
 	struct llist_node freed;
+
+	unsigned long pfn_first;
+	/*
+	 * FIXME: There are other alternatives to bitmap. Like splitting the
+	 * block into contiguous 4K sized blocks. But it is part of bigger
+	 * issues involving partially invalidating large mapping, freeing the
+	 * blocks etc., revisit.
+	 */
+	unsigned long bitmap[BITS_TO_LONGS(I915_BUDDY_MAX_PAGES)];
 };
 
 /* Order-zero must be at least PAGE_SIZE */

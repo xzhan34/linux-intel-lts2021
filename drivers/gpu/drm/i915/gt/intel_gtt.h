@@ -819,13 +819,15 @@ static inline struct sgt_dma {
 
 int svm_bind_addr_prepare(struct i915_address_space *vm,
 			  struct i915_vm_pt_stash *stash,
+			  struct i915_gem_ww_ctx *ww,
 			  u64 start, u64 size);
 int svm_bind_addr_commit(struct i915_address_space *vm,
 			 struct i915_vm_pt_stash *stash,
 			 u64 start, u64 size, u64 flags,
 			 struct sg_table *st, u32 sg_page_sizes);
-int svm_bind_addr(struct i915_address_space *vm, u64 start, u64 size,
-		  u64 flags, struct sg_table *st, u32 sg_page_sizes);
+int svm_bind_addr(struct i915_address_space *vm, struct i915_gem_ww_ctx *ctx,
+		  u64 start, u64 size, u64 flags,
+		  struct sg_table *st, u32 sg_page_sizes);
 void svm_unbind_addr(struct i915_address_space *vm, u64 start, u64 size);
 
 #endif

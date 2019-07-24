@@ -160,6 +160,14 @@ config DRM_I915_DEBUGGER
 config DRM_I915_SVM
 	bool "Enable Shared Virtual Memory support in i915"
 	depends on DRM_I915
+	depends on ARCH_ENABLE_MEMORY_HOTPLUG
+	depends on ARCH_ENABLE_MEMORY_HOTREMOVE
+	depends on MEMORY_HOTPLUG
+	depends on MEMORY_HOTREMOVE
+	depends on ARCH_HAS_PTE_DEVMAP
+	depends on SPARSEMEM_VMEMMAP
+	depends on ZONE_DEVICE
+	depends on DEVICE_PRIVATE
 	depends on MMU
 	select HMM_MIRROR
 	select MMU_NOTIFIER

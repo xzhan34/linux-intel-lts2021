@@ -614,6 +614,7 @@ static int i915_driver_early_probe(struct drm_i915_private *dev_priv,
 	mutex_init(&dev_priv->wm.wm_mutex);
 	mutex_init(&dev_priv->pps_mutex);
 	mutex_init(&dev_priv->hdcp_comp_mutex);
+	mutex_init(&dev_priv->svm_init_mutex);
 
 	i915_debugger_init(dev_priv);
 
@@ -789,6 +790,7 @@ static void i915_driver_late_release(struct drm_i915_private *dev_priv)
 
 	cpu_latency_qos_remove_request(&dev_priv->sb_qos);
 	mutex_destroy(&dev_priv->sb_lock);
+	mutex_destroy(&dev_priv->svm_init_mutex);
 
 	i915_params_free(&dev_priv->params);
 }
@@ -2632,6 +2634,7 @@ static const struct drm_ioctl_desc i915_ioctls[] = {
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_CLOS_RESERVE, i915_gem_clos_reserve_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_CLOS_FREE, i915_gem_clos_free_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_CACHE_RESERVE, i915_gem_cache_reserve_ioctl, DRM_RENDER_ALLOW),
+	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_VM_PREFETCH, i915_gem_vm_prefetch_ioctl, DRM_RENDER_ALLOW),
 };
 
 /*

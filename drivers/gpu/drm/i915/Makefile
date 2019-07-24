@@ -203,7 +203,8 @@ i915-y += \
 	  intel_wopcm.o
 
 # SVM code
-i915-$(CONFIG_DRM_I915_SVM) += i915_svm.o
+i915-$(CONFIG_DRM_I915_SVM) += i915_svm.o \
+			       i915_svm_devmem.o
 
 # general-purpose microcontroller (GuC) support
 i915-y += gt/uc/intel_uc.o \

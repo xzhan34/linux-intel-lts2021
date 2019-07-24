@@ -758,11 +758,16 @@ void setup_private_pat(struct intel_gt *gt)
 
 int svm_bind_addr_prepare(struct i915_address_space *vm,
 			  struct i915_vm_pt_stash *stash,
+			  struct i915_gem_ww_ctx *ww,
 			  u64 start, u64 size)
 {
 	int ret;
 
 	ret = i915_vm_alloc_pt_stash(vm, stash, size);
+	if (ret)
+		return ret;
+
+	ret = i915_vm_lock_objects(vm, ww);
 	if (ret)
 		return ret;
 
@@ -807,13 +812,14 @@ int svm_bind_addr_commit(struct i915_address_space *vm,
 	return 0;
 }
 
-int svm_bind_addr(struct i915_address_space *vm, u64 start, u64 size,
-		  u64 flags, struct sg_table *st, u32 sg_page_sizes)
+int svm_bind_addr(struct i915_address_space *vm, struct i915_gem_ww_ctx *ww,
+		  u64 start, u64 size, u64 flags,
+		  struct sg_table *st, u32 sg_page_sizes)
 {
 	struct i915_vm_pt_stash stash = {};
 	int ret;
 
-	ret = svm_bind_addr_prepare(vm, &stash, start, size);
+	ret = svm_bind_addr_prepare(vm, &stash, ww, start, size);
 	if (ret)
 		goto out_stash;
 

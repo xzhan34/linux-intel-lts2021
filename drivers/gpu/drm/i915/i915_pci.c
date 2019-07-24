@@ -1381,6 +1381,8 @@ static void i915_pci_remove(struct pci_dev *pdev)
 
 	i915_driver_remove(i915);
 	pci_set_drvdata(pdev, NULL);
+
+	intel_memory_regions_remove(i915);
 }
 
 /* is device_id present in comma separated list of ids */

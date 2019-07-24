@@ -13,6 +13,7 @@
 #include "i915_buddy.h"
 #include "intel_memory_region.h"
 #include "i915_drv.h"
+#include "i915_svm.h"
 
 static const struct {
 	u16 class;
@@ -899,6 +900,34 @@ const char *intel_memory_region_id2str(enum intel_region_id id)
 		return "invalid memory region";
 
 	return regions[id];
+}
+
+int intel_memory_regions_add_svm(struct drm_i915_private  *i915)
+{
+	struct intel_memory_region *mr;
+	enum intel_region_id id;
+	int ret = 0;
+
+	mutex_lock(&i915->svm_init_mutex);
+	for_each_memory_region(mr, i915, id) {
+		if (mr->type != INTEL_MEMORY_LOCAL || mr->devmem)
+			continue;
+
+		ret = i915_svm_devmem_add(mr);
+		if (ret)
+			break;
+	}
+	mutex_unlock(&i915->svm_init_mutex);
+	return ret;
+}
+
+void intel_memory_regions_remove(struct drm_i915_private *i915)
+{
+	struct intel_memory_region *mr;
+	enum intel_region_id id;
+
+	for_each_memory_region(mr, i915, id)
+		i915_svm_devmem_remove(mr);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

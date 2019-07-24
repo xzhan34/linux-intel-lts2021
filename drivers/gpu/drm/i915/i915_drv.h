@@ -530,6 +530,9 @@ struct drm_i915_private {
 	 * controller on different i2c buses. */
 	struct mutex gmbus_mutex;
 
+	/* svm_init_mutex  protects concurrent svm devmem initialization for lmem regions */
+	struct mutex svm_init_mutex;
+
 	/**
 	 * Base address of where the gmbus and gpio blocks are located (either
 	 * on PCH or on SoC for platforms without PCH).

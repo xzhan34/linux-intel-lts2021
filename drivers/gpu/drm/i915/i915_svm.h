@@ -35,6 +35,13 @@ static inline bool i915_vm_is_svm_enabled(struct i915_address_space *vm)
 	return vm->svm;
 }
 
+int i915_dmem_convert_pfn(struct drm_i915_private *dev_priv,
+			  struct hmm_range *range);
+int i915_gem_vm_prefetch_ioctl(struct drm_device *dev, void *data,
+			       struct drm_file *file_priv);
+int i915_svm_devmem_add(struct intel_memory_region *mem);
+void i915_svm_devmem_remove(struct intel_memory_region *mem);
+
 #else
 
 struct i915_svm { };
@@ -50,6 +57,12 @@ static inline int i915_svm_bind_mm(struct i915_address_space *vm)
 static inline bool i915_vm_is_svm_enabled(struct i915_address_space *vm)
 { return false; }
 
+static inline int i915_gem_vm_prefetch_ioctl(struct drm_device *dev, void *data,
+					     struct drm_file *file_priv)
+{ return -ENOTSUPP; }
+static inline int i915_svm_devmem_add(struct intel_memory_region *mem)
+{ return 0; }
+static inline void i915_svm_devmem_remove(struct intel_memory_region *mem) { }
 #endif
 
 #endif /* __I915_SVM_H */

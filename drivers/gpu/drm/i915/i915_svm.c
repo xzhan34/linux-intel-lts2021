@@ -65,10 +65,7 @@ static u32 i915_svm_build_sg(struct i915_address_space *vm,
 	 * extending SVM support there.
 	 */
 	for (i = 0; i < npages; i++) {
-		unsigned long addr = 0;
-
-		if (range->hmm_pfns[i] & HMM_PFN_VALID)
-			addr = page_to_phys(hmm_pfn_to_page(range->hmm_pfns[i]));
+		unsigned long addr = range->hmm_pfns[i];
 
 		if (sg && (addr == (sg_dma_address(sg) + sg->length))) {
 			sg->length += PAGE_SIZE;
@@ -118,8 +115,45 @@ static const struct mmu_interval_notifier_ops i915_svm_mni_ops = {
 	.invalidate = i915_svm_range_invalidate,
 };
 
+static int i915_hmm_convert_pfn(struct drm_i915_private *dev_priv,
+				struct hmm_range *range)
+{
+	unsigned long i, npages;
+	int regions = 0;
+
+	npages = (range->end - range->start) >> PAGE_SHIFT;
+	for (i = 0; i < npages; ++i) {
+		struct page *page;
+		unsigned long addr;
+
+		if (!(range->hmm_pfns[i] & HMM_PFN_VALID)) {
+			range->hmm_pfns[i] = 0;
+			continue;
+		}
+
+		page = hmm_pfn_to_page(range->hmm_pfns[i]);
+		if (!page)
+			continue;
+
+		if (is_device_private_page(page)) {
+			struct i915_buddy_block *block = page->zone_device_data;
+			struct intel_memory_region *mem = block->private;
+
+			regions |= REGION_LMEM;
+			addr = mem->region.start + i915_buddy_block_offset(block);
+			addr += (page_to_pfn(page) - block->pfn_first) << PAGE_SHIFT;
+		} else {
+			regions |= REGION_SMEM;
+			addr = page_to_phys(page);
+		}
+
+		range->hmm_pfns[i] = addr;
+	}
+
+	return regions;
+}
+
 static int i915_range_fault(struct svm_notifier *sn,
-			    struct i915_vm_pt_stash *stash,
 			    struct prelim_drm_i915_gem_vm_bind *va,
 			    struct sg_table *st, unsigned long *pfns)
 {
@@ -137,7 +171,10 @@ static int i915_range_fault(struct svm_notifier *sn,
 		.dev_private_owner = vm->i915->drm.dev,
 	};
 	struct mm_struct *mm = sn->notifier.mm;
+	struct i915_vm_pt_stash stash = {};
+	struct i915_gem_ww_ctx ww;
 	u32 sg_page_sizes;
+	int regions;
 	u64 flags;
 	long ret;
 
@@ -155,12 +192,27 @@ static int i915_range_fault(struct svm_notifier *sn,
 			return ret;
 		}
 
+		/* Ensure the range is in one memory region */
+		regions = i915_hmm_convert_pfn(vm->i915, &range);
+		if (!regions ||
+		    ((regions & REGION_SMEM) && (regions & REGION_LMEM)))
+			return -EINVAL;
+
 		sg_page_sizes = i915_svm_build_sg(vm, &range, st);
+
+		/* XXX: Not an elegant solution, revisit */
+		i915_gem_ww_ctx_init(&ww, true);
+		ret = svm_bind_addr_prepare(vm, &stash, &ww, va->start, va->length);
+		if (ret)
+			goto fault_done;
 
 		mutex_lock(&svm->mutex);
 		if (mmu_interval_read_retry(range.notifier,
 					    range.notifier_seq)) {
+			svm_unbind_addr(vm, va->start, va->length);
 			mutex_unlock(&svm->mutex);
+			i915_vm_free_pt_stash(vm, &stash);
+			i915_gem_ww_ctx_fini(&ww);
 			continue;
 		}
 		break;
@@ -168,10 +220,12 @@ static int i915_range_fault(struct svm_notifier *sn,
 
 	flags = (va->flags & PRELIM_I915_GEM_VM_BIND_READONLY) ?
 		I915_GTT_SVM_READONLY : 0;
-	ret = svm_bind_addr_commit(vm, stash, va->start, va->length, flags,
+	ret = svm_bind_addr_commit(vm, &stash, va->start, va->length, flags,
 				   st, sg_page_sizes);
 	mutex_unlock(&svm->mutex);
-
+	i915_vm_free_pt_stash(vm, &stash);
+fault_done:
+	i915_gem_ww_ctx_fini(&ww);
 	return ret;
 }
 
@@ -219,7 +273,6 @@ int i915_gem_vm_bind_svm_buffer(struct i915_address_space *vm,
 				struct prelim_drm_i915_gem_vm_bind *va)
 {
 	unsigned long *pfns, flags = HMM_PFN_REQ_FAULT;
-	struct i915_vm_pt_stash stash = {};
 	struct svm_notifier sn;
 	struct i915_svm *svm;
 	struct mm_struct *mm;
@@ -256,22 +309,16 @@ int i915_gem_vm_bind_svm_buffer(struct i915_address_space *vm,
 
 	memset64((u64 *)pfns, (u64)flags, npages);
 
-	svm_bind_addr_prepare(vm, &stash, va->start, va->length);
 	sn.svm = svm;
 	ret = mmu_interval_notifier_insert(&sn.notifier, mm,
 					   va->start, va->length,
 					   &i915_svm_mni_ops);
 	if (!ret) {
-		ret = i915_range_fault(&sn, &stash, va, &st, pfns);
+		ret = i915_range_fault(&sn, va, &st, pfns);
 		mmu_interval_notifier_remove(&sn.notifier);
 	}
 
-	if (unlikely(ret))
-		__i915_gem_vm_unbind_svm_buffer(vm, va->start, va->length);
-
-	i915_vm_free_pt_stash(vm, &stash);
 	kvfree(pfns);
-
 range_done:
 	sg_free_table(&st);
 bind_done:
