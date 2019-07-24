@@ -248,9 +248,79 @@ migrate_done:
 	return ret;
 }
 
+static vm_fault_t
+i915_devmem_fault_alloc_and_copy(struct i915_devmem_migrate *migrate)
+{
+	struct migrate_vma *args = migrate->args;
+	struct page *dpage, *spage;
+
+	DRM_DEBUG_DRIVER("start 0x%lx\n", args->start);
+	/* Allocate host page */
+	spage = migrate_pfn_to_page(args->src[0]);
+	if (unlikely(!spage || !(args->src[0] & MIGRATE_PFN_MIGRATE)))
+		return 0;
+
+	dpage = alloc_page_vma(GFP_HIGHUSER, args->vma, args->start);
+	if (unlikely(!dpage))
+		return VM_FAULT_SIGBUS;
+	lock_page(dpage);
+
+	args->dst[0] = migrate_pfn(page_to_pfn(dpage)) | MIGRATE_PFN_LOCKED;
+
+	/* Copy the pages */
+	migrate->npages = 1;
+
+	return 0;
+}
+
+static void
+i915_devmem_fault_finalize_and_map(struct i915_devmem_migrate *migrate)
+{
+	DRM_DEBUG_DRIVER("\n");
+}
+
+static inline struct i915_devmem *page_to_devmem(struct page *page)
+{
+	return container_of(page->pgmap, struct i915_devmem, pagemap);
+}
+
 static vm_fault_t i915_devmem_migrate_to_ram(struct vm_fault *vmf)
 {
-	return VM_FAULT_SIGBUS;
+	struct i915_devmem *devmem = page_to_devmem(vmf->page);
+	struct drm_i915_private *i915 = devmem->mem->i915;
+	struct i915_devmem_migrate migrate = {0};
+	unsigned long src = 0, dst = 0;
+	vm_fault_t ret;
+	struct migrate_vma args = {
+		.vma		= vmf->vma,
+		.start		= vmf->address,
+		.end		= vmf->address + PAGE_SIZE,
+		.src		= &src,
+		.dst		= &dst,
+		.pgmap_owner	= i915->drm.dev,
+		.flags		= MIGRATE_VMA_SELECT_DEVICE_PRIVATE,
+	};
+
+	/* XXX: Opportunistically migrate more pages? */
+	DRM_DEBUG_DRIVER("addr 0x%lx\n", args.start);
+	migrate.i915 = i915;
+	migrate.args = &args;
+	migrate.src_id = INTEL_REGION_LMEM_0;
+	migrate.dst_id = INTEL_REGION_SMEM;
+	if (migrate_vma_setup(&args) < 0)
+		return VM_FAULT_SIGBUS;
+	if (!args.cpages)
+		return 0;
+
+	ret = i915_devmem_fault_alloc_and_copy(&migrate);
+	if (ret || dst == 0)
+		goto done;
+
+	migrate_vma_pages(&args);
+	i915_devmem_fault_finalize_and_map(&migrate);
+done:
+	migrate_vma_finalize(&args);
+	return ret;
 }
 
 static void i915_devmem_page_free(struct page *page)
