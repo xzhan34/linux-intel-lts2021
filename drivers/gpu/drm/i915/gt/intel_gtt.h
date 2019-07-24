@@ -808,4 +808,18 @@ static inline struct sgt_dma {
 	return (struct sgt_dma) { sg, addr, max, vma->size };
 }
 
+/* SVM UAPI */
+#define I915_GTT_SVM_READONLY  BIT(0)
+
+int svm_bind_addr_prepare(struct i915_address_space *vm,
+			  struct i915_vm_pt_stash *stash,
+			  u64 start, u64 size);
+int svm_bind_addr_commit(struct i915_address_space *vm,
+			 struct i915_vm_pt_stash *stash,
+			 u64 start, u64 size, u64 flags,
+			 struct sg_table *st, u32 sg_page_sizes);
+int svm_bind_addr(struct i915_address_space *vm, u64 start, u64 size,
+		  u64 flags, struct sg_table *st, u32 sg_page_sizes);
+void svm_unbind_addr(struct i915_address_space *vm, u64 start, u64 size);
+
 #endif

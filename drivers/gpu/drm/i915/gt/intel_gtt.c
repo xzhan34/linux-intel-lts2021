@@ -751,6 +751,80 @@ void setup_private_pat(struct intel_gt *gt)
 		bdw_setup_private_ppat(uncore);
 }
 
+int svm_bind_addr_prepare(struct i915_address_space *vm,
+			  struct i915_vm_pt_stash *stash,
+			  u64 start, u64 size)
+{
+	int ret;
+
+	ret = i915_vm_alloc_pt_stash(vm, stash, size);
+	if (ret)
+		return ret;
+
+	ret = i915_vm_map_pt_stash(vm, stash);
+	if (ret)
+		return ret;
+
+	vm->allocate_va_range(vm, stash, start, size);
+
+	return 0;
+}
+
+int svm_bind_addr_commit(struct i915_address_space *vm,
+			 struct i915_vm_pt_stash *stash,
+			 u64 start, u64 size, u64 flags,
+			 struct sg_table *st, u32 sg_page_sizes)
+{
+	struct i915_vma *vma;
+	u32 pte_flags = 0;
+
+	/* use a vma wrapper */
+	vma = i915_vma_alloc();
+	if (!vma)
+		return -ENOMEM;
+
+	vma->page_sizes.sg = sg_page_sizes;
+	vma->node.start = start;
+	vma->node.size = size;
+	__set_bit(DRM_MM_NODE_ALLOCATED_BIT, &vma->node.flags);
+	vma->size = size;
+	vma->pages = st;
+	vma->vm = vm;
+
+	/* Applicable to VLV, and gen8+ */
+	if (flags & I915_GTT_SVM_READONLY)
+		pte_flags |= PTE_READ_ONLY;
+
+	vm->insert_entries(vm, stash, vma,
+			   i915_gem_get_pat_index(vm->i915, I915_CACHE_NONE),
+			   pte_flags);
+	i915_vma_free(vma);
+	return 0;
+}
+
+int svm_bind_addr(struct i915_address_space *vm, u64 start, u64 size,
+		  u64 flags, struct sg_table *st, u32 sg_page_sizes)
+{
+	struct i915_vm_pt_stash stash = {};
+	int ret;
+
+	ret = svm_bind_addr_prepare(vm, &stash, start, size);
+	if (ret)
+		goto out_stash;
+
+	ret = svm_bind_addr_commit(vm, &stash, start, size, flags,
+				   st, sg_page_sizes);
+out_stash:
+	i915_vm_free_pt_stash(vm, &stash);
+	return ret;
+}
+
+void svm_unbind_addr(struct i915_address_space *vm,
+		     u64 start, u64 size)
+{
+	vm->clear_range(vm, start, size);
+}
+
 struct i915_vma *
 __vm_create_scratch_for_read(struct i915_address_space *vm, unsigned long size)
 {

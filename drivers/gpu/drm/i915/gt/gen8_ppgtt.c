@@ -504,11 +504,21 @@ static u64 __gen8_ppgtt_clear(struct i915_address_space * const vm,
 	DBG("%s(%p):{ lvl:%d, start:%llx, end:%llx, idx:%d, len:%d, used:%d }\n",
 	    __func__, vm, lvl + 1, start, end,
 	    idx, len, atomic_read(px_used(pd)));
-	GEM_BUG_ON(!len || len >= atomic_read(px_used(pd)));
+	/*
+	 * FIXME: In SVM case, during mmu invalidation, we need to clear ppgtt,
+	 * but we don't know if the entry exist or not. So, we can't assume
+	 * that it is called only when the entry exist. revisit.
+	 * Also need to add the ebility to properly handle partial invalidations
+	 * by downgrading the large mappings.
+	 */
+	GEM_BUG_ON(!len);
 
 	do {
 		struct i915_page_table *pt = pd->entry[idx];
 		bool freepx;
+
+		if (!pt)
+			continue;
 
 		if (atomic_fetch_inc(&pt->used) >> gen8_pd_shift(1) &&
 		    gen8_pd_contains(start, end, lvl)) {
@@ -549,12 +559,12 @@ static u64 __gen8_ppgtt_clear(struct i915_address_space * const vm,
 			    __func__, vm, lvl, start, end,
 			    gen8_pd_index(start, 0), count,
 			    atomic_read(&pt->used));
-			GEM_BUG_ON(!count || count >= atomic_read(&pt->used));
+			GEM_BUG_ON(!count);
+			if (count > atomic_read(&pt->used))
+				count = atomic_read(&pt->used);
 
 			num_ptes = count;
 			if (pt->is_compact) {
-				GEM_BUG_ON(num_ptes % 16);
-				GEM_BUG_ON(pte % 16);
 				num_ptes /= 16;
 				pte /= 16;
 			}
@@ -1215,6 +1225,8 @@ xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
 			daddr = px_dma(pd);
 		} else {
 			if (encode & GEN12_PPGTT_PTE_LM) {
+				GEM_BUG_ON(vma->obj &&
+					   !i915_gem_object_is_lmem(vma->obj));
 				GEM_BUG_ON(__gen8_pte_index(start, 0) % 16);
 				GEM_BUG_ON(rem < I915_GTT_PAGE_SIZE_64K);
 				GEM_BUG_ON(!IS_ALIGNED(iter->dma,
@@ -1246,6 +1258,8 @@ xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
 					}
 				}
 			} else {
+				GEM_BUG_ON(vma->obj &&
+					   i915_gem_object_is_lmem(vma->obj));
 				GEM_BUG_ON(pt->is_compact);
 				index =  __gen8_pte_index(start, 0);
 
