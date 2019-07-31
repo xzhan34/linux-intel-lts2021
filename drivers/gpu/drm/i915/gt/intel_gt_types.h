@@ -25,6 +25,7 @@
 #include "intel_gt_buffer_pool_types.h"
 #include "intel_hwconfig.h"
 #include "intel_llc_types.h"
+#include "intel_memory_region.h"
 #include "intel_reset_types.h"
 #include "intel_rc6_types.h"
 #include "intel_rps_types.h"
@@ -228,6 +229,8 @@ struct intel_gt {
 	 * Base of per-tile GTTMMADR where we can derive the MMIO and the GGTT.
 	 */
 	phys_addr_t phys_addr;
+
+	struct intel_memory_region *lmem;
 
 	struct intel_gt_info {
 		unsigned int id;

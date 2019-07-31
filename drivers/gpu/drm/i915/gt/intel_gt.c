@@ -100,6 +100,7 @@ static int intel_gt_probe_lmem(struct intel_gt *gt)
 	GEM_BUG_ON(!HAS_REGION(i915, id));
 	GEM_BUG_ON(i915->mm.regions[id]);
 	i915->mm.regions[id] = mem;
+	gt->lmem = mem;
 
 	return 0;
 }
