@@ -9,6 +9,7 @@
 
 #include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_lmem.h"
+#include "gem/i915_gem_region.h"
 
 #include "gen8_ppgtt.h"
 #include "i915_drv.h"
@@ -462,7 +463,7 @@ static int intel_gt_init_scratch(struct intel_gt *gt, unsigned int size)
 	struct i915_vma *vma;
 	int ret;
 
-	obj = i915_gem_object_create_lmem(i915, size, I915_BO_ALLOC_VOLATILE);
+	obj = intel_gt_object_create_lmem(gt, size, I915_BO_ALLOC_VOLATILE);
 	if (IS_ERR(obj))
 		obj = i915_gem_object_create_stolen(i915, size);
 	if (IS_ERR(obj))
@@ -499,7 +500,7 @@ static int intel_gt_init_counters(struct intel_gt *gt, unsigned int size)
 	void *addr;
 	int err;
 
-	obj = i915_gem_object_create_lmem(gt->i915, size, I915_BO_CPU_CLEAR);
+	obj = intel_gt_object_create_lmem(gt, size, I915_BO_CPU_CLEAR);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 

@@ -4,6 +4,7 @@
  */
 
 #include "gem/i915_gem_lmem.h"
+#include "gem/i915_gem_region.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_irq.h"
 #include "gt/intel_gt_pm_irq.h"
@@ -750,7 +751,7 @@ struct i915_vma *intel_guc_allocate_vma_with_bias(struct intel_guc *guc,
 	int ret;
 
 	if (HAS_LMEM(gt->i915))
-		obj = i915_gem_object_create_lmem(gt->i915, size,
+		obj = intel_gt_object_create_lmem(gt, size,
 						  I915_BO_CPU_CLEAR |
 						  I915_BO_ALLOC_CONTIGUOUS);
 	else
