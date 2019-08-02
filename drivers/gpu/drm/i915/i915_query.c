@@ -133,8 +133,12 @@ query_distance_info(struct drm_i915_private *i915,
 {
 	struct prelim_drm_i915_query_distance_info __user *query_ptr =
 				u64_to_user_ptr(query_item->data_ptr);
+	const unsigned int pcie_hop_distance = 10000;
+	const unsigned int tile_hop_distance = 1000;
 	struct prelim_drm_i915_query_distance_info query;
 	enum intel_memory_type mem_type;
+	struct intel_memory_region *region;
+	struct intel_engine_cs *engine;
 	s32 distance;
 	int ret;
 
@@ -145,29 +149,61 @@ query_distance_info(struct drm_i915_private *i915,
 	if (query.rsvd[0] || query.rsvd[1] || query.rsvd[2])
 		return -EINVAL;
 
-	if (!intel_memory_region_lookup(i915,
-					query.region.memory_class,
-					query.region.memory_instance))
+	region = intel_memory_region_lookup(i915,
+					    query.region.memory_class,
+					    query.region.memory_instance);
+	if (!region)
 		return -EINVAL;
 
-	if (!intel_engine_lookup_user(i915,
-				      query.engine.engine_class,
-				      query.engine.engine_instance))
+	engine = intel_engine_lookup_user(i915,
+					  query.engine.engine_class,
+					  query.engine.engine_instance);
+	if (!engine)
 		return -EINVAL;
 
 	mem_type = query.region.memory_class;
 
-	if (!HAS_LMEM(i915))
+	if (!HAS_LMEM(i915)) {
 		distance = 0;
-	else if (mem_type == INTEL_MEMORY_SYSTEM)
-		distance = 10000;
-	else if (mem_type == INTEL_MEMORY_STOLEN_SYSTEM ||
-		 mem_type == INTEL_MEMORY_STOLEN_LOCAL)
+	} else if (mem_type == INTEL_MEMORY_SYSTEM) {
+		distance = pcie_hop_distance;
+		if (engine->gt->info.id > 0)
+			distance += tile_hop_distance;
+		if (engine->gt->info.id > 2)
+			distance += tile_hop_distance;
+	} else if (mem_type == INTEL_MEMORY_STOLEN_SYSTEM ||
+		   mem_type == INTEL_MEMORY_STOLEN_LOCAL) {
 		/* FIXME determine the appropriate value */
 		distance = 0;
-	else
-		/* TODO: Handle engines on remote tiles. */
-		distance = 0;
+	} else {
+		/*
+		 * As per bspec tiles are laid out and interconnected as:
+		 *
+		 *      0 - 1
+		 *      |   |
+		 *      2 - 3
+		 *
+		 *  Therefore distance between opposite corner tiles is two
+		 *  hops, while the rest are one hop apart.
+		 */
+		int a = min_t(int,
+			      region->gt->info.id,
+			      engine->gt->info.id);
+		int b = max_t(int,
+			      region->gt->info.id,
+			      engine->gt->info.id);
+		int d;
+
+		if ((a == 0 && b == 3) ||
+		    (a == 1 && b == 2))
+			d = 2;
+		else if (a == b)
+			d = 0;
+		else
+			d = 1;
+
+		distance = d * tile_hop_distance;
+	}
 
 	if (put_user(distance, &query_ptr->distance))
 		return -EFAULT;
