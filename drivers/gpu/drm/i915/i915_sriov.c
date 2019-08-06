@@ -45,8 +45,30 @@ static bool gen12_pci_capability_is_vf(struct pci_dev *pdev)
 
 #ifdef CONFIG_PCI_IOV
 
+static bool wants_pf(struct drm_i915_private *i915)
+{
+#define ENABLE_GUC_SRIOV_PF		BIT(2)
+
+	if (i915->params.enable_guc < 0)
+		return false;
+
+	if (i915->params.enable_guc & ENABLE_GUC_SRIOV_PF) {
+		drm_info(&i915->drm,
+			 "Don't enable PF with 'enable_guc=%d' - try 'max_vfs=%u' instead\n",
+			 i915->params.enable_guc,
+			 pci_sriov_get_totalvfs(to_pci_dev(i915->drm.dev)));
+		return true;
+	}
+
+	return false;
+}
+
 static unsigned int wanted_max_vfs(struct drm_i915_private *i915)
 {
+	/* XXX allow to override "max_vfs" with deprecated "enable_guc" */
+	if (wants_pf(i915))
+		return ~0;
+
 	return i915->params.max_vfs;
 }
 
