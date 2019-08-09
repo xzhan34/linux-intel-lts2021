@@ -18,6 +18,9 @@ void __iomem *
 i915_gem_object_lmem_io_map(struct drm_i915_gem_object *obj,
 			    unsigned long n,
 			    unsigned long size);
+void __iomem *
+i915_gem_object_lmem_io_map_page_atomic(struct drm_i915_gem_object *obj,
+					unsigned long n);
 
 bool i915_gem_object_is_lmem(const struct drm_i915_gem_object *obj);
 
