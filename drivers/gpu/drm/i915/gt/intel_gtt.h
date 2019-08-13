@@ -303,7 +303,8 @@ struct i915_address_space {
 #define VM_CLASS_PPGTT 1
 #define VM_CLASS_DPT 2
 
-	struct drm_i915_gem_object *scratch[4];
+	struct drm_i915_gem_object *scratch[5];
+
 	/**
 	 * List of vma currently bound.
 	 */

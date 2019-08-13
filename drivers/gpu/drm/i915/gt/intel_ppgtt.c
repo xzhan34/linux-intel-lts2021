@@ -378,12 +378,22 @@ int ppgtt_init(struct i915_ppgtt *ppgtt, struct intel_gt *gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
 	bool enable_wa = i915_is_mem_wa_enabled(i915, I915_WA_IDLE_GPU_BEFORE_UPDATE);
+	unsigned int ppgtt_size = INTEL_INFO(i915)->ppgtt_size;
 	int err;
 
 	ppgtt->vm.gt = gt;
 	ppgtt->vm.i915 = i915;
 	ppgtt->vm.dma = i915->drm.dev;
-	ppgtt->vm.total = BIT_ULL(INTEL_INFO(i915)->ppgtt_size);
+	ppgtt->vm.total = BIT_ULL(ppgtt_size);
+
+	if (ppgtt_size > 48)
+		ppgtt->vm.top = 4;
+	else if (ppgtt_size > 32)
+		ppgtt->vm.top = 3;
+	else if (ppgtt_size == 32)
+		ppgtt->vm.top = 2;
+	else
+		ppgtt->vm.top = 1;
 
 	dma_resv_init(&ppgtt->vm._resv);
 	err = i915_address_space_init(&ppgtt->vm, VM_CLASS_PPGTT);
