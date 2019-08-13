@@ -252,7 +252,7 @@ static void gen8_ppgtt_notify_vgt(struct i915_ppgtt *ppgtt, bool create)
 
 	mutex_lock(&i915->vgpu.lock);
 
-	if (i915_vm_is_4lvl(&ppgtt->vm)) {
+	if (i915_vm_lvl(&ppgtt->vm) >= 4) {
 		const u64 daddr = px_dma(ppgtt->pd);
 
 		intel_uncore_write(uncore,
@@ -856,7 +856,7 @@ xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
 	u64 start = i915_vma_offset(vma) + (vma->size - iter->rem);
 	dma_addr_t daddr;
 
-	GEM_BUG_ON(!i915_vm_is_4lvl(vma->vm));
+	GEM_BUG_ON(i915_vm_lvl(vma->vm) < 4);
 
 	do {
 		struct i915_page_directory * const pdp =
@@ -1010,7 +1010,7 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 	unsigned int rem = min_t(u64, sg_dma_len(iter->sg), iter->rem);
 	u64 start = i915_vma_offset(vma);
 
-	GEM_BUG_ON(!i915_vm_is_4lvl(vma->vm));
+	GEM_BUG_ON(i915_vm_lvl(vma->vm) < 4);
 
 	do {
 		struct i915_page_directory * const pdp =
@@ -1709,7 +1709,7 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt, u32 flags)
 	}
 	ppgtt->pd = pd;
 
-	if (!i915_vm_is_4lvl(&ppgtt->vm)) {
+	if (i915_vm_lvl(&ppgtt->vm) == 3) {
 		err = gen8_preallocate_top_level_pdp(ppgtt);
 		if (err)
 			goto err_put;

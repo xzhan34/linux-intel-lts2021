@@ -929,7 +929,7 @@ __set_ppgtt(struct i915_gem_context *ctx, struct i915_address_space *vm)
 
 	old = rcu_replace_pointer(ctx->vm, vm,
 				  lockdep_is_held(&ctx->mutex));
-	GEM_BUG_ON(old && i915_vm_is_4lvl(vm) != i915_vm_is_4lvl(old));
+	GEM_BUG_ON(old && i915_vm_lvl(vm) != i915_vm_lvl(old));
 
 	return old;
 }

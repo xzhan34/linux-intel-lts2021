@@ -1306,7 +1306,7 @@ i915_context_ppgtt_root_restore(struct intel_vgpu_submission *s,
 {
 	int i;
 
-	if (i915_vm_is_4lvl(&ppgtt->vm)) {
+	if (i915_vm_lvl(&ppgtt->vm) >= 4) {
 		set_dma_address(ppgtt->pd, s->i915_context_pml4);
 	} else {
 		for (i = 0; i < GEN8_3LVL_PDPES; i++) {
@@ -1367,7 +1367,7 @@ i915_context_ppgtt_root_save(struct intel_vgpu_submission *s,
 {
 	int i;
 
-	if (i915_vm_is_4lvl(&ppgtt->vm)) {
+	if (i915_vm_lvl(&ppgtt->vm) >= 4) {
 		s->i915_context_pml4 = px_dma(ppgtt->pd);
 	} else {
 		for (i = 0; i < GEN8_3LVL_PDPES; i++) {

@@ -2818,7 +2818,7 @@ static int execlists_request_alloc(struct i915_request *request)
 	 * to cancel/unwind this request now.
 	 */
 
-	if (!i915_vm_is_4lvl(request->context->vm)) {
+	if (i915_vm_lvl(request->context->vm) < 4) {
 		ret = emit_pdps(request);
 		if (ret)
 			return ret;

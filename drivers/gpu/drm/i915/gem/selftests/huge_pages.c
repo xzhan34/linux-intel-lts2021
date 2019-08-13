@@ -1781,7 +1781,7 @@ int i915_gem_huge_page_mock_selftests(void)
 		goto out_unlock;
 	}
 
-	if (!i915_vm_is_4lvl(&ppgtt->vm)) {
+	if (i915_vm_lvl(&ppgtt->vm) < 4) {
 		pr_err("failed to create 48b PPGTT\n");
 		err = -EINVAL;
 		goto out_put;

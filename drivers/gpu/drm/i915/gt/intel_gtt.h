@@ -471,10 +471,10 @@ bool intel_vm_no_concurrent_access_wa(struct drm_i915_private *i915);
 int __must_check
 i915_vm_lock_objects(struct i915_address_space *vm, struct i915_gem_ww_ctx *ww);
 
-static inline bool
-i915_vm_is_4lvl(const struct i915_address_space *vm)
+static inline unsigned int
+i915_vm_lvl(const struct i915_address_space * const vm)
 {
-	return (vm->total - 1) >> 32;
+	return vm->top + 1;
 }
 
 static inline bool

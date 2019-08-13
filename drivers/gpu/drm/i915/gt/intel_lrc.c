@@ -1606,7 +1606,7 @@ static u32 lrc_descriptor(const struct intel_context *ce)
 	u32 desc;
 
 	desc = INTEL_LEGACY_32B_CONTEXT;
-	if (i915_vm_is_4lvl(ce->vm))
+	if (i915_vm_lvl(ce->vm) >= 4)
 		desc = INTEL_LEGACY_64B_CONTEXT;
 	desc <<= GEN8_CTX_ADDRESSING_MODE_SHIFT;
 
@@ -1619,7 +1619,7 @@ static u32 lrc_descriptor(const struct intel_context *ce)
 
 static void set_ppgtt_regs(u32 *regs, const struct i915_ppgtt *ppgtt)
 {
-	if (i915_vm_is_4lvl(&ppgtt->vm)) {
+	if (i915_vm_lvl(&ppgtt->vm) >= 4) {
 		/* 64b PPGTT (48bit canonical)
 		 * PDP0_DESCRIPTOR contains the base address to PML4 and
 		 * other PDP Descriptors are ignored.

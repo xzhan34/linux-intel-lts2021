@@ -19,7 +19,7 @@ static int gen8_emit_vm_config(struct i915_request *rq,
 	u64 offset = i915_ggtt_offset(ce->state) +
 		LRC_STATE_OFFSET + CTX_PDP0_LDW * 4;
 
-	if (i915_vm_is_4lvl(&ppgtt->vm)) {
+	if (i915_vm_lvl(&ppgtt->vm) >= 4) {
 		const u64 addr = px_dma(ppgtt->pd);
 		u32 *cs;
 
