@@ -17,6 +17,7 @@
 #include "i915_vma_types.h"
 #include "i915_gem_ww.h"
 #include "i915_drm_client.h"
+#include "intel_memory_region.h"
 
 static inline bool i915_gem_object_size_2big(u64 size)
 {
@@ -289,6 +290,12 @@ static inline bool
 i915_gem_object_is_readonly(const struct drm_i915_gem_object *obj)
 {
 	return obj->flags & I915_BO_READONLY;
+}
+
+static inline bool
+i915_gem_object_allows_atomic_system(struct drm_i915_gem_object *obj)
+{
+	return obj->mm.madv_atomic == I915_BO_ATOMIC_SYSTEM;
 }
 
 static inline bool
@@ -746,6 +753,8 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 			 struct drm_i915_gem_object *src, bool compressed);
 int i915_setup_blt_windows(struct drm_i915_private *i915);
 void i915_teardown_blt_windows(struct drm_i915_private *i915);
+bool i915_gem_object_should_migrate(struct drm_i915_gem_object *obj,
+				    enum intel_region_id dst_region_id);
 
 void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
 				     struct i915_request *rq);

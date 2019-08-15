@@ -17,6 +17,7 @@
 #include "i915_drv.h"
 #include "i915_gem_gtt.h"
 #include "i915_gem_ioctls.h"
+#include "i915_gem_lmem.h"
 #include "i915_gem_object.h"
 #include "i915_gem_mman.h"
 #include "i915_mm.h"
@@ -278,6 +279,13 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 		err = i915_gem_object_lock(obj, &ww);
 		if (err)
 			continue;
+
+		/* Implicitly migrate BO to SMEM if criteria met */
+		if (i915_gem_object_should_migrate(obj, INTEL_REGION_SMEM)) {
+			err = i915_gem_object_migrate_to_smem(obj, &ww, false);
+			if (err)
+				continue;
+		}
 
 		err = i915_gem_object_pin_pages_sync(obj);
 		if (err)

@@ -220,6 +220,26 @@ bool i915_gem_object_can_bypass_llc(struct drm_i915_gem_object *obj)
 	return IS_JSL_EHL(i915);
 }
 
+bool i915_gem_object_should_migrate(struct drm_i915_gem_object *obj,
+				    enum intel_region_id dst_region_id)
+{
+	u32 mask;
+
+	if (!obj->mm.n_placements || obj->mm.region.mem->id == dst_region_id)
+		return false;
+
+	/* reject migration if region not contained in placement list */
+	mask = obj->memory_mask;
+	if (!(mask & BIT(dst_region_id)))
+		return false;
+
+	if (dst_region_id == INTEL_REGION_SMEM &&
+	    i915_gem_object_allows_atomic_system(obj))
+		return true;
+
+	return false;
+}
+
 static int __i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
 				      struct i915_gem_ww_ctx *ww,
 				      struct prelim_drm_i915_gem_vm_advise *args)
