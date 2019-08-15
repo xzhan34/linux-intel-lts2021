@@ -571,7 +571,7 @@ static void __uc_fini_hw(struct intel_uc *uc)
 {
 	struct intel_guc *guc = &uc->guc;
 
-	if (!intel_guc_is_fw_running(guc))
+	if (!intel_uc_fw_is_available(&guc->fw))
 		return;
 
 	if (intel_uc_uses_guc_submission(uc))
