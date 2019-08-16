@@ -1156,7 +1156,8 @@ static const struct intel_device_info ats_m_info = {
 	.has_mslice_steering = 0, \
 	.has_one_eu_per_fuse_bit = 1, \
 	.has_um_queues = 1, \
-	.ppgtt_msb = 56
+	.ppgtt_msb = 56, \
+	.ppgtt_size = 57
 
 #define PVC_ENGINES \
 	BIT(BCS0) | BIT(BCS1) | BIT(BCS2) | BIT(BCS3) | \

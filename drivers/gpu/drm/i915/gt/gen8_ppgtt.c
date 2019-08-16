@@ -341,11 +341,20 @@ static struct i915_page_directory *
 gen8_pdp_for_page_index(struct i915_address_space * const vm, const u64 idx)
 {
 	struct i915_ppgtt * const ppgtt = i915_vm_to_ppgtt(vm);
+	struct i915_page_directory *pd = ppgtt->pd;
 
-	if (vm->top == 2)
-		return ppgtt->pd;
-	else
-		return i915_pd_entry(ppgtt->pd, gen8_pd_index(idx, vm->top));
+	switch (vm->top) {
+	case 4:
+		pd = i915_pd_entry(pd, gen8_pd_index(idx, 4));
+		fallthrough;
+	case 3:
+		pd = i915_pd_entry(pd, gen8_pd_index(idx, 3));
+		fallthrough;
+	case 2:
+		break;
+	}
+
+	return pd;
 }
 
 static struct i915_page_directory *
