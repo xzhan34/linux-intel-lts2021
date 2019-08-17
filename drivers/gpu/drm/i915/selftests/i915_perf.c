@@ -100,6 +100,7 @@ test_stream(struct i915_perf *perf)
 		.sample_flags = SAMPLE_OA_REPORT,
 		.oa_format = GRAPHICS_VER(perf->i915) == 12 ?
 		I915_OA_FORMAT_A32u40_A4u32_B8_C8 : I915_OA_FORMAT_C4_B8,
+		.oa_buffer_size_exponent = order_base_2(SZ_16M),
 	};
 	struct i915_perf_stream *stream;
 	struct intel_gt *gt;

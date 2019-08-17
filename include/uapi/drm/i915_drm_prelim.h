@@ -207,6 +207,26 @@ struct prelim_i915_context_param_engines {
 #define PRELIM_I915_CONTEXT_ENGINES_EXT_PARALLEL_SUBMIT (PRELIM_I915_USER_EXT | 2) /* see prelim_i915_context_engines_parallel_submit */
 };
 
+/* Downstream PRELIM properties */
+enum prelim_drm_i915_perf_property_id {
+	PRELIM_DRM_I915_PERF_PROP = (1 << 16),
+
+	/**
+	 * Specify a global OA buffer size to be allocated in bytes. The size
+	 * specified must be supported by HW (before XEHPSDV supported sizes are
+	 * powers of 2 ranging from 128Kb to 16Mb. With XEHPSDV max supported size
+	 * is 128Mb).
+	 *
+	 * This property is available in perf revision 1001.
+	 */
+	PRELIM_DRM_I915_PERF_PROP_OA_BUFFER_SIZE = (PRELIM_DRM_I915_PERF_PROP | 1),
+
+	PRELIM_DRM_I915_PERF_PROP_LAST,
+
+	PRELIM_DRM_I915_PERF_PROP_MAX = DRM_I915_PERF_PROP_MAX - 1 + \
+					(PRELIM_DRM_I915_PERF_PROP_LAST & 0xffff)
+};
+
 enum prelim_drm_i915_gem_memory_class {
 	PRELIM_I915_MEMORY_CLASS_SYSTEM = 0,
 	PRELIM_I915_MEMORY_CLASS_DEVICE,
