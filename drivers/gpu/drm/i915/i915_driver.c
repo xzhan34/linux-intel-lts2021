@@ -1481,12 +1481,6 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (ret < 0)
 		goto out_driver_late_release;
 
-	/* XXX: Can't run in VF mode yet - more stuff is needed */
-	if (IS_SRIOV_VF(i915)) {
-		ret = -ENODEV;
-		goto out_runtime_pm_put;
-	}
-
 	if (HAS_LMEM(i915))
 		i915_resize_lmem_bar(i915);
 
