@@ -37,7 +37,6 @@ static int num_ctrl_surf_copies(struct drm_i915_private *i915, size_t copy_sz)
 	return DIV_ROUND_UP(num_ccs_blocks(copy_sz), NUM_CCS_BLKS_PER_XFER);
 }
 
-__maybe_unused
 static phys_addr_t calc_ctrl_surf_instr_dwords(struct drm_i915_private *i915,
 					       size_t copy_sz)
 {
@@ -61,7 +60,6 @@ static phys_addr_t calc_ctrl_surf_instr_dwords(struct drm_i915_private *i915,
 }
 
 /* Emit instructions to copy CCS data corresponding to src/dst surfaces */
-__maybe_unused
 static u32 *xehp_emit_ccs_copy(u32 *cmd, struct intel_gt *gt,
 			       u64 src_addr, int src_mem_access,
 			       u64 dst_addr, int dst_mem_access,
@@ -131,7 +129,7 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 	u64 offset;
 	u64 count;
 	u64 rem;
-	u32 size;
+	u64 size;
 	u32 *cmd;
 	int err;
 
@@ -145,6 +143,20 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 		size = (1 + 12 * count) * sizeof(u32);
 	else
 		size = (1 + 8 * count) * sizeof(u32);
+
+	/*
+	 * Whenever the intel_emit_vma_fill_blt() function is used with
+	 * the value to be filled in the BO as zero, we check if the BO
+	 * is located in LMEM only and if it is, we zero out the
+	 * contents of the CCS associated with the BO.
+	 *
+	 * We always pass in the source vma as the second argument since
+	 * we want to calculate the size of the CCS of the source
+	 * object.
+	 */
+	if (!value)
+		size += calc_ctrl_surf_instr_dwords(i915, vma->obj->base.size) * sizeof(u32);
+
 	size = round_up(size, PAGE_SIZE);
 
 	pool = intel_gt_get_buffer_pool(ce->engine->gt, size, I915_MAP_WC);
@@ -252,6 +264,16 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 		offset += size;
 		rem -= size;
 	} while (rem);
+
+	/*
+	 * We only update the CCS if the BO is located in LMEM only and
+	 * the value to be filled in the BO is all zeroes
+	 */
+	if (HAS_FLAT_CCS(i915) && !value)
+		cmd = xehp_emit_ccs_copy(cmd, ce->engine->gt,
+					 i915_vma_offset(vma), DIRECT_ACCESS,
+					 i915_vma_offset(vma), INDIRECT_ACCESS,
+					 vma->obj->base.size);
 
 	*cmd = MI_BATCH_BUFFER_END;
 
