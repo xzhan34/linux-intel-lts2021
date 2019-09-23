@@ -9,9 +9,115 @@
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_buffer_pool.h"
+#include "gt/intel_migrate.h"
 #include "gt/intel_ring.h"
 #include "i915_gem_clflush.h"
 #include "i915_gem_object_blt.h"
+
+/*
+ * Determine how many blocks of CCS data correspond to a given amount of
+ * main buffer data.
+ */
+static int num_ccs_blocks(size_t size) {
+	size_t ccs_size = DIV_ROUND_UP(size, NUM_BYTES_PER_CCS_BYTE);
+
+	return DIV_ROUND_UP(ccs_size, NUM_CCS_BYTES_PER_BLOCK);
+}
+
+/*
+ * Determine how many XY_CTRL_SURF_COPY_BLT instructions must be emitted to
+ * copy all of the FlatCCS data (each instruction can only copy a maximum
+ * of 1024 blocks of data).
+ */
+static int num_ctrl_surf_copies(struct drm_i915_private *i915, size_t copy_sz)
+{
+	if (!HAS_FLAT_CCS(i915))
+		return 0;
+
+	return DIV_ROUND_UP(num_ccs_blocks(copy_sz), NUM_CCS_BLKS_PER_XFER);
+}
+
+__maybe_unused
+static phys_addr_t calc_ctrl_surf_instr_dwords(struct drm_i915_private *i915,
+					       size_t copy_sz)
+{
+	phys_addr_t total_size;
+
+	if (!HAS_FLAT_CCS(i915))
+		return 0;
+
+	/* Each XY_CTRL_SURF_COPY_BLT command is 5 dwords in size. */
+	total_size = XY_CTRL_SURF_INSTR_SIZE * num_ctrl_surf_copies(i915, copy_sz);
+
+	/*
+	 * We will also need to add MI_FLUSH_DW instructions before and after
+	 * the group of XY_CTRL_SURF_COPY_BLT commands for compatibility with
+	 * legacy commands.
+	 */
+	total_size += 2 * MI_FLUSH_DW_SIZE;
+
+	/* Final emission is always qword-aligned */
+	return round_up(total_size, 2);
+}
+
+/* Emit instructions to copy CCS data corresponding to src/dst surfaces */
+__maybe_unused
+static u32 *xehp_emit_ccs_copy(u32 *cmd, struct intel_gt *gt,
+			       u64 src_addr, int src_mem_access,
+			       u64 dst_addr, int dst_mem_access,
+			       size_t size)
+{
+	u32 mocs = REG_FIELD_PREP(XY_CSC_BLT_MOCS_INDEX_MASK_XEHP,
+				  gt->mocs.uc_index);
+	u32 *origcmd = cmd;
+
+	cmd = i915_flush_dw(cmd, MI_FLUSH_DW_LLC | MI_FLUSH_DW_CCS);
+
+	/*
+	 * The XY_CTRL_SURF_COPY_BLT instruction is used to copy the CCS
+	 * data in and out of the CCS region.
+	 *
+	 * We can copy at most 1024 blocks of 256 bytes using one
+	 * XY_CTRL_SURF_COPY_BLT instruction.
+	 *
+	 * In case we need to copy more than 1024 blocks, we need to add
+	 * another instruction to the same batch buffer. This is done in
+	 * a loop here.
+	 *
+	 * 1024 blocks of 256 bytes of CCS represent total 256KB of CCS.
+	 *
+	 * 256 KB of CCS represents 256 * 256 KB = 64 MB of LMEM.
+	 *
+	 * So, after every iteration, we advance the src and dst
+	 * addresses by 64 MB
+	 */
+	while (size) {
+		int inst_blocks = min(num_ccs_blocks(size), NUM_CCS_BLKS_PER_XFER);
+
+		*cmd++ = XY_CTRL_SURF_COPY_BLT |
+			(src_mem_access << SRC_ACCESS_TYPE_SHIFT) |
+			(dst_mem_access << DST_ACCESS_TYPE_SHIFT) |
+			REG_FIELD_PREP(CCS_SIZE_MASK_XEHP, inst_blocks - 1);
+
+		*cmd++ = lower_32_bits(src_addr);
+		*cmd++ = upper_32_bits(src_addr) | mocs;
+		*cmd++ = lower_32_bits(dst_addr);
+		*cmd++ = upper_32_bits(dst_addr) | mocs;
+
+		src_addr += SZ_64M;
+		dst_addr += SZ_64M;
+		size -= inst_blocks * NUM_CCS_BYTES_PER_BLOCK *
+			NUM_BYTES_PER_CCS_BYTE;
+	}
+
+	cmd = i915_flush_dw(cmd, MI_FLUSH_DW_LLC | MI_FLUSH_DW_CCS);
+
+	/* Ensure command sequence is qword-aligned */
+	if ((cmd - origcmd) % 2)
+		*cmd++ = MI_NOOP;
+
+	return cmd;
+}
 
 struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 					 struct i915_vma *vma,
