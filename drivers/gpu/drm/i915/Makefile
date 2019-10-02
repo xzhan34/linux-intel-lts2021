@@ -353,6 +353,9 @@ include $(src)/gvt/Makefile
 obj-$(CONFIG_DRM_I915) += i915.o
 obj-$(CONFIG_DRM_I915_GVT_KVMGT) += gvt/kvmgt.o
 
+obj-m += i915_spi.o
+i915_spi-y := spi/intel_spi_drv.o
+
 # header test
 
 # exclude some broken headers from the test coverage
