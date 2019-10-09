@@ -166,7 +166,7 @@ static int legacy_ring_idx(const struct legacy_ring *ring)
 		u8 base, max;
 	} map[] = {
 		[RENDER_CLASS] = { RCS0, 1 },
-		[COPY_ENGINE_CLASS] = { BCS0, 1 },
+		[COPY_ENGINE_CLASS] = { BCS0, I915_MAX_BCS },
 		[VIDEO_DECODE_CLASS] = { VCS0, I915_MAX_VCS },
 		[VIDEO_ENHANCEMENT_CLASS] = { VECS0, I915_MAX_VECS },
 		[COMPUTE_CLASS] = { CCS0, I915_MAX_CCS },

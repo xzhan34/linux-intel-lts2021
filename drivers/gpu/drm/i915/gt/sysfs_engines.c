@@ -86,6 +86,13 @@ static const char * const vecs_caps[] = {
 	[ilog2(I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC)] = "sfc",
 };
 
+static const char * const bcs_caps[] = {
+	[ilog2(PRELIM_I915_COPY_CLASS_CAP_BLOCK_COPY)] = "block_copy",
+	[ilog2(PRELIM_I915_COPY_CLASS_CAP_SATURATE_PCIE)] = "saturate_pcie",
+	[ilog2(PRELIM_I915_COPY_CLASS_CAP_SATURATE_LINK)] = "saturate_link",
+	[ilog2(PRELIM_I915_COPY_CLASS_CAP_SATURATE_LMEM)] = "saturate_lmem",
+};
+
 static ssize_t repr_trim(char *buf, ssize_t len)
 {
 	/* Trim off the trailing space and replace with a newline */
@@ -114,6 +121,11 @@ __caps_show(struct intel_engine_cs *engine,
 	case VIDEO_ENHANCEMENT_CLASS:
 		repr = vecs_caps;
 		count = ARRAY_SIZE(vecs_caps);
+		break;
+
+	case COPY_ENGINE_CLASS:
+		repr = bcs_caps;
+		count = ARRAY_SIZE(bcs_caps);
 		break;
 
 	default:

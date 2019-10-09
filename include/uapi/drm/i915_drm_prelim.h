@@ -902,6 +902,17 @@ struct prelim_drm_i915_engine_info {
 	__u64 capabilities;
 #define I915_VIDEO_CLASS_CAPABILITY_HEVC		(1 << 0)
 #define I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC	(1 << 1)
+#define PRELIM_I915_COPY_CLASS_CAP_BLOCK_COPY		(1ull << 63)
+	/*
+	 * The following are capabilties of the copy engines, while all engines
+	 * are functionally same, but engines with cap PRELIM_I915_COPY_CLASS_CAP_SATURATE_LINK
+	 * can saturate pcie and scaleup links faster than engines with
+	 * PRELIM_I915_COPY_CLASS_CAP_SATURATE_PCIE. Engines having the capability of
+	 * PRELIM_I915_COPY_CLASS_CAP_SATURATE_LMEM can operate at HBM speeds.
+	 */
+#define PRELIM_I915_COPY_CLASS_CAP_SATURATE_PCIE	(1ull << 62)
+#define PRELIM_I915_COPY_CLASS_CAP_SATURATE_LINK	(1ull << 61)
+#define PRELIM_I915_COPY_CLASS_CAP_SATURATE_LMEM	(1ull << 60)
 
 	/** All known capabilities for this engine class. */
 	__u64 known_capabilities;

@@ -437,6 +437,13 @@ prelim_query_engine_info(struct drm_i915_private *i915,
 				  engine->oa_group->oa_unit_id : U32_MAX;
 
 		switch (engine->uabi_class) {
+		case I915_ENGINE_CLASS_COPY:
+			info.known_capabilities =
+				PRELIM_I915_COPY_CLASS_CAP_BLOCK_COPY |
+				PRELIM_I915_COPY_CLASS_CAP_SATURATE_PCIE |
+				PRELIM_I915_COPY_CLASS_CAP_SATURATE_LINK |
+				PRELIM_I915_COPY_CLASS_CAP_SATURATE_LMEM;
+			break;
 		case I915_ENGINE_CLASS_VIDEO:
 			info.known_capabilities =
 				I915_VIDEO_CLASS_CAPABILITY_HEVC |

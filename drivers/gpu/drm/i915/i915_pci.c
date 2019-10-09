@@ -1141,6 +1141,7 @@ static const struct intel_device_info ats_m_info = {
 	.has_guc_deprivilege = 1, \
 	.has_guc_programmable_mocs = 1, \
 	.has_l3_ccs_read = 1, \
+	.has_link_copy_engines = 1, \
 	.has_media_ratio_mode = 1, \
 	.has_mem_sparing = 1, \
 	.has_mslice_steering = 0, \
@@ -1148,7 +1149,9 @@ static const struct intel_device_info ats_m_info = {
 	.has_um_queues = 1
 
 #define PVC_ENGINES \
-	BIT(BCS0) | \
+	BIT(BCS0) | BIT(BCS1) | BIT(BCS2) | BIT(BCS3) | \
+	BIT(BCS4) | BIT(BCS5) | BIT(BCS6) | BIT(BCS7) | \
+	BIT(BCS8) | \
 	BIT(VCS0) | \
 	BIT(CCS0) | BIT(CCS1) | BIT(CCS2) | BIT(CCS3)
 

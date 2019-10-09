@@ -625,6 +625,25 @@ u64 intel_clamp_timeslice_duration_ms(struct intel_engine_cs *engine, u64 value)
 	return value;
 }
 
+static void __setup_bcs_capabilities(struct intel_engine_cs *engine)
+{
+	if (HAS_LINK_COPY_ENGINES(engine->i915)) {
+		engine->uabi_capabilities |=
+			PRELIM_I915_COPY_CLASS_CAP_SATURATE_PCIE;
+		if (engine->instance == 0)
+			engine->uabi_capabilities |=
+				PRELIM_I915_COPY_CLASS_CAP_BLOCK_COPY |
+				PRELIM_I915_COPY_CLASS_CAP_SATURATE_LMEM |
+				PRELIM_I915_COPY_CLASS_CAP_SATURATE_LINK;
+		else if (engine->instance >= 3)
+			engine->uabi_capabilities |=
+				PRELIM_I915_COPY_CLASS_CAP_SATURATE_LINK;
+	} else if (GRAPHICS_VER(engine->i915) >= 12) {
+		engine->uabi_capabilities |=
+			PRELIM_I915_COPY_CLASS_CAP_BLOCK_COPY;
+	}
+}
+
 static void __setup_engine_capabilities(struct intel_engine_cs *engine)
 {
 	struct drm_i915_private *i915 = engine->i915;
@@ -654,6 +673,8 @@ static void __setup_engine_capabilities(struct intel_engine_cs *engine)
 		    engine->gt->info.sfc_mask & BIT(engine->instance))
 			engine->uabi_capabilities |=
 				I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC;
+	} else if (engine->class == COPY_ENGINE_CLASS) {
+		__setup_bcs_capabilities(engine);
 	}
 }
 
