@@ -75,6 +75,11 @@ struct intel_memory_region {
 	struct i915_buddy_mm mm;
 	struct mutex mm_lock;
 
+	struct {
+		struct work_struct work;
+		struct llist_head blocks;
+	} pd_put;
+
 	struct kref kref;
 
 	resource_size_t io_start;

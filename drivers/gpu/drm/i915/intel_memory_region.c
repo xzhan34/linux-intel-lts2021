@@ -182,14 +182,29 @@ __intel_memory_region_put_pages_buddy(struct intel_memory_region *mem,
 	mutex_unlock(&mem->mm_lock);
 }
 
-void
-__intel_memory_region_put_block_buddy(struct i915_buddy_block *block)
+static void __intel_memory_region_put_block_work(struct work_struct *work)
 {
+	struct intel_memory_region *mem =
+		container_of(work, struct intel_memory_region, pd_put.work);
+	struct llist_node *freed = llist_del_all(&mem->pd_put.blocks);
+	struct i915_buddy_block *block;
 	struct list_head blocks;
 
 	INIT_LIST_HEAD(&blocks);
-	list_add(&block->link, &blocks);
-	__intel_memory_region_put_pages_buddy(block->private, &blocks);
+
+	llist_for_each_entry(block, freed, freed)
+		list_add(&block->link, &blocks);
+
+	__intel_memory_region_put_pages_buddy(mem, &blocks);
+}
+
+void
+__intel_memory_region_put_block_buddy(struct i915_buddy_block *block)
+{
+	struct intel_memory_region *mem = block->private;
+
+	if (llist_add(&block->freed, &mem->pd_put.blocks))
+		schedule_work(&mem->pd_put.work);
 }
 
 int
@@ -377,6 +392,8 @@ intel_memory_region_create(struct intel_gt *gt,
 	mem->type = type;
 	mem->instance = instance;
 
+	INIT_WORK(&mem->pd_put.work, __intel_memory_region_put_block_work);
+
 	mutex_init(&mem->objects.lock);
 	INIT_LIST_HEAD(&mem->objects.list);
 	INIT_LIST_HEAD(&mem->reserved);
@@ -419,6 +436,9 @@ static void __intel_memory_region_destroy(struct kref *kref)
 {
 	struct intel_memory_region *mem =
 		container_of(kref, typeof(*mem), kref);
+
+	/* Flush any pending work to free blocks region */
+	flush_work(&mem->pd_put.work);
 
 	if (mem->ops->release)
 		mem->ops->release(mem);
@@ -536,6 +556,9 @@ int intel_memory_regions_resume_early(struct drm_i915_private *i915)
 void intel_memory_regions_driver_release(struct drm_i915_private *i915)
 {
 	int i;
+
+	/* flush pending work that might use the memory regions */
+	flush_workqueue(i915->wq);
 
 	for (i = 0; i < ARRAY_SIZE(i915->mm.regions); i++) {
 		struct intel_memory_region *region =

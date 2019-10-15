@@ -8,6 +8,7 @@
 
 #include <linux/bitops.h>
 #include <linux/list.h>
+#include <linux/llist.h>
 #include <linux/slab.h>
 
 struct i915_buddy_block {
@@ -35,6 +36,15 @@ struct i915_buddy_block {
 	 */
 	struct list_head link;
 	struct list_head tmp_link;
+
+	/*
+	 * XXX: consider moving this somewhere specific to the pd stuff. In an
+	 * ideal world we would like to keep i915_buddy as non-i915 specific as
+	 * possible and in this case the delayed freeing is only required for
+	 * our pd handling, which is only one part of our overall i915_buddy
+	 * use.
+	 */
+	struct llist_node freed;
 };
 
 /* Order-zero must be at least PAGE_SIZE */

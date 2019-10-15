@@ -69,10 +69,11 @@ static void mock_device_release(struct drm_device *dev)
 	i915_gem_drain_freed_objects(i915);
 
 	mock_fini_ggtt(to_gt(i915)->ggtt);
-	destroy_workqueue(i915->wq);
 
 	intel_gt_driver_late_release_all(i915);
 	intel_memory_regions_driver_release(i915);
+
+	destroy_workqueue(i915->wq);
 
 	drm_mode_config_cleanup(&i915->drm);
 
