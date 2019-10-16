@@ -18,6 +18,10 @@
 #include "intel_uc.h"
 #include "i915_drv.h"
 
+/* UM Queue parameters: */
+#define GUC_UM_QUEUE_SIZE	(SZ_4K)
+#define GUC_PAGE_RES_TIMEOUT_US	(-1)
+
 /*
  * The Additional Data Struct (ADS) has pointers for different buffers used by
  * the GuC. One single gem object contains the ADS struct itself (guc_ads) and
@@ -33,6 +37,8 @@
  *      | guc_gt_system_info                    |
  *      +---------------------------------------+
  *      | guc_engine_usage                      |
+ *      +---------------------------------------+
+ *      | guc_um_init_params                    |
  *      +---------------------------------------+ <== static
  *      | guc_mmio_reg[countA] (engine 0.0)     |
  *      | guc_mmio_reg[countB] (engine 0.1)     |
@@ -49,6 +55,10 @@
  *      +---------------------------------------+
  *      | padding                               |
  *      +---------------------------------------+ <== 4K aligned
+ *      | UM queues                             |
+ *      +---------------------------------------+
+ *      | padding                               |
+ *      +---------------------------------------+ <== 4K aligned
  *      | private data                          |
  *      +---------------------------------------+
  *      | padding                               |
@@ -59,6 +69,7 @@ struct __guc_ads_blob {
 	struct guc_policies policies;
 	struct guc_gt_system_info system_info;
 	struct guc_engine_usage engine_usage;
+	struct guc_um_init_params um_init_params;
 	/* From here on, location is dynamic! Refer to above diagram. */
 	struct guc_mmio_reg regset[0];
 } __packed;
@@ -92,6 +103,16 @@ static u32 guc_ads_capture_size(struct intel_guc *guc)
 	return PAGE_ALIGN(guc->ads_capture_size);
 }
 
+static u32 guc_ads_um_queues_size(struct intel_guc *guc)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+
+	if (!HAS_UM_QUEUES(gt->i915))
+		return 0;
+
+	return GUC_UM_QUEUE_SIZE * GUC_UM_HW_QUEUE_MAX;
+}
+
 static u32 guc_ads_private_data_size(struct intel_guc *guc)
 {
 	return PAGE_ALIGN(guc->fw.private_data_size);
@@ -122,12 +143,22 @@ static u32 guc_ads_capture_offset(struct intel_guc *guc)
 	return PAGE_ALIGN(offset);
 }
 
-static u32 guc_ads_private_data_offset(struct intel_guc *guc)
+static u32 guc_ads_um_queues_offset(struct intel_guc *guc)
 {
 	u32 offset;
 
 	offset = guc_ads_capture_offset(guc) +
 		 guc_ads_capture_size(guc);
+
+	return PAGE_ALIGN(offset);
+}
+
+static u32 guc_ads_private_data_offset(struct intel_guc *guc)
+{
+	u32 offset;
+
+	offset = guc_ads_um_queues_offset(guc) +
+		 guc_ads_um_queues_size(guc);
 
 	return PAGE_ALIGN(offset);
 }
@@ -539,6 +570,32 @@ static void guc_mmio_reg_state_init(struct intel_guc *guc)
 	}
 }
 
+static void guc_um_init_params(struct intel_guc *guc)
+{
+	u32 um_queue_offset = guc_ads_um_queues_offset(guc);
+	struct i915_vma *vma = guc->ads_vma;
+	u64 base_dpa;
+	u32 base_ggtt;
+	int i;
+
+	GEM_BUG_ON(!(vma->obj->flags & I915_BO_ALLOC_CONTIGUOUS));
+
+	base_ggtt = intel_guc_ggtt_offset(guc, vma) + um_queue_offset;
+	base_dpa = sg_dma_address(vma->pages->sgl) + um_queue_offset;
+
+	for (i = 0; i < GUC_UM_HW_QUEUE_MAX; ++i) {
+		ads_blob_write(guc, um_init_params.queue_params[i].base_dpa,
+			       base_dpa + (i * GUC_UM_QUEUE_SIZE));
+		ads_blob_write(guc, um_init_params.queue_params[i].base_ggtt_address,
+			       base_ggtt + (i * GUC_UM_QUEUE_SIZE));
+		ads_blob_write(guc, um_init_params.queue_params[i].size_in_bytes,
+			       GUC_UM_QUEUE_SIZE);
+	}
+
+	ads_blob_write(guc, um_init_params.page_response_timeout_in_us,
+		       GUC_PAGE_RES_TIMEOUT_US);
+}
+
 static void fill_engine_enable_masks(struct intel_gt *gt,
 				     struct iosys_map *info_map)
 {
@@ -857,6 +914,12 @@ static void __guc_ads_init(struct intel_guc *guc)
 	guc_capture_prep_lists(guc);
 
 	/* ADS */
+	if (HAS_UM_QUEUES(i915)) {
+		guc_um_init_params(guc);
+		ads_blob_write(guc, ads.um_init_data, base +
+			       offsetof(struct __guc_ads_blob, um_init_params));
+	}
+
 	ads_blob_write(guc, ads.scheduler_policies, base +
 		       offsetof(struct __guc_ads_blob, policies));
 	ads_blob_write(guc, ads.gt_system_info, base +

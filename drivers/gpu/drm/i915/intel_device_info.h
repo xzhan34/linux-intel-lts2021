@@ -147,6 +147,7 @@ enum intel_ppgtt_type {
 	func(has_64bit_reloc); \
 	func(has_64k_pages); \
 	func(has_asid_tlb_invalidation); \
+	func(has_coherent_ggtt); \
 	func(has_gmd_id); \
 	func(gpu_reset_clobbers_display); \
 	func(has_reset_engine); \
@@ -184,7 +185,7 @@ enum intel_ppgtt_type {
 	func(has_selective_tlb_invalidation); \
 	func(has_semaphore_xehpsdv); \
 	func(has_snoop); \
-	func(has_coherent_ggtt); \
+	func(has_um_queues); \
 	func(tuning_thread_rr_after_dep); \
 	func(has_csc_uid);	\
 	func(has_lmem_max_bandwidth);	\

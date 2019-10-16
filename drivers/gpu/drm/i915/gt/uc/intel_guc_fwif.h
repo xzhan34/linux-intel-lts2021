@@ -313,6 +313,28 @@ struct guc_update_scheduling_policy {
 	u32 data[MAX_SCHEDULING_POLICY_SIZE];
 } __packed;
 
+/* Page fault structures */
+
+enum guc_um_queue_type {
+	GUC_UM_HW_QUEUE_PAGE_FAULT = 0,
+	GUC_UM_HW_QUEUE_PAGE_FAULT_RESPONSE,
+	GUC_UM_HW_QUEUE_ACCESS_COUNTER,
+	GUC_UM_HW_QUEUE_MAX
+};
+
+struct guc_um_queue_params {
+	u64 base_dpa;
+	u32 base_ggtt_address;
+	u32 size_in_bytes;
+	u32 rsvd[4];
+} __packed;
+
+struct guc_um_init_params {
+	u64 page_response_timeout_in_us;
+	u32 rsvd[6];
+	struct guc_um_queue_params queue_params[GUC_UM_HW_QUEUE_MAX];
+} __packed;
+
 #define GUC_POWER_UNSPECIFIED	0
 #define GUC_POWER_D0		1
 #define GUC_POWER_D1		2
@@ -423,7 +445,7 @@ struct guc_ads {
 	u32 golden_context_lrca[GUC_MAX_ENGINE_CLASSES];
 	u32 eng_state_size[GUC_MAX_ENGINE_CLASSES];
 	u32 private_data;
-	u32 reserved2;
+	u32 um_init_data;
 	u32 capture_instance[GUC_CAPTURE_LIST_INDEX_MAX][GUC_MAX_ENGINE_CLASSES];
 	u32 capture_class[GUC_CAPTURE_LIST_INDEX_MAX][GUC_MAX_ENGINE_CLASSES];
 	u32 capture_global[GUC_CAPTURE_LIST_INDEX_MAX];

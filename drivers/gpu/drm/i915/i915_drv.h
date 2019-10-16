@@ -1449,6 +1449,8 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
  */
 #define HAS_FLAT_CCS(dev_priv)   (INTEL_INFO(dev_priv)->has_flat_ccs)
 
+#define HAS_UM_QUEUES(dev_priv) (INTEL_INFO(dev_priv)->has_um_queues)
+
 #define HAS_GT_UC(dev_priv)	(INTEL_INFO(dev_priv)->has_gt_uc)
 
 #define HAS_SELECTIVE_TLB_INVALIDATION(dev_priv) \
