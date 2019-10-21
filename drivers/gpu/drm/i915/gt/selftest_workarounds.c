@@ -1366,9 +1366,18 @@ int intel_workarounds_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(live_gpu_reset_workarounds),
 		SUBTEST(live_engine_reset_workarounds),
 	};
+	struct intel_gt *gt;
+	unsigned int i;
+	int ret = 0;
 
-	if (intel_gt_is_wedged(to_gt(i915)))
-		return 0;
+	for_each_gt(gt, i915, i) {
+		if (intel_gt_is_wedged(gt))
+			continue;
 
-	return intel_gt_live_subtests(tests, to_gt(i915));
+		ret = intel_gt_live_subtests(tests, gt);
+		if (ret)
+			break;
+	}
+
+	return ret;
 }

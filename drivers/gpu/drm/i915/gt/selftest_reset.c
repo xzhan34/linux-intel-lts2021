@@ -378,13 +378,20 @@ int intel_reset_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_atomic_reset),
 		SUBTEST(igt_atomic_engine_reset),
 	};
-	struct intel_gt *gt = to_gt(i915);
+	struct intel_gt *gt;
+	unsigned int i;
+	int ret = 0;
 
-	if (!intel_has_gpu_reset(gt))
-		return 0;
+	for_each_gt(gt, i915, i) {
+		if (!intel_has_gpu_reset(gt))
+			continue;
+		if (intel_gt_is_wedged(gt))
+			ret |= -EIO;
+		else
+			ret |= intel_gt_live_subtests(tests, gt);
+		if (ret)
+			break;
+	}
 
-	if (intel_gt_is_wedged(gt))
-		return -EIO; /* we're long past hope of a successful reset */
-
-	return intel_gt_live_subtests(tests, gt);
+	return ret;
 }

@@ -2229,9 +2229,21 @@ int intel_lrc_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(live_pphwsp_runtime),
 		SUBTEST(live_lrc_indirect_ctx_bb),
 	};
+	struct intel_gt *gt;
+	unsigned int i;
+	int ret = 0;
 
 	if (!HAS_LOGICAL_RING_CONTEXTS(i915))
 		return 0;
 
-	return intel_gt_live_subtests(tests, to_gt(i915));
+	for_each_gt(gt, i915, i) {
+		if (intel_gt_is_wedged(gt))
+			continue;
+
+		ret = intel_gt_live_subtests(tests, gt);
+		if (ret)
+			break;
+	}
+
+	return ret;
 }
