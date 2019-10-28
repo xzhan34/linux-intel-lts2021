@@ -627,7 +627,8 @@ static bool guc_check_version_range(struct intel_uc_fw *uc_fw)
  */
 int intel_uc_fw_fetch(struct intel_uc_fw *uc_fw)
 {
-	struct drm_i915_private *i915 = __uc_fw_to_gt(uc_fw)->i915;
+	struct intel_gt *gt = __uc_fw_to_gt(uc_fw);
+	struct drm_i915_private *i915 = gt->i915;
 	struct intel_uc_fw_file file_ideal;
 	struct device *dev = i915->drm.dev;
 	struct drm_i915_gem_object *obj;
@@ -718,7 +719,7 @@ int intel_uc_fw_fetch(struct intel_uc_fw *uc_fw)
 	}
 
 	if (HAS_LMEM(i915))
-		obj = i915_gem_object_create_lmem_from_data(i915, fw->data, fw->size);
+		obj = i915_gem_object_create_lmem_from_data(gt->lmem, fw->data, fw->size);
 	else
 		obj = i915_gem_object_create_shmem_from_data(i915, fw->data, fw->size);
 

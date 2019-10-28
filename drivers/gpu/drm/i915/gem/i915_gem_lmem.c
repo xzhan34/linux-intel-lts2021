@@ -188,15 +188,15 @@ bool i915_gem_object_is_lmem(const struct drm_i915_gem_object *obj)
 }
 
 struct drm_i915_gem_object *
-i915_gem_object_create_lmem_from_data(struct drm_i915_private *i915,
+i915_gem_object_create_lmem_from_data(struct intel_memory_region *region,
 				      const void *data, size_t size)
 {
 	struct drm_i915_gem_object *obj;
 	void *map;
 
-	obj = i915_gem_object_create_lmem(i915,
-					  round_up(size, PAGE_SIZE),
-					  I915_BO_ALLOC_CONTIGUOUS);
+	obj = i915_gem_object_create_region(region,
+					    round_up(size, PAGE_SIZE),
+					    I915_BO_ALLOC_CONTIGUOUS);
 	if (IS_ERR(obj))
 		return obj;
 
