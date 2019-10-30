@@ -112,3 +112,30 @@ void intel_iov_fini_hw(struct intel_iov *iov)
 	if (intel_iov_is_pf(iov))
 		intel_iov_service_reset(iov);
 }
+
+/**
+ * intel_iov_init_late - Late initialization of SR-IOV support.
+ * @iov: the IOV struct
+ *
+ * This function continues necessary initialization of the SR-IOV
+ * support in the driver and the hardware.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_init_late(struct intel_iov *iov)
+{
+	struct intel_gt *gt = iov_to_gt(iov);
+
+	if (intel_iov_is_pf(iov)) {
+		/*
+		 * GuC submission must be working on PF to allow VFs to work.
+		 * If unavailable, mark as PF error, but it's safe to continue.
+		 */
+		if (unlikely(!intel_uc_uses_guc_submission(&gt->uc))) {
+			pf_update_status(iov, -EIO, "GuC");
+			return 0;
+		}
+	}
+
+	return 0;
+}

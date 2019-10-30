@@ -1042,6 +1042,10 @@ int intel_gt_init(struct intel_gt *gt)
 		i915_probe_error(gt->i915, "Failed to retrieve hwconfig table: %pe\n",
 				 ERR_PTR(err));
 
+	err = intel_iov_init_late(&gt->iov);
+	if (err)
+		goto err_gt;
+
 	err = __engines_record_defaults(gt);
 	if (err)
 		goto err_gt;
