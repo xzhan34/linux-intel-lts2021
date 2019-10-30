@@ -1,2 +1,3 @@
 DG1 PENDING UPSTREAM PATCHES (done)
-T:      drm/i915/dg1
+T:	drm/i915/dg1
+B:	dii-auto-chop/dg1
