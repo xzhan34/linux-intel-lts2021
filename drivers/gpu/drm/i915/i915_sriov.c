@@ -270,3 +270,76 @@ void i915_sriov_print_info(struct drm_i915_private *i915, struct drm_printer *p)
 	/*XXX legacy igt */
 	drm_printf(p, "virtualization: %s\n", str_enabled_disabled(true));
 }
+
+/**
+ * i915_sriov_pf_enable_vfs - Enable VFs.
+ * @i915: the i915 struct
+ * @num_vfs: number of VFs to enable (shall not be zero)
+ *
+ * This function will enable specified number of VFs. Note that VFs can be
+ * enabled only after successful PF initialization.
+ * This function shall be called only on PF.
+ *
+ * Return: number of configured VFs or a negative error code on failure.
+ */
+int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
+{
+	struct device *dev = i915->drm.dev;
+	struct pci_dev *pdev = to_pci_dev(dev);
+	int err;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	GEM_BUG_ON(num_vfs < 0);
+	drm_dbg(&i915->drm, "enabling %d VFs\n", num_vfs);
+
+	/* verify that all initialization was successfully completed */
+	err = i915_sriov_pf_status(i915);
+	if (err < 0)
+		goto fail;
+
+	err = pci_enable_sriov(pdev, num_vfs);
+	if (err < 0)
+		goto fail;
+
+	dev_info(dev, "Enabled %u VFs\n", num_vfs);
+	return num_vfs;
+
+fail:
+	drm_err(&i915->drm, "Failed to enable %u VFs (%pe)\n",
+		num_vfs, ERR_PTR(err));
+	return err;
+}
+
+/**
+ * i915_sriov_pf_disable_vfs - Disable VFs.
+ * @i915: the i915 struct
+ *
+ * This function will disable all previously enabled VFs.
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
+{
+	struct device *dev = i915->drm.dev;
+	struct pci_dev *pdev = to_pci_dev(dev);
+	u16 num_vfs = pci_num_vf(pdev);
+	u16 vfs_assigned = pci_vfs_assigned(pdev);
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	drm_dbg(&i915->drm, "disabling %u VFs\n", num_vfs);
+
+	if (vfs_assigned) {
+		dev_warn(dev, "Can't disable %u VFs, %u are still assigned\n",
+			 num_vfs, vfs_assigned);
+		return -EPERM;
+	}
+
+	if (!num_vfs)
+		return 0;
+
+	pci_disable_sriov(pdev);
+
+	dev_info(dev, "Disabled %u VFs\n", num_vfs);
+	return 0;
+}
