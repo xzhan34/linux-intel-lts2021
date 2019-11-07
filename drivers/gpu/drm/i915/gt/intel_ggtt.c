@@ -250,6 +250,21 @@ static void guc_ggtt_invalidate(struct i915_ggtt *ggtt)
 	}
 }
 
+static void gen12vf_ggtt_invalidate(struct i915_ggtt *ggtt)
+{
+	struct intel_gt *gt;
+
+	list_for_each_entry(gt, &ggtt->gt_list, ggtt_link) {
+		struct intel_guc *guc = &gt->uc.guc;
+		intel_wakeref_t wakeref;
+
+		if (!guc->ct.enabled)
+			continue;
+		with_intel_runtime_pm(gt->uncore->rpm, wakeref)
+			intel_guc_invalidate_tlb_guc(guc, INTEL_GUC_TLB_INVAL_MODE_HEAVY);
+	}
+}
+
 u64 mtl_ggtt_pte_encode(dma_addr_t addr,
 			unsigned int pat_index,
 			u32 flags)
@@ -268,10 +283,6 @@ u64 mtl_ggtt_pte_encode(dma_addr_t addr,
 		pte |= MTL_GGTT_PTE_PAT1;
 
 	return pte;
-}
-
-static void nop_ggtt_invalidate(struct i915_ggtt *ggtt)
-{
 }
 
 u64 gen8_ggtt_pte_encode(dma_addr_t addr,
@@ -1515,7 +1526,7 @@ static int gen12vf_ggtt_probe(struct i915_ggtt *ggtt)
 	ggtt->vm.vma_ops.set_pages   = ggtt_set_pages;
 	ggtt->vm.vma_ops.clear_pages = clear_pages;
 
-	ggtt->invalidate = nop_ggtt_invalidate;
+	ggtt->invalidate = gen12vf_ggtt_invalidate;
 
 	return ggtt_probe_common(ggtt, sizeof(gen8_pte_t) *
 				 (ggtt->vm.total >> PAGE_SHIFT));
