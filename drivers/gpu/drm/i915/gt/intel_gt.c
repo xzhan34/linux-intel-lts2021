@@ -266,6 +266,13 @@ int intel_gt_init_hw(struct intel_gt *gt)
 		goto out;
 	}
 
+	ret = intel_iov_init_hw(&gt->iov);
+	if (unlikely(ret)) {
+		i915_probe_error(i915, "Enabling IOV failed (%pe)\n",
+				 ERR_PTR(ret));
+		goto out;
+	}
+
 out:
 	intel_uncore_forcewake_put(uncore, FORCEWAKE_ALL);
 	return ret;

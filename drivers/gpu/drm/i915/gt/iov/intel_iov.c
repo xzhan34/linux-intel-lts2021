@@ -60,3 +60,28 @@ void intel_iov_fini(struct intel_iov *iov)
 	if (intel_iov_is_pf(iov))
 		intel_iov_provisioning_fini(iov);
 }
+
+static void pf_enable_ggtt_guest_update(struct intel_iov *iov)
+{
+	struct intel_gt *gt = iov_to_gt(iov);
+
+	/* Guest Direct GGTT Update Enable */
+	intel_uncore_write(gt->uncore, GEN12_VIRTUAL_CTRL_REG,
+			   GEN12_GUEST_GTT_UPDATE_EN);
+}
+
+/**
+ * intel_iov_init_hw - Initialize SR-IOV hardware support.
+ * @iov: the IOV struct
+ *
+ * PF must configure hardware to enable VF's access to GGTT.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_init_hw(struct intel_iov *iov)
+{
+	if (intel_iov_is_pf(iov))
+		pf_enable_ggtt_guest_update(iov);
+
+	return 0;
+}
