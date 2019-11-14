@@ -233,6 +233,7 @@ struct intel_iov {
 		struct {
 			struct intel_iov_vf_config config;
 			struct intel_iov_vf_runtime runtime;
+			struct drm_mm_node ggtt_balloon[2];
 		} vf;
 	};
 

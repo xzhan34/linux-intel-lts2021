@@ -14,6 +14,8 @@
 
 #include "gem/i915_gem_lmem.h"
 
+#include "iov/intel_iov.h"
+
 #include "intel_ggtt_gmch.h"
 #include "intel_gt.h"
 #include "intel_gt_regs.h"
@@ -832,6 +834,10 @@ static int init_ggtt(struct i915_ggtt *ggtt)
 	if (ret)
 		return ret;
 
+	ret = intel_iov_init_ggtt(&ggtt->vm.gt->iov);
+	if (ret)
+		return ret;
+
 	mutex_init(&ggtt->error_mutex);
 	if (ggtt->mappable_end) {
 		/*
@@ -1059,6 +1065,7 @@ static void ggtt_cleanup_hw(struct i915_ggtt *ggtt)
 	mutex_destroy(&ggtt->error_mutex);
 
 	ggtt_release_guc_top(ggtt);
+	intel_iov_fini_ggtt(&ggtt->vm.gt->iov);
 	intel_vgt_deballoon(ggtt);
 
 	ggtt->vm.cleanup(&ggtt->vm);

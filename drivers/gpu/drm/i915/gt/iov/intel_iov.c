@@ -118,6 +118,82 @@ void intel_iov_fini(struct intel_iov *iov)
 		intel_iov_provisioning_fini(iov);
 }
 
+static int vf_balloon_ggtt(struct intel_iov *iov)
+{
+	struct i915_ggtt *ggtt = iov_to_gt(iov)->ggtt;
+	u64 start, end;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	/*
+	 * We can only use part of the GGTT as allocated by PF.
+	 *
+	 *      0                                      GUC_GGTT_TOP
+	 *      |<------------ Total GGTT size ------------------>|
+	 *
+	 *      |<-- VF GGTT base -->|<- size ->|
+	 *
+	 *      +--------------------+----------+-----------------+
+	 *      |////////////////////|   block  |\\\\\\\\\\\\\\\\\|
+	 *      +--------------------+----------+-----------------+
+	 *
+	 *      |<--- balloon[0] --->|<-- VF -->|<-- balloon[1] ->|
+	 */
+
+	start = 0;
+	end = iov->vf.config.ggtt_base;
+	err = i915_ggtt_balloon(ggtt, start, end, &iov->vf.ggtt_balloon[0]);
+	if (unlikely(err))
+		return err;
+
+	start = iov->vf.config.ggtt_base + iov->vf.config.ggtt_size;
+	end = GUC_GGTT_TOP;
+	err = i915_ggtt_balloon(ggtt, start, end, &iov->vf.ggtt_balloon[1]);
+
+	return err;
+}
+
+static void vf_deballoon_ggtt(struct intel_iov *iov)
+{
+	struct i915_ggtt *ggtt = iov_to_gt(iov)->ggtt;
+
+	i915_ggtt_deballoon(ggtt, &iov->vf.ggtt_balloon[1]);
+	i915_ggtt_deballoon(ggtt, &iov->vf.ggtt_balloon[0]);
+}
+
+/**
+ * intel_iov_init_ggtt - Initialize GGTT for SR-IOV.
+ * @iov: the IOV struct
+ *
+ * On the VF this function will balloon GGTT to make sure only assigned region
+ * will be used for allocations.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_init_ggtt(struct intel_iov *iov)
+{
+	int err;
+
+	if (intel_iov_is_vf(iov)) {
+		err = vf_balloon_ggtt(iov);
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
+/**
+ * intel_iov_fini_ggtt - Cleanup SR-IOV hardware support.
+ * @iov: the IOV struct
+ */
+void intel_iov_fini_ggtt(struct intel_iov *iov)
+{
+	if (intel_iov_is_vf(iov))
+		vf_deballoon_ggtt(iov);
+}
+
 static void pf_enable_ggtt_guest_update(struct intel_iov *iov)
 {
 	struct intel_gt *gt = iov_to_gt(iov);
