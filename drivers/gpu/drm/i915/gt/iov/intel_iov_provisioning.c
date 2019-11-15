@@ -1946,11 +1946,11 @@ static u64 pf_query_free_lmem(struct intel_iov *iov)
 	struct intel_gt *gt = iov_to_gt(iov);
 
 	/* Flush any pending work to get reliable results */
-	intel_memory_region_flush(gt->i915->mm.regions[INTEL_REGION_LMEM_0]);
+	intel_memory_region_flush(gt->lmem);
 	intel_gt_flush_buffer_pool(gt);
 	i915_gem_drain_workqueue(gt->i915);
 
-	return gt->i915->mm.regions[INTEL_REGION_LMEM_0]->avail;
+	return gt->lmem->avail;
 }
 
 /**
