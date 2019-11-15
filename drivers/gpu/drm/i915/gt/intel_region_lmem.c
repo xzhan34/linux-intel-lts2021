@@ -210,6 +210,24 @@ static resource_size_t vf_get_lmem_size(struct intel_iov *iov)
 	return iov->vf.config.lmem_size;
 }
 
+static resource_size_t vf_get_lmem_base(struct intel_iov *iov)
+{
+	struct drm_i915_private *i915 = iov_to_i915(iov);
+	resource_size_t base = 0;
+	struct intel_gt *gt;
+	unsigned int id;
+
+	GEM_BUG_ON(!IS_SRIOV_VF(iov_to_i915(iov)));
+
+	for_each_gt(gt, i915, id)
+		if (id < iov_to_gt(iov)->info.id)
+			base += vf_get_lmem_size(&gt->iov);
+		else
+			break;
+
+	return base;
+}
+
 static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
@@ -237,6 +255,7 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 	/* VFs will get LMEM configuration from PF */
 	if (IS_SRIOV_VF(i915)) {
 		lmem_size = vf_get_lmem_size(&gt->iov);
+		lmem_base = vf_get_lmem_base(&gt->iov);
 		goto create_region;
 	}
 
