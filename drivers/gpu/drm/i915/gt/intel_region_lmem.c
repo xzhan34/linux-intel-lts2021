@@ -15,6 +15,7 @@
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_mcr.h"
 #include "gt/intel_gt_regs.h"
+#include "gt/iov/intel_iov_utils.h"
 
 static void
 region_lmem_release(struct intel_memory_region *mem)
@@ -203,6 +204,12 @@ int intel_get_tile_range(struct intel_gt *gt,
 	return 0;
 }
 
+static resource_size_t vf_get_lmem_size(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!IS_SRIOV_VF(iov_to_i915(iov)));
+	return iov->vf.config.lmem_size;
+}
+
 static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
@@ -227,6 +234,11 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 	root_lmembar_size = pci_resource_len(pdev, GEN12_LMEM_BAR);
 
 	sparing = &to_gt(i915)->mem_sparing;
+	/* VFs will get LMEM configuration from PF */
+	if (IS_SRIOV_VF(i915)) {
+		lmem_size = vf_get_lmem_size(&gt->iov);
+		goto create_region;
+	}
 
 	/* Get per tile memory range */
 	err = intel_get_tile_range(gt, &lmem_base, &lmem_size);
@@ -298,6 +310,7 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 
 	}
 
+create_region:
 	/*
 	 * We do want to continue with the driver load if the BAR size is smaller than
 	 * memory fitted on the device. Fail on multi tile devices as BAR size might
