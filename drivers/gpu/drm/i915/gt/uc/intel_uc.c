@@ -7,6 +7,7 @@
 
 #include "gt/intel_gt.h"
 #include "gt/intel_reset.h"
+#include "gt/iov/intel_iov_memirq.h"
 #include "gt/iov/intel_iov_query.h"
 #include "intel_gsc_fw.h"
 #include "intel_gsc_uc.h"
@@ -723,6 +724,12 @@ static int __vf_uc_init_hw(struct intel_uc *uc)
 	}
 
 	intel_guc_reset_interrupts(guc);
+
+	if (HAS_MEMORY_IRQ_STATUS(i915)) {
+		err = intel_iov_memirq_prepare_guc(&gt->iov);
+		if (unlikely(err))
+			goto err_out;
+	}
 
 	err = guc_enable_communication(guc);
 	if (unlikely(err))

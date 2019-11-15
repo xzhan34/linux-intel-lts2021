@@ -40,6 +40,14 @@
  *
  * `GuC KLV`_ keys available for use with HOST2GUC_SELF_CFG_.
  *
+ * _`GUC_KLV_SELF_CFG_MEMIRQ_STATUS_ADDR` : 0x0900
+ *      Refers to 64 bit Global Gfx address (in bytes) of memory based interrupts
+ *      status vector for use by the GuC.
+ *
+ * _`GUC_KLV_SELF_CFG_MEMIRQ_SOURCE_ADDR` : 0x0901
+ *      Refers to 64 bit Global Gfx address (in bytes) of memory based interrupts
+ *      source vector for use by the GuC.
+ *
  * _`GUC_KLV_SELF_CFG_H2G_CTB_ADDR` : 0x0902
  *      Refers to 64 bit Global Gfx address of H2G `CT Buffer`_.
  *      Should be above WOPCM address but below APIC base address for native mode.
@@ -64,6 +72,12 @@
  *      Refers to size of G2H `CT Buffer`_ in bytes.
  *      Should be a multiple of 4K.
  */
+
+#define GUC_KLV_SELF_CFG_MEMIRQ_STATUS_ADDR_KEY		0x0900
+#define GUC_KLV_SELF_CFG_MEMIRQ_STATUS_ADDR_LEN		2u
+
+#define GUC_KLV_SELF_CFG_MEMIRQ_SOURCE_ADDR_KEY		0x0901
+#define GUC_KLV_SELF_CFG_MEMIRQ_SOURCE_ADDR_LEN		2u
 
 #define GUC_KLV_SELF_CFG_H2G_CTB_ADDR_KEY		0x0902
 #define GUC_KLV_SELF_CFG_H2G_CTB_ADDR_LEN		2u

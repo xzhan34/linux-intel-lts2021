@@ -8,6 +8,9 @@
 #include "intel_iov_reg.h"
 #include "intel_iov_utils.h"
 #include "gem/i915_gem_lmem.h"
+#include "gt/intel_gt.h"
+#include "gt/intel_gt_regs.h"
+#include "gt/uc/abi/guc_actions_vf_abi.h"
 
 /**
  * Memory based irq page layout
@@ -150,4 +153,45 @@ void intel_iov_memirq_fini(struct intel_iov *iov)
 		return;
 
 	vf_release_memirq_data(iov);
+}
+
+/**
+ * intel_iov_memirq_prepare_guc - Prepare GuC to use memory based interrrupts.
+ * @iov: the IOV struct
+ *
+ * Register Interrupt Source Report page and Interrupt Status Report page
+ * within GuC to correctly handle memory based interrrupts from GuC.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_memirq_prepare_guc(struct intel_iov *iov)
+{
+	struct intel_gt *gt = iov_to_gt(iov);
+	struct intel_guc *guc = &gt->uc.guc;
+	u32 base, source, status;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+	GEM_BUG_ON(!HAS_MEMORY_IRQ_STATUS(iov_to_i915(iov)));
+
+	base = intel_guc_ggtt_offset(guc, iov->vf.irq.vma);
+	source = base + I915_VF_IRQ_SOURCE + GEN11_GUC;
+	status = base + I915_VF_IRQ_STATUS + GEN11_GUC * SZ_16;
+
+	err = intel_guc_self_cfg64(guc, GUC_KLV_SELF_CFG_MEMIRQ_SOURCE_ADDR_KEY,
+				   source);
+	if (unlikely(err))
+		goto failed;
+
+	err = intel_guc_self_cfg64(guc, GUC_KLV_SELF_CFG_MEMIRQ_STATUS_ADDR_KEY,
+				   status);
+	if (unlikely(err))
+		goto failed;
+
+	return 0;
+
+failed:
+	IOV_ERROR(iov, "Failed to register MEMIRQ %#x:%#x (%pe)\n",
+		  source, status, ERR_PTR(err));
+	return err;
 }
