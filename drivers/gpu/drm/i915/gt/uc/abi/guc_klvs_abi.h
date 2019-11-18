@@ -156,6 +156,10 @@ enum {
  *      A 4K aligned size of GGTT assigned to VF.
  *      Value is 64 bits.
  *
+ * _`GUC_KLV_VF_CFG_LMEM_SIZE` : 0x0003
+ *      A 2M aligned size of local memory assigned to VF.
+ *      Value is 64 bits.
+ *
  * _`GUC_KLV_VF_CFG_NUM_CONTEXTS` : 0x0004
  *      Refers to the number of contexts allocated to this VF.
  *
@@ -257,6 +261,9 @@ enum {
 
 #define GUC_KLV_VF_CFG_GGTT_SIZE_KEY		0x0002
 #define GUC_KLV_VF_CFG_GGTT_SIZE_LEN		2u
+
+#define GUC_KLV_VF_CFG_LMEM_SIZE_KEY		0x0003
+#define GUC_KLV_VF_CFG_LMEM_SIZE_LEN		2u
 
 #define GUC_KLV_VF_CFG_NUM_CONTEXTS_KEY		0x0004
 #define GUC_KLV_VF_CFG_NUM_CONTEXTS_LEN		1u

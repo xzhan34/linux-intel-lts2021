@@ -2438,6 +2438,12 @@ static u32 encode_config(u32 *cfg, const struct intel_iov_config *config)
 	cfg[n++] = MAKE_GUC_KLV(VF_CFG_NUM_DOORBELLS);
 	cfg[n++] = config->num_dbs;
 
+	if (config->lmem_obj) {
+		cfg[n++] = MAKE_GUC_KLV(VF_CFG_LMEM_SIZE);
+		cfg[n++] = lower_32_bits(config->lmem_obj->base.size);
+		cfg[n++] = upper_32_bits(config->lmem_obj->base.size);
+	}
+
 	cfg[n++] = MAKE_GUC_KLV(VF_CFG_EXEC_QUANTUM);
 	cfg[n++] = config->exec_quantum;
 
