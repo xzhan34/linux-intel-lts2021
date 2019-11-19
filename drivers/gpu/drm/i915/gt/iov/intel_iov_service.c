@@ -266,6 +266,50 @@ static int reply_handshake(struct intel_iov *iov, u32 origin,
 					   response, ARRAY_SIZE(response));
 }
 
+static int pf_reply_runtime_query(struct intel_iov *iov, u32 origin,
+				  u32 relay_id, const u32 *msg, u32 len)
+{
+	struct intel_iov_runtime_regs *runtime = &iov->pf.service.runtime;
+	u32 response[VF2PF_QUERY_RUNTIME_RESPONSE_MSG_MAX_LEN];
+	u32 max_chunk = (ARRAY_SIZE(response) - VF2PF_QUERY_RUNTIME_RESPONSE_MSG_MIN_LEN) / 2;
+	u32 limit, start, chunk, i;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (unlikely(len > VF2PF_QUERY_RUNTIME_REQUEST_MSG_LEN))
+		return -EMSGSIZE;
+	if (unlikely(len < VF2PF_QUERY_RUNTIME_REQUEST_MSG_LEN))
+		return -EPROTO;
+
+	limit = FIELD_GET(VF2PF_QUERY_RUNTIME_REQUEST_MSG_0_LIMIT, msg[0]);
+	start = FIELD_GET(VF2PF_QUERY_RUNTIME_REQUEST_MSG_1_START, msg[1]);
+	if (unlikely(start > runtime->size))
+		return -EINVAL;
+
+	chunk = min_t(u32, runtime->size - start, max_chunk);
+	if (limit)
+		chunk = min_t(u32, chunk, limit);
+
+	response[0] = FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		      FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_RESPONSE_SUCCESS) |
+		      FIELD_PREP(VF2PF_QUERY_RUNTIME_RESPONSE_MSG_0_COUNT, chunk);
+
+	response[1] = FIELD_PREP(VF2PF_QUERY_RUNTIME_RESPONSE_MSG_1_REMAINING,
+				 runtime->size - start - chunk);
+
+	for (i = 0; i < chunk; ++i) {
+		i915_reg_t reg = runtime->regs[start + i];
+		u32 offset = i915_mmio_reg_offset(reg);
+		u32 value = runtime->values[start + i];
+
+		response[2 + 2 * i] = offset;
+		response[2 + 2 * i + 1] = value;
+	}
+
+	return intel_iov_relay_reply_to_vf(&iov->relay, origin, relay_id,
+					   response, 2 + 2 * chunk);
+}
+
 /**
  * intel_iov_service_process_msg - Service request message from VF.
  * @iov: the IOV struct
@@ -299,6 +343,9 @@ int intel_iov_service_process_msg(struct intel_iov *iov, u32 origin,
 	switch (action) {
 	case IOV_ACTION_VF2PF_HANDSHAKE:
 		err = reply_handshake(iov, origin, relay_id, msg, len);
+		break;
+	case IOV_ACTION_VF2PF_QUERY_RUNTIME:
+		err = pf_reply_runtime_query(iov, origin, relay_id, msg, len);
 		break;
 	default:
 		break;
