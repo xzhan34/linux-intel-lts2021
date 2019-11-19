@@ -175,6 +175,18 @@ struct intel_iov_vf_runtime {
 };
 
 /**
+ * struct intel_iov_memirq - IOV interrupts data.
+ * @obj: GEM object with memory interrupt data.
+ * @vma: VMA of the object.
+ * @vaddr: pointer to memory interrupt data.
+ */
+struct intel_iov_memirq {
+	struct drm_i915_gem_object *obj;
+	struct i915_vma *vma;
+	void *vaddr;
+};
+
+/**
  * struct intel_iov_relay - IOV Relay Communication data.
  * @lock: protects #pending_relays and #last_fence.
  * @pending_relays: list of relay requests that await a response.
@@ -240,6 +252,7 @@ struct intel_iov_selftest
  * @pf.lmtt: local memory translation tables for VFs.
  * @vf.config: configuration of the resources assigned to VF.
  * @vf.runtime: retrieved runtime info.
+ * @vf.irq: Memory based interrupts data.
  * @relay: data related to VF/PF communication based on GuC Relay messages.
  */
 struct intel_iov {
@@ -256,6 +269,7 @@ struct intel_iov {
 			struct intel_iov_vf_config config;
 			struct intel_iov_vf_runtime runtime;
 			struct drm_mm_node ggtt_balloon[2];
+			struct intel_iov_memirq irq;
 		} vf;
 	};
 

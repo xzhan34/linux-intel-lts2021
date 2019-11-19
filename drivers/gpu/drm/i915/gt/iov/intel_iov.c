@@ -4,6 +4,7 @@
  */
 
 #include "intel_iov.h"
+#include "intel_iov_memirq.h"
 #include "intel_iov_provisioning.h"
 #include "intel_iov_query.h"
 #include "intel_iov_relay.h"
@@ -93,6 +94,8 @@ static int vf_tweak_guc_submission(struct intel_iov *iov)
  * that can't be changed later (GuC submission contexts) to allow early PF
  * provisioning.
  *
+ * On VF this function will initialize data used by memory based interrupts.
+ *
  * Return: 0 on success or a negative error code on failure.
  */
 int intel_iov_init(struct intel_iov *iov)
@@ -109,8 +112,13 @@ int intel_iov_init(struct intel_iov *iov)
 		intel_iov_provisioning_init(iov);
 	}
 
-	if (intel_iov_is_vf(iov))
+	if (intel_iov_is_vf(iov)) {
 		vf_tweak_guc_submission(iov);
+
+		err = intel_iov_memirq_init(iov);
+		if (unlikely(err))
+			return err;
+	}
 
 	return 0;
 }
@@ -127,6 +135,9 @@ void intel_iov_fini(struct intel_iov *iov)
 		intel_iov_provisioning_fini(iov);
 		intel_lmtt_fini(&iov->pf.lmtt);
 	}
+
+	if (intel_iov_is_vf(iov))
+		intel_iov_memirq_fini(iov);
 }
 
 static int vf_balloon_ggtt(struct intel_iov *iov)
