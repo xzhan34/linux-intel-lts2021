@@ -270,5 +270,17 @@ int intel_iov_init_late(struct intel_iov *iov)
 		}
 	}
 
+	if (intel_iov_is_vf(iov)) {
+		/*
+		 * If we try to start VF driver without GuC submission enabled,
+		 * then use -EIO error to keep driver alive but without GEM.
+		 */
+		if (!intel_uc_uses_guc_submission(&gt->uc)) {
+			dev_warn(gt->i915->drm.dev, "GuC submission is %s\n",
+				 str_enabled_disabled(false));
+			return -EIO;
+		}
+	}
+
 	return 0;
 }
