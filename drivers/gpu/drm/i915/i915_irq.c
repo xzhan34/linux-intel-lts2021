@@ -3776,12 +3776,14 @@ static irqreturn_t dg1_irq_handler(int irq, void *arg)
 static irqreturn_t vf_mem_irq_handler(int irq, void *arg)
 {
 	struct drm_i915_private * const i915 = arg;
-	struct intel_gt *gt = to_gt(i915);
+	struct intel_gt *gt;
+	unsigned int i;
 
 	if (!intel_irqs_enabled(i915))
 		return IRQ_NONE;
 
-	intel_iov_memirq_handler(&gt->iov);
+	for_each_gt(gt, i915, i)
+		intel_iov_memirq_handler(&gt->iov);
 
 	pmu_irq_stats(i915, IRQ_HANDLED);
 
@@ -3790,16 +3792,20 @@ static irqreturn_t vf_mem_irq_handler(int irq, void *arg)
 
 static void vf_mem_irq_reset(struct drm_i915_private *i915)
 {
-	struct intel_gt *gt = to_gt(i915);
+	struct intel_gt *gt;
+	unsigned int i;
 
-	intel_iov_memirq_reset(&gt->iov);
+	for_each_gt(gt, i915, i)
+		intel_iov_memirq_reset(&gt->iov);
 }
 
 static int vf_mem_irq_postinstall(struct drm_i915_private *i915)
 {
-	struct intel_gt *gt = to_gt(i915);
+	struct intel_gt *gt;
+	unsigned int i;
 
-	intel_iov_memirq_postinstall(&gt->iov);
+	for_each_gt(gt, i915, i)
+		intel_iov_memirq_postinstall(&gt->iov);
 
 	return 0;
 }

@@ -8,6 +8,7 @@
 #include "intel_iov_reg.h"
 #include "intel_iov_utils.h"
 #include "gem/i915_gem_lmem.h"
+#include "gem/i915_gem_region.h"
 #include "gt/intel_breadcrumbs.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_regs.h"
