@@ -78,6 +78,8 @@ static void pf_enable_ggtt_guest_update(struct intel_iov *iov)
  * @iov: the IOV struct
  *
  * PF must configure hardware to enable VF's access to GGTT.
+ * PF also updates here runtime info (snapshot of registers values)
+ * that will be shared with VFs.
  *
  * Return: 0 on success or a negative error code on failure.
  */

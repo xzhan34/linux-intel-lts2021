@@ -11,6 +11,7 @@
 #include "gt/intel_gt.h"
 #include "intel_iov.h"
 #include "intel_iov_relay.h"
+#include "intel_iov_service.h"
 #include "intel_iov_utils.h"
 #include "intel_runtime_pm.h"
 #include "i915_drv.h"
@@ -445,10 +446,15 @@ static int relay_handle_failure(struct intel_iov_relay *relay, u32 origin,
 static int relay_handle_request(struct intel_iov_relay *relay, u32 origin,
 				u32 relay_id, const u32 *msg, u32 len)
 {
+	struct intel_iov *iov = relay_to_iov(relay);
 	struct drm_i915_private *i915 = relay_to_i915(relay);
 	struct intel_runtime_pm *rpm = &i915->runtime_pm;
 	intel_wakeref_t wakeref = intel_runtime_pm_get(rpm);
 	int err = -EOPNOTSUPP;
+
+	if (intel_iov_is_pf(iov))
+		err = intel_iov_service_process_msg(iov, origin,
+						    relay_id, msg, len);
 
 	if (unlikely(err < 0)) {
 		u32 error = from_err_to_iov_error(err);
