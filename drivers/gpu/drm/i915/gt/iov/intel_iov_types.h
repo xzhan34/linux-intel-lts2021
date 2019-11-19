@@ -9,6 +9,7 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <drm/drm_mm.h>
+#include "i915_reg.h"
 
 /**
  * struct intel_iov_config - IOV configuration data.
@@ -79,6 +80,26 @@ struct intel_iov_provisioning {
 #define PFID		VFID(0)
 
 /**
+ * struct intel_iov_runtime_regs - Register runtime info shared with VFs.
+ * @size: size of the regs and value arrays.
+ * @regs: pointer to static array with register offsets.
+ * @values: pointer to array with captured register values.
+ */
+struct intel_iov_runtime_regs {
+	u32 size;
+	const i915_reg_t *regs;
+	u32 *values;
+};
+
+/**
+ * struct intel_iov_service - Placeholder for service data shared with VFs.
+ * @runtime: register runtime info shared with VFs.
+ */
+struct intel_iov_service {
+	struct intel_iov_runtime_regs runtime;
+};
+
+/**
  * struct intel_iov_relay - IOV Relay Communication data.
  * @lock: protects #pending_relays and #last_fence.
  * @pending_relays: list of relay requests that await a response.
@@ -94,12 +115,14 @@ struct intel_iov_relay {
  * struct intel_iov - I/O Virtualization related data.
  * @pf.sysfs: sysfs data.
  * @pf.provisioning: provisioning data.
+ * @pf.service: placeholder for service data.
  * @relay: data related to VF/PF communication based on GuC Relay messages.
  */
 struct intel_iov {
 	struct {
 		struct intel_iov_sysfs sysfs;
 		struct intel_iov_provisioning provisioning;
+		struct intel_iov_service service;
 	} pf;
 
 	struct intel_iov_relay relay;

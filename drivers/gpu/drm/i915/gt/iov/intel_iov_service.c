@@ -10,10 +10,214 @@
 #include "abi/iov_messages_abi.h"
 #include "abi/iov_version_abi.h"
 
+#include "gt/intel_gt_regs.h"
+
 #include "intel_iov_relay.h"
 #include "intel_iov_service.h"
 #include "intel_iov_types.h"
 #include "intel_iov_utils.h"
+
+static void __uncore_read_many(struct intel_uncore *uncore, unsigned int count,
+			       const i915_reg_t *regs, u32 *values)
+{
+	while (count--) {
+		*values++ = intel_uncore_read(uncore, *regs++);
+	}
+}
+
+static const i915_reg_t tgl_runtime_regs[] = {
+	RPM_CONFIG0,			/* _MMIO(0x0D00) */
+	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */
+	GEN11_EU_DISABLE,		/* _MMIO(0x9134) */
+	GEN11_GT_SLICE_ENABLE,		/* _MMIO(0x9138) */
+	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
+	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
+	CTC_MODE,			/* _MMIO(0xA26C) */
+	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
+	GEN9_TIMESTAMP_OVERRIDE,	/* _MMIO(0x44074) */
+};
+
+static const i915_reg_t *get_runtime_regs(struct drm_i915_private *i915,
+					  unsigned int *size)
+{
+	const i915_reg_t *regs;
+
+	if (IS_TIGERLAKE(i915) || IS_ALDERLAKE_S(i915) || IS_ALDERLAKE_P(i915))  {
+		regs = tgl_runtime_regs;
+		*size = ARRAY_SIZE(tgl_runtime_regs);
+	} else {
+		MISSING_CASE(GRAPHICS_VER(i915));
+		regs = ERR_PTR(-ENODEV);
+		*size = 0;
+	}
+
+	return regs;
+}
+
+static bool regs_selftest(const i915_reg_t *regs, unsigned int count)
+{
+	u32 offset = 0;
+
+	while (IS_ENABLED(CONFIG_DRM_I915_SELFTEST) && count--) {
+		if (i915_mmio_reg_offset(*regs) < offset) {
+			pr_err("invalid register order: %#x < %#x\n",
+				i915_mmio_reg_offset(*regs), offset);
+			return false;
+		}
+		offset = i915_mmio_reg_offset(*regs++);
+	}
+
+	return true;
+}
+
+static int pf_alloc_runtime_info(struct intel_iov *iov)
+{
+	const i915_reg_t *regs;
+	unsigned int size;
+	u32 *values;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(iov->pf.service.runtime.size);
+	GEM_BUG_ON(iov->pf.service.runtime.regs);
+	GEM_BUG_ON(iov->pf.service.runtime.values);
+
+	regs = get_runtime_regs(iov_to_i915(iov), &size);
+	if (IS_ERR(regs))
+		return PTR_ERR(regs);
+
+	if (unlikely(!size))
+		return 0;
+
+	if (unlikely(!regs_selftest(regs, size)))
+		return -EBADSLT;
+
+	values = kcalloc(size, sizeof(u32), GFP_KERNEL);
+	if (!values)
+		return -ENOMEM;
+
+	iov->pf.service.runtime.size = size;
+	iov->pf.service.runtime.regs = regs;
+	iov->pf.service.runtime.values = values;
+
+	return 0;
+}
+
+static void pf_release_runtime_info(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	kfree(iov->pf.service.runtime.values);
+	iov->pf.service.runtime.values = NULL;
+	iov->pf.service.runtime.regs = NULL;
+	iov->pf.service.runtime.size = 0;
+}
+
+static void pf_prepare_runtime_info(struct intel_iov *iov)
+{
+	const i915_reg_t *regs;
+	unsigned int size;
+	u32 *values;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (!iov->pf.service.runtime.size)
+		return;
+
+	size = iov->pf.service.runtime.size;
+	regs = iov->pf.service.runtime.regs;
+	values = iov->pf.service.runtime.values;
+
+	__uncore_read_many(iov_to_gt(iov)->uncore, size, regs, values);
+
+	while (size--) {
+		IOV_DEBUG(iov, "reg[%#x] = %#x\n",
+			  i915_mmio_reg_offset(*regs++), *values++);
+	}
+}
+
+static void pf_reset_runtime_info(struct intel_iov *iov)
+{
+	unsigned int size;
+	u32 *values;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (!iov->pf.service.runtime.size)
+		return;
+
+	size = iov->pf.service.runtime.size;
+	values = iov->pf.service.runtime.values;
+
+	while (size--)
+		*values++ = 0;
+}
+
+/**
+ * intel_iov_service_init_early - Early initialization of the PF IOV services.
+ * @iov: the IOV struct
+ *
+ * Performs early initialization of the IOV PF services, including preparation
+ * of the runtime info that will be shared with VFs.
+ *
+ * This function can only be called on PF.
+ */
+void intel_iov_service_init_early(struct intel_iov *iov)
+{
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	err = pf_alloc_runtime_info(iov);
+	if (unlikely(err))
+		pf_update_status(iov, err, "runtime");
+}
+
+/**
+ * intel_iov_service_release - Cleanup PF IOV services.
+ * @iov: the IOV struct
+ *
+ * Releases any data allocated during initialization.
+ *
+ * This function can only be called on PF.
+ */
+void intel_iov_service_release(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	pf_release_runtime_info(iov);
+}
+
+/**
+ * intel_iov_service_update - Update PF IOV services.
+ * @iov: the IOV struct
+ *
+ * Updates runtime data shared with VFs.
+ *
+ * This function can be called more than once.
+ * This function can only be called on PF.
+ */
+void intel_iov_service_update(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	pf_prepare_runtime_info(iov);
+}
+
+/**
+ * intel_iov_service_reset - Update PF IOV services.
+ * @iov: the IOV struct
+ *
+ * Resets runtime data to avoid sharing stale info with VFs.
+ *
+ * This function can be called more than once.
+ * This function can only be called on PF.
+ */
+void intel_iov_service_reset(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	pf_reset_runtime_info(iov);
+}
 
 static int reply_handshake(struct intel_iov *iov, u32 origin,
 			   u32 relay_id, const u32 *msg, u32 len)

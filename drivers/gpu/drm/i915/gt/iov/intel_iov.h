@@ -15,5 +15,6 @@ int intel_iov_init(struct intel_iov *iov);
 void intel_iov_fini(struct intel_iov *iov);
 
 int intel_iov_init_hw(struct intel_iov *iov);
+void intel_iov_fini_hw(struct intel_iov *iov);
 
 #endif /* __INTEL_IOV_H__ */
