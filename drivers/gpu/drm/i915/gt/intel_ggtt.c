@@ -2098,3 +2098,34 @@ void i915_ggtt_deballoon(struct i915_ggtt *ggtt, struct drm_mm_node *node)
 	ggtt->vm.reserved -= node->size;
 	drm_mm_remove_node(node);
 }
+
+static gen8_pte_t tgl_prepare_vf_pte(u16 vfid)
+{
+	GEM_BUG_ON(!FIELD_FIT(TGL_GGTT_PTE_VFID_MASK, vfid));
+
+	return FIELD_PREP(TGL_GGTT_PTE_VFID_MASK, vfid) | GEN8_PAGE_PRESENT;
+}
+
+void i915_ggtt_set_space_owner(struct i915_ggtt *ggtt, u16 vfid,
+			       const struct drm_mm_node *node)
+{
+	gen8_pte_t __iomem *gtt_entries = ggtt->gsm;
+	const gen8_pte_t pte = tgl_prepare_vf_pte(vfid);
+	u64 base = node->start;
+	u64 size = node->size;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(ggtt->vm.i915));
+	GEM_BUG_ON(base % PAGE_SIZE);
+	GEM_BUG_ON(size % PAGE_SIZE);
+
+	drm_dbg(&ggtt->vm.i915->drm, "GGTT VF%u [%#llx-%#llx] %lluK\n",
+		vfid, base, base + size, size / SZ_1K);
+
+	gtt_entries += base >> PAGE_SHIFT;
+	while (size) {
+		gen8_set_pte(gtt_entries++, pte);
+		size -= PAGE_SIZE;
+	}
+
+	ggtt->invalidate(ggtt);
+}

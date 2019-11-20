@@ -471,6 +471,8 @@ static int pf_provision_ggtt(struct intel_iov *iov, unsigned int id, u64 size)
 		if (size == node->size)
 			return 0;
 
+		i915_ggtt_set_space_owner(ggtt, 0, node);
+
 		mutex_lock(&ggtt->vm.mutex);
 		drm_mm_remove_node(node);
 		mutex_unlock(&ggtt->vm.mutex);
@@ -494,6 +496,8 @@ static int pf_provision_ggtt(struct intel_iov *iov, unsigned int id, u64 size)
 	mutex_unlock(&ggtt->vm.mutex);
 	if (unlikely(err))
 		return err;
+
+	i915_ggtt_set_space_owner(ggtt, id, node);
 
 	IOV_DEBUG(iov, "VF%u provisioned GGTT %llx-%llx (%lluK)\n",
 		  id, node->start, node->start + node->size - 1, node->size / SZ_1K);

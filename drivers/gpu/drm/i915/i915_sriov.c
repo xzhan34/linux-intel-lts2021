@@ -10,6 +10,7 @@
 
 #include "gt/intel_gt_pm.h"
 #include "gt/iov/intel_iov_provisioning.h"
+#include "gt/iov/intel_iov_utils.h"
 
 /* safe for use before register access via uncore is completed */
 static u32 pci_peek_mmio_read32(struct pci_dev *pdev, i915_reg_t reg)

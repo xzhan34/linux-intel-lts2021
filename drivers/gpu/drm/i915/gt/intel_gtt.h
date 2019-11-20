@@ -99,11 +99,11 @@ typedef u64 gen8_pte_t;
 /*
  *  DOC: GEN12 GGTT Table Entry format
  *
- * +----------+---------+---------+--------------+---------+
- * |    63:46 |   45:12 |    11:2 |            1 |       0 |
- * +==========+=========+=========+==============+=========+
- * |  Ignored | Address | Ignored | Local Memory | Present |
- * +----------+---------+---------+--------------+---------+
+ * +----------+---------+---------+-----------------+--------------+---------+
+ * |    63:46 |   45:12 |    11:5 |             4:2 |            1 |       0 |
+ * +==========+=========+=========+=================+==============+=========+
+ * |  Ignored | Address | Ignored | Function Number | Local Memory | Present |
+ * +----------+---------+---------+-----------------+--------------+---------+
  *
  * ADL-P/S:
  * +----------+--------------+-------------------+---------+---------+----------+--------+---------+
@@ -118,6 +118,7 @@ typedef u64 gen8_pte_t;
 #define GEN12_GGTT_PTE_LM		BIT_ULL(1)
 #define MTL_GGTT_PTE_PAT0		BIT_ULL(52)
 #define MTL_GGTT_PTE_PAT1		BIT_ULL(53)
+#define TGL_GGTT_PTE_VFID_MASK		GENMASK_ULL(4, 2)
 #define GEN12_GGTT_PTE_ADDR_MASK	GENMASK_ULL(45, 12)
 #define ADL_GGTT_PTE_ADDR_MASK		GENMASK_ULL(38, 12)
 #define MTL_GGTT_PTE_PAT_MASK		GENMASK_ULL(53, 52)
@@ -727,6 +728,9 @@ void intel_partial_pages_for_sg_table(struct drm_i915_gem_object *obj,
 int i915_ggtt_balloon(struct i915_ggtt *ggtt, u64 start, u64 end,
 		      struct drm_mm_node *node);
 void i915_ggtt_deballoon(struct i915_ggtt *ggtt, struct drm_mm_node *node);
+
+void i915_ggtt_set_space_owner(struct i915_ggtt *ggtt, u16 vfid,
+			       const struct drm_mm_node *node);
 
 int i915_ppgtt_init_hw(struct intel_gt *gt);
 
