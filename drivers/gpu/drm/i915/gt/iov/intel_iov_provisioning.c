@@ -6,6 +6,8 @@
 #include "intel_iov.h"
 #include "intel_iov_provisioning.h"
 #include "intel_iov_utils.h"
+#include "gem/i915_gem_object_blt.h"
+#include "gem/i915_gem_region.h"
 #include "gt/uc/abi/guc_actions_pf_abi.h"
 #include "gt/uc/abi/guc_klvs_abi.h"
 
@@ -1711,6 +1713,114 @@ u32 intel_iov_provisioning_get_preempt_timeout(struct intel_iov *iov, unsigned i
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return preempt_timeout;
+}
+
+static int pf_provision_lmem(struct intel_iov *iov, unsigned int id, u64 size)
+{
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	struct intel_iov_config *config = &provisioning->configs[id];
+	struct drm_i915_gem_object *obj = fetch_and_zero(&config->lmem_obj);
+	int err;
+
+	if (check_round_up_overflow(size, (u64)SZ_2M, &size))
+		return -EOVERFLOW;
+
+	if (obj) {
+		if (size == obj->base.size)
+			goto done;
+
+		i915_gem_object_unpin_pages(obj);
+		i915_gem_object_put(obj);
+	}
+
+	if (!size)
+		return 0;
+
+	if (size > iov_to_i915(iov)->mm.regions[INTEL_REGION_LMEM_0]->avail)
+		return -E2BIG;
+
+	obj = i915_gem_object_create_lmem(iov_to_gt(iov)->i915, size,
+					  I915_BO_ALLOC_USER | /* must clear */
+					  I915_BO_ALLOC_CHUNK_2M |
+					  I915_BO_ALLOC_VOLATILE |
+					  I915_BO_SYNC_HINT);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	err = i915_gem_object_pin_pages_unlocked(obj);
+	if (unlikely(err))
+		goto err_put;
+
+	err = i915_gem_object_migrate_sync(obj);
+	if (unlikely(err))
+		goto err_unpin;
+
+	IOV_DEBUG(iov, "VF%u provisioned LMEM %zu (%zuM)\n",
+		  id, obj->base.size, obj->base.size / SZ_1M);
+done:
+	config->lmem_obj = obj;
+	return 0;
+
+err_unpin:
+	i915_gem_object_unpin_pages(obj);
+err_put:
+	i915_gem_object_put(obj);
+	return err;
+}
+
+/**
+ * intel_iov_provisioning_set_lmem - Provision VF with LMEM.
+ * @iov: the IOV struct
+ * @id: VF identifier
+ * @size: requested LMEM size
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_set_lmem(struct intel_iov *iov, unsigned int id, u64 size)
+{
+	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
+	intel_wakeref_t wakeref;
+	int err = -ENONET;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(id > pf_get_totalvfs(iov));
+	GEM_BUG_ON(!id);
+
+	mutex_lock(pf_provisioning_mutex(iov));
+
+	with_intel_runtime_pm(rpm, wakeref)
+		err = pf_provision_lmem(iov, id, size);
+
+	if (unlikely(err))
+		IOV_ERROR(iov, "Failed to provision VF%u with %llu of LMEM (%pe)\n",
+			  id, size, ERR_PTR(err));
+
+	mutex_unlock(pf_provisioning_mutex(iov));
+	return err;
+}
+
+/**
+ * intel_iov_provisioning_get_lmem - Get VF LMEM quota.
+ * @iov: the IOV struct
+ * @id: VF identifier
+ *
+ * This function can only be called on PF.
+ */
+u64 intel_iov_provisioning_get_lmem(struct intel_iov *iov, unsigned int id)
+{
+	struct drm_i915_gem_object *obj;
+	u64 size;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(id > pf_get_totalvfs(iov));
+	GEM_BUG_ON(!id);
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	obj = iov->pf.provisioning.configs[id].lmem_obj;
+	size = obj ? obj->base.size : 0;
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return size;
 }
 
 static u32 intel_iov_threshold_to_klv_key(enum intel_iov_threshold threshold)

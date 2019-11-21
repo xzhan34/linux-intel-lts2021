@@ -56,6 +56,9 @@ u32 intel_iov_provisioning_get_exec_quantum(struct intel_iov *iov, unsigned int 
 int intel_iov_provisioning_set_preempt_timeout(struct intel_iov *iov, unsigned int id, u32 preempt_timeout);
 u32 intel_iov_provisioning_get_preempt_timeout(struct intel_iov *iov, unsigned int id);
 
+int intel_iov_provisioning_set_lmem(struct intel_iov *iov, unsigned int id, u64 size);
+u64 intel_iov_provisioning_get_lmem(struct intel_iov *iov, unsigned int id);
+
 int intel_iov_provisioning_set_threshold(struct intel_iov *iov, unsigned int id,
 					 enum intel_iov_threshold threshold, u32 value);
 u32 intel_iov_provisioning_get_threshold(struct intel_iov *iov, unsigned int id,

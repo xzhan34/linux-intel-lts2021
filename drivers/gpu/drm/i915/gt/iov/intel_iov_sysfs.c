@@ -429,14 +429,37 @@ static ssize_t doorbells_quota_iov_attr_store(struct intel_iov *iov,
 	return err ?: count;
 }
 
+static ssize_t lmem_quota_iov_attr_show(struct intel_iov *iov,
+					unsigned int id, char *buf)
+{
+	return sysfs_emit(buf, "%llu\n", intel_iov_provisioning_get_lmem(iov, id));
+}
+
+static ssize_t lmem_quota_iov_attr_store(struct intel_iov *iov,
+					 unsigned int id,
+					 const char *buf, size_t count)
+{
+	u64 size;
+	int err;
+
+	err = kstrtou64(buf, 0, &size);
+	if (err)
+		return err;
+
+	err = intel_iov_provisioning_set_lmem(iov, id, size);
+	return err ?: count;
+}
+
 IOV_ATTR(ggtt_quota);
 IOV_ATTR(contexts_quota);
 IOV_ATTR(doorbells_quota);
+IOV_ATTR(lmem_quota);
 
 static struct attribute *vf_attrs[] = {
 	&ggtt_quota_iov_attr.attr,
 	&contexts_quota_iov_attr.attr,
 	&doorbells_quota_iov_attr.attr,
+	&lmem_quota_iov_attr.attr,
 	NULL
 };
 
@@ -518,8 +541,20 @@ static struct bin_attribute *vf_bin_attrs[] = {
 	NULL
 };
 
+static umode_t vf_attr_is_visible(struct kobject *kobj,
+				  struct attribute *attr, int index)
+{
+	struct intel_iov *iov = kobj_to_iov(kobj);
+
+	if (attr == &lmem_quota_iov_attr.attr && !HAS_LMEM(iov_to_i915(iov)))
+		return 0;
+
+	return attr->mode;
+}
+
 static const struct attribute_group vf_attr_group = {
 	.attrs = vf_attrs,
+	.is_visible = vf_attr_is_visible,
 	.bin_attrs = vf_bin_attrs,
 };
 

@@ -51,6 +51,7 @@ IOV_THRESHOLDS(__to_intel_iov_threshold_enum)
  */
 struct intel_iov_config {
 	struct drm_mm_node ggtt_region;
+	struct drm_i915_gem_object *lmem_obj;
 	u16 num_ctxs;
 	u16 begin_ctx;
 	u16 num_dbs;
