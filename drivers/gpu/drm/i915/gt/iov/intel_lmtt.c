@@ -42,7 +42,7 @@ lmtt_pt_alloc(struct intel_lmtt *lmtt, unsigned int level)
 		}
 	}
 
-	obj = i915_gem_object_create_lmem(lmtt_to_gt(lmtt)->i915, pt_size,
+	obj = intel_gt_object_create_lmem(lmtt_to_gt(lmtt), pt_size,
 					  I915_BO_ALLOC_CHUNK_64K |
 					  I915_BO_ALLOC_CONTIGUOUS |
 					  I915_BO_ALLOC_VOLATILE |

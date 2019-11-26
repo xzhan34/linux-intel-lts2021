@@ -1838,7 +1838,7 @@ static int pf_provision_lmem(struct intel_iov *iov, unsigned int id, u64 size)
 		goto finish;
 	}
 
-	obj = i915_gem_object_create_lmem(iov_to_gt(iov)->i915, size,
+	obj = intel_gt_object_create_lmem(iov_to_gt(iov), size,
 					  I915_BO_ALLOC_USER | /* must clear */
 					  I915_BO_ALLOC_CHUNK_2M |
 					  I915_BO_ALLOC_VOLATILE |

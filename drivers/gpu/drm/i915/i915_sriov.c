@@ -532,6 +532,8 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 	bool auto_provisioning = i915_sriov_pf_is_auto_provisioning_enabled(i915);
 	struct device *dev = i915->drm.dev;
 	struct pci_dev *pdev = to_pci_dev(dev);
+	struct intel_gt *gt;
+	unsigned int id;
 	int err;
 
 	GEM_BUG_ON(!IS_SRIOV_PF(i915));
@@ -549,21 +551,26 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 		goto fail;
 
 	/* hold the reference to runtime pm as long as VFs are enabled */
-	intel_gt_pm_get_untracked(to_gt(i915));
+	for_each_gt(gt, i915, id)
+		intel_gt_pm_get_untracked(gt);
 
-	err = intel_iov_provisioning_verify(&to_gt(i915)->iov, num_vfs);
-	if (err == -ENODATA) {
-		if (auto_provisioning)
-			err = intel_iov_provisioning_auto(&to_gt(i915)->iov, num_vfs);
-		else
-			err = 0; /* trust late provisioning */
+	for_each_gt(gt, i915, id) {
+		err = intel_iov_provisioning_verify(&gt->iov, num_vfs);
+		if (err == -ENODATA) {
+			if (auto_provisioning)
+				err = intel_iov_provisioning_auto(&gt->iov, num_vfs);
+			else
+				err = 0; /* trust late provisioning */
+		}
+		if (unlikely(err))
+			goto fail_pm;
 	}
-	if (unlikely(err))
-		goto fail_pm;
 
-	err = pf_update_guc_clients(&to_gt(i915)->iov, num_vfs);
-	if (unlikely(err < 0))
-		goto fail_pm;
+	for_each_gt(gt, i915, id) {
+		err = pf_update_guc_clients(&gt->iov, num_vfs);
+		if (unlikely(err < 0))
+			goto fail_pm;
+	}
 
 	err = pci_enable_sriov(pdev, num_vfs);
 	if (err < 0)
@@ -575,10 +582,13 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 	return num_vfs;
 
 fail_guc:
-	pf_update_guc_clients(&to_gt(i915)->iov, 0);
+	for_each_gt(gt, i915, id)
+		pf_update_guc_clients(&gt->iov, 0);
 fail_pm:
-	intel_iov_provisioning_auto(&to_gt(i915)->iov, 0);
-	intel_gt_pm_put_untracked(to_gt(i915));
+	for_each_gt(gt, i915, id) {
+		intel_iov_provisioning_auto(&gt->iov, 0);
+		intel_gt_pm_put_untracked(gt);
+	}
 	i915_debugger_allow(i915);
 fail:
 	drm_err(&i915->drm, "Failed to enable %u VFs (%pe)\n",
@@ -629,6 +639,8 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 	struct pci_dev *pdev = to_pci_dev(dev);
 	u16 num_vfs = pci_num_vf(pdev);
 	u16 vfs_assigned = pci_vfs_assigned(pdev);
+	struct intel_gt *gt;
+	unsigned int id;
 
 	GEM_BUG_ON(!IS_SRIOV_PF(i915));
 	drm_dbg(&i915->drm, "disabling %u VFs\n", num_vfs);
@@ -646,12 +658,18 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 
 	pci_disable_sriov(pdev);
 
-	pf_start_vfs_flr(&to_gt(i915)->iov, num_vfs);
-	pf_wait_vfs_flr(&to_gt(i915)->iov, num_vfs);
+	for_each_gt(gt, i915, id)
+		pf_start_vfs_flr(&gt->iov, num_vfs);
+	for_each_gt(gt, i915, id)
+		pf_wait_vfs_flr(&gt->iov, num_vfs);
 
-	pf_update_guc_clients(&to_gt(i915)->iov, 0);
-	intel_iov_provisioning_auto(&to_gt(i915)->iov, 0);
-	intel_gt_pm_put_untracked(to_gt(i915));
+	for_each_gt(gt, i915, id) {
+		pf_update_guc_clients(&gt->iov, 0);
+		intel_iov_provisioning_auto(&gt->iov, 0);
+	}
+
+	for_each_gt(gt, i915, id)
+		intel_gt_pm_put_untracked(gt);
 
 	i915_debugger_allow(i915);
 
@@ -669,6 +687,9 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
  */
 int i915_sriov_suspend_late(struct drm_i915_private *i915)
 {
+	struct intel_gt *gt;
+	unsigned int id;
+
 	if (IS_SRIOV_PF(i915)) {
 		/*
 		 * When we're enabling the VFs in i915_sriov_pf_enable_vfs(), we also get
@@ -676,8 +697,10 @@ int i915_sriov_suspend_late(struct drm_i915_private *i915)
 		 * However for the time of suspend this wakeref must be put back.
 		 * We'll get it back during the resume in i915_sriov_resume_early().
 		 */
-		if (pci_num_vf(to_pci_dev(i915->drm.dev)) != 0)
-			intel_gt_pm_put_untracked(to_gt(i915));
+		if (pci_num_vf(to_pci_dev(i915->drm.dev)) != 0) {
+			for_each_gt(gt, i915, id)
+				intel_gt_pm_put_untracked(gt);
+		}
 	}
 
 	return 0;
@@ -693,6 +716,9 @@ int i915_sriov_suspend_late(struct drm_i915_private *i915)
  */
 int i915_sriov_resume_early(struct drm_i915_private *i915)
 {
+	struct intel_gt *gt;
+	unsigned int id;
+
 	if (IS_SRIOV_PF(i915)) {
 		/*
 		 * When we're enabling the VFs in i915_sriov_pf_enable_vfs(), we also get
@@ -700,8 +726,10 @@ int i915_sriov_resume_early(struct drm_i915_private *i915)
 		 * However for the time of suspend this wakeref must be put back.
 		 * If we have VFs enabled, now is the moment at which we get back this wakeref.
 		 */
-		if (pci_num_vf(to_pci_dev(i915->drm.dev)) != 0)
-			intel_gt_pm_get_untracked(to_gt(i915));
+		if (pci_num_vf(to_pci_dev(i915->drm.dev)) != 0) {
+			for_each_gt(gt, i915, id)
+				intel_gt_pm_get_untracked(gt);
+		}
 	}
 
 	return 0;
