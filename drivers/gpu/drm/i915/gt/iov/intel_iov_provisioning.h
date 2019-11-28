@@ -23,6 +23,7 @@ bool intel_iov_provisioning_get_reset_engine(struct intel_iov *iov);
 
 int intel_iov_provisioning_auto(struct intel_iov *iov, unsigned int num_vfs);
 int intel_iov_provisioning_verify(struct intel_iov *iov, unsigned int num_vfs);
+int intel_iov_provisioning_push(struct intel_iov *iov, unsigned int num);
 
 int intel_iov_provisioning_set_ggtt(struct intel_iov *iov, unsigned int id, u64 size);
 u64 intel_iov_provisioning_get_ggtt(struct intel_iov *iov, unsigned int id);

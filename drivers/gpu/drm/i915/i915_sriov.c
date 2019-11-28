@@ -309,6 +309,19 @@ void i915_sriov_print_info(struct drm_i915_private *i915, struct drm_printer *p)
 	drm_printf(p, "virtualization: %s\n", str_enabled_disabled(true));
 }
 
+static int pf_update_guc_clients(struct intel_iov *iov, unsigned int num_vfs)
+{
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	err = intel_iov_provisioning_push(iov, num_vfs);
+	if (unlikely(err))
+		IOV_DEBUG(iov, "err=%d", err);
+
+	return err;
+}
+
 /**
  * i915_sriov_pf_enable_vfs - Enable VFs.
  * @i915: the i915 struct
@@ -347,13 +360,19 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 	if (unlikely(err))
 		goto fail_pm;
 
+	err = pf_update_guc_clients(&to_gt(i915)->iov, num_vfs);
+	if (unlikely(err < 0))
+		goto fail_pm;
+
 	err = pci_enable_sriov(pdev, num_vfs);
 	if (err < 0)
-		goto fail_pm;
+		goto fail_guc;
 
 	dev_info(dev, "Enabled %u VFs\n", num_vfs);
 	return num_vfs;
 
+fail_guc:
+	pf_update_guc_clients(&to_gt(i915)->iov, 0);
 fail_pm:
 	intel_iov_provisioning_auto(&to_gt(i915)->iov, 0);
 	intel_gt_pm_put_untracked(to_gt(i915));
@@ -393,6 +412,7 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 
 	pci_disable_sriov(pdev);
 
+	pf_update_guc_clients(&to_gt(i915)->iov, 0);
 	intel_iov_provisioning_auto(&to_gt(i915)->iov, 0);
 	intel_gt_pm_put_untracked(to_gt(i915));
 

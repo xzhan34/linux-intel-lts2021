@@ -137,6 +137,26 @@ enum {
  *
  * `GuC KLV`_ keys available for use with PF2GUC_UPDATE_VF_CFG.
  *
+ * _`GUC_KLV_VF_CFG_GGTT_START` : 0x0001
+ *      A 4K aligned start GTT address/offset assigned to VF.
+ *      Value is 64 bits.
+ *
+ * _`GUC_KLV_VF_CFG_GGTT_SIZE` : 0x0002
+ *      A 4K aligned size of GGTT assigned to VF.
+ *      Value is 64 bits.
+ *
+ * _`GUC_KLV_VF_CFG_NUM_CONTEXTS` : 0x0004
+ *      Refers to the number of contexts allocated to this VF.
+ *
+ *      :0: no contexts (default)
+ *      :1-65535: number of contexts (Gen12)
+ *
+ * _`GUC_KLV_VF_CFG_NUM_DOORBELLS` : 0x0006
+ *      Refers to the number of doorbells allocated to this VF.
+ *
+ *      :0: no doorbells (default)
+ *      :1-255: number of doorbells (Gen12)
+ *
  * _`GUC_KLV_VF_CFG_EXEC_QUANTUM` : 0x8A01
  *      This config sets the VFs-execution-quantum in milliseconds.
  *      GUC will attempt to obey the maximum values as much as HW is capable
@@ -170,12 +190,42 @@ enum {
  *      AI/ML.
  *
  *      :0: no preemption timeout (default)
+ *
+ * _`GUC_KLV_VF_CFG_BEGIN_DOORBELL_ID` : 0x8A0A
+ *      Refers to the start index of doorbell assigned to this VF.
+ *
+ *      :0: (default)
+ *      :1-255: number of doorbells (Gen12)
+ *
+ * _`GUC_KLV_VF_CFG_BEGIN_CONTEXT_ID` : 0x8A0B
+ *      Refers to the start index in context array allocated to this VF’s use.
+ *
+ *      :0: (default)
+ *      :1-65535: number of contexts (Gen12)
  */
+
+#define GUC_KLV_VF_CFG_GGTT_START_KEY		0x0001
+#define GUC_KLV_VF_CFG_GGTT_START_LEN		2u
+
+#define GUC_KLV_VF_CFG_GGTT_SIZE_KEY		0x0002
+#define GUC_KLV_VF_CFG_GGTT_SIZE_LEN		2u
+
+#define GUC_KLV_VF_CFG_NUM_CONTEXTS_KEY		0x0004
+#define GUC_KLV_VF_CFG_NUM_CONTEXTS_LEN		1u
+
+#define GUC_KLV_VF_CFG_NUM_DOORBELLS_KEY	0x0006
+#define GUC_KLV_VF_CFG_NUM_DOORBELLS_LEN	1u
 
 #define GUC_KLV_VF_CFG_EXEC_QUANTUM_KEY		0x8a01
 #define GUC_KLV_VF_CFG_EXEC_QUANTUM_LEN		1u
 
 #define GUC_KLV_VF_CFG_PREEMPT_TIMEOUT_KEY	0x8a02
 #define GUC_KLV_VF_CFG_PREEMPT_TIMEOUT_LEN	1u
+
+#define GUC_KLV_VF_CFG_BEGIN_DOORBELL_ID_KEY	0x8a0a
+#define GUC_KLV_VF_CFG_BEGIN_DOORBELL_ID_LEN	1u
+
+#define GUC_KLV_VF_CFG_BEGIN_CONTEXT_ID_KEY	0x8a0b
+#define GUC_KLV_VF_CFG_BEGIN_CONTEXT_ID_LEN	1u
 
 #endif /* _ABI_GUC_KLVS_ABI_H */

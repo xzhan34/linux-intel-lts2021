@@ -9,6 +9,10 @@
 #include "gt/uc/abi/guc_actions_pf_abi.h"
 #include "gt/uc/abi/guc_klvs_abi.h"
 
+#define MAKE_GUC_KLV(__K) \
+	(FIELD_PREP(GUC_KLV_0_KEY, GUC_KLV_##__K##_KEY) | \
+	 FIELD_PREP(GUC_KLV_0_LEN, GUC_KLV_##__K##_LEN))
+
 /*
  * Resource configuration for VFs provisioning is maintained in the
  * flexible array where:
@@ -1756,6 +1760,138 @@ int intel_iov_provisioning_verify(struct intel_iov *iov, unsigned int num_vfs)
 		return -ENOKEY;
 
 	return 0;
+}
+
+/* Return: number of configuration dwords written */
+static u32 encode_config(u32 *cfg, const struct intel_iov_config *config)
+{
+	u32 n = 0;
+
+	if (drm_mm_node_allocated(&config->ggtt_region)) {
+		cfg[n++] = MAKE_GUC_KLV(VF_CFG_GGTT_START);
+		cfg[n++] = lower_32_bits(config->ggtt_region.start);
+		cfg[n++] = upper_32_bits(config->ggtt_region.start);
+
+		cfg[n++] = MAKE_GUC_KLV(VF_CFG_GGTT_SIZE);
+		cfg[n++] = lower_32_bits(config->ggtt_region.size);
+		cfg[n++] = upper_32_bits(config->ggtt_region.size);
+	}
+
+	cfg[n++] = MAKE_GUC_KLV(VF_CFG_BEGIN_CONTEXT_ID);
+	cfg[n++] = config->begin_ctx;
+
+	cfg[n++] = MAKE_GUC_KLV(VF_CFG_NUM_CONTEXTS);
+	cfg[n++] = config->num_ctxs;
+
+	cfg[n++] = MAKE_GUC_KLV(VF_CFG_BEGIN_DOORBELL_ID);
+	cfg[n++] = config->begin_db;
+
+	cfg[n++] = MAKE_GUC_KLV(VF_CFG_NUM_DOORBELLS);
+	cfg[n++] = config->num_dbs;
+
+	return n;
+}
+
+static int pf_push_configs(struct intel_iov *iov, unsigned int num)
+{
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	struct intel_guc *guc = iov_to_guc(iov);
+	struct i915_vma *vma;
+	unsigned int n;
+	u32 cfg_size;
+	u32 cfg_addr;
+	u32 *cfg;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	err = intel_guc_allocate_and_map_vma(guc, SZ_4K, &vma, (void **)&cfg);
+	if (unlikely(err))
+		return err;
+
+	cfg_addr = intel_guc_ggtt_offset(guc, vma);
+
+	for (n = 1; n <= num; n++) {
+		cfg_size = 0;
+
+		err = pf_validate_config(iov, n);
+		if (err != -ENODATA)
+			cfg_size = encode_config(cfg, &provisioning->configs[n]);
+
+		GEM_BUG_ON(cfg_size * sizeof(u32) > SZ_4K);
+
+		if (cfg_size) {
+			err = guc_action_update_vf_cfg(guc, n, cfg_addr, cfg_size);
+			if (unlikely(err < 0))
+				goto fail;
+		}
+
+		provisioning->num_pushed++;
+	}
+	err = 0;
+
+fail:
+	i915_vma_unpin_and_release(&vma, I915_VMA_RELEASE_MAP);
+	return err;
+}
+
+static int pf_push_no_configs(struct intel_iov *iov)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	unsigned int n;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	for (n = iov->pf.provisioning.num_pushed; n > 0; n--) {
+		err = guc_action_update_vf_cfg(guc, n, 0, 0);
+		if (unlikely(err < 0))
+			break;
+		iov->pf.provisioning.num_pushed++;
+	}
+
+	return n ? -ESTALE : 0;
+}
+
+/**
+ * intel_iov_provisioning_push() - Push provisioning configs to GuC.
+ * @iov: the IOV struct
+ * @num: number of configurations to push
+ *
+ * Push provisioning configs for @num VFs or reset configs for previously
+ * configured VFs.
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_provisioning_push(struct intel_iov *iov, unsigned int num)
+{
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(num > pf_get_totalvfs(iov));
+
+	err = pf_get_status(iov);
+	if (unlikely(err < 0))
+		goto fail;
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	if (num)
+		err = pf_push_configs(iov, num);
+	else
+		err = pf_push_no_configs(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	if (unlikely(err))
+		goto fail;
+
+	return 0;
+fail:
+	IOV_ERROR(iov, "Failed to push configurations (%pe)", ERR_PTR(err));
+	return err;
 }
 
 /**

@@ -10,6 +10,7 @@
 #include <linux/spinlock.h>
 #include <drm/drm_mm.h>
 #include "i915_reg.h"
+#include "intel_wakeref.h"
 
 /**
  * struct intel_iov_config - IOV configuration data.
@@ -70,6 +71,7 @@ struct intel_iov_policies {
  */
 struct intel_iov_provisioning {
 	bool auto_mode;
+	unsigned int num_pushed;
 	struct intel_iov_policies policies;
 	struct intel_iov_spare_config spare;
 	struct intel_iov_config *configs;
