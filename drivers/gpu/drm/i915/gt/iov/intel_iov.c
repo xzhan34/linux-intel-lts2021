@@ -62,6 +62,9 @@ int intel_iov_init_mmio(struct intel_iov *iov)
 		ret = intel_iov_query_config(iov);
 		if (unlikely(ret))
 			return ret;
+		ret = intel_iov_query_runtime(iov, true);
+		if (unlikely(ret))
+			return ret;
 	}
 
 	return 0;
@@ -136,6 +139,7 @@ static void pf_enable_ggtt_guest_update(struct intel_iov *iov)
  */
 int intel_iov_init_hw(struct intel_iov *iov)
 {
+
 	if (intel_iov_is_pf(iov)) {
 		pf_enable_ggtt_guest_update(iov);
 		intel_iov_service_update(iov);

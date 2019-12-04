@@ -158,6 +158,19 @@ struct intel_iov_service {
 };
 
 /**
+ * struct intel_iov_vf_runtime - Placeholder for the VF runtime data.
+ * @regs_size: size of runtime register array.
+ * @regs: pointer to array of register offset/value pairs.
+ */
+struct intel_iov_vf_runtime {
+	u32 regs_size;
+	struct vf_runtime_reg {
+		u32 offset;
+		u32 value;
+	} *regs;
+};
+
+/**
  * struct intel_iov_relay - IOV Relay Communication data.
  * @lock: protects #pending_relays and #last_fence.
  * @pending_relays: list of relay requests that await a response.
@@ -205,6 +218,7 @@ struct intel_iov_vf_config {
  * @pf.service: placeholder for service data.
  * @pf.state: placeholder for VFs data.
  * @vf.config: configuration of the resources assigned to VF.
+ * @vf.runtime: retrieved runtime info.
  * @relay: data related to VF/PF communication based on GuC Relay messages.
  */
 struct intel_iov {
@@ -218,6 +232,7 @@ struct intel_iov {
 
 		struct {
 			struct intel_iov_vf_config config;
+			struct intel_iov_vf_runtime runtime;
 		} vf;
 	};
 

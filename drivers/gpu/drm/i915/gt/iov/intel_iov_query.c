@@ -5,7 +5,10 @@
 
 #include <drm/drm_print.h>
 #include <linux/bitfield.h>
+#include <linux/crc32.h>
 
+#include "abi/iov_actions_mmio_abi.h"
+#include "gt/intel_gt_regs.h"
 #include "gt/uc/abi/guc_actions_vf_abi.h"
 #include "gt/uc/abi/guc_klvs_abi.h"
 #include "gt/uc/abi/guc_version_abi.h"
@@ -292,6 +295,223 @@ int intel_iov_query_config(struct intel_iov *iov)
 		return err;
 
 	return 0;
+}
+
+static const i915_reg_t tgl_early_regs[] = {
+	RPM_CONFIG0,			/* _MMIO(0x0D00) */
+	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */
+	GEN11_EU_DISABLE,		/* _MMIO(0x9134) */
+	GEN11_GT_SLICE_ENABLE,		/* _MMIO(0x9138) */
+	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
+	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
+	CTC_MODE,			/* _MMIO(0xA26C) */
+	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
+};
+
+static const i915_reg_t *get_early_regs(struct drm_i915_private *i915,
+					unsigned int *size)
+{
+	const i915_reg_t *regs;
+
+	if (IS_TIGERLAKE(i915) || IS_ALDERLAKE_S(i915) || IS_ALDERLAKE_P(i915)) {
+		regs = tgl_early_regs;
+		*size = ARRAY_SIZE(tgl_early_regs);
+	} else {
+		MISSING_CASE(GRAPHICS_VER(i915));
+		regs = ERR_PTR(-ENODEV);
+		*size = 0;
+	}
+
+	return regs;
+}
+
+static void vf_cleanup_runtime_info(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	kfree(iov->vf.runtime.regs);
+	iov->vf.runtime.regs = NULL;
+	iov->vf.runtime.regs_size = 0;
+}
+
+static int vf_prepare_runtime_info(struct intel_iov *iov, unsigned int regs_size,
+				   unsigned int alignment)
+{
+	unsigned int regs_size_up = roundup(regs_size, alignment);
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+	GEM_BUG_ON(iov->vf.runtime.regs_size && !iov->vf.runtime.regs);
+
+	iov->vf.runtime.regs = krealloc(iov->vf.runtime.regs,
+					regs_size_up * sizeof(struct vf_runtime_reg),
+					__GFP_ZERO | GFP_NOWAIT | __GFP_NOWARN);
+	if (unlikely(!iov->vf.runtime.regs))
+		return -ENOMEM;
+
+	iov->vf.runtime.regs_size = regs_size;
+
+	return regs_size_up;
+}
+
+static void vf_show_runtime_info(struct intel_iov *iov)
+{
+	struct vf_runtime_reg *vf_regs = iov->vf.runtime.regs;
+	unsigned int size = iov->vf.runtime.regs_size;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	for (;size--; vf_regs++) {
+		IOV_DEBUG(iov, "RUNTIME reg[%#x] = %#x\n",
+			  vf_regs->offset, vf_regs->value);
+	}
+}
+
+static int guc_send_mmio_relay(struct intel_guc *guc, const u32 *request, u32 len,
+			       u32 *response, u32 response_size)
+{
+	u32 magic1, magic2;
+	int ret;
+
+	GEM_BUG_ON(len < VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_MIN_LEN);
+	GEM_BUG_ON(response_size < VF2GUC_MMIO_RELAY_SERVICE_RESPONSE_MSG_MIN_LEN);
+
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_MSG_0_ORIGIN, request[0]) != GUC_HXG_ORIGIN_HOST);
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_MSG_0_TYPE, request[0]) != GUC_HXG_TYPE_REQUEST);
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_REQUEST_MSG_0_ACTION, request[0]) !=
+			     GUC_ACTION_VF2GUC_MMIO_RELAY_SERVICE);
+
+	magic1 = FIELD_GET(VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_0_MAGIC, request[0]);
+
+	ret = intel_guc_send_mmio(guc, request, len, response, response_size);
+	if (unlikely(ret < 0))
+		return ret;
+
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_MSG_0_ORIGIN, response[0]) != GUC_HXG_ORIGIN_GUC);
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_MSG_0_TYPE, response[0]) != GUC_HXG_TYPE_RESPONSE_SUCCESS);
+
+	magic2 = FIELD_GET(VF2GUC_MMIO_RELAY_SERVICE_RESPONSE_MSG_0_MAGIC, response[0]);
+
+	if (unlikely(magic1 != magic2))
+		return -EPROTO;
+
+	return ret;
+}
+
+static u32 mmio_relay_header(u32 opcode, u32 magic)
+{
+	return FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+	       FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+	       FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, GUC_ACTION_VF2GUC_MMIO_RELAY_SERVICE) |
+	       FIELD_PREP(VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_0_MAGIC, magic) |
+	       FIELD_PREP(VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_0_OPCODE, opcode);
+}
+
+static int vf_get_runtime_info_mmio(struct intel_iov *iov)
+{
+	u32 request[VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_MAX_LEN];
+	u32 response[VF2GUC_MMIO_RELAY_SERVICE_RESPONSE_MSG_MAX_LEN];
+	u32 chunk = VF2PF_MMIO_GET_RUNTIME_REQUEST_MSG_NUM_OFFSET;
+	unsigned int size, size_up, i, n;
+	struct vf_runtime_reg *vf_regs;
+	const i915_reg_t *regs;
+	int ret;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+	BUILD_BUG_ON(VF2PF_MMIO_GET_RUNTIME_REQUEST_MSG_NUM_OFFSET >
+		     VF2PF_MMIO_GET_RUNTIME_RESPONSE_MSG_NUM_VALUE);
+
+	regs = get_early_regs(iov_to_i915(iov), &size);
+	if (IS_ERR(regs)) {
+		ret = PTR_ERR(regs);
+		goto failed;
+	}
+	if (!size)
+		return 0;
+
+	/*
+	 * We want to allocate slightly larger buffer in order to align
+	 * ourselves with GuC interface and avoid out-of-bounds write.
+	 */
+	ret = vf_prepare_runtime_info(iov, size, chunk);
+	if (unlikely(ret < 0))
+		goto failed;
+	vf_regs = iov->vf.runtime.regs;
+	size_up = ret;
+	GEM_BUG_ON(!size_up);
+
+	for (i = 0; i < size; i++)
+		vf_regs[i].offset = i915_mmio_reg_offset(regs[i]);
+
+	for (i = 0; i < size_up; i += chunk) {
+
+		request[0] = mmio_relay_header(IOV_OPCODE_VF2PF_MMIO_GET_RUNTIME, 0);
+
+		for (n = 0; n < chunk; n++)
+			request[1 + n] = vf_regs[i + n].offset;
+
+		/* we will use few bits from crc32 as magic */
+		u32p_replace_bits(request, crc32_le(0, (void*)request, sizeof(request)),
+				  VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_0_MAGIC);
+
+		ret = guc_send_mmio_relay(iov_to_guc(iov), request, ARRAY_SIZE(request),
+					  response, ARRAY_SIZE(response));
+		if (unlikely(ret < 0))
+			goto failed;
+		GEM_BUG_ON(ret != ARRAY_SIZE(response));
+
+		for (n = 0; n < chunk; n++)
+			vf_regs[i + n].value = response[1 + n];
+	}
+
+	return 0;
+
+failed:
+	vf_cleanup_runtime_info(iov);
+	return ret;
+}
+
+/**
+ * intel_iov_query_runtime - Query IOV runtime data.
+ * @iov: the IOV struct
+ * @early: use early MMIO access
+ *
+ * This function is for VF use only.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_query_runtime(struct intel_iov *iov, bool early)
+{
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	if (early)
+		err = vf_get_runtime_info_mmio(iov);
+	else
+		err = -EINVAL;
+	if (unlikely(err))
+		goto failed;
+
+	vf_show_runtime_info(iov);
+	return 0;
+
+failed:
+	IOV_PROBE_ERROR(iov, "Failed to get runtime info (%pe)\n",
+			ERR_PTR(err));
+	return err;
+}
+
+/**
+ * intel_iov_query_fini - Cleanup all queried IOV data.
+ * @iov: the IOV struct
+ *
+ * This function is for VF use only.
+ */
+void intel_iov_query_fini(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	vf_cleanup_runtime_info(iov);
 }
 
 /**
