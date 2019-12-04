@@ -50,6 +50,7 @@
 #include "gt/intel_gt_pm_irq.h"
 #include "gt/intel_gt_regs.h"
 #include "gt/intel_rps.h"
+#include "gt/iov/intel_iov_memirq.h"
 
 #include "i915_driver.h"
 #include "i915_drv.h"
@@ -3772,6 +3773,37 @@ static irqreturn_t dg1_irq_handler(int irq, void *arg)
 	return IRQ_HANDLED;
 }
 
+static irqreturn_t vf_mem_irq_handler(int irq, void *arg)
+{
+	struct drm_i915_private * const i915 = arg;
+	struct intel_gt *gt = to_gt(i915);
+
+	if (!intel_irqs_enabled(i915))
+		return IRQ_NONE;
+
+	intel_iov_memirq_handler(&gt->iov);
+
+	pmu_irq_stats(i915, IRQ_HANDLED);
+
+	return IRQ_HANDLED;
+}
+
+static void vf_mem_irq_reset(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt = to_gt(i915);
+
+	intel_iov_memirq_reset(&gt->iov);
+}
+
+static int vf_mem_irq_postinstall(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt = to_gt(i915);
+
+	intel_iov_memirq_postinstall(&gt->iov);
+
+	return 0;
+}
+
 /* Called from drm generic code, passed 'crtc' which
  * we use as a pipe index
  */
@@ -5652,7 +5684,9 @@ static irq_handler_t intel_irq_handler(struct drm_i915_private *dev_priv)
 		else
 			return i8xx_irq_handler;
 	} else {
-		if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
+		if (HAS_MEMORY_IRQ_STATUS(dev_priv))
+			return vf_mem_irq_handler;
+		else if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
 			return dg1_irq_handler;
 		else if (GRAPHICS_VER(dev_priv) >= 11)
 			return gen11_irq_handler;
@@ -5680,7 +5714,9 @@ static void intel_irq_reset(struct drm_i915_private *dev_priv)
 		else
 			i8xx_irq_reset(dev_priv);
 	} else {
-		if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
+		if (HAS_MEMORY_IRQ_STATUS(dev_priv))
+			vf_mem_irq_reset(dev_priv);
+		else if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
 			dg1_irq_reset(dev_priv);
 		else if (GRAPHICS_VER(dev_priv) >= 11)
 			gen11_irq_reset(dev_priv);
@@ -5705,7 +5741,9 @@ static void intel_irq_postinstall(struct drm_i915_private *dev_priv)
 		else
 			i8xx_irq_postinstall(dev_priv);
 	} else {
-		if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
+		if (HAS_MEMORY_IRQ_STATUS(dev_priv))
+			vf_mem_irq_postinstall(dev_priv);
+		else if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
 			dg1_irq_postinstall(dev_priv);
 		else if (GRAPHICS_VER(dev_priv) >= 11)
 			gen11_irq_postinstall(dev_priv);

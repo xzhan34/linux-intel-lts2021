@@ -8,9 +8,17 @@
 #include "intel_iov_reg.h"
 #include "intel_iov_utils.h"
 #include "gem/i915_gem_lmem.h"
+#include "gt/intel_breadcrumbs.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_regs.h"
 #include "gt/uc/abi/guc_actions_vf_abi.h"
+
+#ifdef CONFIG_DRM_I915_DEBUG_IOV
+#define MEMIRQ_DEBUG(_gt, _f, ...) \
+	drm_dbg(&(_gt)->i915->drm, "IRQ " _f, ##__VA_ARGS__)
+#else
+#define MEMIRQ_DEBUG(...)
+#endif
 
 /**
  * Memory based irq page layout
@@ -194,4 +202,108 @@ failed:
 	IOV_ERROR(iov, "Failed to register MEMIRQ %#x:%#x (%pe)\n",
 		  source, status, ERR_PTR(err));
 	return err;
+}
+
+/**
+ * intel_iov_memirq_reset - TBD
+ * @iov: the IOV struct
+ *
+ * TBD.
+ */
+void intel_iov_memirq_reset(struct intel_iov *iov)
+{
+	u8 *irq = iov->vf.irq.vaddr;
+	u32 *val = (u32*)(irq + I915_VF_IRQ_ENABLE);
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	if (irq)
+		*val = 0;
+}
+
+/**
+ * intel_iov_memirq_postinstall - TBD
+ * @iov: the IOV struct
+ *
+ * TBD.
+ */
+void intel_iov_memirq_postinstall(struct intel_iov *iov)
+{
+	u8 *irq = iov->vf.irq.vaddr;
+	u32 *val = (u32*)(irq + I915_VF_IRQ_ENABLE);
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	if (irq)
+		*val = 0xffff;
+}
+
+static void __engine_mem_irq_handler(struct intel_engine_cs *engine, u8 *status)
+{
+	struct intel_gt __maybe_unused *gt = engine->gt;
+
+	MEMIRQ_DEBUG(gt, "STATUS %s %*ph\n", engine->name, 16, status);
+
+	if (READ_ONCE(status[ilog2(GT_RENDER_USER_INTERRUPT)]) == 0xFF) {
+		WRITE_ONCE(status[ilog2(GT_RENDER_USER_INTERRUPT)], 0x00);
+		intel_engine_signal_breadcrumbs(engine);
+		tasklet_hi_schedule(&engine->sched_engine->tasklet);
+	}
+}
+
+static void __guc_mem_irq_handler(struct intel_guc *guc, u8 *status)
+{
+	struct intel_gt __maybe_unused *gt = guc_to_gt(guc);
+
+	MEMIRQ_DEBUG(gt, "STATUS %s %*ph\n", "GUC", 16, status);
+
+	if (READ_ONCE(status[ilog2(GUC_INTR_GUC2HOST)]) == 0xFF) {
+		WRITE_ONCE(status[ilog2(GUC_INTR_GUC2HOST)], 0x00);
+		intel_guc_to_host_event_handler(guc);
+	}
+}
+
+/**
+ * intel_iov_memirq_handler - TBD
+ * @iov: the IOV struct
+ *
+ * TBD.
+ */
+void intel_iov_memirq_handler(struct intel_iov *iov)
+{
+	struct intel_gt *gt = iov_to_gt(iov);
+	u8 *irq = iov->vf.irq.vaddr;
+	u8 * const source_base = irq + I915_VF_IRQ_SOURCE;
+	u8 * const status_base = irq + I915_VF_IRQ_STATUS;
+	u8 *source, value;
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	if (!irq)
+		return;
+
+	MEMIRQ_DEBUG(gt, "SOURCE %*ph\n", 32, source_base);
+	MEMIRQ_DEBUG(gt, "SOURCE %*ph\n", 32, source_base + 32);
+
+	/* TODO: Only check active engines */
+	for_each_engine(engine, gt, id) {
+		source = source_base + engine->irq_offset;
+		value = READ_ONCE(*source);
+		if (value == 0xff) {
+			WRITE_ONCE(*source, 0x00);
+			__engine_mem_irq_handler(engine, status_base +
+						 engine->irq_offset * SZ_16);
+		}
+	}
+
+	/* GuC must be check separately */
+	source = source_base + GEN11_GUC;
+	value = READ_ONCE(*source);
+	if (value == 0xff) {
+		WRITE_ONCE(*source, 0x00);
+		__guc_mem_irq_handler(&gt->uc.guc, status_base +
+				      GEN11_GUC * SZ_16);
+	}
 }
