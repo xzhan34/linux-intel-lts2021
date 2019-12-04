@@ -6,8 +6,10 @@
 #include <linux/bitfield.h>
 
 #include "gt/uc/abi/guc_actions_vf_abi.h"
+#include "gt/uc/abi/guc_klvs_abi.h"
 #include "gt/uc/abi/guc_version_abi.h"
 #include "i915_drv.h"
+#include "intel_iov_relay.h"
 #include "intel_iov_utils.h"
 #include "intel_iov_types.h"
 #include "intel_iov_query.h"
@@ -141,6 +143,116 @@ int intel_iov_query_bootstrap(struct intel_iov *iov)
 		return err;
 
 	err = vf_handshake_with_guc(iov);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static int guc_action_query_single_klv(struct intel_guc *guc, u32 key,
+				       u32 *value, u32 value_len)
+{
+	u32 request[VF2GUC_QUERY_SINGLE_KLV_REQUEST_MSG_LEN] = {
+		FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION,
+			   GUC_ACTION_VF2GUC_QUERY_SINGLE_KLV),
+		FIELD_PREP(VF2GUC_QUERY_SINGLE_KLV_REQUEST_MSG_1_KEY, key),
+	};
+	u32 response[VF2GUC_QUERY_SINGLE_KLV_RESPONSE_MSG_MAX_LEN];
+	u32 length;
+	int ret;
+
+	ret = intel_guc_send_mmio(guc, request, ARRAY_SIZE(request),
+				  response, ARRAY_SIZE(response));
+	if (unlikely(ret < 0))
+		return ret;
+
+	GEM_BUG_ON(ret != VF2GUC_QUERY_SINGLE_KLV_RESPONSE_MSG_MAX_LEN);
+	if (unlikely(FIELD_GET(VF2GUC_QUERY_SINGLE_KLV_RESPONSE_MSG_0_MBZ, response[0])))
+		return -EPROTO;
+
+	length = FIELD_GET(VF2GUC_QUERY_SINGLE_KLV_RESPONSE_MSG_0_LENGTH, response[0]);
+	if (unlikely(length > value_len))
+		return -EOVERFLOW;
+	if (unlikely(length < value_len))
+		return -ENODATA;
+
+	GEM_BUG_ON(length != value_len);
+	switch (value_len) {
+	default:
+		GEM_BUG_ON(value_len);
+		return -EINVAL;
+	case 3:
+		value[2] = FIELD_GET(VF2GUC_QUERY_SINGLE_KLV_RESPONSE_MSG_3_VALUE96, response[3]);
+		fallthrough;
+	case 2:
+		value[1] = FIELD_GET(VF2GUC_QUERY_SINGLE_KLV_RESPONSE_MSG_2_VALUE64, response[2]);
+		fallthrough;
+	case 1:
+		value[0] = FIELD_GET(VF2GUC_QUERY_SINGLE_KLV_RESPONSE_MSG_1_VALUE32, response[1]);
+		fallthrough;
+	case 0:
+		break;
+	}
+
+	return 0;
+}
+
+static int guc_action_query_single_klv64(struct intel_guc *guc, u32 key, u64 *value64)
+{
+	u32 value[2];
+	int err;
+
+	err = guc_action_query_single_klv(guc, key, value, ARRAY_SIZE(value));
+	if (unlikely(err))
+		return err;
+
+	*value64 = (u64)value[1] << 32 | value[0];
+	return 0;
+}
+
+static int vf_get_ggtt_info(struct intel_iov *iov)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	u64 start, size;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+	GEM_BUG_ON(iov->vf.config.ggtt_size);
+
+	err = guc_action_query_single_klv64(guc, GUC_KLV_VF_CFG_GGTT_START_KEY, &start);
+	if (unlikely(err))
+		return err;
+
+	err = guc_action_query_single_klv64(guc, GUC_KLV_VF_CFG_GGTT_SIZE_KEY, &size);
+	if (unlikely(err))
+		return err;
+
+	IOV_DEBUG(iov, "GGTT %#llx-%#llx = %lluK\n",
+		  start, start + size -1, size / SZ_1K);
+
+	iov->vf.config.ggtt_base = start;
+	iov->vf.config.ggtt_size = size;
+
+	return iov->vf.config.ggtt_size ? 0 : -ENODATA;
+}
+
+/**
+ * intel_iov_query_config - Query IOV config data over MMIO.
+ * @iov: the IOV struct
+ *
+ * This function is for VF use only.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_query_config(struct intel_iov *iov)
+{
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	err = vf_get_ggtt_info(iov);
 	if (unlikely(err))
 		return err;
 

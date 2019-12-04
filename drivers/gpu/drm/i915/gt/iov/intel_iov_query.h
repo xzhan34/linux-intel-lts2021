@@ -9,5 +9,6 @@
 struct intel_iov;
 
 int intel_iov_query_bootstrap(struct intel_iov *iov);
+int intel_iov_query_config(struct intel_iov *iov);
 
 #endif /* __INTEL_IOV_QUERY_H__ */

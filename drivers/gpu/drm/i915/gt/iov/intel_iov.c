@@ -59,6 +59,9 @@ int intel_iov_init_mmio(struct intel_iov *iov)
 		ret = intel_iov_query_bootstrap(iov);
 		if (unlikely(ret))
 			return ret;
+		ret = intel_iov_query_config(iov);
+		if (unlikely(ret))
+			return ret;
 	}
 
 	return 0;

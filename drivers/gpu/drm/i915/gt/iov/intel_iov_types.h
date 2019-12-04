@@ -171,6 +171,8 @@ struct intel_iov_relay {
 
 /**
  * struct intel_iov_vf_config - VF configuration data.
+ * @ggtt_base: base of GGTT region.
+ * @ggtt_size: size of GGTT region.
  */
 struct intel_iov_vf_config {
 	struct {
@@ -179,6 +181,8 @@ struct intel_iov_vf_config {
 		u8 minor;
 		u8 patch;
 	} guc_abi;
+	u64 ggtt_base;
+	u64 ggtt_size;
 };
 
 /**
