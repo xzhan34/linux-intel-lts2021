@@ -199,6 +199,11 @@ static int guc_action_query_single_klv(struct intel_guc *guc, u32 key,
 	return 0;
 }
 
+static int guc_action_query_single_klv32(struct intel_guc *guc, u32 key, u32 *value32)
+{
+	return guc_action_query_single_klv(guc, key, value32, 1);
+}
+
 static int guc_action_query_single_klv64(struct intel_guc *guc, u32 key, u64 *value64)
 {
 	u32 value[2];
@@ -238,6 +243,31 @@ static int vf_get_ggtt_info(struct intel_iov *iov)
 	return iov->vf.config.ggtt_size ? 0 : -ENODATA;
 }
 
+static int vf_get_submission_cfg(struct intel_iov *iov)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	u32 num_ctxs, num_dbs;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+	GEM_BUG_ON(iov->vf.config.num_ctxs);
+
+	err = guc_action_query_single_klv32(guc, GUC_KLV_VF_CFG_NUM_CONTEXTS_KEY, &num_ctxs);
+	if (unlikely(err))
+		return err;
+
+	err = guc_action_query_single_klv32(guc, GUC_KLV_VF_CFG_NUM_DOORBELLS_KEY, &num_dbs);
+	if (unlikely(err))
+		return err;
+
+	IOV_DEBUG(iov, "CTXs %u DBs %u\n", num_ctxs, num_dbs);
+
+	iov->vf.config.num_ctxs = num_ctxs;
+	iov->vf.config.num_dbs = num_dbs;
+
+	return iov->vf.config.num_ctxs ? 0 : -ENODATA;
+}
+
 /**
  * intel_iov_query_config - Query IOV config data over MMIO.
  * @iov: the IOV struct
@@ -253,6 +283,10 @@ int intel_iov_query_config(struct intel_iov *iov)
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
 
 	err = vf_get_ggtt_info(iov);
+	if (unlikely(err))
+		return err;
+
+	err = vf_get_submission_cfg(iov);
 	if (unlikely(err))
 		return err;
 

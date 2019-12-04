@@ -173,6 +173,8 @@ struct intel_iov_relay {
  * struct intel_iov_vf_config - VF configuration data.
  * @ggtt_base: base of GGTT region.
  * @ggtt_size: size of GGTT region.
+ * @num_ctxs: number of GuC submission contexts.
+ * @num_dbs: number of GuC doorbells.
  */
 struct intel_iov_vf_config {
 	struct {
@@ -183,6 +185,8 @@ struct intel_iov_vf_config {
 	} guc_abi;
 	u64 ggtt_base;
 	u64 ggtt_size;
+	u16 num_ctxs;
+	u16 num_dbs;
 };
 
 /**
