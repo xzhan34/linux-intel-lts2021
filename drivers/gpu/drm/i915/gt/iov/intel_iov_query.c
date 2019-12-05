@@ -266,6 +266,26 @@ static int vf_get_ggtt_info(struct intel_iov *iov)
 	return iov->vf.config.ggtt_size ? 0 : -ENODATA;
 }
 
+static int vf_get_lmem_info(struct intel_iov *iov)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	u64 size;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+	GEM_BUG_ON(iov->vf.config.lmem_size);
+
+	err = guc_action_query_single_klv64(guc, GUC_KLV_VF_CFG_LMEM_SIZE_KEY, &size);
+	if (unlikely(err))
+		return err;
+
+	IOV_DEBUG(iov, "LMEM %lluM\n", size / SZ_1M);
+
+	iov->vf.config.lmem_size = size;
+
+	return iov->vf.config.lmem_size ? 0 : -ENODATA;
+}
+
 static int vf_get_submission_cfg(struct intel_iov *iov)
 {
 	struct intel_guc *guc = iov_to_guc(iov);
@@ -318,6 +338,12 @@ int intel_iov_query_config(struct intel_iov *iov)
 	err = vf_get_ggtt_info(iov);
 	if (unlikely(err))
 		return err;
+
+	if (HAS_LMEM(iov_to_i915(iov))) {
+		err = vf_get_lmem_info(iov);
+		if (unlikely(err))
+			return err;
+	}
 
 	err = vf_get_submission_cfg(iov);
 	if (unlikely(err))
