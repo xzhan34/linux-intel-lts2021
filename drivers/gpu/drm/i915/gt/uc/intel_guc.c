@@ -25,6 +25,7 @@
 #endif
 
 static const struct intel_guc_ops guc_ops_default;
+static const struct intel_guc_ops guc_ops_vf;
 
 static struct i915_vma *guc_vma_from_obj(struct intel_guc *guc,
 					 struct drm_i915_gem_object *obj,
@@ -88,6 +89,10 @@ void intel_guc_init_send_regs(struct intel_guc *guc)
 					FW_REG_READ | FW_REG_WRITE);
 	}
 	guc->send_regs.fw_domains = fw_domains;
+
+	/* XXX: move to init_early when safe to call IS_SRIOV_VF */
+	if (IS_SRIOV_VF(guc_to_gt(guc)->i915))
+		guc->ops = &guc_ops_vf;
 }
 
 static void gen9_reset_guc_interrupts(struct intel_guc *guc)
@@ -753,6 +758,39 @@ static void __guc_fini(struct intel_guc *guc)
 	intel_guc_capture_destroy(guc);
 	intel_guc_log_destroy(&guc->log);
 	intel_uc_fw_fini(&guc->fw);
+}
+
+static int __vf_guc_init(struct intel_guc *guc)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+	int err;
+
+	GEM_BUG_ON(!IS_SRIOV_VF(gt->i915));
+
+	err = intel_guc_ct_init(&guc->ct);
+	if (err)
+		return err;
+
+	/* GuC submission is mandatory for VFs */
+	err = intel_guc_submission_init(guc);
+	if (err)
+		goto err_ct;
+
+	return 0;
+
+err_ct:
+	intel_guc_ct_fini(&guc->ct);
+	return err;
+}
+
+static void __vf_guc_fini(struct intel_guc *guc)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+
+	GEM_BUG_ON(!IS_SRIOV_VF(gt->i915));
+
+	intel_guc_submission_fini(guc);
+	intel_guc_ct_fini(&guc->ct);
 }
 
 /*
@@ -1524,4 +1562,9 @@ void intel_guc_print_info(struct intel_guc *guc, struct drm_printer *p)
 static const struct intel_guc_ops guc_ops_default = {
 	.init = __guc_init,
 	.fini = __guc_fini,
+};
+
+static const struct intel_guc_ops guc_ops_vf = {
+	.init = __vf_guc_init,
+	.fini = __vf_guc_fini,
 };
