@@ -24,6 +24,8 @@
 #define GUC_DEBUG(_guc, _fmt, ...) typecheck(struct intel_guc *, _guc)
 #endif
 
+static const struct intel_guc_ops guc_ops_default;
+
 static struct i915_vma *guc_vma_from_obj(struct intel_guc *guc,
 					 struct drm_i915_gem_object *obj,
 					 u32 bias);
@@ -260,6 +262,8 @@ void intel_guc_init_early(struct intel_guc *guc)
 
 	intel_guc_enable_msg(guc, INTEL_GUC_RECV_MSG_EXCEPTION |
 				  INTEL_GUC_RECV_MSG_CRASH_DUMP_POSTED);
+
+	guc->ops = &guc_ops_default;
 }
 
 void intel_guc_init_late(struct intel_guc *guc)
@@ -656,7 +660,7 @@ void intel_guc_dump_time_info(struct intel_guc *guc, struct drm_printer *p)
 		   gt->clock_frequency, gt->clock_period_ns);
 }
 
-int intel_guc_init(struct intel_guc *guc)
+static int __guc_init(struct intel_guc *guc)
 {
 	struct intel_gt *gt = guc_to_gt(guc);
 	int ret;
@@ -730,7 +734,7 @@ out:
 	return ret;
 }
 
-void intel_guc_fini(struct intel_guc *guc)
+static void __guc_fini(struct intel_guc *guc)
 {
 	if (!intel_uc_fw_is_loadable(&guc->fw))
 		return;
@@ -1516,3 +1520,8 @@ void intel_guc_print_info(struct intel_guc *guc, struct drm_printer *p)
 		intel_guc_submission_print_context_info(guc, p);
 	}
 }
+
+static const struct intel_guc_ops guc_ops_default = {
+	.init = __guc_init,
+	.fini = __guc_fini,
+};

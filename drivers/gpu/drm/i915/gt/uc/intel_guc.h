@@ -22,7 +22,13 @@
 #include "i915_vma.h"
 
 struct __guc_ads_blob;
+struct intel_guc;
 struct intel_guc_state_capture;
+
+struct intel_guc_ops {
+	int (*init)(struct intel_guc *guc);
+	void (*fini)(struct intel_guc *guc);
+};
 
 /**
  * struct intel_guc - Top level structure of GuC.
@@ -31,6 +37,8 @@ struct intel_guc_state_capture;
  * i915_sched_engine for submission.
  */
 struct intel_guc {
+	/** @ops: Operations to init / fini the GuC */
+	struct intel_guc_ops const *ops;
 	/** @fw: the GuC firmware */
 	struct intel_uc_fw fw;
 	/** @log: sub-structure containing GuC log related data and objects */
@@ -389,6 +397,19 @@ static inline u32 intel_guc_ggtt_offset(struct intel_guc *guc,
 	GEM_BUG_ON(range_overflows_t(u64, offset, vma->size, GUC_GGTT_TOP));
 
 	return offset;
+}
+
+static inline int intel_guc_init(struct intel_guc *guc)
+{
+	if (guc->ops->init)
+		return guc->ops->init(guc);
+	return 0;
+}
+
+static inline void intel_guc_fini(struct intel_guc *guc)
+{
+	if (guc->ops->fini)
+		guc->ops->fini(guc);
 }
 
 void intel_guc_init_early(struct intel_guc *guc);
