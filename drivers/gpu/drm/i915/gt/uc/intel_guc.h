@@ -465,7 +465,8 @@ static inline bool intel_guc_is_wanted(const struct intel_guc *guc)
 static inline bool intel_guc_is_used(const struct intel_guc *guc)
 {
 	GEM_BUG_ON(__intel_uc_fw_status(&guc->fw) == INTEL_UC_FIRMWARE_SELECTED);
-	return intel_uc_fw_is_available(&guc->fw);
+	return intel_uc_fw_is_available(&guc->fw) ||
+	       intel_uc_fw_is_preloaded(&guc->fw);
 }
 
 static inline bool intel_guc_is_fw_running(const struct intel_guc *guc)

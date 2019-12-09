@@ -43,7 +43,8 @@ static inline bool intel_gsc_uc_is_wanted(const struct intel_gsc_uc *gsc)
 static inline bool intel_gsc_uc_is_used(const struct intel_gsc_uc *gsc)
 {
 	GEM_BUG_ON(__intel_uc_fw_status(&gsc->fw) == INTEL_UC_FIRMWARE_SELECTED);
-	return intel_uc_fw_is_available(&gsc->fw);
+	return intel_uc_fw_is_available(&gsc->fw) ||
+	       intel_uc_fw_is_preloaded(&gsc->fw);
 }
 
 #endif
