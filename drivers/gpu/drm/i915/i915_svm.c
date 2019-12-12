@@ -218,8 +218,9 @@ static int i915_range_fault(struct svm_notifier *sn,
 		break;
 	}
 
-	flags = (va->flags & PRELIM_I915_GEM_VM_BIND_READONLY) ?
-		I915_GTT_SVM_READONLY : 0;
+	flags = (regions & REGION_LMEM) ? I915_GTT_SVM_LMEM : 0;
+	flags |= (va->flags & PRELIM_I915_GEM_VM_BIND_READONLY) ?
+		 I915_GTT_SVM_READONLY : 0;
 	ret = svm_bind_addr_commit(vm, &stash, va->start, va->length, flags,
 				   st, sg_page_sizes);
 	mutex_unlock(&svm->mutex);

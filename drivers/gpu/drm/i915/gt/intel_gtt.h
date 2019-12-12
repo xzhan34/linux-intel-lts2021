@@ -830,6 +830,7 @@ static inline void ppgtt_dump(struct i915_address_space *vm,
 
 /* SVM UAPI */
 #define I915_GTT_SVM_READONLY  BIT(0)
+#define I915_GTT_SVM_LMEM      BIT(1)
 
 int svm_bind_addr_prepare(struct i915_address_space *vm,
 			  struct i915_vm_pt_stash *stash,

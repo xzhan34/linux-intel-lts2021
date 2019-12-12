@@ -972,7 +972,7 @@ static void __gen8_ppgtt_dump(struct i915_address_space * const vm,
 	unsigned int idx, len;
 	gen8_pte_t *vaddr;
 	unsigned int pdpe;
-	bool is_large;
+	bool is_large, is_64k;
 
 	GEM_BUG_ON(end > vm->total >> GEN8_PTE_SHIFT);
 
@@ -994,6 +994,7 @@ static void __gen8_ppgtt_dump(struct i915_address_space * const vm,
 		DRM_DEBUG_DRIVER(format, prefix[lvl + 1], pdpe,
 				 start, vaddr[pdpe]);
 		is_large = (vaddr[pdpe] & GEN8_PDE_PS_2M);
+		is_64k = lvl ? 0 : vaddr[pdpe] & GEN12_PDE_64K;
 		if (is_large) {
 			start += BIT_ULL(gen8_pd_shift(lvl + 1));
 			continue;
@@ -1020,8 +1021,13 @@ static void __gen8_ppgtt_dump(struct i915_address_space * const vm,
 					DRM_DEBUG_DRIVER(format, prefix[lvl],
 							 pdpe, start,
 							 vaddr[pdpe]);
-				start++;
-				count--;
+				if (is_64k) {
+					start += 16;
+					count -= (count < 16) ? count : 16;
+				} else {
+					start++;
+					count--;
+				}
 				pdpe++;
 			}
 

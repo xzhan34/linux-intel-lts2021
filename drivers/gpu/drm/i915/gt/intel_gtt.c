@@ -804,6 +804,8 @@ int svm_bind_addr_commit(struct i915_address_space *vm,
 	/* Applicable to VLV, and gen8+ */
 	if (flags & I915_GTT_SVM_READONLY)
 		pte_flags |= PTE_READ_ONLY;
+	if (flags & I915_GTT_SVM_LMEM)
+		pte_flags |= (vm->top == 4 ? PTE_LM | PTE_AE : PTE_LM);
 
 	vm->insert_entries(vm, stash, vma,
 			   i915_gem_get_pat_index(vm->i915, I915_CACHE_NONE),

@@ -194,6 +194,9 @@ static int i915_devmem_bind_addr(struct i915_devmem_migrate *migrate,
 	sg_mark_end(sg);
 	i915_sg_trim(&st);
 
+	if (mem_id != INTEL_REGION_SMEM)
+		flags |= I915_GTT_SVM_LMEM;
+
 	ret = svm_bind_addr(vm, ww, node->start, npages * PAGE_SIZE,
 			    flags, &st, sg_page_sizes);
 	sg_free_table(&st);
