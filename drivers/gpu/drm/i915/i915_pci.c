@@ -949,6 +949,7 @@ static const struct intel_device_info tgl_info = {
 	.display.has_modular_fia = 1,
 	.platform_engine_mask =
 		BIT(RCS0) | BIT(BCS0) | BIT(VECS0) | BIT(VCS0) | BIT(VCS2),
+	.has_sriov = 1,
 };
 
 static const struct intel_device_info rkl_info = {
