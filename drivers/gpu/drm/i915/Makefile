@@ -242,7 +242,8 @@ i915-y += spi/intel_spi.o
 iov-y += \
 	i915_sriov.o \
 	i915_sriov_sysfs.o \
-	gt/iov/intel_iov.o
+	gt/iov/intel_iov.o \
+	gt/iov/intel_iov_provisioning.o
 i915-y += $(iov-y)
 
 # graphics hardware monitoring (HWMON) support
