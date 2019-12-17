@@ -1,0 +1,68 @@
+/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright © 2022 Intel Corporation
+ */
+
+#ifndef __INTEL_IOV_UTILS_H__
+#define __INTEL_IOV_UTILS_H__
+
+#include "i915_drv.h"
+
+static inline struct intel_gt *iov_to_gt(struct intel_iov *iov)
+{
+	return container_of(iov, struct intel_gt, iov);
+}
+
+static inline struct drm_i915_private *iov_to_i915(struct intel_iov *iov)
+{
+	return iov_to_gt(iov)->i915;
+}
+
+static inline struct device *iov_to_dev(struct intel_iov *iov)
+{
+	return iov_to_i915(iov)->drm.dev;
+}
+
+static inline bool intel_iov_is_pf(struct intel_iov *iov)
+{
+	return IS_SRIOV_PF(iov_to_i915(iov));
+}
+
+static inline bool intel_iov_is_vf(struct intel_iov *iov)
+{
+	return IS_SRIOV_VF(iov_to_i915(iov));
+}
+
+static inline bool intel_iov_is_enabled(struct intel_iov *iov)
+{
+	return intel_iov_is_pf(iov) || intel_iov_is_vf(iov);
+}
+
+static inline u16 pf_get_totalvfs(struct intel_iov *iov)
+{
+	return i915_sriov_pf_get_totalvfs(iov_to_i915(iov));
+}
+
+static inline bool pf_in_error(struct intel_iov *iov)
+{
+	return i915_sriov_pf_aborted(iov_to_i915(iov));
+}
+
+static inline int pf_get_status(struct intel_iov *iov)
+{
+	return i915_sriov_pf_status(iov_to_i915(iov));
+}
+
+#define IOV_ERROR(_iov, _fmt, ...) \
+	drm_notice(&iov_to_i915(_iov)->drm, "IOV: " _fmt, ##__VA_ARGS__)
+#define IOV_PROBE_ERROR(_iov, _fmt, ...) \
+	i915_probe_error(iov_to_i915(_iov), "IOV: " _fmt, ##__VA_ARGS__)
+
+static inline void pf_update_status(struct intel_iov *iov, int status, const char *reason)
+{
+	GEM_BUG_ON(status >= 0);
+	IOV_PROBE_ERROR(iov, "Initialization failed (%pe) %s\n", ERR_PTR(status), reason);
+	i915_sriov_pf_abort(iov_to_i915(iov), status);
+}
+
+#endif /* __INTEL_IOV_UTILS_H__ */

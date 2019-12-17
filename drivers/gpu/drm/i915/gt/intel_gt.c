@@ -38,6 +38,7 @@
 #include "intel_uncore.h"
 #include "intel_pagefault.h"
 #include "intel_pm.h"
+#include "iov/intel_iov.h"
 #include "shmem_utils.h"
 #include "intel_gt_sysfs.h"
 #include "pxp/intel_pxp.h"
@@ -989,10 +990,14 @@ int intel_gt_init(struct intel_gt *gt)
 	 */
 	intel_uncore_forcewake_get(gt->uncore, FORCEWAKE_ALL);
 
+	err = intel_iov_init(&gt->iov);
+	if (unlikely(err))
+		goto out_fw;
+
 	err = intel_gt_init_scratch(gt,
 				    GRAPHICS_VER(gt->i915) == 2 ? SZ_256K : SZ_4K);
 	if (err)
-		goto out_fw;
+		goto err_iov;
 
 	err = intel_gt_init_counters(gt, SZ_4K);
 	if (err && err != -ENODEV)
@@ -1065,6 +1070,8 @@ err_pm:
 	intel_gt_fini_counters(gt);
 err_scratch:
 	intel_gt_fini_scratch(gt);
+err_iov:
+	intel_iov_fini(&gt->iov);
 out_fw:
 	if (err)
 		intel_gt_set_wedged_on_init(gt);
@@ -1121,6 +1128,7 @@ void intel_gt_driver_release(struct intel_gt *gt)
 	intel_gt_fini_scratch(gt);
 	intel_gt_fini_buffer_pool(gt);
 	intel_gt_fini_hwconfig(gt);
+	intel_iov_fini(&gt->iov);
 }
 
 void intel_gt_driver_late_release_all(struct drm_i915_private *i915)
@@ -1132,6 +1140,7 @@ void intel_gt_driver_late_release_all(struct drm_i915_private *i915)
 	rcu_barrier();
 
 	for_each_gt(gt, i915, id) {
+		intel_iov_release(&gt->iov);
 		intel_uc_driver_late_release(&gt->uc);
 		intel_gt_fini_ccs_mode(gt);
 		intel_gt_fini_requests(gt);
@@ -1234,6 +1243,8 @@ static int intel_gt_tile_setup(struct intel_gt *gt,
 		return ret;
 
 	gt->phys_addr = phys_addr;
+
+	intel_iov_init_early(&gt->iov);
 
 	if (!id) {
 		ret = driver_flr_init(gt);

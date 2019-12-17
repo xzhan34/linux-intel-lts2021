@@ -79,6 +79,7 @@
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_gt_regs.h"
 #include "gt/intel_rc6.h"
+#include "gt/iov/intel_iov.h"
 
 #include "pxp/intel_pxp_pm.h"
 
@@ -1464,6 +1465,9 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto out_driver_late_release;
 
 	disable_rpm_wakeref_asserts(&i915->runtime_pm);
+
+	/* XXX find better place */
+	intel_iov_init_early(&to_gt(i915)->iov);
 
 	if (HAS_LMEM(i915))
 		i915_resize_lmem_bar(i915);

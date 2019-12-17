@@ -18,6 +18,7 @@
 
 #include <drm/drm_mm.h>
 
+#include "iov/intel_iov_types.h"
 #include "uc/intel_uc.h"
 #include "intel_gsc.h"
 
@@ -194,6 +195,7 @@ struct intel_gt {
 	struct intel_uc uc;
 	struct intel_gsc gsc;
 	struct intel_wopcm wopcm;
+	struct intel_iov iov;
 	enum intel_engine_id rsvd_bcs;
 
 	struct {
