@@ -1114,6 +1114,10 @@ static int i915_driver_hw_probe(struct drm_i915_private *dev_priv)
 
 	pci_set_master(pdev);
 
+	/* Assume that VF is up, otherwise we may end with unknown state */
+	if (IS_SRIOV_VF(dev_priv))
+		ret = pci_set_power_state(pdev, PCI_D0);
+
 	/* On the 945G/GM, the chipset reports the MSI capability on the
 	 * integrated graphics even though the support isn't actually there
 	 * according to the published specs.  It doesn't appear to function
