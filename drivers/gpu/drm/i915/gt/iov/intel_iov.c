@@ -35,10 +35,17 @@ void intel_iov_release(struct intel_iov *iov)
  * intel_iov_init - Initialize IOV.
  * @iov: the IOV struct
  *
+ * On PF this function performs initial partitioning of the shared resources
+ * that can't be changed later (GuC submission contexts) to allow early PF
+ * provisioning.
+ *
  * Return: 0 on success or a negative error code on failure.
  */
 int intel_iov_init(struct intel_iov *iov)
 {
+	if (intel_iov_is_pf(iov))
+		intel_iov_provisioning_init(iov);
+
 	return 0;
 }
 

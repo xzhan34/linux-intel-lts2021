@@ -488,6 +488,11 @@ static u16 decode_vf_ctxs_count(u16 num_bits)
 	return __decode_ctxs_count(num_bits, false);
 }
 
+static u16 decode_pf_ctxs_count(u16 num_bits)
+{
+	return __decode_ctxs_count(num_bits, true);
+}
+
 static u16 __decode_ctxs_start(u16 start_bit, bool first)
 {
 	GEM_BUG_ON(first && start_bit);
@@ -1095,6 +1100,51 @@ u32 intel_iov_provisioning_get_preempt_timeout(struct intel_iov *iov, unsigned i
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return preempt_timeout;
+}
+
+static void pf_assign_ctxs_for_pf(struct intel_iov *iov)
+{
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	u16 total_vfs = pf_get_totalvfs(iov);
+	const u16 total_ctxs_bits = ctxs_bitmap_total_bits();
+	u16 pf_ctxs_bits;
+	u16 pf_ctxs;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(!total_vfs);
+	GEM_BUG_ON(provisioning->configs[0].num_ctxs);
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	pf_ctxs_bits = total_ctxs_bits - ((total_ctxs_bits / (1 + total_vfs)) * total_vfs);
+	pf_ctxs = decode_pf_ctxs_count(pf_ctxs_bits);
+
+	IOV_DEBUG(iov, "config: %s %u = %u pf + %u available\n",
+		  "contexts", GUC_MAX_CONTEXT_ID, pf_ctxs, GUC_MAX_CONTEXT_ID - pf_ctxs);
+
+	provisioning->configs[0].begin_ctx = 0;
+	provisioning->configs[0].num_ctxs = pf_ctxs;
+}
+
+/**
+ * intel_iov_provisioning_init - Perform initial provisioning of the resources.
+ * @iov: the IOV struct
+ *
+ * Some resources shared between PF and VFs need to partitioned early, as PF
+ * allocation can't be changed later, only VFs allocations can be modified until
+ * all VFs are enabled. Perform initial partitioning to get fixed PF resources.
+ *
+ * This function can only be called on PF.
+ */
+void intel_iov_provisioning_init(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (unlikely(pf_in_error(iov)))
+		return;
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	pf_assign_ctxs_for_pf(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
 }
 
 static bool pf_is_auto_provisioning_enabled(struct intel_iov *iov)
