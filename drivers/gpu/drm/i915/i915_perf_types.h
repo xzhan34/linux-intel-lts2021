@@ -463,7 +463,7 @@ struct i915_perf {
 	 * Use a format mask to store the supported formats
 	 * for a platform.
 	 */
-#define FORMAT_MASK_SIZE DIV_ROUND_UP(I915_OA_FORMAT_MAX - 1, BITS_PER_LONG)
+#define FORMAT_MASK_SIZE DIV_ROUND_UP(PRELIM_I915_OA_FORMAT_MAX - 1, BITS_PER_LONG)
 	unsigned long format_mask[FORMAT_MASK_SIZE];
 
 	atomic64_t noa_programming_delay;

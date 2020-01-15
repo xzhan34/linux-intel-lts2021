@@ -307,7 +307,7 @@ static u32 i915_oa_max_sample_rate = 100000;
  * code assumes all reports have a power-of-two size and ~(size - 1) can
  * be used as a mask to align the OA tail pointer.
  */
-static const struct i915_oa_format oa_formats[I915_OA_FORMAT_MAX] = {
+static const struct i915_oa_format oa_formats[PRELIM_I915_OA_FORMAT_MAX] = {
 	[I915_OA_FORMAT_A13]	    = { 0, 64 },
 	[I915_OA_FORMAT_A29]	    = { 1, 128 },
 	[I915_OA_FORMAT_A13_B8_C8]  = { 2, 128 },
@@ -321,6 +321,9 @@ static const struct i915_oa_format oa_formats[I915_OA_FORMAT_MAX] = {
 	[I915_OA_FORMAT_A32u40_A4u32_B8_C8] = { 5, 256 },
 	[I915_OAR_FORMAT_A32u40_A4u32_B8_C8]    = { 5, 256 },
 	[I915_OA_FORMAT_A24u40_A14u32_B8_C8]    = { 5, 256 },
+	[PRELIM_I915_OAR_FORMAT_A32u40_A4u32_B8_C8]    = { 5, 256 },
+	[PRELIM_I915_OA_FORMAT_A24u40_A14u32_B8_C8]    = { 5, 256 },
+	[PRELIM_I915_OAM_FORMAT_A2u64_B8_C8]           = { 5, 128 },
 };
 
 #define SAMPLE_OA_REPORT      (1<<0)
@@ -474,6 +477,7 @@ static bool oa_buffer_check_unlocked(struct i915_perf_stream *stream)
 	bool pollin;
 	u32 hw_tail;
 	u64 now;
+	u32 partial_report_size;
 
 	/* We have to consider the (unlikely) possibility that read() errors
 	 * could result in an OA buffer reset which might reset the head and
@@ -483,10 +487,16 @@ static bool oa_buffer_check_unlocked(struct i915_perf_stream *stream)
 
 	hw_tail = stream->perf->ops.oa_hw_tail_read(stream);
 
-	/* The tail pointer increases in 64 byte increments,
-	 * not in report_size steps...
+	/* The tail pointer increases in 64 byte increments, whereas report
+	 * sizes need not be integral multiples or 64 or powers of 2.
+	 * Compute potentially partially landed report in the OA buffer
 	 */
-	hw_tail &= ~(report_size - 1);
+	partial_report_size = OA_TAKEN(hw_tail, stream->oa_buffer.tail);
+	partial_report_size %= report_size;
+
+	/* Subtract partial amount off the tail */
+	hw_tail = gtt_offset + ((hw_tail - partial_report_size) &
+				(stream->oa_buffer.vma->size - 1));
 
 	now = ktime_get_mono_fast_ns();
 
@@ -609,6 +619,8 @@ static int append_oa_sample(struct i915_perf_stream *stream,
 {
 	int report_size = stream->oa_buffer.format->size;
 	struct drm_i915_perf_record_header header;
+	int report_size_partial;
+	u8 *oa_buf_end;
 
 	header.type = DRM_I915_PERF_RECORD_SAMPLE;
 	header.pad = 0;
@@ -622,7 +634,19 @@ static int append_oa_sample(struct i915_perf_stream *stream,
 		return -EFAULT;
 	buf += sizeof(header);
 
-	if (copy_to_user(buf, report, report_size))
+	oa_buf_end = stream->oa_buffer.vaddr +
+		     stream->oa_buffer.vma->size;
+	report_size_partial = oa_buf_end - report;
+
+	if (report_size_partial < report_size) {
+		if(copy_to_user(buf, report, report_size_partial))
+			return -EFAULT;
+		buf += report_size_partial;
+
+		if(copy_to_user(buf, stream->oa_buffer.vaddr,
+				report_size - report_size_partial))
+			return -EFAULT;
+	} else if (copy_to_user(buf, report, report_size))
 		return -EFAULT;
 
 	(*offset) += header.size;
@@ -692,8 +716,8 @@ static int gen8_append_oa_reports(struct i915_perf_stream *stream,
 	 * all a power of two).
 	 */
 	if (drm_WARN_ONCE(&uncore->i915->drm,
-			  head > stream->oa_buffer.vma->size || head % report_size ||
-			  tail > stream->oa_buffer.vma->size || tail % report_size,
+			  head > stream->oa_buffer.vma->size ||
+			  tail > stream->oa_buffer.vma->size,
 			  "Inconsistent OA buffer pointers: head = %u, tail = %u\n",
 			  head, tail))
 		return -EIO;
@@ -706,22 +730,6 @@ static int gen8_append_oa_reports(struct i915_perf_stream *stream,
 		u32 *report32 = (void *)report;
 		u32 ctx_id;
 		u32 reason;
-
-		/*
-		 * All the report sizes factor neatly into the buffer
-		 * size so we never expect to see a report split
-		 * between the beginning and end of the buffer.
-		 *
-		 * Given the initial alignment check a misalignment
-		 * here would imply a driver bug that would result
-		 * in an overrun.
-		 */
-		if (drm_WARN_ON(&uncore->i915->drm,
-				(stream->oa_buffer.vma->size - head) < report_size)) {
-			drm_err(&uncore->i915->drm,
-				"Spurious OA head ptr: non-integral report offset\n");
-			break;
-		}
 
 		/*
 		 * The reason field includes flags identifying what
@@ -4132,7 +4140,7 @@ oa_format_valid(struct i915_perf *perf, enum drm_i915_oa_format format)
 }
 
 static __always_inline void
-oa_format_add(struct i915_perf *perf, enum drm_i915_oa_format format)
+oa_format_add(struct i915_perf *perf, int format)
 {
 	__set_bit(format, perf->format_mask);
 }
@@ -4243,7 +4251,7 @@ static int read_properties_unlocked(struct i915_perf *perf,
 			props->metrics_set = value;
 			break;
 		case DRM_I915_PERF_PROP_OA_FORMAT:
-			if (value == 0 || value >= I915_OA_FORMAT_MAX) {
+			if (value == 0 || value >= PRELIM_I915_OA_FORMAT_MAX) {
 				drm_dbg(&perf->i915->drm,
 					"Out-of-range OA report format %llu\n",
 					  value);
@@ -5038,6 +5046,14 @@ static void oa_init_supported_formats(struct i915_perf *perf)
 		oa_format_add(perf, I915_OA_FORMAT_A12_B8_C8);
 		oa_format_add(perf, I915_OA_FORMAT_A32u40_A4u32_B8_C8);
 		oa_format_add(perf, I915_OA_FORMAT_C4_B8);
+		break;
+
+	case INTEL_XEHPSDV:
+		oa_format_add(perf, I915_OAR_FORMAT_A32u40_A4u32_B8_C8);
+		oa_format_add(perf, I915_OA_FORMAT_A24u40_A14u32_B8_C8);
+		oa_format_add(perf, PRELIM_I915_OAR_FORMAT_A32u40_A4u32_B8_C8);
+		oa_format_add(perf, PRELIM_I915_OA_FORMAT_A24u40_A14u32_B8_C8);
+		oa_format_add(perf, PRELIM_I915_OAM_FORMAT_A2u64_B8_C8);
 		break;
 
 	case INTEL_DG2:

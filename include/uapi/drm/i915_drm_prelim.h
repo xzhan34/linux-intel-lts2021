@@ -257,6 +257,18 @@ struct prelim_i915_context_param_engines {
 #define PRELIM_I915_CONTEXT_ENGINES_EXT_PARALLEL_SUBMIT (PRELIM_I915_USER_EXT | 2) /* see prelim_i915_context_engines_parallel_submit */
 };
 
+/* PRELIM OA formats */
+enum prelim_drm_i915_oa_format {
+	PRELIM_I915_OA_FORMAT_START = 128,
+
+	/* XEHPSDV */
+	PRELIM_I915_OAR_FORMAT_A32u40_A4u32_B8_C8 = PRELIM_I915_OA_FORMAT_START,
+	PRELIM_I915_OA_FORMAT_A24u40_A14u32_B8_C8,
+	PRELIM_I915_OAM_FORMAT_A2u64_B8_C8,
+
+	PRELIM_I915_OA_FORMAT_MAX	/* non-ABI */
+};
+
 struct prelim_drm_i915_gem_context_param {
 /*
  * I915_CONTEXT_PARAM_DEBUG_FLAGS
