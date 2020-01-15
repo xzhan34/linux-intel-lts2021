@@ -306,7 +306,8 @@ static u32 i915_oa_max_sample_rate = 100000;
 
 /* XXX: beware if future OA HW adds new report formats that the current
  * code assumes all reports have a power-of-two size and ~(size - 1) can
- * be used as a mask to align the OA tail pointer.
+ * be used as a mask to align the OA tail pointer. In some of the
+ * formats, R is used to denote reserved field.
  */
 static const struct i915_oa_format oa_formats[PRELIM_I915_OA_FORMAT_MAX] = {
 	[I915_OA_FORMAT_A13]	    = { 0, 64 },
@@ -325,6 +326,11 @@ static const struct i915_oa_format oa_formats[PRELIM_I915_OA_FORMAT_MAX] = {
 	[PRELIM_I915_OAR_FORMAT_A32u40_A4u32_B8_C8]    = { 5, 256 },
 	[PRELIM_I915_OA_FORMAT_A24u40_A14u32_B8_C8]    = { 5, 256 },
 	[PRELIM_I915_OAM_FORMAT_A2u64_B8_C8]           = { 5, 128, TYPE_OAM },
+	[PRELIM_I915_OAR_FORMAT_A36u64_B8_C8]		= { 1, 384, 0 },
+	[PRELIM_I915_OAC_FORMAT_A24u64_B8_C8]		= { 1, 320, 0 },
+	[PRELIM_I915_OA_FORMAT_A38u64_R2u64_B8_C8]	= { 1, 448, 0 },
+	[PRELIM_I915_OAM_FORMAT_A2u64_R2u64_B8_C8]	= { 1, 128, TYPE_OAM },
+	[PRELIM_I915_OAC_FORMAT_A22u32_R2u32_B8_C8]	= { 2, 192, 0 },
 };
 
 static const u32 xehpsdv_oa_base[] = {
@@ -5610,6 +5616,14 @@ static void oa_init_supported_formats(struct i915_perf *perf)
 	case INTEL_DG2:
 		oa_format_add(perf, I915_OAR_FORMAT_A32u40_A4u32_B8_C8);
 		oa_format_add(perf, I915_OA_FORMAT_A24u40_A14u32_B8_C8);
+		oa_format_add(perf, PRELIM_I915_OAR_FORMAT_A32u40_A4u32_B8_C8);
+		oa_format_add(perf, PRELIM_I915_OA_FORMAT_A24u40_A14u32_B8_C8);
+		oa_format_add(perf, PRELIM_I915_OAM_FORMAT_A2u64_B8_C8);
+		oa_format_add(perf, PRELIM_I915_OAR_FORMAT_A36u64_B8_C8);
+		oa_format_add(perf, PRELIM_I915_OAC_FORMAT_A24u64_B8_C8);
+		oa_format_add(perf, PRELIM_I915_OA_FORMAT_A38u64_R2u64_B8_C8);
+		oa_format_add(perf, PRELIM_I915_OAM_FORMAT_A2u64_R2u64_B8_C8);
+		oa_format_add(perf, PRELIM_I915_OAC_FORMAT_A22u32_R2u32_B8_C8);
 		break;
 
 	default:
