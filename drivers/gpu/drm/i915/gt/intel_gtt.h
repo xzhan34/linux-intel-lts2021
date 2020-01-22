@@ -26,6 +26,7 @@
 #include <drm/drm_mm.h>
 
 #include "gt/intel_reset.h"
+#include "i915_scatterlist.h"
 #include "i915_selftest.h"
 #include "i915_vma_types.h"
 
@@ -681,11 +682,24 @@ __vm_create_scratch_for_read_pinned(struct i915_address_space *vm, unsigned long
 static inline struct sgt_dma {
 	struct scatterlist *sg;
 	dma_addr_t dma, max;
+	u64 rem;
 } sgt_dma(struct i915_vma *vma) {
 	struct scatterlist *sg = vma->pages->sgl;
-	dma_addr_t addr = sg_dma_address(sg);
+	u64 max, offset = 0;
+	dma_addr_t addr;
 
-	return (struct sgt_dma){ sg, addr, addr + sg_dma_len(sg) };
+	/* For partial binding, skip until specified offset */
+	if (vma->ggtt_view.type == I915_GGTT_VIEW_PARTIAL) {
+		offset = vma->ggtt_view.partial.offset << PAGE_SHIFT;
+		while (offset >= sg_dma_len(sg)) {
+			offset -= sg_dma_len(sg);
+			sg = __sg_next(sg);
+		}
+	}
+
+	addr = sg_dma_address(sg) + offset;
+	max = addr + min_t(u64, (sg_dma_len(sg) - offset), vma->size);
+	return (struct sgt_dma) { sg, addr, max, vma->size };
 }
 
 #endif
