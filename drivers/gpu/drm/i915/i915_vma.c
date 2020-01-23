@@ -216,6 +216,10 @@ vma_create(struct drm_i915_gem_object *obj,
 		__set_bit(I915_VMA_GGTT_BIT, __i915_vma_flags(vma));
 	}
 
+	if (!i915_vma_is_ggtt(vma) &&
+	    (view && view->type == I915_GGTT_VIEW_PARTIAL))
+		goto skip_rb_insert;
+
 	rb = NULL;
 	p = &obj->vma.tree.rb_node;
 	while (*p) {
@@ -240,6 +244,7 @@ vma_create(struct drm_i915_gem_object *obj,
 	rb_link_node(&vma->obj_node, rb, p);
 	rb_insert_color(&vma->obj_node, &obj->vma.tree);
 
+skip_rb_insert:
 	if (i915_vma_is_ggtt(vma))
 		/*
 		 * We put the GGTT vma at the start of the vma-list, followed
@@ -308,13 +313,16 @@ i915_vma_instance(struct drm_i915_gem_object *obj,
 		  struct i915_address_space *vm,
 		  const struct i915_ggtt_view *view)
 {
-	struct i915_vma *vma;
+	struct i915_vma *vma = NULL;
 
 	GEM_BUG_ON(!atomic_read(&vm->open));
 
-	spin_lock(&obj->vma.lock);
-	vma = i915_vma_lookup(obj, vm, view);
-	spin_unlock(&obj->vma.lock);
+	if (i915_is_ggtt(vm) || !view ||
+	    view->type != I915_GGTT_VIEW_PARTIAL) {
+		spin_lock(&obj->vma.lock);
+		vma = i915_vma_lookup(obj, vm, view);
+		spin_unlock(&obj->vma.lock);
+	}
 
 	/* vma_create() will resolve the race if another creates the vma */
 	if (unlikely(!vma))
