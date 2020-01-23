@@ -126,6 +126,7 @@ struct iaf_pdata {
 	void *parent;
 	enum product_type product;
 	u16 index;
+	struct dpa_space dpa;
 	u8 sd_cnt;
 	u8 socket_id;
 	u8 slot;

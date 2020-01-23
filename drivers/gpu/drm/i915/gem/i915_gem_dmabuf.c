@@ -62,7 +62,6 @@ static int dmabuf_map_addr(struct device *dev, struct drm_i915_gem_object *obj,
 
 	for_each_sg(sgt->sgl, sg, sgt->orig_nents, i) {
 		addr = sg_dma_address(sg) - mem->region.start + mem->io_start;
-
 		sg->dma_address = dma_map_resource(dev, addr, sg->length, dir,
 						   attrs);
 		if (dma_mapping_error(dev, sg->dma_address))

@@ -15,6 +15,8 @@
 #include <drm/intel_iaf_platform.h>
 
 #include "gt/intel_gt.h"
+#include "gt/intel_gt_mcr.h"
+#include "gt/intel_gt_regs.h"
 
 #include "i915_drv.h"
 #include "intel_iaf.h"
@@ -82,6 +84,7 @@ static int dev_event(void *parent, void *handle, enum iaf_dev_event event,
 static struct iaf_pdata *init_pd(struct drm_i915_private *i915)
 {
 	struct iaf_pdata *pd;
+	u32 reg;
 
 	pd = kzalloc(sizeof(*pd), GFP_KERNEL);
 	if (!pd)
@@ -102,6 +105,22 @@ static struct iaf_pdata *init_pd(struct drm_i915_private *i915)
 	pd->register_dev = register_dev;
 	pd->unregister_dev = unregister_dev;
 	pd->dev_event = dev_event;
+
+	/*
+	 * Calculate the actual DPA offset and size (in GB) for the device.
+	 * Each tile will have the same amount of memory, so we only need to
+	 * read the first one.
+	 */
+	reg = intel_gt_mcr_read_any(to_gt(i915), XEHP_TILE0_ADDR_RANGE) &
+		XEHP_TILE_LMEM_RANGE_MASK;
+
+	// FIXME: On some systems, TILE0 is < 8Gb. PVC needs 8GB, so fake it.
+	if (reg >> XEHP_TILE_LMEM_RANGE_SHIFT < 8) {
+		drm_err(&i915->drm, "XEHP_TILE0_ADDR_RANGE: %x\n", reg);
+		reg = 8 << XEHP_TILE_LMEM_RANGE_SHIFT;
+	}
+	pd->dpa.pkg_offset = (u32)i915->intel_iaf.index * MAX_DPA_SIZE;
+	pd->dpa.pkg_size = (reg >> XEHP_TILE_LMEM_RANGE_SHIFT) * pd->sd_cnt;
 
 	return pd;
 }
@@ -319,6 +338,10 @@ void intel_iaf_init(struct drm_i915_private *i915)
 			goto set_range;
 		}
 		i915->intel_iaf.index = index;
+		i915->intel_iaf.dpa = (u64)index * MAX_DPA_SIZE * SZ_1G;
+		drm_info(&i915->drm, "IAF: [dpa 0x%llx-0x%llx]\n",
+			 i915->intel_iaf.dpa,
+			 ((u64)index + 1) * MAX_DPA_SIZE * SZ_1G - 1);
 	}
 
 	/*
