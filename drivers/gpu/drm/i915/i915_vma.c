@@ -1297,6 +1297,7 @@ void i915_vma_release(struct kref *ref)
 
 	GEM_BUG_ON(i915_vma_is_active(vma));
 	GEM_BUG_ON(drm_mm_node_allocated(&vma->node));
+	GEM_BUG_ON(i915_active_fence_isset(&vma->active.excl));
 	GEM_BUG_ON(!list_empty(&vma->vm_bind_link));
 
 	i915_vm_put(vma->vm);
@@ -1450,12 +1451,6 @@ void i915_vma_revoke_mmap(struct i915_vma *vma)
 	i915_vma_unset_userfault(vma);
 	if (!--vma->obj->userfault_count)
 		list_del(&vma->obj->userfault_link);
-}
-
-static int
-__i915_request_await_bind(struct i915_request *rq, struct i915_vma *vma)
-{
-	return __i915_request_await_exclusive(rq, &vma->active);
 }
 
 static int __i915_vma_move_to_active(struct i915_vma *vma, struct i915_request *rq)

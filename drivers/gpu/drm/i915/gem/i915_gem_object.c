@@ -46,6 +46,7 @@
 #include "i915_gem_object_blt.h"
 #include "i915_gem_region.h"
 #include "i915_gem_tiling.h"
+#include "i915_gem_vm_bind.h"
 #include "i915_memcpy.h"
 #include "i915_trace.h"
 

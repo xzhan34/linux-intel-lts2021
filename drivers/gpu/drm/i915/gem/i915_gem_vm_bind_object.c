@@ -139,6 +139,7 @@ static struct i915_vma *vm_bind_get_vma(struct i915_address_space *vm,
 
 	vma->start = va->start;
 	vma->last = va->start + va->length - 1;
+	__set_bit(I915_VMA_PERSISTENT_BIT, __i915_vma_flags(vma));
 
 	return __i915_vma_get(vma);
 }

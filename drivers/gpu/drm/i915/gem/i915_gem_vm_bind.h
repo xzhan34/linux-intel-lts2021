@@ -26,6 +26,8 @@ static inline void i915_gem_vm_bind_unlock(struct i915_address_space *vm)
 	mutex_unlock(&vm->vm_bind_lock);
 }
 
+#define assert_vm_priv_held(vm)   assert_object_held((vm)->root_obj)
+
 static inline int i915_gem_vm_priv_lock(struct i915_address_space *vm,
 					struct i915_gem_ww_ctx *ww)
 {

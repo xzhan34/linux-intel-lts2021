@@ -52,12 +52,6 @@ void i915_destroy_window_vma(struct i915_vma *vma);
 
 void i915_vma_unpin_and_release(struct i915_vma **p_vma, unsigned int flags);
 #define I915_VMA_RELEASE_MAP BIT(0)
-
-static inline bool i915_vma_is_active(const struct i915_vma *vma)
-{
-	return !i915_active_is_idle(&vma->active);
-}
-
 /* do not reserve memory to prevent deadlocks */
 #define __EXEC_OBJECT_NO_RESERVE BIT(31)
 
@@ -174,6 +168,23 @@ static inline bool i915_vma_is_purged(const struct i915_vma *vma)
 static inline bool i915_vma_set_purged(struct i915_vma *vma)
 {
        return !test_and_set_bit(I915_VMA_PURGED_BIT, __i915_vma_flags(vma));
+}
+
+static inline bool i915_vma_is_persistent(const struct i915_vma *vma)
+{
+	return test_bit(I915_VMA_PERSISTENT_BIT, __i915_vma_flags(vma));
+}
+
+static inline bool i915_vma_is_active(const struct i915_vma *vma)
+{
+	if (i915_vma_is_purged(vma))
+		return false;
+
+	if (i915_vma_is_persistent(vma) &&
+	    i915_vm_is_active(vma->vm))
+		return true;
+
+	return !i915_active_is_idle(&vma->active);
 }
 
 static inline struct i915_vma *i915_vma_get(struct i915_vma *vma)
@@ -470,8 +481,30 @@ int i915_vma_wait_for_bind(struct i915_vma *vma);
 
 static inline int i915_vma_sync(struct i915_vma *vma)
 {
+	int ret;
+
 	/* Wait for the asynchronous bindings and pending GPU reads */
-	return i915_active_wait(&vma->active);
+	ret = i915_active_wait(&vma->active);
+	if (ret || !i915_vma_is_persistent(vma) || i915_vma_is_purged(vma))
+		return ret;
+
+	return i915_vm_sync(vma->vm);
+}
+
+static inline bool i915_vma_is_bind_complete(struct i915_vma *vma)
+{
+	/* Ensure vma bind is initiated */
+	if (!i915_vma_is_bound(vma, I915_VMA_BIND_MASK))
+		return false;
+
+	/* Ensure any binding started is complete */
+	return !i915_active_fence_isset(&vma->active.excl);
+}
+
+static inline int
+__i915_request_await_bind(struct i915_request *rq, struct i915_vma *vma)
+{
+	return __i915_request_await_exclusive(rq, &vma->active);
 }
 
 void i915_vma_module_exit(void);
