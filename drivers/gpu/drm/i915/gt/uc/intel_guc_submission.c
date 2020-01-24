@@ -2761,6 +2761,12 @@ static u32 map_guc_prio_to_lrc_desc_prio(u8 prio)
 	}
 }
 
+static inline void update_um_queues_regs(struct intel_context *ce)
+{
+	if (HAS_UM_QUEUES(ce->engine->i915))
+		ce->lrc_reg_state[PVC_CTX_ASID] = ce->vm->asid;
+}
+
 static void prepare_context_registration_info_v69(struct intel_context *ce)
 {
 	struct intel_engine_cs *engine = ce->engine;
@@ -2770,6 +2776,8 @@ static void prepare_context_registration_info_v69(struct intel_context *ce)
 	struct intel_context *child;
 
 	GEM_BUG_ON(!engine->mask);
+
+	update_um_queues_regs(ce);
 
 	/*
 	 * Ensure LRC + CT vmas are is same region as write barrier is done
@@ -2837,6 +2845,8 @@ static void prepare_context_registration_info_v70(struct intel_context *ce,
 
 	GEM_BUG_ON(!engine->mask);
 
+	update_um_queues_regs(ce);
+
 	memset(info, 0, sizeof(*info));
 	info->context_idx = ctx_id;
 	info->engine_class = engine_class_to_guc_class(engine->class);
@@ -2858,6 +2868,7 @@ static void prepare_context_registration_info_v70(struct intel_context *ce,
 	if (intel_context_is_parent(ce)) {
 		struct guc_sched_wq_desc *wq_desc;
 		u64 wq_desc_offset, wq_base_offset;
+		struct intel_context *child;
 
 		ce->parallel.guc.wqi_tail = 0;
 		ce->parallel.guc.wqi_head = 0;
@@ -2879,6 +2890,9 @@ static void prepare_context_registration_info_v70(struct intel_context *ce,
 		ce->parallel.guc.wq_head = &wq_desc->head;
 		ce->parallel.guc.wq_tail = &wq_desc->tail;
 		ce->parallel.guc.wq_status = &wq_desc->wq_status;
+
+		for_each_child(ce, child)
+			update_um_queues_regs(child);
 
 		clear_children_join_go_memory(ce);
 	}
