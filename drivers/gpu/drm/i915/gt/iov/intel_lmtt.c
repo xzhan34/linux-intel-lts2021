@@ -12,6 +12,7 @@
 #include "gt/intel_gt_regs.h"
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_region.h"
+#include "gt/intel_gt.h"
 
 static struct intel_gt *lmtt_to_gt(struct intel_lmtt *lmtt)
 {
@@ -234,13 +235,18 @@ static u64 __lmtt_offset(struct intel_lmtt *lmtt, unsigned int vf)
 
 static resource_size_t __lmtt_size(struct intel_lmtt *lmtt, unsigned int vf)
 {
-	struct intel_gt *gt = lmtt_to_gt(lmtt);
+	struct intel_gt *_gt, *gt = lmtt_to_gt(lmtt);
 	struct drm_i915_gem_object *obj;
 	resource_size_t size = 0;
+	unsigned int id;
 
-	obj = gt->iov.pf.provisioning.configs[vf].lmem_obj;
-	size = obj->base.size;
+	for_each_gt(_gt, gt->i915, id) {
+		obj = _gt->iov.pf.provisioning.configs[vf].lmem_obj;
+		if (!obj)
+			continue;
 
+		size += obj->base.size;
+	}
 	GEM_BUG_ON(!IS_ALIGNED(size, BIT_ULL(lmtt->ops->lmtt_pte_shift(0))));
 
 	return size;
@@ -288,17 +294,30 @@ __lmtt_insert_entries(struct intel_lmtt *lmtt, unsigned int vf,
 static int
 lmtt_insert_entries(struct intel_lmtt *lmtt, unsigned int vf, u64 start)
 {
-	struct intel_gt *gt = lmtt_to_gt(lmtt);
-	struct drm_i915_gem_object *obj;
-	struct sg_table *sg;
+	struct intel_gt *_gt, *gt = lmtt_to_gt(lmtt);
+	unsigned int id;
 	int err;
 
-	obj = gt->iov.pf.provisioning.configs[vf].lmem_obj;
-	sg = obj->mm.pages;
+	/*
+	 * Each tile has its own LMTT, and we need to make all objects (which
+	 * are also per-tile) available.
+	 */
+	for_each_gt(_gt, gt->i915, id) {
+		struct drm_i915_gem_object *obj = _gt->iov.pf.provisioning.configs[vf].lmem_obj;
+		struct sg_table *sg;
 
-	err = __lmtt_insert_entries(lmtt, vf, start, sg);
-	if (err)
-		return err;
+		if (!obj)
+			continue;
+
+		sg = obj->mm.pages;
+
+		err = __lmtt_insert_entries(lmtt, vf, start, sg);
+		if (err)
+			return err;
+
+		start += obj->base.size;
+	}
+	GEM_BUG_ON(start != __lmtt_offset(lmtt, vf) + __lmtt_size(lmtt, vf));
 
 	return 0;
 }
