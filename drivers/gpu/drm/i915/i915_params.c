@@ -264,6 +264,12 @@ i915_param_named_unsafe(enable_hw_throttle_blt, bool, 0400,
 i915_param_named_unsafe(enable_fake_int_wa, bool, 0400,
 			"Enable fake interrupts via polling timer w/a for multi-tile platforms. (default: true)");
 
+#if IS_ENABLED(CONFIG_DRM_I915_DEBUG_CONTIGUOUS)
+i915_param_named_unsafe(force_alloc_contig, int, 0400,
+	"Force allocation of LMEM and SMEM objects from physically contiguous pages. "
+	"0=disabled [default], 1=SMEM only, 2=LMEM only, 3=both");
+#endif
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,

@@ -287,3 +287,16 @@ config DRM_I915_PCIE_STRICT_WRITE_ORDERING
 	  debugging.
 
 	  If in doubt, say "N".
+
+config DRM_I915_DEBUG_CONTIGUOUS
+        bool "Enable debug support for forcing physically contiguous userspace allocations"
+        depends on DRM_I915
+        depends on EXPERT
+        depends on STAGING
+        default n
+	select CMA if HAVE_DMA_CONTIGUOUS
+	select DMA_CMA if HAVE_DMA_CONTIGUOUS
+	help
+	  For hardware validation only.
+
+	  If in doubt, say "N".

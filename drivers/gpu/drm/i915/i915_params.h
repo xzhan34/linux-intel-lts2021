@@ -83,6 +83,7 @@ struct drm_printer;
 	param(unsigned int, request_timeout_ms, CONFIG_DRM_I915_REQUEST_TIMEOUT, CONFIG_DRM_I915_REQUEST_TIMEOUT ? 0600 : 0) \
 	param(unsigned int, lmem_size, 0, 0400) \
 	param(unsigned int, enable_eviction, 3, 0600) \
+	param(int, force_alloc_contig, 0, 0400) \
 	/* leave bools at the end to not create holes */ \
 	param(bool, enable_fake_int_wa, true, 0400) \
 	param(bool, enable_hw_throttle_blt, true, 0400) \

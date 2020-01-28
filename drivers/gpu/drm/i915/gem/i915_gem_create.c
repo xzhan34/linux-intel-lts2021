@@ -88,6 +88,7 @@ static int
 setup_object(struct drm_i915_gem_object *obj, u64 size)
 {
 	struct intel_memory_region *mr = obj->mm.placements[0];
+	u32 alloc_flags;
 	int ret;
 
 	size = round_up(size, i915_gem_object_max_page_size(obj));
@@ -102,7 +103,9 @@ setup_object(struct drm_i915_gem_object *obj, u64 size)
 	if (overflows_type(size, obj->base.size) || size > object_limit(obj))
 		return -E2BIG;
 
-	ret = mr->ops->init_object(mr, obj, size, I915_BO_ALLOC_USER);
+	alloc_flags = i915_modparams.force_alloc_contig & ALLOC_CONTIGUOUS_LMEM ?
+		I915_BO_ALLOC_CONTIGUOUS : 0;
+	ret = mr->ops->init_object(mr, obj, size, alloc_flags | I915_BO_ALLOC_USER);
 	if (ret)
 		return ret;
 

@@ -37,4 +37,9 @@ intel_gt_object_create_lmem(struct intel_gt *gt,
 	return i915_gem_object_create_region(gt->lmem, size, flags);
 }
 
+/* i915_modparams.force_alloc_contig flags */
+#define ALLOC_CONTIGUOUS_SMEM BIT(0)
+#define ALLOC_CONTIGUOUS_LMEM BIT(1)
+#define ALLOC_CONTIGUOUS_FLAGS (ALLOC_CONTIGUOUS_SMEM | ALLOC_CONTIGUOUS_LMEM)
+
 #endif
