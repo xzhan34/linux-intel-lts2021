@@ -8323,6 +8323,10 @@ enum skl_power_gate {
 #define   SGGI_DIS			REG_BIT(15)
 #define   SGR_DIS			REG_BIT(13)
 
+#define XEHP_DBGTRACEMEM_SZ			_MMIO(0x102018)
+#define XEHP_DBGTRACEMEMBASE_UDW	        _MMIO(0x102014)
+#define XEHP_DBGTRACEMEMBASE_LDW	        _MMIO(0x102010)
+
 #define _ICL_PHY_MISC_A		0x64C00
 #define _ICL_PHY_MISC_B		0x64C04
 #define _DG2_PHY_MISC_TC1	0x64C14 /* TC1="PHY E" but offset as if "PHY F" */

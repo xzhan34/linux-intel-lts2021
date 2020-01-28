@@ -45,6 +45,42 @@ static const struct intel_memory_region_ops intel_region_lmem_ops = {
 	.init_object = __i915_gem_lmem_object_init,
 };
 
+/*
+ * Don't allow LMEM allocation for first few megabytes reserved for
+ * per tile debug trace data. Make sure to maintain alignment by using
+ * buddy_alloc_range.
+ */
+static int reserve_tracedebug_region(struct intel_uncore *uncore,
+				     struct intel_memory_region *mem)
+{
+	struct drm_i915_private *i915 = uncore->i915;
+	u64 start = 0, size = 0;
+	int ret;
+
+	/* TODO: bspec says this is for XEHPSDV debug only */
+	if (!IS_XEHPSDV(i915))
+		return 0;
+
+	size = intel_uncore_read(uncore, XEHP_DBGTRACEMEM_SZ);
+	if (WARN_ON(size > 255))
+		size = 255;
+	size *= SZ_1M;
+
+	start = intel_uncore_read64_2x32(uncore,
+					 XEHP_DBGTRACEMEMBASE_LDW,
+					 XEHP_DBGTRACEMEMBASE_UDW);
+	if (size) {
+		ret = intel_memory_region_reserve(mem, start, size);
+		if (!ret)
+			drm_dbg(&i915->drm, "LMEM: reserving [0x%llx-0x%llx] for debug trace data\n",
+				start, size);
+
+		return ret;
+	}
+	/* success when debug registers unset */
+	return 0;
+}
+
 static bool get_legacy_lowmem_region(struct intel_uncore *uncore,
 				     u64 *start, u32 *size)
 {
@@ -227,6 +263,10 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 		return mem;
 
 	err = reserve_lowmem_region(uncore, mem);
+	if (err)
+		goto err_region_put;
+
+	err = reserve_tracedebug_region(&i915->uncore, mem);
 	if (err)
 		goto err_region_put;
 
