@@ -139,12 +139,19 @@ static void pf_enable_ggtt_guest_update(struct intel_iov *iov)
  */
 int intel_iov_init_hw(struct intel_iov *iov)
 {
+	int err;
 
 	if (intel_iov_is_pf(iov)) {
 		pf_enable_ggtt_guest_update(iov);
 		intel_iov_service_update(iov);
 		intel_iov_provisioning_restart(iov);
 		intel_iov_state_reset(iov);
+	}
+
+	if (intel_iov_is_vf(iov)) {
+		err = intel_iov_query_runtime(iov, false);
+		if (unlikely(err))
+			return -EIO;
 	}
 
 	return 0;
@@ -158,6 +165,9 @@ void intel_iov_fini_hw(struct intel_iov *iov)
 {
 	if (intel_iov_is_pf(iov))
 		intel_iov_service_reset(iov);
+
+	if (intel_iov_is_vf(iov))
+		intel_iov_query_fini(iov);
 }
 
 /**

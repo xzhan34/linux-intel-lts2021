@@ -7,6 +7,7 @@
 #include <linux/bitfield.h>
 #include <linux/crc32.h>
 
+#include "abi/iov_actions_abi.h"
 #include "abi/iov_actions_mmio_abi.h"
 #include "abi/iov_version_abi.h"
 #include "gt/intel_gt_regs.h"
@@ -507,6 +508,82 @@ failed:
 	return ret;
 }
 
+static int vf_get_runtime_info_relay(struct intel_iov *iov)
+{
+	struct drm_i915_private *i915 = iov_to_i915(iov);
+	u32 request[VF2PF_QUERY_RUNTIME_REQUEST_MSG_LEN];
+	u32 response[VF2PF_QUERY_RUNTIME_RESPONSE_MSG_MAX_LEN];
+	u32 limit = (ARRAY_SIZE(response) - VF2PF_QUERY_RUNTIME_RESPONSE_MSG_MIN_LEN) / 2;
+	u32 start = 0;
+	u32 count, remaining, num, i;
+	int ret;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+	GEM_BUG_ON(!limit);
+	assert_rpm_wakelock_held(&i915->runtime_pm);
+
+	request[0] = FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		     FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		     FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, IOV_ACTION_VF2PF_QUERY_RUNTIME) |
+		     FIELD_PREP(VF2PF_QUERY_RUNTIME_REQUEST_MSG_0_LIMIT, limit);
+
+repeat:
+	request[1] = FIELD_PREP(VF2PF_QUERY_RUNTIME_REQUEST_MSG_1_START, start);
+	ret = intel_iov_relay_send_to_pf(&iov->relay,
+					 request, ARRAY_SIZE(request),
+					 response, ARRAY_SIZE(response));
+	if (unlikely(ret < 0))
+		goto failed;
+
+	if (unlikely(ret < VF2PF_QUERY_RUNTIME_RESPONSE_MSG_MIN_LEN)) {
+		ret = -EPROTO;
+		goto failed;
+	}
+	if (unlikely((ret - VF2PF_QUERY_RUNTIME_RESPONSE_MSG_MIN_LEN) % 2)) {
+		ret = -EPROTO;
+		goto failed;
+	}
+
+	num = (ret - VF2PF_QUERY_RUNTIME_RESPONSE_MSG_MIN_LEN) / 2;
+	count = FIELD_GET(VF2PF_QUERY_RUNTIME_RESPONSE_MSG_0_COUNT, response[0]);
+	remaining = FIELD_GET(VF2PF_QUERY_RUNTIME_RESPONSE_MSG_1_REMAINING, response[1]);
+
+	IOV_DEBUG(iov, "count=%u num=%u ret=%d start=%u remaining=%u\n",
+		  count, num, ret, start, remaining);
+
+	if (unlikely(count != num)) {
+		ret = -EPROTO;
+		goto failed;
+	}
+
+	if (start == 0) {
+		ret = vf_prepare_runtime_info(iov, num + remaining, 1);
+		if (unlikely(ret < 0))
+			goto failed;
+	} else if (unlikely(start + num > iov->vf.runtime.regs_size)) {
+		ret = -EPROTO;
+		goto failed;
+	}
+
+	for (i = 0; i < num; ++i) {
+		struct vf_runtime_reg *reg = &iov->vf.runtime.regs[start + i];
+
+		reg->offset = response[VF2PF_QUERY_RUNTIME_RESPONSE_MSG_MIN_LEN + 2 * i];
+		reg->value = response[VF2PF_QUERY_RUNTIME_RESPONSE_MSG_MIN_LEN + 2 * i + 1];
+	}
+
+	if (remaining) {
+		start += num;
+		goto repeat;
+	}
+
+	return 0;
+
+failed:
+	vf_cleanup_runtime_info(iov);
+	return ret;
+}
+
 /**
  * intel_iov_query_runtime - Query IOV runtime data.
  * @iov: the IOV struct
@@ -531,7 +608,7 @@ int intel_iov_query_runtime(struct intel_iov *iov, bool early)
 	if (early)
 		err = vf_get_runtime_info_mmio(iov);
 	else
-		err = -EINVAL;
+		err = vf_get_runtime_info_relay(iov);
 	if (unlikely(err))
 		goto failed;
 
