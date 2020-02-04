@@ -170,9 +170,15 @@ void intel_gt_init_ggtt(struct intel_gt *gt, struct i915_ggtt *ggtt)
 
 int intel_gt_init_mmio(struct intel_gt *gt)
 {
-	intel_gt_init_clock_frequency(gt);
+	int ret;
 
+	ret = intel_iov_init_mmio(&gt->iov);
+	if (ret)
+		return ret;
+
+	intel_gt_init_clock_frequency(gt);
 	intel_uc_init_mmio(&gt->uc);
+
 	intel_sseu_info_init(gt);
 	intel_gt_mcr_init(gt);
 

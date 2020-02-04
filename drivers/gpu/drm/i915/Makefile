@@ -246,6 +246,7 @@ iov-y += \
 	gt/iov/intel_iov_debugfs.o \
 	gt/iov/intel_iov_event.o \
 	gt/iov/intel_iov_provisioning.o \
+	gt/iov/intel_iov_query.o \
 	gt/iov/intel_iov_relay.o \
 	gt/iov/intel_iov_service.o \
 	gt/iov/intel_iov_state.o \

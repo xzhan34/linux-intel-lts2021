@@ -5,6 +5,7 @@
 
 #include "intel_iov.h"
 #include "intel_iov_provisioning.h"
+#include "intel_iov_query.h"
 #include "intel_iov_relay.h"
 #include "intel_iov_service.h"
 #include "intel_iov_state.h"
@@ -40,6 +41,27 @@ void intel_iov_release(struct intel_iov *iov)
 		intel_iov_service_release(iov);
 		intel_iov_provisioning_release(iov);
 	}
+}
+
+/**
+ * intel_iov_init_mmio - Initialize IOV based on MMIO data.
+ * @iov: the IOV struct
+ *
+ * On VF this function will read SR-IOV INIT message from GuC.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_init_mmio(struct intel_iov *iov)
+{
+	int ret;
+
+	if (intel_iov_is_vf(iov)) {
+		ret = intel_iov_query_bootstrap(iov);
+		if (unlikely(ret))
+			return ret;
+	}
+
+	return 0;
 }
 
 /**

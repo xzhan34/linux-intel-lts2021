@@ -173,6 +173,12 @@ struct intel_iov_relay {
  * struct intel_iov_vf_config - VF configuration data.
  */
 struct intel_iov_vf_config {
+	struct {
+		u8 branch;
+		u8 major;
+		u8 minor;
+		u8 patch;
+	} guc_abi;
 };
 
 /**
