@@ -29,6 +29,7 @@
 #include "igt_gem_utils.h"
 
 #define DW_PER_PAGE (PAGE_SIZE / sizeof(u32))
+#define HANG_POISON 0xc5c5c5c5
 
 static inline struct i915_address_space *ctx_vm(struct i915_gem_context *ctx)
 {
@@ -1499,7 +1500,7 @@ static int check_scratch(struct i915_address_space *vm, u64 offset)
 
 static int write_to_scratch(struct i915_gem_context *ctx,
 			    struct intel_engine_cs *engine,
-			    u64 offset, u32 value)
+			    u64 batch, u64 offset, u32 value)
 {
 	struct drm_i915_private *i915 = ctx->i915;
 	struct drm_i915_gem_object *obj;
@@ -1509,7 +1510,7 @@ static int write_to_scratch(struct i915_gem_context *ctx,
 	u32 *cmd;
 	int err;
 
-	GEM_BUG_ON(offset < I915_GTT_PAGE_SIZE);
+	GEM_BUG_ON(offset < batch + I915_GTT_PAGE_SIZE && offset >= batch);
 
 	err = check_scratch(ctx_vm(ctx), offset);
 	if (err)
@@ -1547,7 +1548,7 @@ static int write_to_scratch(struct i915_gem_context *ctx,
 		goto out_vm;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_OFFSET_FIXED);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_OFFSET_FIXED | batch);
 	if (err)
 		goto out_vm;
 
@@ -1597,7 +1598,7 @@ out:
 
 static int read_from_scratch(struct i915_gem_context *ctx,
 			     struct intel_engine_cs *engine,
-			     u64 offset, u32 *value)
+			     u64 batch, u64 offset, u32 *value)
 {
 	struct drm_i915_private *i915 = ctx->i915;
 	struct drm_i915_gem_object *obj;
@@ -1609,7 +1610,7 @@ static int read_from_scratch(struct i915_gem_context *ctx,
 	u32 *cmd;
 	int err;
 
-	GEM_BUG_ON(offset < I915_GTT_PAGE_SIZE);
+	GEM_BUG_ON(offset < batch + I915_GTT_PAGE_SIZE && offset >= batch);
 
 	err = check_scratch(ctx_vm(ctx), offset);
 	if (err)
@@ -1629,7 +1630,8 @@ static int read_from_scratch(struct i915_gem_context *ctx,
 			goto out_vm;
 		}
 
-		err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_OFFSET_FIXED);
+		err = i915_vma_pin(vma, 0, 0, PIN_USER |
+				   PIN_OFFSET_FIXED | batch);
 		if (err)
 			goto out_vm;
 
@@ -1646,8 +1648,8 @@ static int read_from_scratch(struct i915_gem_context *ctx,
 		*cmd++ = upper_32_bits(offset);
 		*cmd++ = MI_STORE_REGISTER_MEM_GEN8;
 		*cmd++ = GPR0;
-		*cmd++ = result;
-		*cmd++ = 0;
+		*cmd++ = lower_32_bits(i915_vma_offset(vma) + result);
+		*cmd++ = upper_32_bits(i915_vma_offset(vma));
 		*cmd = MI_BATCH_BUFFER_END;
 
 		i915_gem_object_flush_map(obj);
@@ -1784,8 +1786,8 @@ static int check_scratch_page(struct i915_gem_context *ctx,
 
 static int igt_vm_isolation(void *arg)
 {
-	struct drm_i915_private *i915 = arg;
 	struct i915_gem_context *ctx_a, *ctx_b;
+	struct drm_i915_private *i915 = arg;
 	unsigned long num_engines, count;
 	struct intel_engine_cs *engine;
 	struct igt_live_test t;
@@ -1842,6 +1844,7 @@ static int igt_vm_isolation(void *arg)
 	count = 0;
 	num_engines = 0;
 	for_each_uabi_engine(engine, i915) {
+		unsigned long start, end;
 		IGT_TIMEOUT(end_time);
 		unsigned long this = 0;
 
@@ -1852,28 +1855,41 @@ static int igt_vm_isolation(void *arg)
 		if (GRAPHICS_VER(i915) < 8 && engine->class != RENDER_CLASS)
 			continue;
 
+		/* Wa_1409502670:xehpsdv */
+		if (IS_XEHPSDV(i915))
+			start = I915_GTT_PAGE_SIZE_64K;
+		else
+			start = 0;
+		end = vm_total;
+
 		while (!__igt_timeout(end_time, NULL)) {
-			u32 value = 0xc5c5c5c5;
-			u64 offset;
+			u64 target, batch;
+			u32 value;
 
-			/* Leave enough space at offset 0 for the batch */
-			offset = igt_random_offset(&prng,
-						   I915_GTT_PAGE_SIZE, vm_total,
-						   sizeof(u32), alignof_dword);
+			value = HANG_POISON;
+			batch = igt_random_offset(&prng, start, end,
+						  I915_GTT_PAGE_SIZE,
+						  I915_GTT_PAGE_SIZE);
+			do {
+				target = igt_random_offset(&prng, start, end,
+							   I915_GTT_PAGE_SIZE,
+							   I915_GTT_PAGE_SIZE);
+			} while (target < batch + I915_GTT_PAGE_SIZE &&
+				 target >= batch);
 
-			err = write_to_scratch(ctx_a, engine,
-					       offset, 0xdeadbeef);
+			err = write_to_scratch(ctx_a, engine, batch,
+					       target, 0xdeadbeef);
 			if (err == 0)
-				err = read_from_scratch(ctx_b, engine,
-							offset, &value);
+				err = read_from_scratch(ctx_b, engine, batch,
+							target, &value);
 			if (err)
 				goto out_file;
 
 			if (value != expected) {
 				pr_err("%s: Read %08x from scratch (offset 0x%08x_%08x), after %lu reads!\n",
 				       engine->name, value,
-				       upper_32_bits(offset),
-				       lower_32_bits(offset),
+				       upper_32_bits(target),
+				       lower_32_bits(target),
 				       this);
 				err = -EINVAL;
 				goto out_file;

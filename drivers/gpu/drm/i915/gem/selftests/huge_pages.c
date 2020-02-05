@@ -1226,6 +1226,10 @@ static int igt_write_huge(struct drm_i915_private *i915,
 			offset_low = round_down(offset_low,
 						I915_GTT_PAGE_SIZE_2M);
 
+		/* Needed for Wa_1409502670:xehpsdv, with vma node starting at 64K */
+		if (IS_XEHPSDV(ce->vm->i915))
+			offset_low = max(offset_low,  I915_GTT_PAGE_SIZE_64K);
+
 		err = __igt_write_huge(ce, obj, size, offset_low,
 				       dword, num + 1);
 		if (err)

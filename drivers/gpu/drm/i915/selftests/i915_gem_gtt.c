@@ -1035,6 +1035,10 @@ static int shrink_boom(struct i915_address_space *vm,
 			goto err_purge;
 		}
 
+		/* Needed for Wa_1409502670:xehpsdv, with vma node starting at 64K */
+		if (IS_XEHPSDV(vm->i915))
+			flags |=  hole_start;
+
 		err = i915_vma_pin(vma, 0, 0, flags);
 		if (err)
 			goto err_purge;
@@ -1089,6 +1093,7 @@ static int exercise_ppgtt(struct drm_i915_private *dev_priv,
 	struct i915_ppgtt *ppgtt;
 	IGT_TIMEOUT(end_time);
 	struct file *file;
+	u64 node_start;
 	int err;
 
 	if (!HAS_FULL_PPGTT(dev_priv))
@@ -1106,7 +1111,13 @@ static int exercise_ppgtt(struct drm_i915_private *dev_priv,
 	GEM_BUG_ON(offset_in_page(ppgtt->vm.total));
 	GEM_BUG_ON(!atomic_read(&ppgtt->vm.open));
 
-	err = func(&ppgtt->vm, 0, ppgtt->vm.total, end_time);
+	/* Needed for Wa_1409502670:xehpsdv, with vma node starting at 64K */
+	if (IS_XEHPSDV(ppgtt->vm.i915))
+		node_start =  I915_GTT_PAGE_SIZE_64K;
+	else
+		node_start = 0;
+
+	err = func(&ppgtt->vm, node_start, ppgtt->vm.total, end_time);
 
 	i915_vm_put(&ppgtt->vm);
 

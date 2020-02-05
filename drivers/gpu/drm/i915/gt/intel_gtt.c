@@ -267,7 +267,6 @@ int i915_address_space_init(struct i915_address_space *vm, int subclass)
 	}
 	dma_resv_init(&vm->_resv);
 
-	drm_mm_init(&vm->mm, 0, vm->total);
 	vm->inode = alloc_anon_inode(vm->i915->drm.anon_inode->i_sb);
 	if (IS_ERR(vm->inode))
 		return PTR_ERR(vm->inode);
@@ -286,6 +285,12 @@ int i915_address_space_init(struct i915_address_space *vm, int subclass)
 		vm->min_alignment[INTEL_MEMORY_LOCAL] = I915_GTT_PAGE_SIZE_64K;
 		vm->min_alignment[INTEL_MEMORY_STOLEN_LOCAL] = I915_GTT_PAGE_SIZE_64K;
 	}
+
+	/* Wa_1409502670:xehpsdv */
+	if (IS_XEHPSDV(vm->i915) && subclass == VM_CLASS_PPGTT)
+		drm_mm_init(&vm->mm, I915_GTT_PAGE_SIZE_64K, vm->total - I915_GTT_PAGE_SIZE_64K);
+	else
+		drm_mm_init(&vm->mm, 0, vm->total);
 
 	vm->mm.head_node.color = I915_COLOR_UNEVICTABLE;
 
