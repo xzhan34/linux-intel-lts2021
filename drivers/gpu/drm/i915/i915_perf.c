@@ -384,6 +384,23 @@ struct i915_oa_config_bo {
 static struct ctl_table_header *sysctl_header;
 
 static enum hrtimer_restart oa_poll_check_timer_cb(struct hrtimer *hrtimer);
+
+static inline u32 _oa_taken(struct i915_perf_stream * stream,
+			       u32 tail, u32 head)
+{
+	u32 size = stream->oa_buffer.vma->size;
+
+	return tail >= head ? tail - head : size - (head - tail);
+}
+
+static inline u32 _rewind_tail(struct i915_perf_stream * stream,
+			       u32 relative_hw_tail, u32 rewind_delta)
+{
+	return rewind_delta > relative_hw_tail ?
+	       stream->oa_buffer.vma->size - (rewind_delta - relative_hw_tail) :
+	       relative_hw_tail - rewind_delta;
+}
+
 static size_t max_oa_buffer_size(struct drm_i915_private *i915)
 {
 	return HAS_OA_BUF_128M(i915) ? SZ_128M : SZ_16M;
@@ -491,12 +508,14 @@ static bool oa_buffer_check_unlocked(struct i915_perf_stream *stream)
 	 * sizes need not be integral multiples or 64 or powers of 2.
 	 * Compute potentially partially landed report in the OA buffer
 	 */
-	partial_report_size = OA_TAKEN(hw_tail, stream->oa_buffer.tail);
+	partial_report_size =
+		_oa_taken(stream, hw_tail, stream->oa_buffer.tail);
 	partial_report_size %= report_size;
 
 	/* Subtract partial amount off the tail */
-	hw_tail = gtt_offset + ((hw_tail - partial_report_size) &
-				(stream->oa_buffer.vma->size - 1));
+	hw_tail = gtt_offset + _rewind_tail(stream,
+					    hw_tail - gtt_offset,
+					    partial_report_size);
 
 	now = ktime_get_mono_fast_ns();
 
@@ -531,17 +550,16 @@ static bool oa_buffer_check_unlocked(struct i915_perf_stream *stream)
 		 * memory in the order they were written to.
 		 * If not : (╯°□°）╯︵ ┻━┻
 		 */
-		while (OA_TAKEN(tail, aged_tail) >= report_size) {
+		while (_oa_taken(stream, tail, aged_tail) >= report_size) {
 			u32 *report32 = (void *)(stream->oa_buffer.vaddr + tail);
 
 			if (report32[0] != 0 || report32[1] != 0)
 				break;
 
-			tail = (tail - report_size) &
-				(stream->oa_buffer.vma->size - 1);
+			tail = _rewind_tail(stream, tail, report_size);
 		}
 
-		if (OA_TAKEN(hw_tail, tail) > report_size &&
+		if (_oa_taken(stream, hw_tail, tail) > report_size &&
 		    __ratelimit(&stream->perf->tail_pointer_race))
 			DRM_NOTE("unlanded report(s) head=0x%x "
 				 "tail=0x%x hw_tail=0x%x\n",
@@ -552,8 +570,9 @@ static bool oa_buffer_check_unlocked(struct i915_perf_stream *stream)
 		stream->oa_buffer.aging_timestamp = now;
 	}
 
-	pollin = OA_TAKEN(stream->oa_buffer.tail - gtt_offset,
-			  stream->oa_buffer.head - gtt_offset) >= report_size;
+	pollin = _oa_taken(stream,
+			   stream->oa_buffer.tail,
+			   stream->oa_buffer.head) >= report_size;
 
 	spin_unlock_irqrestore(&stream->oa_buffer.ptr_lock, flags);
 
@@ -684,11 +703,9 @@ static int gen8_append_oa_reports(struct i915_perf_stream *stream,
 	int report_size = stream->oa_buffer.format->size;
 	u8 *oa_buf_base = stream->oa_buffer.vaddr;
 	u32 gtt_offset = i915_ggtt_offset(stream->oa_buffer.vma);
-	u32 mask = (stream->oa_buffer.vma->size - 1);
 	size_t start_offset = *offset;
 	unsigned long flags;
-	u32 head, tail;
-	u32 taken;
+	u32 head, tail, size;
 	int ret = 0;
 
 	if (drm_WARN_ON(&uncore->i915->drm, !stream->enabled))
@@ -698,6 +715,7 @@ static int gen8_append_oa_reports(struct i915_perf_stream *stream,
 
 	head = stream->oa_buffer.head;
 	tail = stream->oa_buffer.tail;
+	size = stream->oa_buffer.vma->size;
 
 	spin_unlock_irqrestore(&stream->oa_buffer.ptr_lock, flags);
 
@@ -716,16 +734,15 @@ static int gen8_append_oa_reports(struct i915_perf_stream *stream,
 	 * all a power of two).
 	 */
 	if (drm_WARN_ONCE(&uncore->i915->drm,
-			  head > stream->oa_buffer.vma->size ||
-			  tail > stream->oa_buffer.vma->size,
+			  head > size || tail > size,
 			  "Inconsistent OA buffer pointers: head = %u, tail = %u\n",
 			  head, tail))
 		return -EIO;
 
 
 	for (/* none */;
-	     (taken = OA_TAKEN(tail, head));
-	     head = (head + report_size) & mask) {
+	     _oa_taken(stream, tail, head);
+	     head = (head + report_size) % size) {
 		u8 *report = oa_buf_base + head;
 		u32 *report32 = (void *)report;
 		u32 ctx_id;
@@ -1903,6 +1920,7 @@ static int alloc_oa_buffer(struct i915_perf_stream *stream, int size_exponent)
 	struct drm_i915_gem_object *bo;
 	struct i915_vma *vma;
 	size_t size = 1U << size_exponent;
+	size_t adjust = 0;
 	int ret;
 
 	if (drm_WARN_ON(&gt->i915->drm, stream->oa_buffer.vma))
@@ -1911,7 +1929,18 @@ static int alloc_oa_buffer(struct i915_perf_stream *stream, int size_exponent)
 	if (WARN_ON(size < SZ_128K || size > max_oa_buffer_size(gt->i915)))
 		return -EINVAL;
 
-	bo = i915_gem_object_create_shmem(gt->i915, size);
+	/*
+	 * Wa_1607390583:xehpsdv
+	 * XEHPSDV has new feature that supports upto 128Mb oa buffer. User can request
+	 * buffers sizes that are powers of 2 ranging from 128Kb to 128 Mb. On enabling
+	 * the feature, there is a bug that causes the actual OA buffer size to be less
+	 * by 896Kb when the user requests a size greater than 16Mb. To workaround the
+	 * issue, we adjust the OA buffer size accordingly before allocating.
+	 */
+	if (IS_XEHPSDV(gt->i915) && size > SZ_16M)
+		adjust = 896 * 1024;
+
+	bo = i915_gem_object_create_shmem(gt->i915, size - adjust);
 	if (IS_ERR(bo)) {
 		drm_err(&gt->i915->drm, "Failed to allocate OA buffer\n");
 		return PTR_ERR(bo);
