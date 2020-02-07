@@ -429,6 +429,7 @@ static const struct intel_device_info ilk_m_info = {
 	.dma_mask_size = 40, \
 	.ppgtt_type = INTEL_PPGTT_ALIASING, \
 	.ppgtt_size = 31, \
+	.ppgtt_msb = 31, \
 	I9XX_PIPE_OFFSETS, \
 	I9XX_CURSOR_OFFSETS, \
 	ILK_COLORS, \
@@ -482,6 +483,7 @@ static const struct intel_device_info snb_m_gt2_info = {
 	.dma_mask_size = 40, \
 	.ppgtt_type = INTEL_PPGTT_ALIASING, \
 	.ppgtt_size = 31, \
+	.ppgtt_msb = 31, \
 	IVB_PIPE_OFFSETS, \
 	IVB_CURSOR_OFFSETS, \
 	IVB_COLORS, \
@@ -543,6 +545,7 @@ static const struct intel_device_info vlv_info = {
 	.dma_mask_size = 40,
 	.ppgtt_type = INTEL_PPGTT_ALIASING,
 	.ppgtt_size = 31,
+	.ppgtt_msb = 31,
 	.has_snoop = true,
 	.has_coherent_ggtt = false,
 	.platform_engine_mask = BIT(RCS0) | BIT(VCS0) | BIT(BCS0),
@@ -593,6 +596,7 @@ static const struct intel_device_info hsw_gt3_info = {
 	.dma_mask_size = 39, \
 	.ppgtt_type = INTEL_PPGTT_FULL, \
 	.ppgtt_size = 48, \
+	.ppgtt_msb = 47, \
 	.has_64bit_reloc = 1
 
 #define BDW_PLATFORM \
@@ -641,6 +645,7 @@ static const struct intel_device_info chv_info = {
 	.dma_mask_size = 39,
 	.ppgtt_type = INTEL_PPGTT_FULL,
 	.ppgtt_size = 32,
+	.ppgtt_msb = 47,
 	.has_reset_engine = 1,
 	.has_snoop = true,
 	.has_coherent_ggtt = false,
@@ -727,6 +732,7 @@ static const struct intel_device_info skl_gt4_info = {
 	.dma_mask_size = 39, \
 	.ppgtt_type = INTEL_PPGTT_FULL, \
 	.ppgtt_size = 48, \
+	.ppgtt_msb = 47, \
 	.has_reset_engine = 1, \
 	.has_snoop = true, \
 	.has_coherent_ggtt = false, \
@@ -1037,6 +1043,7 @@ static const struct intel_device_info adl_p_info = {
 	.has_runtime_pm = 1, \
 	.has_selective_tlb_invalidation = 1, \
 	.has_semaphore_xehpsdv = 1, \
+	.ppgtt_msb = 47, \
 	.ppgtt_size = 48, \
 	.ppgtt_type = INTEL_PPGTT_FULL, \
 	.has_oam = 1, \
@@ -1148,7 +1155,8 @@ static const struct intel_device_info ats_m_info = {
 	.has_mem_sparing = 1, \
 	.has_mslice_steering = 0, \
 	.has_one_eu_per_fuse_bit = 1, \
-	.has_um_queues = 1
+	.has_um_queues = 1, \
+	.ppgtt_msb = 56
 
 #define PVC_ENGINES \
 	BIT(BCS0) | BIT(BCS1) | BIT(BCS2) | BIT(BCS3) | \

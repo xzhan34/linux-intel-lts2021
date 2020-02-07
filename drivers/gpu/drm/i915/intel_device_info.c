@@ -96,6 +96,7 @@ void intel_device_info_print_static(const struct intel_device_info *info,
 	drm_printf(p, "page-sizes: %x\n", info->page_sizes);
 	drm_printf(p, "platform: %s\n", intel_platform_name(info->platform));
 	drm_printf(p, "ppgtt-size: %d\n", info->ppgtt_size);
+	drm_printf(p, "ppgtt-msb: %d\n", info->ppgtt_msb);
 	drm_printf(p, "ppgtt-type: %d\n", info->ppgtt_type);
 	drm_printf(p, "dma_mask_size: %u\n", info->dma_mask_size);
 

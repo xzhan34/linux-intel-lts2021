@@ -344,7 +344,8 @@ int i915_gem_vm_unbind_obj(struct i915_address_space *vm,
 	if (va->handle)
 		return -EINVAL;
 
-	va->start = gen8_noncanonical_addr(va->start);
+	va->start = intel_noncanonical_addr(INTEL_PPGTT_MSB(vm->i915),
+					    va->start);
 	/* XXX: Support async and delayed unbind */
 	ret = i915_gem_vm_bind_lock_interruptible(vm);
 	if (ret)
@@ -400,7 +401,8 @@ static struct i915_vma *vm_bind_get_vma(struct i915_address_space *vm,
 	struct i915_ggtt_view view;
 	struct i915_vma *vma;
 
-	va->start = gen8_noncanonical_addr(va->start);
+	va->start = intel_noncanonical_addr(INTEL_PPGTT_MSB(vm->i915),
+					    va->start);
 	vma = i915_gem_vm_bind_lookup_vma(vm, va->start);
 	if (vma)
 		return ERR_PTR(-EEXIST);

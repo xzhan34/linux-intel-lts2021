@@ -972,6 +972,7 @@ static inline struct intel_gt *to_gt(struct drm_i915_private *i915)
 #define DRIVER_CAPS(dev_priv)	(&(dev_priv)->caps)
 
 #define INTEL_DEVID(dev_priv)	(RUNTIME_INFO(dev_priv)->device_id)
+#define INTEL_PPGTT_MSB(dev_priv)	(INTEL_INFO(dev_priv)->ppgtt_msb)
 
 #define IP_VER(ver, rel)		((ver) << 8 | (rel))
 

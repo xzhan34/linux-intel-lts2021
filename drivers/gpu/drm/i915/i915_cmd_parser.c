@@ -1471,8 +1471,10 @@ int intel_engine_cmd_parser(struct intel_engine_cs *engine,
 		/* Defer failure until attempted use */
 		jump_whitelist = alloc_whitelist(batch_length);
 
-	shadow_addr = gen8_canonical_addr(i915_vma_offset(shadow));
-	batch_addr = gen8_canonical_addr(i915_vma_offset(batch) + batch_offset);
+	shadow_addr = intel_canonical_addr(INTEL_PPGTT_MSB(engine->i915),
+					   i915_vma_offset(shadow));
+	batch_addr = intel_canonical_addr(INTEL_PPGTT_MSB(engine->i915),
+					  i915_vma_offset(batch) + batch_offset);
 
 	/*
 	 * We use the batch length as size because the shadow object is as

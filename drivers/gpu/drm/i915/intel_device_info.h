@@ -236,6 +236,8 @@ struct intel_device_info {
 	enum intel_ppgtt_type ppgtt_type;
 	unsigned int ppgtt_size; /* log2, e.g. 31/32/48 bits */
 
+	unsigned int ppgtt_msb; /* Virtual Addresss msb supported by the HW */
+
 	unsigned int page_sizes; /* page sizes supported by the HW */
 
 	u32 memory_regions; /* regions supported by the HW */

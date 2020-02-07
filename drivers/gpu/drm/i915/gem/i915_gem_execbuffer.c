@@ -542,7 +542,9 @@ eb_validate_vma(struct i915_execbuffer *eb,
 	 * any non-page-aligned or non-canonical addresses.
 	 */
 	if (unlikely(entry->flags & EXEC_OBJECT_PINNED &&
-		     entry->offset != gen8_canonical_addr(entry->offset & I915_GTT_PAGE_MASK)))
+		     entry->offset != intel_canonical_addr(
+				INTEL_PPGTT_MSB(eb->i915),
+				entry->offset & I915_GTT_PAGE_MASK)))
 		return -EINVAL;
 
 	/* pad_to_size was once a reserved field, so sanitize it */
@@ -557,7 +559,8 @@ eb_validate_vma(struct i915_execbuffer *eb,
 	 * so from this point we're always using non-canonical
 	 * form internally.
 	 */
-	entry->offset = gen8_noncanonical_addr(entry->offset);
+	entry->offset = intel_noncanonical_addr(INTEL_PPGTT_MSB(eb->i915),
+					entry->offset);
 
 	if (!eb->reloc_cache.has_fence) {
 		entry->flags &= ~EXEC_OBJECT_NEEDS_FENCE;
@@ -840,7 +843,8 @@ eb_check_for_persistent_vma(struct i915_execbuffer *eb,
 	if (!test_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags))
 		return NULL;
 
-	va = gen8_noncanonical_addr(entry->offset & PIN_OFFSET_MASK);
+	va = intel_noncanonical_addr(INTEL_PPGTT_MSB(vm->i915),
+				     entry->offset & PIN_OFFSET_MASK);
 	vma = i915_gem_vm_bind_lookup_vma(vm, va);
 	if (!vma)
 		return NULL;
@@ -1301,10 +1305,12 @@ static void eb_destroy(const struct i915_execbuffer *eb)
 }
 
 static inline u64
-relocation_target(const struct drm_i915_gem_relocation_entry *reloc,
+relocation_target(const struct i915_execbuffer *eb,
+		  const struct drm_i915_gem_relocation_entry *reloc,
 		  const struct i915_vma *target)
 {
-	return gen8_canonical_addr((int)reloc->delta + i915_vma_offset(target));
+	return intel_canonical_addr(INTEL_PPGTT_MSB(eb->i915),
+				    (int)reloc->delta + i915_vma_offset(target));
 }
 
 static void reloc_cache_clear(struct reloc_cache *cache)
@@ -1835,7 +1841,8 @@ static int __reloc_entry_gpu(struct i915_execbuffer *eb,
 	if (IS_ERR(batch))
 		return (batch != ERR_PTR(-ENODEV)) ? PTR_ERR(batch) : 0;
 
-	addr = gen8_canonical_addr(i915_vma_offset(vma) + offset);
+	addr = intel_canonical_addr(INTEL_PPGTT_MSB(eb->i915),
+				    i915_vma_offset(vma) + offset);
 	if (ver >= 8) {
 		if (offset & 7) {
 			*batch++ = MI_STORE_DWORD_IMM_GEN4;
@@ -1843,7 +1850,8 @@ static int __reloc_entry_gpu(struct i915_execbuffer *eb,
 			*batch++ = upper_32_bits(addr);
 			*batch++ = lower_32_bits(target_addr);
 
-			addr = gen8_canonical_addr(addr + 4);
+			addr = intel_canonical_addr(INTEL_PPGTT_MSB(eb->i915),
+						    addr + 4);
 
 			*batch++ = MI_STORE_DWORD_IMM_GEN4;
 			*batch++ = lower_32_bits(addr);
@@ -1905,7 +1913,7 @@ relocate_entry(struct i915_vma *vma,
 	       struct i915_execbuffer *eb,
 	       const struct i915_vma *target)
 {
-	u64 target_addr = relocation_target(reloc, target);
+	u64 target_addr = relocation_target(eb, reloc, target);
 	u64 offset = reloc->offset;
 	int reloc_gpu = reloc_entry_gpu(eb, vma, offset, target_addr);
 
@@ -1999,7 +2007,8 @@ eb_relocate_entry(struct i915_execbuffer *eb,
 	 * more work needs to be done.
 	 */
 	if (!DBG_FORCE_RELOC &&
-	    gen8_canonical_addr(i915_vma_offset(target->vma)) == reloc->presumed_offset)
+	    intel_canonical_addr(INTEL_PPGTT_MSB(eb->i915),
+				 i915_vma_offset(target->vma)) == reloc->presumed_offset)
 		return 0;
 
 	/* Check that the relocation address is valid... */
@@ -2106,7 +2115,8 @@ static int eb_relocate_vma(struct i915_execbuffer *eb, struct eb_vma *ev)
 				 * having already demonstrated that we
 				 * can read from this userspace address.
 				 */
-				offset = gen8_canonical_addr(offset & ~UPDATE);
+				offset = intel_canonical_addr(INTEL_PPGTT_MSB(eb->i915),
+							      offset & ~UPDATE);
 				__put_user(offset,
 					   &urelocs[r - stack].presumed_offset);
 			}
@@ -4332,7 +4342,8 @@ i915_gem_execbuffer2_ioctl(struct drm_device *dev, void *data,
 				continue;
 
 			exec2_list[i].offset =
-				gen8_canonical_addr(exec2_list[i].offset & PIN_OFFSET_MASK);
+				intel_canonical_addr(INTEL_PPGTT_MSB(i915),
+						     exec2_list[i].offset & PIN_OFFSET_MASK);
 			unsafe_put_user(exec2_list[i].offset,
 					&user_exec_list[i].offset,
 					end_user);
