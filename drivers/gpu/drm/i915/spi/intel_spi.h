@@ -10,10 +10,16 @@
 
 struct drm_i915_private;
 
+#define I915_SPI_REGIONS 13
+struct i915_spi_region {
+	const char *name;
+};
+
 struct intel_spi {
 	struct auxiliary_device aux_dev;
 	struct drm_i915_private *i915;
 	struct resource bar;
+	const struct i915_spi_region *regions;
 };
 
 #define auxiliary_dev_to_intel_spi_dev(auxiliary_dev) \
