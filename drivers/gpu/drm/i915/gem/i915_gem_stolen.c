@@ -821,25 +821,13 @@ static int get_mtl_gms_size(struct intel_uncore *uncore)
 	}
 }
 
-static inline bool lmembar_is_igpu_stolen(struct drm_i915_private *i915)
-{
-	u32 regions = INTEL_INFO(i915)->memory_regions;
-
-	if (regions & REGION_LMEM)
-		return false;
-
-	drm_WARN_ON(&i915->drm, (regions & REGION_STOLEN_LMEM) == 0);
-
-	return true;
-}
-
 struct intel_memory_region *
 i915_gem_stolen_lmem_setup(struct intel_gt *gt, u16 type,  u16 instance)
 {
 	struct intel_uncore *uncore = gt->uncore;
 	struct drm_i915_private *i915 = gt->i915;
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
-	resource_size_t dsm_size, dsm_base, lmem_size;
+	resource_size_t dsm_size, dsm_base, lmem_size, lmem_base;
 	struct intel_memory_region *mem;
 	resource_size_t io_start, io_size;
 	resource_size_t min_page_size;
@@ -851,15 +839,9 @@ i915_gem_stolen_lmem_setup(struct intel_gt *gt, u16 type,  u16 instance)
 	if (!i915_pci_resource_valid(pdev, GFXMEM_BAR))
 		return ERR_PTR(-ENXIO);
 
-	if (lmembar_is_igpu_stolen(i915) || IS_DG1(i915)) {
-		lmem_size = pci_resource_len(pdev, GFXMEM_BAR);
-	} else {
-		resource_size_t lmem_range;
-
-		lmem_range = intel_gt_mcr_read_any(&i915->gt0, XEHP_TILE0_ADDR_RANGE) & 0xFFFF;
-		lmem_size = lmem_range >> XEHP_TILE_LMEM_RANGE_SHIFT;
-		lmem_size *= SZ_1G;
-	}
+	ret = intel_get_tile_range(gt, &lmem_base, &lmem_size);
+	if (ret)
+		return ERR_PTR(ret);
 
 	if (HAS_BAR2_SMEM_STOLEN(i915)) {
 		/*
@@ -915,7 +897,9 @@ i915_gem_stolen_lmem_setup(struct intel_gt *gt, u16 type,  u16 instance)
 
 	drm_dbg(&i915->drm, "Stolen Local memory IO start: %pa\n",
 		&mem->io_start);
-	drm_dbg(&i915->drm, "Stolen Local DSM base: %pa\n", &dsm_base);
+	drm_dbg(&i915->drm,
+		"Local Memory base: %pa, Stolen Local DSM base: %pa\n",
+		&lmem_base, &dsm_base);
 
 	intel_memory_region_set_name(mem, "stolen-local");
 

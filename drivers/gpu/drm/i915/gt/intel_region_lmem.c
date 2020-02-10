@@ -77,6 +77,68 @@ static int reserve_lowmem_region(struct intel_uncore *uncore,
 	return ret;
 }
 
+static inline bool lmembar_is_igpu_stolen(struct drm_i915_private *i915)
+{
+	u32 regions = INTEL_INFO(i915)->memory_regions;
+
+	if (regions & REGION_LMEM)
+		return false;
+
+	drm_WARN_ON(&i915->drm, (regions & REGION_STOLEN_LMEM) == 0);
+
+	return true;
+}
+
+int intel_get_tile_range(struct intel_gt *gt,
+			 resource_size_t *lmem_base,
+			 resource_size_t *lmem_size)
+{
+	struct drm_i915_private *i915 = gt->i915;
+	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
+	resource_size_t root_lmembar_size;
+	resource_size_t lmem_range;
+	static const i915_mcr_reg_t tile_addr_reg[] = {
+		XEHP_TILE0_ADDR_RANGE,
+		XEHP_TILE1_ADDR_RANGE,
+		XEHP_TILE2_ADDR_RANGE,
+		XEHP_TILE3_ADDR_RANGE,
+	};
+	u32 instance = gt->info.id;
+
+	if (!i915_pci_resource_valid(pdev, GEN12_LMEM_BAR))
+		return -ENXIO;
+
+	root_lmembar_size = pci_resource_len(pdev, GEN12_LMEM_BAR);
+
+	/*
+	 * XEHPSDV A step single tile doesn't support the tile range
+	 * registers.
+	 * https://gfxspecs.intel.com/Predator/Home/Index/43880
+	 */
+	if (!lmembar_is_igpu_stolen(i915) && !IS_DG1(i915) &&
+	    !(IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0, STEP_B0) &&
+	      !i915->remote_tiles)) {
+		/* We should take the size and range of the tiles from
+		 * the tile range register intead of assigning the offsets
+		 * manually. The tile ranges are divided into 1GB granularity
+		 */
+		lmem_range = intel_gt_mcr_read_any(gt, tile_addr_reg[instance]) & 0xFFFF;
+		*lmem_size = lmem_range >> XEHP_TILE_LMEM_RANGE_SHIFT;
+		*lmem_base = (lmem_range & 0xFF) >> XEHP_TILE_LMEM_BASE_SHIFT;
+
+		*lmem_size *= SZ_1G;
+		*lmem_base *= SZ_1G;
+	} else {
+		*lmem_size = root_lmembar_size;
+		*lmem_base = 0;
+	}
+
+	if (!*lmem_size || *lmem_base > root_lmembar_size)
+		return -EIO;
+
+	return 0;
+}
+
 static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
@@ -85,15 +147,8 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 	struct intel_memory_region *mem;
 	resource_size_t min_page_size;
 	resource_size_t io_start;
+	resource_size_t lmem_size, lmem_base;
 	resource_size_t root_lmembar_size;
-	u64 lmem_range, lmem_size, lmem_base = 0;
-	static const i915_mcr_reg_t tile_addr_reg[] = {
-		XEHP_TILE0_ADDR_RANGE,
-		XEHP_TILE1_ADDR_RANGE,
-		XEHP_TILE2_ADDR_RANGE,
-		XEHP_TILE3_ADDR_RANGE,
-	};
-	u32 instance = gt->info.id;
 	int err;
 
 	if (!IS_DGFX(i915))
@@ -104,40 +159,21 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 
 	root_lmembar_size = pci_resource_len(pdev, GEN12_LMEM_BAR);
 
-	if (i915->remote_tiles > 0) {
-		/* We should take the size and range of the tiles from
-		 * the tile range register intead of assigning the offsets
-		 * manually. The tile ranges are divided into 1GB granularity
-		 */
-		lmem_range = intel_gt_mcr_read_any(gt, tile_addr_reg[instance]) & 0xFFFF;
-		lmem_size = lmem_range >> XEHP_TILE_LMEM_RANGE_SHIFT;
-		lmem_base = (lmem_range & 0xFF) >> XEHP_TILE_LMEM_BASE_SHIFT;
-
-		lmem_size *= SZ_1G;
-		lmem_base *= SZ_1G;
-	} else {
-		lmem_size = root_lmembar_size;
-		/* base for tile0 always set below */
-	}
-
-	if (!lmem_size || lmem_base > root_lmembar_size)
-		return ERR_PTR(-EIO);
+	/* Get per tile memory range */
+	err = intel_get_tile_range(gt, &lmem_base, &lmem_size);
+	if (err)
+		return ERR_PTR(err);
 
 	/* Leave space for per-tile WOPCM/GSM stolen memory at the LMEM roof.
 	 * Applicable only to XEHPSDV/DG2 etc.
 	 */
 
 	if (HAS_FLAT_CCS(i915)) {
-		resource_size_t lmem_range;
 		u64 tile_stolen, flat_ccs_base_addr_reg, flat_ccs_base;
 
-		lmem_range = intel_gt_mcr_read_any(&i915->gt0, XEHP_TILE0_ADDR_RANGE) & 0xFFFF;
-		lmem_size = lmem_range >> XEHP_TILE_LMEM_RANGE_SHIFT;
-		lmem_size *= SZ_1G;
-
-		flat_ccs_base_addr_reg = intel_gt_mcr_read_any(gt, XEHP_FLAT_CCS_BASE_ADDR);
+		flat_ccs_base_addr_reg = intel_gt_mcr_read_any_fw(gt, XEHP_FLAT_CCS_BASE_ADDR);
 		flat_ccs_base = (flat_ccs_base_addr_reg >> XEHP_CCS_BASE_SHIFT) * SZ_64K;
-		tile_stolen = lmem_size - flat_ccs_base;
+		tile_stolen = lmem_size - (flat_ccs_base - lmem_base);
 
 		/* If the FLAT_CCS_BASE_ADDR register is not populated, flag an error */
 		if (tile_stolen == lmem_size)
@@ -147,16 +183,32 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 		lmem_size -= tile_stolen;
 	} else {
 		/* Stolen starts from GSMBASE without CCS */
-		lmem_size = intel_uncore_read64(&i915->uncore, GEN12_GSMBASE);
-		if (GEM_WARN_ON(lmem_size > pci_resource_len(pdev, GEN12_LMEM_BAR)))
-			return ERR_PTR(-ENODEV);
+		lmem_size = intel_uncore_read64(uncore, GEN12_GSMBASE) - lmem_base;
 
 	}
 
+	/*
+	 * We do want to continue with the driver load if the BAR size is smaller than
+	 * memory fitted on the device. Fail on multi tile devices as BAR size might
+	 * not be sufficient to map all the tiles.
+	 */
+	if (GEM_WARN_ON(lmem_size > root_lmembar_size || lmem_base > root_lmembar_size)) {
+		if (i915->remote_tiles) {
+			return ERR_PTR(-EIO);
+		} else {
+			drm_warn(&i915->drm, "Cannot use the full memory %pa on the device as LMEM BAR size was found to be smaller\n", &lmem_size);
+			lmem_size = min(lmem_size, root_lmembar_size);
+			drm_warn(&i915->drm, "Continuing with reduced LMEM size: %pa\n", &lmem_size);
+		}
+ 	}
+ 
 	if (i915->params.lmem_size > 0) {
 		lmem_size = min_t(resource_size_t, lmem_size,
 				  mul_u32_u32(i915->params.lmem_size, SZ_1M));
 	}
+
+	if (GEM_WARN_ON(lmem_size > pci_resource_len(pdev, GEN12_LMEM_BAR)))
+		return ERR_PTR(-ENODEV);
 
 	io_start = pci_resource_start(pdev, GEN12_LMEM_BAR) + lmem_base;
 
