@@ -302,22 +302,26 @@ struct drm_i915_gem_object {
 #define I915_BO_ALLOC_USER       BIT(2)
 #define I915_BO_ALLOC_IGNORE_MIN_PAGE_SIZE     BIT(3)
 #define I915_BO_ALLOC_CHUNK_4K   BIT(4)
-#define I915_BO_ALLOC_CHUNK_1G   BIT(5)
+#define I915_BO_ALLOC_CHUNK_64K  BIT(5)
+#define I915_BO_ALLOC_CHUNK_2M   BIT(6)
+#define I915_BO_ALLOC_CHUNK_1G   BIT(7)
 #define I915_BO_ALLOC_FLAGS (I915_BO_ALLOC_CONTIGUOUS | \
 			     I915_BO_ALLOC_VOLATILE | \
 			     I915_BO_ALLOC_USER | \
 			     I915_BO_ALLOC_IGNORE_MIN_PAGE_SIZE | \
 			     I915_BO_ALLOC_CHUNK_4K | \
+			     I915_BO_ALLOC_CHUNK_64K | \
+			     I915_BO_ALLOC_CHUNK_2M | \
 			     I915_BO_ALLOC_CHUNK_1G)
-#define I915_BO_STRUCT_PAGE	BIT(6)
-#define I915_BO_READONLY	BIT(7)
-#define I915_TILING_QUIRK_BIT	8 /* unknown swizzling; do not release! */
-#define I915_BO_PROTECTED	BIT(9)
-#define I915_BO_SKIP_CLEAR	BIT(10)
-#define I915_BO_CPU_CLEAR	BIT(11)
-#define I915_BO_FAULT_CLEAR	BIT(12)
-#define I915_BO_SYNC_HINT	BIT(13)
-#define I915_BO_FABRIC		BIT(14)
+#define I915_BO_STRUCT_PAGE	BIT(8)
+#define I915_BO_READONLY	BIT(9)
+#define I915_TILING_QUIRK_BIT	10 /* unknown swizzling; do not release! */
+#define I915_BO_PROTECTED	BIT(11)
+#define I915_BO_SKIP_CLEAR	BIT(12)
+#define I915_BO_CPU_CLEAR	BIT(13)
+#define I915_BO_FAULT_CLEAR	BIT(14)
+#define I915_BO_SYNC_HINT	BIT(15)
+#define I915_BO_FABRIC		BIT(16)
 
 	/**
 	 * @pat_index: The desired PAT index.

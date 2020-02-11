@@ -62,6 +62,10 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 	flags = 0;
 	if (obj->flags & I915_BO_ALLOC_CHUNK_1G) {
 		flags = I915_ALLOC_CHUNK_1G;
+	} else if (obj->flags & I915_BO_ALLOC_CHUNK_2M) {
+		flags = I915_ALLOC_CHUNK_2M;
+	} else if (obj->flags & I915_BO_ALLOC_CHUNK_64K) {
+		flags = I915_ALLOC_CHUNK_64K;
 	} else if (obj->flags & I915_BO_ALLOC_CHUNK_4K) {
 		flags = I915_ALLOC_CHUNK_4K;
 	} else if (!(obj->flags & I915_BO_ALLOC_IGNORE_MIN_PAGE_SIZE)) {
@@ -179,7 +183,11 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 	if (!mem)
 		return ERR_PTR(-ENODEV);
 
-	if (!(flags & I915_BO_ALLOC_IGNORE_MIN_PAGE_SIZE))
+	if (flags & I915_BO_ALLOC_CHUNK_2M)
+		size = round_up(size, SZ_2M);
+	else if (flags & I915_BO_ALLOC_CHUNK_64K)
+		size = round_up(size, SZ_64K);
+	else if (!(flags & I915_BO_ALLOC_IGNORE_MIN_PAGE_SIZE))
 		size = round_up(size, mem->min_page_size);
 
 	GEM_BUG_ON(!size);

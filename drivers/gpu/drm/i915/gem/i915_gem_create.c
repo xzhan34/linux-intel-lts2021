@@ -83,6 +83,12 @@ static u64 object_size_align(struct intel_memory_region *mr, u64 size, u32 *flag
 		if (page_sz_mask & BIT(0)) {
 			alloc_flags |= I915_BO_ALLOC_CHUNK_4K;
 			alignment = SZ_4K;
+		} else if (page_sz_mask & BIT(1)) {
+			alloc_flags |= I915_BO_ALLOC_CHUNK_64K;
+			alignment = SZ_64K;
+		} else if (page_sz_mask & BIT(2)) {
+			alloc_flags |= I915_BO_ALLOC_CHUNK_2M;
+			alignment = SZ_2M;
 		} else if (page_sz_mask & BIT(3)) {
 			alloc_flags |= I915_BO_ALLOC_CHUNK_1G;
 			alignment = SZ_1G;
