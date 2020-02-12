@@ -759,9 +759,9 @@ static u32 __contexts_get_next_token(struct intel_gt *gt)
 	return token;
 }
 
-static struct i915_gem_context *
-__create_context(struct drm_i915_private *i915)
+static struct i915_gem_context *__create_context(struct intel_gt *gt)
 {
+	struct drm_i915_private *i915 = gt->i915;
 	struct i915_gem_context *ctx;
 	struct i915_gem_engines *e;
 	int err;
@@ -804,7 +804,7 @@ __create_context(struct drm_i915_private *i915)
 		ctx->hang_timestamp[i] = jiffies - CONTEXT_FAST_HANG_JIFFIES;
 
 	if (GRAPHICS_VER(i915) >= 12)
-		ctx->semaphore_token = __contexts_get_next_token(to_gt(i915));
+		ctx->semaphore_token = __contexts_get_next_token(gt);
 
 	return ctx;
 
@@ -903,8 +903,9 @@ static void __assign_ppgtt(struct i915_gem_context *ctx,
 }
 
 static struct i915_gem_context *
-i915_gem_create_context(struct drm_i915_private *i915, unsigned int flags)
+i915_gem_context_create_for_gt(struct intel_gt *gt, unsigned int flags)
 {
+	struct drm_i915_private *i915 = gt->i915;
 	struct i915_gem_context *ctx;
 	int ret;
 
@@ -912,14 +913,14 @@ i915_gem_create_context(struct drm_i915_private *i915, unsigned int flags)
 	    !HAS_EXECLISTS(i915))
 		return ERR_PTR(-EINVAL);
 
-	ctx = __create_context(i915);
+	ctx = __create_context(gt);
 	if (IS_ERR(ctx))
 		return ctx;
 
 	if (HAS_FULL_PPGTT(i915)) {
 		struct i915_ppgtt *ppgtt;
 
-		ppgtt = i915_ppgtt_create(to_gt(i915));
+		ppgtt = i915_ppgtt_create(gt);
 		if (IS_ERR(ppgtt)) {
 			drm_dbg(&i915->drm, "PPGTT setup failed (%ld)\n",
 				PTR_ERR(ppgtt));
@@ -1038,7 +1039,7 @@ int i915_gem_context_open(struct drm_i915_private *i915,
 	/* 0 reserved for invalid/unassigned ppgtt */
 	xa_init_flags(&file_priv->vm_xa, XA_FLAGS_ALLOC1);
 
-	ctx = i915_gem_create_context(i915, 0);
+	ctx = i915_gem_context_create_for_gt(to_gt(i915), 0);
 	if (IS_ERR(ctx)) {
 		err = PTR_ERR(ctx);
 		goto err;
@@ -2247,7 +2248,7 @@ int i915_gem_context_create_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		return ret;
 
-	ext_data.ctx = i915_gem_create_context(i915, args->flags);
+	ext_data.ctx = i915_gem_context_create_for_gt(to_gt(i915), args->flags);
 	if (IS_ERR(ext_data.ctx))
 		return PTR_ERR(ext_data.ctx);
 

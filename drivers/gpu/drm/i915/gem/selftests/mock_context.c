@@ -84,7 +84,7 @@ live_context(struct drm_i915_private *i915, struct file *file)
 	int err;
 	u32 id;
 
-	ctx = i915_gem_create_context(i915, 0);
+	ctx = i915_gem_context_create_for_gt(to_gt(i915), 0);
 	if (IS_ERR(ctx))
 		return ctx;
 
@@ -143,7 +143,7 @@ kernel_context(struct drm_i915_private *i915)
 {
 	struct i915_gem_context *ctx;
 
-	ctx = i915_gem_create_context(i915, 0);
+	ctx = i915_gem_context_create_for_gt(to_gt(i915), 0);
 	if (IS_ERR(ctx))
 		return ctx;
 
