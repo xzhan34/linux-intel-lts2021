@@ -873,7 +873,10 @@ static int igt_lmem_create_migrate_cross_tile(void *arg)
 	return ret;
 }
 
-static int __igt_lmem_write_gpu(struct intel_gt *gt, struct intel_gt *sdw_gt)
+static int
+__igt_lmem_write_gpu(struct intel_gt *gt,
+		     struct intel_gt *sdw_gt,
+		     struct intel_gt *vm_gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
 	struct drm_i915_gem_object *obj;
@@ -883,14 +886,14 @@ static int __igt_lmem_write_gpu(struct intel_gt *gt, struct intel_gt *sdw_gt)
 	u32 sz;
 	int err;
 
-	pr_info("%s: writting to gt%u from gt%u\n",
-		__func__, gt->info.id, sdw_gt->info.id);
+	pr_info("%s: writting to gt%u from gt%u, ppgtt at gt%u...\n",
+		__func__, gt->info.id, sdw_gt->info.id, vm_gt->info.id);
 
 	file = mock_file(i915);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
 
-	ctx = live_context(i915, file);
+	ctx = live_gt_context(vm_gt, file);
 	if (IS_ERR(ctx)) {
 		err = PTR_ERR(ctx);
 		goto out_file;
@@ -924,7 +927,7 @@ static int igt_lmem_write_gpu(void *arg)
 {
 	struct intel_gt *gt = arg;
 
-	return __igt_lmem_write_gpu(gt, gt);
+	return __igt_lmem_write_gpu(gt, gt, gt);
 }
 
 static int igt_lmem_write_gpu_cross_tile(void *arg)
@@ -940,7 +943,32 @@ static int igt_lmem_write_gpu_cross_tile(void *arg)
 			if (gt == gt2)
 				continue;
 
-			ret = __igt_lmem_write_gpu(gt, gt2);
+			ret = __igt_lmem_write_gpu(gt, gt2, gt2);
+			if (ret)
+				break;
+		}
+
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+static int igt_lmem_write_gpu_cross_tile_cross_vm(void *arg)
+{
+
+	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt, *gt2;
+	unsigned int i, j;
+	int ret;
+
+	for_each_gt(gt, i915, i) {
+		for_each_gt(gt2, i915, j) {
+			if (gt == gt2)
+				continue;
+
+			ret = __igt_lmem_write_gpu(gt, gt2, gt);
 			if (ret)
 				break;
 		}
@@ -1574,6 +1602,7 @@ int intel_memory_region_cross_tile_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_lmem_pages_migrate_cross_tile),
 		SUBTEST(igt_lmem_write_cpu_cross_tile),
 		SUBTEST(igt_lmem_write_gpu_cross_tile),
+		SUBTEST(igt_lmem_write_gpu_cross_tile_cross_vm),
 	};
 	struct intel_gt *gt;
 	unsigned int i;
