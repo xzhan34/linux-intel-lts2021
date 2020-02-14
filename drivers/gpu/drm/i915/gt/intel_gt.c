@@ -44,6 +44,9 @@ void intel_gt_common_init_early(struct intel_gt *gt)
 	INIT_WORK(&gt->watchdog.work, intel_gt_watchdog_work);
 
 	intel_gt_init_buffer_pool(gt);
+
+	atomic_set(&gt->next_token, 0);
+
 	intel_gt_init_reset(gt);
 	intel_gt_init_requests(gt);
 	intel_gt_init_timelines(gt);

@@ -820,15 +820,6 @@ struct drm_i915_private {
 		struct i915_gem_contexts {
 			spinlock_t lock; /* locks list */
 			struct list_head list;
-
-#define GEN12_ENGINE_SEMAPHORE_TOKEN_MAX	27
-#define XEHPSDV_ENGINE_SEMAPHORE_TOKEN_MAX		256
-			/*
-			 * Used for gen12+ semaphore tokens.
-			 * This value is used to initialize our contexts, and is
-			 * free to overflow.
-			 */
-			atomic_t next_token;
 		} contexts;
 
 		/*
