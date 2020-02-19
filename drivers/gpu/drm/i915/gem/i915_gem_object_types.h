@@ -317,6 +317,7 @@ struct drm_i915_gem_object {
 #define I915_BO_CPU_CLEAR	BIT(11)
 #define I915_BO_FAULT_CLEAR	BIT(12)
 #define I915_BO_SYNC_HINT	BIT(13)
+#define I915_BO_FABRIC		BIT(14)
 
 	/**
 	 * @pat_index: The desired PAT index.

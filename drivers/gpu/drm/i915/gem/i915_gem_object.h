@@ -294,6 +294,24 @@ static inline void i915_gem_object_unlock(struct drm_i915_gem_object *obj)
 }
 
 static inline void
+i915_gem_object_set_fabric(struct drm_i915_gem_object *obj)
+{
+	obj->flags |= I915_BO_FABRIC;
+}
+
+static inline void
+i915_gem_object_clear_fabric(struct drm_i915_gem_object *obj)
+{
+	obj->flags &= ~I915_BO_FABRIC;
+}
+
+static inline bool
+i915_gem_object_has_fabric(const struct drm_i915_gem_object *obj)
+{
+	return obj->flags & I915_BO_FABRIC;
+}
+
+static inline void
 i915_gem_object_set_readonly(struct drm_i915_gem_object *obj)
 {
 	obj->flags |= I915_BO_READONLY;

@@ -278,7 +278,11 @@ i915_param_named_unsafe(force_alloc_contig, int, 0400,
 	"0=disabled [default], 1=SMEM only, 2=LMEM only, 3=both");
 #endif
 
-i915_param_named_unsafe(prelim_override_p2p_dist, bool, 0400, "Override P2P distance check (default: false)");
+i915_param_named_unsafe(prelim_override_p2p_dist, uint, 0400,
+			"Flags to determine P2P behavior: "
+			"Use kernel configured behavior (default: 0), "
+			"Override distance check (1), "
+			"Fabric path only (2)");
 
 i915_param_named_unsafe(smem_access_control, int, 0600,
 			"Bitmask to indicate WA enabled for pcie deadlock, bits 1 and 2 are mutually exclusive"

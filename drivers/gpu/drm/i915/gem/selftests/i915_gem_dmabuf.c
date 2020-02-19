@@ -97,6 +97,13 @@ static int igt_dmabuf_import_same_driver_lmem(void *arg)
 	if (!lmem)
 		return 0;
 
+	/*
+	 * Asks about the device - if both sides support p2p,
+	 * we can use lmem inplace.
+	 */
+	if (i915_p2p_distance(i915, i915->drm.dev) >= 0)
+		return 0; /* skip */
+
 	force_different_devices = true;
 
 	obj = i915_gem_object_create_lmem(i915, PAGE_SIZE, 0);
@@ -117,10 +124,25 @@ static int igt_dmabuf_import_same_driver_lmem(void *arg)
 
 	/*
 	 * We expect an import of an LMEM-only object to fail with
-	 * -EOPNOTSUPP because it can't be migrated to SMEM.
+	 * -EOPNOTSUPP because it can't be migrated to SMEM. However,
+	 * if both sides support peer2peer access, then it can be used
+	 * inplace from lmem.
 	 */
 	import = i915_gem_prime_import(&i915->drm, dmabuf);
 	if (!IS_ERR(import)) {
+		struct dma_buf_attachment *attach = obj->base.import_attach;
+
+		/*
+		 * Asks about the object/attachment -If both sides support p2p,
+		 * we can use lmem inplace.
+		 */
+		if (object_to_attachment_p2p_distance(obj, attach) >= 0) {
+			pr_err("this is unexpected!\n");
+			err = 0;
+		} else {
+			pr_err("i915_gem_prime_import succeeded when it shouldn't have\n");
+			err = -EINVAL;
+		}
 		drm_gem_object_put(import);
 		pr_err("i915_gem_prime_import succeeded when it shouldn't have\n");
 		err = -EINVAL;

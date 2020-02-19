@@ -721,7 +721,7 @@ void intel_ggtt_bind_vma(struct i915_address_space *vm,
 	pte_flags = 0;
 	if (i915_gem_object_is_readonly(obj))
 		pte_flags |= PTE_READ_ONLY;
-	if (i915_gem_object_is_lmem(obj))
+	if (i915_gem_object_is_lmem(obj) || i915_gem_object_has_fabric(obj))
 		pte_flags |= PTE_LM;
 
 	vm->insert_entries(vm, stash, vma, pat_index, pte_flags);
