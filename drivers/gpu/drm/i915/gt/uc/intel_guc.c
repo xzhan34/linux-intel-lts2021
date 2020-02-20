@@ -865,6 +865,29 @@ int intel_guc_to_host_process_recv_msg(struct intel_guc *guc,
 }
 
 /**
+ * intel_guc_set_schedule_mode() - request GuC insert scheduling delays
+ * @guc:	the guc
+ * @mode:	the scheduling mode
+ * @delay:	the delay in milliseconds
+ *
+ * The user can request a stall by providing a non-zero value for @delay.
+ * When this occurs, the GuC will continue inserting scheduling stalls
+ * until such a time as the user sets the stall @delay to zero.
+ * Once @delay is set to zero, the GuC will return to normal scheduling.
+ */
+int intel_guc_set_schedule_mode(struct intel_guc *guc,
+				enum intel_guc_scheduler_mode mode, u32 delay)
+{
+	u32 action[] = {
+		INTEL_GUC_ACTION_SET_SCHEDULING_MODE,
+		mode,
+		delay
+	};
+
+	return intel_guc_send(guc, action, ARRAY_SIZE(action));
+}
+
+/**
  * intel_guc_auth_huc() - Send action to GuC to authenticate HuC ucode
  * @guc: intel_guc structure
  * @rsa_offset: rsa offset w.r.t ggtt base of huc vma

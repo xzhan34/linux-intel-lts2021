@@ -129,6 +129,48 @@ DEFINE_SIMPLE_ATTRIBUTE(guc_sched_disable_gucid_threshold_fops,
 			guc_sched_disable_gucid_threshold_get,
 			guc_sched_disable_gucid_threshold_set, "%lld\n");
 
+static int guc_stall_get(void *data, u64 *val)
+{
+	struct intel_guc *guc = data;
+
+	if (!intel_guc_submission_is_used(guc))
+		return -ENODEV;
+
+	*val = guc->stall_ms;
+
+	return 0;
+}
+
+static int guc_stall_set(void *data, u64 val)
+{
+#define INTEL_GUC_STALL_MAX 60000 /* in milliseconds */
+	struct intel_guc *guc = data;
+	enum intel_guc_scheduler_mode mode;
+
+	if (!intel_guc_submission_is_used(guc))
+		return -ENODEV;
+
+	if (val > INTEL_GUC_STALL_MAX) {
+		DRM_DEBUG_DRIVER("GuC Scheduler request delay = %lld > %d, "
+				 "setting delay = %d\n",
+				 val, INTEL_GUC_STALL_MAX, INTEL_GUC_STALL_MAX);
+		val = INTEL_GUC_STALL_MAX;
+	}
+	guc->stall_ms = val;
+
+	if (val)
+		mode = INTEL_GUC_SCHEDULER_MODE_STALL_IMMEDIATE;
+	else
+		mode = INTEL_GUC_SCHEDULER_MODE_NORMAL;
+
+	DRM_DEBUG_DRIVER("GuC Scheduler Stall Mode = %s (%d ms delay)\n",
+			 mode == INTEL_GUC_SCHEDULER_MODE_STALL_IMMEDIATE ?
+			 "Immediate" : "Normal", guc->stall_ms);
+
+	return intel_guc_set_schedule_mode(guc, mode, val);
+}
+DEFINE_SIMPLE_ATTRIBUTE(guc_stall_fops, guc_stall_get, guc_stall_set, "%lld\n");
+
 void intel_guc_debugfs_register(struct intel_guc *guc, struct dentry *root)
 {
 	static const struct intel_gt_debugfs_file files[] = {
@@ -138,6 +180,7 @@ void intel_guc_debugfs_register(struct intel_guc *guc, struct dentry *root)
 		{ "guc_sched_disable_delay_ms", &guc_sched_disable_delay_ms_fops, NULL },
 		{ "guc_sched_disable_gucid_threshold", &guc_sched_disable_gucid_threshold_fops,
 		   NULL },
+		{ "guc_stall_ms", &guc_stall_fops, NULL },
 	};
 
 	if (!intel_guc_is_supported(guc))

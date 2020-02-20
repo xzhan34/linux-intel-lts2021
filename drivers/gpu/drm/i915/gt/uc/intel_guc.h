@@ -265,6 +265,9 @@ struct intel_guc {
 		unsigned long last_stat_jiffies;
 	} timestamp;
 
+	/* @stall_ms: To insert GuC stalls */
+	u32  stall_ms;
+
 #ifdef CONFIG_DRM_I915_SELFTEST
 	/**
 	 * @number_guc_id_stolen: The number of guc_ids that have been stolen
@@ -506,6 +509,8 @@ void intel_guc_submission_reset_prepare(struct intel_guc *guc);
 void intel_guc_submission_reset(struct intel_guc *guc, intel_engine_mask_t stalled);
 void intel_guc_submission_reset_finish(struct intel_guc *guc);
 void intel_guc_submission_cancel_requests(struct intel_guc *guc);
+int intel_guc_set_schedule_mode(struct intel_guc *guc,
+				enum intel_guc_scheduler_mode mode, u32 delay);
 
 void intel_guc_load_status(struct intel_guc *guc, struct drm_printer *p);
 void intel_guc_print_info(struct intel_guc *guc, struct drm_printer *p);
