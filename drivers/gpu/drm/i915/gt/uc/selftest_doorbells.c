@@ -351,7 +351,11 @@ static uint get_num_doorbells(struct intel_gt *gt)
 {
 	uint num_doorbells;
 
-	if (HAS_GUC_DIST_DB(gt->i915)) {
+	if (IS_SRIOV_PF(gt->i915)) {
+		num_doorbells = gt->iov.pf.provisioning.configs[0].num_dbs;
+	} else if (IS_SRIOV_VF(gt->i915)) {
+		num_doorbells = gt->iov.vf.config.num_dbs;
+	} else if (HAS_GUC_DIST_DB(gt->i915)) {
 		u32 distdbreg = intel_uncore_read(gt->uncore,
 						  GEN12_DIST_DBS_POPULATED);
 
