@@ -1236,6 +1236,13 @@ static void ct_handle_msg(struct intel_guc_ct *ct, struct ct_incoming_msg *msg)
 	u32 format = FIELD_GET(GUC_CTB_MSG_0_FORMAT, msg->msg[0]);
 	int err;
 
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+	if (unlikely(ct->rcv_override && ct->rcv_override(ct, msg->msg) != -ENOTSUPP)) {
+		ct_free_msg(msg);
+		return;
+	}
+#endif
+
 	if (format == GUC_CTB_FORMAT_HXG)
 		err = ct_handle_hxg(ct, msg);
 	else

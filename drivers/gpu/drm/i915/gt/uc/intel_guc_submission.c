@@ -5621,4 +5621,5 @@ void intel_guc_context_set_preemption_timeout(struct intel_context *ce)
 #include "selftest_guc.c"
 #include "selftest_guc_multi_lrc.c"
 #include "selftest_guc_hangcheck.c"
+#include "selftest_doorbells.c"
 #endif

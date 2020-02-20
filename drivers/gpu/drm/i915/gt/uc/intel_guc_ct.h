@@ -83,6 +83,8 @@ struct intel_guc_ct {
 		struct work_struct worker; /* handler for incoming requests */
 	} requests;
 
+	I915_SELFTEST_DECLARE(int (*rcv_override)(struct intel_guc_ct *ct, const u32 *msg));
+
 	/** @stall_time: time of first time a CTB submission is stalled */
 	ktime_t stall_time;
 
