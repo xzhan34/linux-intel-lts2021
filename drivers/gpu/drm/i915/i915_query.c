@@ -429,13 +429,28 @@ prelim_query_engine_info(struct drm_i915_private *i915,
 		info.engine.engine_class = engine->uabi_class;
 		info.engine.engine_instance = engine->uabi_instance;
 		info.flags = PRELIM_I915_ENGINE_INFO_HAS_LOGICAL_INSTANCE |
-			PRELIM_I915_ENGINE_INFO_HAS_OA_UNIT_ID;
+			PRELIM_I915_ENGINE_INFO_HAS_OA_UNIT_ID |
+			PRELIM_I915_ENGINE_INFO_HAS_KNOWN_CAPABILITIES;
 		info.capabilities = engine->uabi_capabilities;
 		info.logical_instance = ilog2(engine->logical_mask);
 		info.oa_unit_id = engine->oa_group && engine->oa_group->num_engines ?
 				  engine->oa_group->oa_unit_id : U32_MAX;
 
-		if (copy_to_user(info_ptr, &info, sizeof(info)))
+		switch (engine->uabi_class) {
+		case I915_ENGINE_CLASS_VIDEO:
+			info.known_capabilities =
+				I915_VIDEO_CLASS_CAPABILITY_HEVC |
+				I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC;
+			break;
+		case I915_ENGINE_CLASS_VIDEO_ENHANCE:
+			info.known_capabilities =
+				I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC;
+			break;
+		}
+
+		GEM_WARN_ON(info.capabilities & ~info.known_capabilities);
+
+		if (__copy_to_user(info_ptr, &info, sizeof(info)))
 			return -EFAULT;
 
 		query.num_engines++;

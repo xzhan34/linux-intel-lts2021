@@ -894,6 +894,7 @@ struct prelim_drm_i915_engine_info {
 
 	/** Engine flags. */
 	__u64 flags;
+#define PRELIM_I915_ENGINE_INFO_HAS_KNOWN_CAPABILITIES	(1ull << 63)
 #define PRELIM_I915_ENGINE_INFO_HAS_LOGICAL_INSTANCE	(1ull << 62)
 #define PRELIM_I915_ENGINE_INFO_HAS_OA_UNIT_ID		(1ull << 61)
 
@@ -902,7 +903,8 @@ struct prelim_drm_i915_engine_info {
 #define I915_VIDEO_CLASS_CAPABILITY_HEVC		(1 << 0)
 #define I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC	(1 << 1)
 
-	__u64 rsvd3;
+	/** All known capabilities for this engine class. */
+	__u64 known_capabilities;
 
 	/** Logical engine instance */
 	__u16 logical_instance;
