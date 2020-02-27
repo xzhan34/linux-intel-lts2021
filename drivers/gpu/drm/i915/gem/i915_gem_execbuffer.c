@@ -762,8 +762,9 @@ static int eb_reserve(struct i915_execbuffer *eb)
 
 			ev = &eb->vma[i];
 			flags = ev->flags;
-			if (flags & EXEC_OBJECT_PINNED &&
-			    flags & __EXEC_OBJECT_HAS_PIN)
+			if ((flags & EXEC_OBJECT_PINNED &&
+			     flags & __EXEC_OBJECT_HAS_PIN) ||
+			    i915_vma_is_persistent(ev->vma))
 				continue;
 
 			eb_unreserve_vma(ev);
@@ -816,6 +817,26 @@ static int eb_select_context(struct i915_execbuffer *eb)
 		eb->invalid_flags |= EXEC_OBJECT_NEEDS_GTT;
 
 	return 0;
+}
+
+static struct i915_vma *
+eb_check_for_persistent_vma(struct i915_execbuffer *eb,
+			    struct drm_i915_gem_exec_object2 *entry)
+{
+	struct i915_address_space *vm = eb->context->vm;
+	struct i915_vma *vma;
+	u64 va;
+
+	assert_vm_bind_held(vm);
+
+	va = gen8_noncanonical_addr(entry->offset & PIN_OFFSET_MASK);
+	vma = i915_gem_vm_bind_lookup_vma(vm, va);
+	if (!vma)
+		return NULL;
+
+	i915_vma_get(vma);
+
+	return vma;
 }
 
 static int __eb_add_lut(struct i915_execbuffer *eb,
@@ -921,6 +942,7 @@ static struct i915_vma *eb_lookup_vma(struct i915_execbuffer *eb, u32 handle)
 			i915_gem_object_put(obj);
 			return vma;
 		}
+		GEM_BUG_ON(i915_vma_is_persistent(vma));
 
 		err = __eb_add_lut(eb, handle, vma);
 		if (likely(!err))
@@ -940,15 +962,20 @@ static int eb_lookup_vmas(struct i915_execbuffer *eb)
 	INIT_LIST_HEAD(&eb->relocs);
 
 	for (i = 0; i < eb->buffer_count; i++) {
+		struct drm_i915_gem_exec_object2 *entry = &eb->exec[i];
+		u32 handle = entry->handle;
 		struct i915_vma *vma;
 
-		vma = eb_lookup_vma(eb, eb->exec[i].handle);
+		vma = eb_check_for_persistent_vma(eb, entry);
+		if (!vma)
+			vma = eb_lookup_vma(eb, handle);
+
 		if (IS_ERR(vma)) {
 			err = PTR_ERR(vma);
 			goto err;
 		}
 
-		err = eb_validate_vma(eb, &eb->exec[i], vma);
+		err = eb_validate_vma(eb, entry, vma);
 		if (unlikely(err)) {
 			i915_vma_put(vma);
 			goto err;
@@ -2431,7 +2458,8 @@ static int eb_move_to_gpu(struct i915_execbuffer *eb)
 		unsigned int flags = ev->flags;
 		struct drm_i915_gem_object *obj = vma->obj;
 
-		assert_vma_held(vma);
+		if (!i915_vma_is_persistent(vma))
+			assert_vma_held(vma);
 
 		if (flags & EXEC_OBJECT_CAPTURE) {
 			struct i915_capture_list *capture;

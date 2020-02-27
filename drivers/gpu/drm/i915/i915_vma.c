@@ -1255,7 +1255,10 @@ void i915_vma_close(struct i915_vma *vma)
 					&clock->lock,
 					flags)) {
 		struct drm_i915_gem_object *obj = vma->obj;
-		bool inuse = object_inuse(obj) && !i915_is_ggtt_or_dpt(vm);
+		bool inuse =
+			!i915_vma_is_persistent(vma) &&
+			object_inuse(obj) &&
+			!i915_is_ggtt_or_dpt(vm);
 
 		if (inuse) {
 			list_add(&vma->closed_link, &clock->age[0]);
@@ -1485,9 +1488,13 @@ int _i915_vma_move_to_active(struct i915_vma *vma,
 
 	assert_object_held(obj);
 
-	err = __i915_vma_move_to_active(vma, rq);
-	if (unlikely(err))
-		return err;
+	if (!i915_vma_is_persistent(vma)) {
+		err = __i915_vma_move_to_active(vma, rq);
+		if (unlikely(err))
+			return err;
+
+		GEM_BUG_ON(!i915_vma_is_active(vma));
+	}
 
 	if (flags & EXEC_OBJECT_WRITE) {
 		struct intel_frontbuffer *front;
@@ -1523,7 +1530,6 @@ int _i915_vma_move_to_active(struct i915_vma *vma,
 	obj->read_domains |= I915_GEM_GPU_DOMAINS;
 	obj->mm.dirty = true;
 
-	GEM_BUG_ON(!i915_vma_is_active(vma));
 	return 0;
 }
 

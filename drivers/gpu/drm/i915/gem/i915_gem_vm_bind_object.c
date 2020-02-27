@@ -104,8 +104,8 @@ int i915_gem_vm_unbind_obj(struct i915_address_space *vm,
 		goto out_unlock;
 	}
 
-	if (i915_vma_is_pinned(vma)) {
-		ret = -EBUSY;
+	if (i915_vma_is_pinned(vma) || atomic_read(&vma->open_count)) {
+		ret = -EAGAIN;
 		goto out_unlock;
 	}
 
