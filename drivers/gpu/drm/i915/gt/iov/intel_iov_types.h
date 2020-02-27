@@ -214,6 +214,7 @@ struct intel_iov_relay {
  * @lmem_size: LMEM size.
  * @num_ctxs: number of GuC submission contexts.
  * @num_dbs: number of GuC doorbells.
+ * @tile_mask: assigned tiles (as bitmask with tile0 = BIT(0)).
  */
 struct intel_iov_vf_config {
 	struct {
@@ -227,6 +228,7 @@ struct intel_iov_vf_config {
 	u64 lmem_size;
 	u16 num_ctxs;
 	u16 num_dbs;
+	u32 tile_mask;
 };
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

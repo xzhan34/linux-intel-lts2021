@@ -235,6 +235,30 @@ static int guc_action_query_single_klv64(struct intel_guc *guc, u32 key, u64 *va
 	return 0;
 }
 
+static int vf_get_tiles(struct intel_iov *iov)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	u32 tile_mask;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+	GEM_BUG_ON(!iov_is_root(iov));
+
+	err = guc_action_query_single_klv32(guc, GUC_KLV_VF_CFG_TILE_MASK_KEY, &tile_mask);
+	if (unlikely(err))
+		return err;
+
+	if (!tile_mask) {
+		IOV_ERROR(iov, "Invalid GT assignment: %#x\n", tile_mask);
+		return -ENODATA;
+	}
+
+	IOV_DEBUG(iov, "tile mask %#x\n", tile_mask);
+	iov->vf.config.tile_mask = tile_mask;
+
+	return 0;
+}
+
 static int vf_get_ggtt_info(struct intel_iov *iov)
 {
 	struct intel_guc *guc = iov_to_guc(iov);
@@ -339,6 +363,12 @@ int intel_iov_query_config(struct intel_iov *iov)
 	int err;
 
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	if (HAS_REMOTE_TILES(iov_to_i915(iov)) && iov_is_root(iov)) {
+		err = vf_get_tiles(iov);
+		if (unlikely(err))
+			return err;
+	}
 
 	err = vf_get_ggtt_info(iov);
 	if (unlikely(err))
