@@ -98,7 +98,7 @@ static inline void intel_guc_ct_sanitize(struct intel_guc_ct *ct)
 	ct->enabled = false;
 }
 
-static inline bool intel_guc_ct_enabled(struct intel_guc_ct *ct)
+static inline bool intel_guc_ct_enabled(const struct intel_guc_ct *ct)
 {
 	return ct->enabled;
 }

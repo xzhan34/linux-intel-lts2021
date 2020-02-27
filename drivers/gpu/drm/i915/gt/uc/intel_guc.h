@@ -384,28 +384,28 @@ int intel_guc_allocate_and_map_vma(struct intel_guc *guc, u32 size,
 int intel_guc_self_cfg32(struct intel_guc *guc, u16 key, u32 value);
 int intel_guc_self_cfg64(struct intel_guc *guc, u16 key, u64 value);
 
-static inline bool intel_guc_is_supported(struct intel_guc *guc)
+static inline bool intel_guc_is_supported(const struct intel_guc *guc)
 {
 	return intel_uc_fw_is_supported(&guc->fw);
 }
 
-static inline bool intel_guc_is_wanted(struct intel_guc *guc)
+static inline bool intel_guc_is_wanted(const struct intel_guc *guc)
 {
 	return intel_uc_fw_is_enabled(&guc->fw);
 }
 
-static inline bool intel_guc_is_used(struct intel_guc *guc)
+static inline bool intel_guc_is_used(const struct intel_guc *guc)
 {
 	GEM_BUG_ON(__intel_uc_fw_status(&guc->fw) == INTEL_UC_FIRMWARE_SELECTED);
 	return intel_uc_fw_is_available(&guc->fw);
 }
 
-static inline bool intel_guc_is_fw_running(struct intel_guc *guc)
+static inline bool intel_guc_is_fw_running(const struct intel_guc *guc)
 {
 	return intel_uc_fw_is_running(&guc->fw);
 }
 
-static inline bool intel_guc_is_ready(struct intel_guc *guc)
+static inline bool intel_guc_is_ready(const struct intel_guc *guc)
 {
 	return intel_guc_is_fw_running(guc) && intel_guc_ct_enabled(&guc->ct);
 }
