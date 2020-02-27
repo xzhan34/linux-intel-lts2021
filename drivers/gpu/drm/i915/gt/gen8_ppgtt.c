@@ -222,6 +222,8 @@ static u64 gen8_pte_encode(dma_addr_t addr,
 
 	if (flags & PTE_LM)
 		pte |= GEN12_PPGTT_PTE_LM;
+	if (flags & PTE_AE)
+		pte |= GEN12_USM_PPGTT_PTE_AE;
 
 	switch (level) {
 	case I915_CACHE_NONE:
@@ -1640,6 +1642,7 @@ int intel_flat_lmem_ppgtt_init(struct i915_address_space *vm,
 	gen8_pte_t *vaddr;
 	gen8_pte_t encode;
 	bool needs_flush;
+	u32 pte_flags;
 	int lvl;
 	int err;
 
@@ -1654,9 +1657,13 @@ int intel_flat_lmem_ppgtt_init(struct i915_address_space *vm,
 	GEM_BUG_ON(!IS_ALIGNED(node->start | node->size, SZ_1G));
 	GEM_BUG_ON(node->size > SZ_1G * GEN8_PDES);
 
+	pte_flags = PTE_LM;
+	if (GRAPHICS_VER_FULL(vm->i915) >= IP_VER(12, 60))
+		pte_flags |= PTE_AE;
+
 	start = node->start >> GEN8_PTE_SHIFT;
 	end = start + (node->size >> GEN8_PTE_SHIFT);
-	encode = vm->pte_encode(node->start, 0, PTE_LM) | GEN8_PDPE_PS_1G;
+	encode = vm->pte_encode(node->start, 0, pte_flags) | GEN8_PDPE_PS_1G;
 
 	/* The vm->mm may be hiding the first page already */
 	head = vm->mm.head_node.start + vm->mm.head_node.size;

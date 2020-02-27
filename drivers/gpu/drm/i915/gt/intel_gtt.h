@@ -88,6 +88,7 @@ typedef u64 gen8_pte_t;
 #define BYT_PTE_WRITEABLE		REG_BIT(1)
 
 #define GEN12_PPGTT_PTE_LM	BIT_ULL(11)
+#define GEN12_USM_PPGTT_PTE_AE	BIT_ULL(10)
 
 /*
  *  DOC: GEN12 GGTT Table Entry format
@@ -363,6 +364,7 @@ struct i915_address_space {
 			  u32 flags); /* Create a valid PTE */
 #define PTE_READ_ONLY	BIT(0)
 #define PTE_LM		BIT(1)
+#define PTE_AE		BIT(2)
 
 	void (*allocate_va_range)(struct i915_address_space *vm,
 				  struct i915_vm_pt_stash *stash,

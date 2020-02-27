@@ -202,7 +202,7 @@ void ppgtt_bind_vma(struct i915_address_space *vm,
 	if (vma->vm->has_read_only && i915_gem_object_is_readonly(vma->obj))
 		pte_flags |= PTE_READ_ONLY;
 	if (i915_gem_object_is_lmem(vma->obj))
-		pte_flags |= PTE_LM;
+		pte_flags |= (vma->vm->top == 4 ? PTE_LM | PTE_AE : PTE_LM);
 
 	vm->insert_entries(vm, stash, vma, cache_level, pte_flags);
 
