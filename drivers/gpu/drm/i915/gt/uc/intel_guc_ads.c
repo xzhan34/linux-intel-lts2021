@@ -356,6 +356,7 @@ static int guc_mmio_regset_init(struct temp_regset *regset,
 				struct intel_engine_cs *engine)
 {
 	struct intel_gt *gt = engine->gt;
+	struct drm_i915_private *i915 = gt->i915;
 	const u32 base = engine->mmio_base;
 	struct i915_wa_list *wal = &engine->wa_list;
 	struct i915_wa *wa;
@@ -376,8 +377,14 @@ static int guc_mmio_regset_init(struct temp_regset *regset,
 	    CCS_MASK(engine->gt))
 		ret |= GUC_MMIO_REG_ADD(gt, regset, GEN12_RCU_MODE, true);
 
-	for (i = 0, wa = wal->list; i < wal->count; i++, wa++)
+	for (i = 0, wa = wal->list; i < wal->count; i++, wa++) {
+		/* Wa_1607720814 - dummy write must be last not sorted! */
+		if (IS_XEHPSDV(i915) &&
+		    i915_mmio_reg_offset(wa->reg) == 0xB0CC)
+			continue;
+
 		ret |= GUC_MMIO_REG_ADD(gt, regset, wa->reg, wa->masked_reg);
+	}
 
 	/* Be extra paranoid and include all whitelist registers. */
 	for (i = 0; i < RING_MAX_NONPRIV_SLOTS; i++)
@@ -400,6 +407,42 @@ static int guc_mmio_regset_init(struct temp_regset *regset,
 		ret |= GUC_MMIO_REG_ADD(gt, regset, EU_PERF_CNTL4, false);
 		ret |= GUC_MMIO_REG_ADD(gt, regset, EU_PERF_CNTL5, false);
 		ret |= GUC_MMIO_REG_ADD(gt, regset, EU_PERF_CNTL6, false);
+	}
+
+	/*
+	 * Wa_1607720814:
+	 *
+	 * NB: The dummy write must be the last entry in the list. Specifically,
+	 * it has to be after all entries in the broken range which potentially
+	 * means it is out of order. So, to be safe, just add it manually as the
+	 * last entry.
+	 */
+	if (IS_XEHPSDV(i915)) {
+		bool found = false;
+
+		for (i = 0; i < regset->storage_used; i++) {
+			u32 offset = regset->storage[i].offset;
+			if ((offset >= 0xB000) && (offset <= 0xB01F)) {
+				found = true;
+				break;
+			}
+
+			if ((offset >= 0xB0A0) && (offset <= 0xB0FF)) {
+				found = true;
+				break;
+			}
+		}
+
+		if (found) {
+			struct guc_mmio_reg *slot;
+			struct guc_mmio_reg reg = {
+				.offset = 0xB0CC,
+				.flags = 0,
+			};
+
+			slot = __mmio_reg_add(regset, &reg);
+			ret |= IS_ERR(slot);
+		}
 	}
 
 	return ret ? -1 : 0;
