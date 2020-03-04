@@ -138,6 +138,12 @@ i915_gem_object_lmem_io_map(struct drm_i915_gem_object *obj,
 	return io_mapping_map_wc(&mem->iomap, offset, size);
 }
 
+unsigned long i915_gem_object_lmem_offset(struct drm_i915_gem_object *obj)
+{
+	GEM_BUG_ON(!(obj->flags & I915_BO_ALLOC_CONTIGUOUS));
+	return i915_gem_object_get_dma_address(obj, 0);
+}
+
 /**
  * i915_gem_object_validates_to_lmem - Whether the object is resident in
  * lmem when pages are present.

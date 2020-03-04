@@ -1200,6 +1200,10 @@
 #define   INVALIDATION_BROADCAST_MODE_DIS	REG_BIT(12)
 #define   GLOBAL_INVALIDATION_MODE		REG_BIT(2)
 
+#define XEHP_LMEM_CFG_ADDR			MCR_REG(0xcf58)
+#define   LMEM_ENABLE				REG_BIT(31)
+#define   LMTT_DIR_PTR				REG_GENMASK(30, 0) /* in multiples of 64KB */
+
 #define GEN12_GAM_DONE				_MMIO(0xcf68)
 
 #define XEHPSDV_TLB_INV_DESC0			_MMIO(0xcf7c)

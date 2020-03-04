@@ -97,8 +97,17 @@ static int vf_tweak_guc_submission(struct intel_iov *iov)
  */
 int intel_iov_init(struct intel_iov *iov)
 {
-	if (intel_iov_is_pf(iov))
+	int err;
+
+	if (intel_iov_is_pf(iov)) {
+		err = intel_lmtt_init(&iov->pf.lmtt);
+		if (unlikely(err)) {
+			pf_update_status(iov, err, "lmtt");
+			return err;
+		}
+
 		intel_iov_provisioning_init(iov);
+	}
 
 	if (intel_iov_is_vf(iov))
 		vf_tweak_guc_submission(iov);
@@ -114,8 +123,10 @@ int intel_iov_init(struct intel_iov *iov)
  */
 void intel_iov_fini(struct intel_iov *iov)
 {
-	if (intel_iov_is_pf(iov))
+	if (intel_iov_is_pf(iov)) {
 		intel_iov_provisioning_fini(iov);
+		intel_lmtt_fini(&iov->pf.lmtt);
+	}
 }
 
 static int vf_balloon_ggtt(struct intel_iov *iov)
@@ -219,6 +230,8 @@ static void pf_enable_ggtt_guest_update(struct intel_iov *iov)
  * PF must configure hardware to enable VF's access to GGTT.
  * PF also updates here runtime info (snapshot of registers values)
  * that will be shared with VFs.
+ * On platforms with LMEM, PF setups the initial (top-level non-present)
+ * LMTT.
  *
  * Return: 0 on success or a negative error code on failure.
  */
@@ -227,6 +240,7 @@ int intel_iov_init_hw(struct intel_iov *iov)
 	int err;
 
 	if (intel_iov_is_pf(iov)) {
+		intel_lmtt_init_hw(&iov->pf.lmtt);
 		pf_enable_ggtt_guest_update(iov);
 		intel_iov_service_update(iov);
 		intel_iov_provisioning_restart(iov);

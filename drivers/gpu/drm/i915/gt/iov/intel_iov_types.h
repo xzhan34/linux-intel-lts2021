@@ -9,6 +9,7 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <drm/drm_mm.h>
+#include "intel_lmtt.h"
 #include "i915_reg.h"
 #include "i915_selftest.h"
 #include "intel_wakeref.h"
@@ -231,6 +232,7 @@ struct intel_iov_selftest
  * @pf.provisioning: provisioning data.
  * @pf.service: placeholder for service data.
  * @pf.state: placeholder for VFs data.
+ * @pf.lmtt: local memory translation tables for VFs.
  * @vf.config: configuration of the resources assigned to VF.
  * @vf.runtime: retrieved runtime info.
  * @relay: data related to VF/PF communication based on GuC Relay messages.
@@ -242,6 +244,7 @@ struct intel_iov {
 			struct intel_iov_provisioning provisioning;
 			struct intel_iov_service service;
 			struct intel_iov_state state;
+			struct intel_lmtt lmtt;
 		} pf;
 
 		struct {
