@@ -389,7 +389,10 @@ int intel_lmtt_init(struct intel_lmtt *lmtt)
 	if (!HAS_LMEM(gt->i915))
 		return 0;
 
-	lmtt->ops = &xehpsdv_lmtt_ops;
+	if (HAS_LMTT_LVL2(gt->i915))
+		lmtt->ops = &pvc_lmtt_ops;
+	else
+		lmtt->ops = &xehpsdv_lmtt_ops;
 
 	err = lmtt_pd_init(lmtt);
 	if (unlikely(err))

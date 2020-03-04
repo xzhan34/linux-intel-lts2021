@@ -254,7 +254,8 @@ iov-y += \
 	gt/iov/intel_iov_state.o \
 	gt/iov/intel_iov_sysfs.o \
 	gt/iov/intel_lmtt.o \
-	gt/iov/xehpsdv_lmtt.o
+	gt/iov/xehpsdv_lmtt.o \
+	gt/iov/pvc_lmtt.o
 i915-y += $(iov-y)
 
 iov-$(CONFIG_DRM_I915_SELFTEST) += \

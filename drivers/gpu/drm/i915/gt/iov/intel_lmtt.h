@@ -14,6 +14,7 @@ struct intel_lmtt_pt;
 struct intel_lmtt_ops;
 
 extern const struct intel_lmtt_ops xehpsdv_lmtt_ops;
+extern const struct intel_lmtt_ops pvc_lmtt_ops;
 
 #define LMTT_PT_SHIFT		16
 #define LMTT_PAGE_SHIFT		21

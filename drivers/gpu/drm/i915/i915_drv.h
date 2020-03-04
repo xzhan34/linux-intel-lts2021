@@ -1612,11 +1612,13 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 
 #define HAS_GUC_PROGRAMMABLE_MOCS(i915) (INTEL_INFO(i915)->has_guc_programmable_mocs)
 
-#define HAS_MEM_FENCE_SUPPORT(i915) ((i915)->params.enable_mem_fence && IS_PONTEVECCHIO((i915)))
-
 #define HAS_EU_STALL_SAMPLING(i915) (INTEL_INFO(i915)->has_eu_stall_sampling)
 
 #define HAS_GT_ERROR_VECTORS(i915) (INTEL_INFO(i915)->has_gt_error_vectors)
+
+#define HAS_MEM_FENCE_SUPPORT(i915) ((i915)->params.enable_mem_fence && IS_PONTEVECCHIO((i915)))
+
+#define HAS_LMTT_LVL2(i915) (INTEL_INFO(i915)->has_lmtt_lvl2)
 
 static inline bool i915_has_svm(struct drm_i915_private *dev_priv)
 {
