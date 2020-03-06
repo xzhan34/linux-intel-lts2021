@@ -293,6 +293,8 @@ struct i915_address_space {
 	struct mutex vm_bind_lock;  /* Protects vm_bind lists */
 	struct list_head vm_bind_list;
 	struct list_head vm_bound_list;
+	struct list_head vm_capture_list;
+	spinlock_t vm_capture_lock;  /* Protects vm_capture_list */
 	/* va tree of persistent vmas */
 	struct rb_root_cached va;
 	struct list_head non_priv_vm_bind_list;

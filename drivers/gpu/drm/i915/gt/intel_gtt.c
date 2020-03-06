@@ -268,6 +268,8 @@ void i915_address_space_init(struct i915_address_space *vm, int subclass)
 	vm->root_obj = i915_gem_object_create_internal(vm->i915, PAGE_SIZE);
 	GEM_BUG_ON(IS_ERR(vm->root_obj));
 	INIT_LIST_HEAD(&vm->priv_obj_list);
+	INIT_LIST_HEAD(&vm->vm_capture_list);
+	spin_lock_init(&vm->vm_capture_lock);
 
 	i915_active_init(&vm->active, __i915_vm_active, __i915_vm_retire, 0);
 }

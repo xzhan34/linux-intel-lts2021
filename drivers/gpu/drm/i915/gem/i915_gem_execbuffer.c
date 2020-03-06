@@ -2461,7 +2461,8 @@ static int eb_move_to_gpu(struct i915_execbuffer *eb)
 		if (!i915_vma_is_persistent(vma))
 			assert_vma_held(vma);
 
-		if (flags & EXEC_OBJECT_CAPTURE) {
+		if ((flags & EXEC_OBJECT_CAPTURE) &&
+		    !i915_vma_is_persistent_capture(vma)) {
 			struct i915_capture_list *capture;
 
 			for_each_batch_create_order(eb, j) {

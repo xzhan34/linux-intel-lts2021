@@ -1080,6 +1080,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	struct i915_vma_coredump *dst;
 	unsigned long num_pages;
 	struct sgt_iter iter;
+	u64 offset, n = 0;
 	int ret;
 
 	might_sleep();
@@ -1108,12 +1109,18 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	dst->page_count = 0;
 	dst->unused = 0;
 
+	offset = (vma->ggtt_view.type == I915_GGTT_VIEW_PARTIAL) ?
+		 vma->ggtt_view.partial.offset : 0;
+
 	ret = -EINVAL;
 	if (drm_mm_node_allocated(&ggtt->error_capture)) {
 		void __iomem *s;
 		dma_addr_t dma;
 
 		for_each_sgt_daddr(dma, iter, vma->pages) {
+			if (n++ < offset)
+				continue;
+
 			mutex_lock(&ggtt->error_mutex);
 			ggtt->vm.insert_page(&ggtt->vm, dma, slot,
 					     I915_CACHE_NONE, 0);
@@ -1128,7 +1135,8 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 			mb();
 			ggtt->vm.clear_range(&ggtt->vm, slot, PAGE_SIZE);
 			mutex_unlock(&ggtt->error_mutex);
-			if (ret)
+
+			if (ret || (vma->size <= ((n - offset) * PAGE_SIZE)))
 				break;
 		}
 	} else if (i915_gem_object_is_lmem(vma->obj)) {
@@ -1138,6 +1146,9 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 		for_each_sgt_daddr(dma, iter, vma->pages) {
 			void __iomem *s;
 
+			if (n++ < offset)
+				continue;
+
 			s = io_mapping_map_wc(&mem->iomap,
 					      dma - mem->region.start,
 					      PAGE_SIZE);
@@ -1145,7 +1156,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 					    (void __force *)s, dst,
 					    true);
 			io_mapping_unmap(s);
-			if (ret)
+			if (ret || (vma->size <= ((n - offset) * PAGE_SIZE)))
 				break;
 		}
 	} else {
@@ -1153,6 +1164,9 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 
 		for_each_sgt_page(page, iter, vma->pages) {
 			void *s;
+
+			if (n++ < offset)
+				continue;
 
 			drm_clflush_pages(&page, 1);
 
@@ -1162,7 +1176,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 
 			drm_clflush_pages(&page, 1);
 
-			if (ret)
+			if (ret || (vma->size <= ((n - offset) * PAGE_SIZE)))
 				break;
 		}
 	}
@@ -1418,7 +1432,7 @@ capture_vma(struct intel_engine_capture_vma *next,
 	if (!c)
 		return next;
 
-	if (!i915_active_acquire_if_busy(&vma->active)) {
+	if (!i915_vma_active_acquire_if_busy(vma)) {
 		kfree(c);
 		return next;
 	}
@@ -1431,6 +1445,20 @@ capture_vma(struct intel_engine_capture_vma *next,
 }
 
 static struct intel_engine_capture_vma *
+capture_user_vm(struct intel_engine_capture_vma *capture,
+		struct i915_address_space *vm, gfp_t gfp)
+{
+	struct i915_vma *vma;
+
+	spin_lock(&vm->vm_capture_lock);
+	list_for_each_entry(vma, &vm->vm_capture_list, vm_capture_link)
+		capture = capture_vma(capture, vma, "user", gfp);
+	spin_unlock(&vm->vm_capture_lock);
+
+	return capture;
+}
+
+static struct intel_engine_capture_vma *
 capture_user(struct intel_engine_capture_vma *capture,
 	     const struct i915_request *rq,
 	     gfp_t gfp)
@@ -1439,6 +1467,13 @@ capture_user(struct intel_engine_capture_vma *capture,
 
 	for (c = rq->capture_list; c; c = c->next)
 		capture = capture_vma(capture, c->vma, "user", gfp);
+
+	/*
+	 * include persistent VMAs
+	 * XXX overrides gfp due to execlists_capture_work caller
+	 */
+	gfp = GFP_NOWAIT | __GFP_NOWARN;
+	capture = capture_user_vm(capture, rq->context->vm, gfp);
 
 	return capture;
 }
@@ -1516,7 +1551,7 @@ intel_engine_coredump_add_vma(struct intel_engine_coredump *ee,
 						 vma, this->name,
 						 compress));
 
-		i915_active_release(&vma->active);
+		i915_vma_active_release(vma);
 
 		capture = this->next;
 		kfree(this);

@@ -175,6 +175,11 @@ static inline bool i915_vma_is_persistent(const struct i915_vma *vma)
 	return test_bit(I915_VMA_PERSISTENT_BIT, __i915_vma_flags(vma));
 }
 
+static inline bool i915_vma_is_persistent_capture(const struct i915_vma *vma)
+{
+	return !list_empty(&vma->vm_capture_link);
+}
+
 static inline bool i915_vma_is_active(const struct i915_vma *vma)
 {
 	if (i915_vma_is_purged(vma))
@@ -478,6 +483,22 @@ void i915_vma_make_shrinkable(struct i915_vma *vma);
 void i915_vma_make_purgeable(struct i915_vma *vma);
 
 int i915_vma_wait_for_bind(struct i915_vma *vma);
+
+static inline bool i915_vma_active_acquire_if_busy(struct i915_vma *vma)
+{
+	if (i915_vma_is_persistent(vma))
+		return i915_active_acquire_if_busy(&vma->vm->active);
+	else
+		return i915_active_acquire_if_busy(&vma->active);
+}
+
+static inline void i915_vma_active_release(struct i915_vma *vma)
+{
+	if (i915_vma_is_persistent(vma))
+		i915_active_release(&vma->vm->active);
+	else
+		i915_active_release(&vma->active);
+}
 
 static inline int i915_vma_sync(struct i915_vma *vma)
 {

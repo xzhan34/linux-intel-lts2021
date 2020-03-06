@@ -56,6 +56,11 @@ static void i915_gem_vm_bind_remove(struct i915_vma *vma)
 	assert_vm_bind_held(vma->vm);
 	GEM_BUG_ON(list_empty(&vma->vm_bind_link));
 
+	spin_lock(&vma->vm->vm_capture_lock);
+	if (!list_empty(&vma->vm_capture_link))
+		list_del_init(&vma->vm_capture_link);
+	spin_unlock(&vma->vm->vm_capture_lock);
+
 	list_del_init(&vma->vm_bind_link);
 	list_del_init(&vma->non_priv_vm_bind_link);
 	i915_vm_bind_it_remove(vma, &vma->vm->va);
@@ -204,6 +209,12 @@ retry:
 			goto out_ww;
 
 		__i915_vma_unpin(vma);
+	}
+
+	if (va->flags & PRELIM_I915_GEM_VM_BIND_CAPTURE) {
+		spin_lock(&vm->vm_capture_lock);
+		list_add_tail(&vma->vm_capture_link, &vm->vm_capture_list);
+		spin_unlock(&vm->vm_capture_lock);
 	}
 
 	list_add_tail(&vma->vm_bind_link, &vm->vm_bind_list);

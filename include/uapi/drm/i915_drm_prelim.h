@@ -260,6 +260,7 @@ struct prelim_drm_i915_gem_vm_bind {
 	__u64 flags;
 #define PRELIM_I915_GEM_VM_BIND_IMMEDIATE	(1ull << 63)
 #define PRELIM_I915_GEM_VM_BIND_READONLY	(1ull << 62)
+#define PRELIM_I915_GEM_VM_BIND_CAPTURE		(1ull << 61)
 
 	/**
 	 * Zero-terminated chain of extensions.
