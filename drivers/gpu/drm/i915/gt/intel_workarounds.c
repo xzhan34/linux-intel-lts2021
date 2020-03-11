@@ -1908,6 +1908,103 @@ wa_verify(const struct i915_wa *wa, bool mcr,
 	return true;
 }
 
+/**
+ * wa_find_addr - Find the index in wal where an address is or would be
+ *
+ * Example usage:
+ *      i = wa_find_addr(wal, test_addr);
+ *      if (i >= wal->count) {
+ *              // entry not present, but would follow current last entry.
+ *      } else if (i915_mmio_reg_offset(wal->list[i].reg == test_addr)) {
+ *              // entry is present at index i.
+ *      } else {
+ *              // entry not present; i is where it would be inserted.
+ *      }
+ *
+ */
+static int
+wa_find_addr(const struct i915_wa_list *wal, u32 test_addr)
+{
+        unsigned int start = 0;
+        unsigned int end = wal->count;
+        unsigned int mid = 0;
+        u32 wa_addr;
+
+        while (start < end) {
+                mid = start + (end - start) / 2;
+                wa_addr = i915_mmio_reg_offset(wal->list[mid].reg);
+
+                if (wa_addr < test_addr) {
+                        start = mid + 1;
+                } else if (wa_addr > test_addr) {
+                        end = mid;
+                } else {
+                        break;
+                }
+        }
+        mid = start + (end - start) / 2;
+
+	return mid;
+}
+
+/**
+ * wa_addr_range_present - is an address range touched by wa list?
+ * @wal: workaround list
+ * @rn: number of address range pairs present in rt
+ * @rt: Array of zero or more [addr_range_start, addr_range_end]
+ *      The ranges are expected to be non-overlapping and in order.
+ */
+static bool
+wa_addr_range_present(const struct i915_wa_list *wal, int rn, const u32 rt[][2])
+{
+	struct i915_wa *wa;
+	u32 test_addr;
+	int i;
+	int j;
+
+	/* As an optimization, find first entry of interest with a binary search.
+	   Thereafter, step through list linearly.
+	 */
+	i = wa_find_addr(wal, rt[0][0]);
+
+        for (wa = wal->list + i; i < wal->count; i++, wa++) {
+		test_addr = i915_mmio_reg_offset(wal->list[i].reg);
+		for (j = 0; j < rn; j++) {
+			if ((test_addr >= rt[j][0]) && test_addr <= rt[j][1])
+				return true;
+		}
+
+		if (test_addr > rt[rn-1][1])
+			break;
+	}
+
+	return false;
+}
+
+/**
+ * xehpsdv_wa_1607720814() - Wa_1607720814:xehpsdv
+ *
+ * For XEHPSDV, writes to the ranges 0xb000-0xb01f and 0xb0a0-0xb0ff do not
+ * take effect until a subsequent write is done within the same range.
+ * Wa_1607720814 is known to write into the problematic range (at 0xb0b4).
+ * A special write to a dummy register in this address range ensures that
+ * these dangling writes are completed.
+ */
+static void
+xehpsdv_wa_1607720814(struct intel_uncore *uncore, const struct i915_wa_list *wal)
+{
+	static const u32 rt[][2] = {
+		{ 0xb000, 0xb01f, },
+		{ 0xb0a0, 0xb0ff, },
+	};
+	const int rn = ARRAY_SIZE(rt);
+	i915_reg_t tgt_reg = _MMIO(0xb0cc);
+
+	if (wa_addr_range_present(wal, rn, rt)) {
+		intel_uncore_write(uncore, tgt_reg, 0);
+	}
+}
+
 static void
 wa_list_apply(struct intel_gt *gt, const struct i915_wa_list *wal)
 {
@@ -1959,6 +2056,9 @@ wa_list_apply(struct intel_gt *gt, const struct i915_wa_list *wal)
 void intel_gt_apply_workarounds(struct intel_gt *gt)
 {
 	wa_list_apply(gt, &gt->wa_list);
+
+	if (IS_XEHPSDV(gt->i915))
+		xehpsdv_wa_1607720814(gt->uncore, &gt->wa_list);
 }
 
 static int wa_list_verify(struct intel_gt *gt,
@@ -3249,6 +3349,9 @@ void intel_engine_deny_user_register_access(struct intel_engine_cs *engine,
 void intel_engine_apply_workarounds(struct intel_engine_cs *engine)
 {
 	wa_list_apply(engine->gt, &engine->wa_list);
+
+	if (IS_XEHPSDV(engine->i915))
+		xehpsdv_wa_1607720814(engine->uncore, &engine->wa_list);
 }
 
 static const struct i915_range mcr_ranges_gen8[] = {
