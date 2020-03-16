@@ -318,7 +318,7 @@ struct i915_vma *intel_emit_vma_copy_blt(struct intel_context *ce,
 	u32 size, *cmd;
 	int err;
 
-	GEM_BUG_ON(src->size != dst->size);
+	GEM_BUG_ON(src->size > dst->size);
 
 	GEM_BUG_ON(intel_engine_is_virtual(ce->engine));
 	intel_engine_pm_get(ce->engine);
