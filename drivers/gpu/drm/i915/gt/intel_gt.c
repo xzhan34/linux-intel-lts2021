@@ -35,6 +35,7 @@
 #include "intel_tlb.h"
 #include "intel_uncore.h"
 #include "shmem_utils.h"
+#include "intel_gt_sysfs.h"
 #include "pxp/intel_pxp.h"
 
 void intel_gt_common_init_early(struct intel_gt *gt)
@@ -454,6 +455,7 @@ void intel_gt_driver_register(struct intel_gt *gt)
 	intel_rps_driver_register(&gt->rps);
 
 	intel_gt_debugfs_register(gt);
+	intel_gt_sysfs_register(gt);
 }
 
 static int intel_gt_init_scratch(struct intel_gt *gt, unsigned int size)
@@ -865,6 +867,7 @@ void intel_gt_driver_unregister(struct intel_gt *gt)
 {
 	intel_wakeref_t wakeref;
 
+	intel_gt_sysfs_unregister(gt);
 	intel_rps_driver_unregister(&gt->rps);
 	intel_gsc_fini(&gt->gsc);
 
