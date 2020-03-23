@@ -15,6 +15,14 @@ struct intel_iov_config {
 };
 
 /**
+ * struct intel_iov_sysfs - IOV sysfs data.
+ * @entries: array with kobjects that represent PF and VFs.
+ */
+struct intel_iov_sysfs {
+	struct kobject **entries;
+};
+
+/**
  * struct intel_iov_provisioning - IOV provisioning data.
  * @configs: flexible array with configuration data for PF and VFs.
  * @lock: protects provisionining data
@@ -29,10 +37,12 @@ struct intel_iov_provisioning {
 
 /**
  * struct intel_iov - I/O Virtualization related data.
+ * @pf.sysfs: sysfs data.
  * @pf.provisioning: provisioning data.
  */
 struct intel_iov {
 	struct {
+		struct intel_iov_sysfs sysfs;
 		struct intel_iov_provisioning provisioning;
 	} pf;
 };

@@ -42,6 +42,7 @@
 #include "shmem_utils.h"
 #include "intel_gt_sysfs.h"
 #include "pxp/intel_pxp.h"
+#include "gt/iov/intel_iov_sysfs.h"
 
 static const char *intel_gt_driver_errors_to_str[] = {
 	[INTEL_GT_DRIVER_ERROR_GGTT] = "GGTT",
@@ -517,6 +518,7 @@ void intel_gt_driver_register(struct intel_gt *gt)
 
 	intel_gt_debugfs_register(gt);
 	intel_gt_sysfs_register(gt);
+	intel_iov_sysfs_setup(&gt->iov);
 }
 
 static int intel_gt_init_scratch(struct intel_gt *gt, unsigned int size)
@@ -1096,6 +1098,9 @@ void intel_gt_driver_remove(struct intel_gt *gt)
 void intel_gt_driver_unregister(struct intel_gt *gt)
 {
 	intel_wakeref_t wakeref;
+
+	if (!gt->i915->drm.unplugged)
+		intel_iov_sysfs_teardown(&gt->iov);
 
 	intel_gt_sysfs_unregister(gt);
 	intel_rps_driver_unregister(&gt->rps);
