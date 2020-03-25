@@ -6,6 +6,7 @@
 
 #include <linux/dma-buf.h>
 #include <linux/highmem.h>
+#include <linux/pci-p2pdma.h>
 #include <linux/scatterlist.h>
 
 #include "gem/i915_gem_dmabuf.h"
@@ -20,6 +21,56 @@ I915_SELFTEST_DECLARE(static bool force_different_devices;)
 static struct drm_i915_gem_object *dma_buf_to_obj(struct dma_buf *buf)
 {
 	return to_intel_bo(buf->priv);
+}
+
+static void dmabuf_unmap_addr(struct device *dev, struct scatterlist *sgl,
+			      int nents, enum dma_data_direction dir,
+			      unsigned long attrs)
+{
+	struct scatterlist *sg;
+	int i;
+
+	for_each_sg(sgl, sg, nents, i)
+		dma_unmap_resource(dev, sg_dma_address(sg), sg_dma_len(sg),
+				   dir, attrs);
+}
+
+/**
+ * dmabuf_map_addr - Update LMEM address to a physical address and map the
+ * resource.
+ * @dev: valid device
+ * @obj: valid i915 GEM object
+ * @sgt: scatter gather table to apply mapping to
+ * @dir: DMA direction
+ *
+ * The dma_address of the scatter list is the LMEM "address".  From this the
+ * actual physical address can be determined.
+ *
+ */
+static int dmabuf_map_addr(struct device *dev, struct drm_i915_gem_object *obj,
+			   struct sg_table *sgt, enum dma_data_direction dir,
+			   unsigned long attrs)
+{
+	struct intel_memory_region *mem = obj->mm.region.mem;
+	struct scatterlist *sg;
+	phys_addr_t addr;
+	int i;
+
+	for_each_sg(sgt->sgl, sg, sgt->orig_nents, i) {
+		addr = sg_dma_address(sg) - mem->region.start + mem->io_start;
+
+		sg->dma_address = dma_map_resource(dev, addr, sg->length, dir,
+						   attrs);
+		if (dma_mapping_error(dev, sg->dma_address))
+			goto unmap;
+		sg->dma_length = sg->length;
+	}
+
+	return 0;
+
+unmap:
+	dmabuf_unmap_addr(dev, sgt->sgl, i, dir, attrs);
+	return -ENOMEM;
 }
 
 static struct sg_table *i915_gem_map_dma_buf(struct dma_buf_attachment *attach,
@@ -44,10 +95,16 @@ static struct sg_table *i915_gem_map_dma_buf(struct dma_buf_attachment *attach,
 	dst = sgt->sgl;
 	for_each_sg(obj->mm.pages->sgl, src, obj->mm.pages->nents, i) {
 		sg_set_page(dst, sg_page(src), src->length, 0);
+		sg_dma_address(dst) = sg_dma_address(src);
 		dst = sg_next(dst);
 	}
 
-	ret = dma_map_sgtable(attach->dev, sgt, dir, DMA_ATTR_SKIP_CPU_SYNC);
+	if (i915_gem_object_has_struct_page(obj))
+		ret = dma_map_sgtable(attach->dev, sgt, dir,
+				      DMA_ATTR_SKIP_CPU_SYNC);
+	else
+		ret = dmabuf_map_addr(attach->dev, obj, sgt, dir,
+				      DMA_ATTR_SKIP_CPU_SYNC);
 	if (ret)
 		goto err_free_sg;
 
@@ -65,7 +122,16 @@ static void i915_gem_unmap_dma_buf(struct dma_buf_attachment *attach,
 				   struct sg_table *sgt,
 				   enum dma_data_direction dir)
 {
-	dma_unmap_sgtable(attach->dev, sgt, dir, DMA_ATTR_SKIP_CPU_SYNC);
+	struct drm_i915_gem_object *obj = dma_buf_to_obj(attach->dmabuf);
+
+	if (i915_gem_object_has_struct_page(obj))
+		dma_unmap_sgtable(attach->dev, sgt, dir,
+				  DMA_ATTR_SKIP_CPU_SYNC);
+	else
+		dmabuf_unmap_addr(attach->dev, sgt->sgl, sgt->nents, dir,
+				  DMA_ATTR_SKIP_CPU_SYNC);
+
+	sg_free_table(sgt);
 	kfree(sgt);
 }
 
@@ -213,9 +279,12 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct intel_context *ce = to_gt(i915)->engine[BCS0]->blitter_context;
 	struct i915_gem_ww_ctx ww;
-	int err;
+	int err, p2p_distance;
 
-	if (!i915_gem_object_can_migrate(obj, INTEL_REGION_SMEM))
+	p2p_distance = pci_p2pdma_distance_many(to_pci_dev(obj->base.dev->dev),
+						&attach->dev, 1, false);
+	if (p2p_distance < 0 &&
+	    !i915_gem_object_can_migrate(obj, INTEL_REGION_SMEM))
 		return -EOPNOTSUPP;
 
 	for_i915_gem_ww(&ww, err, true) {
@@ -223,9 +292,12 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 		if (err)
 			continue;
 
-		err = i915_gem_object_migrate(obj, &ww, ce, INTEL_REGION_SMEM);
-		if (err)
-			continue;
+		if (p2p_distance < 0) {
+			err = i915_gem_object_migrate(obj, &ww, ce,
+						      INTEL_REGION_SMEM);
+			if (err)
+				continue;
+		}
 
 		err = i915_gem_object_pin_pages(obj);
 	}
