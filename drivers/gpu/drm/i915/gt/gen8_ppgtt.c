@@ -1478,7 +1478,8 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 	vm->scratch[0]->encode =
 		gen8_pte_encode(px_dma(vm->scratch[0]),
 				I915_CACHE_NONE, pte_flags);
-	if (!vm->has_scratch)
+
+	if (!vm->has_scratch || i915_vm_page_fault_enabled(vm))
 		vm->scratch[0]->encode &= ~GEN8_PAGE_PRESENT;
 
 	wakeref = l4wa_pm_get(gt);
@@ -1509,7 +1510,8 @@ retry:
 					    vm->scratch[i - 1]->encode);
 
 		obj->encode = gen8_pde_encode(px_dma(obj), I915_CACHE_NONE);
-		if (!vm->has_scratch)
+
+		if (!vm->has_scratch || i915_vm_page_fault_enabled(vm))
 			obj->encode &= ~GEN8_PAGE_PRESENT;
 
 		vm->scratch[i] = obj;
