@@ -80,6 +80,11 @@
 #define GEN12_GUC_TLB_INV_CR		_MMIO(0xcee8)
 #define   GEN12_GUC_TLB_INV_CR_INVALIDATE	(1 << 0)
 
+#define PVC_GUC_TLB_INV_DESC0		_MMIO(0xcf7c)
+#define   PVC_GUC_TLB_INV_DESC0_VALID	(1 << 0)
+#define PVC_GUC_TLB_INV_DESC1		_MMIO(0xcf80)
+#define   PVC_GUC_TLB_INV_DESC1_INVALIDATE	(1 << 6)
+
 #define GUC_ARAT_C6DIS			_MMIO(0xA178)
 
 #define GUC_EIP				_MMIO(0xc0b0)
