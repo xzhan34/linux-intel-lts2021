@@ -224,6 +224,7 @@ bool i915_gem_object_should_migrate(struct drm_i915_gem_object *obj,
 				    enum intel_region_id dst_region_id)
 {
 	struct intel_memory_region *dst_mem;
+	bool should_migrate = false;
 	u32 mask;
 
 	if (!obj->mm.n_placements || obj->mm.region.mem->id == dst_region_id)
@@ -236,20 +237,25 @@ bool i915_gem_object_should_migrate(struct drm_i915_gem_object *obj,
 
 	dst_mem = to_i915(obj->base.dev)->mm.regions[dst_region_id];
 
-	if ((dst_mem->type == INTEL_MEMORY_SYSTEM &&
-	     i915_gem_object_allows_atomic_system(obj)) ||
-	    (dst_mem->type == INTEL_MEMORY_LOCAL &&
-	     i915_gem_object_allows_atomic_device(obj)))
-		return true;
+	if (dst_mem->type == INTEL_MEMORY_SYSTEM)
+		should_migrate =
+			i915_gem_object_allows_atomic_system(obj) ||
+			i915_gem_object_test_preferred_location(obj, dst_region_id);
+	else if (dst_mem->type == INTEL_MEMORY_LOCAL)
+		should_migrate =
+			i915_gem_object_allows_atomic_device(obj) ||
+			i915_gem_object_test_preferred_location(obj, dst_region_id);
 
-	return false;
+	return should_migrate;
 }
 
 static int __i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
 				      struct i915_gem_ww_ctx *ww,
 				      struct prelim_drm_i915_gem_vm_advise *args)
 {
+	struct intel_memory_region *region;
 	int err = 0;
+	u32 mask;
 
 	/*
 	 * Could treat these hints as DGFX only, but as these are hints
@@ -286,6 +292,31 @@ static int __i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
 		break;
 	case PRELIM_I915_VM_ADVISE_ATOMIC_NONE:
 		obj->mm.madv_atomic = I915_BO_ATOMIC_NONE;
+		break;
+	case PRELIM_I915_VM_ADVISE_PREFERRED_LOCATION:
+		/* MEMORY_CLASS_NONE is used to clear preferred region */
+		if (args->region.memory_class == (u16)PRELIM_I915_MEMORY_CLASS_NONE) {
+			obj->mm.preferred_region = NULL;
+			break;
+		}
+
+		/* verify user provided region is valid */
+		region = intel_memory_region_lookup(to_i915(obj->base.dev),
+						    args->region.memory_class,
+						    args->region.memory_instance);
+		if (!region) {
+			err = -EINVAL;
+			break;
+		}
+
+		/* verify region is contained in object's placement list */
+		mask = obj->memory_mask;
+		if (!(mask & BIT(region->id))) {
+			err = -EINVAL;
+			break;
+		}
+
+		obj->mm.preferred_region = region;
 		break;
 	default:
 		err = -EINVAL;

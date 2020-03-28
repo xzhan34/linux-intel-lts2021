@@ -12,6 +12,7 @@
 #include <drm/drm_device.h>
 
 #include "display/intel_frontbuffer.h"
+#include "intel_memory_region.h"
 #include "i915_gem_object_types.h"
 #include "i915_gem_gtt.h"
 #include "i915_vma_types.h"
@@ -304,6 +305,38 @@ i915_gem_object_allows_atomic_device(struct drm_i915_gem_object *obj)
 	/* GPU atomics allowed with either ATOMIC_DEVICE or ATOMIC_SYSTEM */
 	return obj->mm.madv_atomic == I915_BO_ATOMIC_DEVICE ||
 	       obj->mm.madv_atomic == I915_BO_ATOMIC_SYSTEM;
+}
+
+static inline bool
+i915_gem_object_test_preferred_location(struct drm_i915_gem_object *obj,
+					enum intel_region_id region_id)
+{
+	bool have_preferred;
+
+	if (!obj->mm.preferred_region)
+		return false;
+
+	/*
+	 * test if target region is our preferred region but only honor
+	 * when the atomic hint doesn't exclude migration
+	 */
+	switch (obj->mm.preferred_region->type) {
+	case INTEL_MEMORY_SYSTEM:
+		have_preferred =
+			(obj->mm.preferred_region->id == region_id) &&
+			!i915_gem_object_allows_atomic_device(obj);
+		break;
+	case INTEL_MEMORY_LOCAL:
+		have_preferred =
+			(obj->mm.preferred_region->id == region_id) &&
+			!i915_gem_object_allows_atomic_system(obj);
+		break;
+	default:
+		have_preferred = false;
+		break;
+	}
+
+	return have_preferred;
 }
 
 static inline bool

@@ -525,6 +525,7 @@ struct drm_i915_gem_object {
 		 * Priority list of potential placements for this object.
 		 */
 		struct intel_memory_region **placements;
+		struct intel_memory_region *preferred_region;
 		int n_placements;
 
 		/**

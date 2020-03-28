@@ -770,6 +770,7 @@ struct prelim_drm_i915_debug_event_ack {
 enum prelim_drm_i915_gem_memory_class {
 	PRELIM_I915_MEMORY_CLASS_SYSTEM = 0,
 	PRELIM_I915_MEMORY_CLASS_DEVICE,
+	PRELIM_I915_MEMORY_CLASS_NONE = -1
 };
 
 /**
@@ -1013,14 +1014,28 @@ struct prelim_drm_i915_gem_vm_advise {
 	 *      this hint will influence migration policy.
 	 * ATOMIC_NONE
 	 *	clears above ATOMIC_SYSTEM / ATOMIC_DEVICE hint.
+	 * PREFERRED_LOCATION
+	 *	sets the preferred memory class and instance for this object's
+	 *	backing store.  This is a hint only and not guaranteed to be
+	 *	honored.  It is an error to choose a memory region that was not
+	 *	part of the original set of placements for the GEM object.
+	 *	If choosing a preferred location that is in conflict with the
+	 *	use of ATOMIC_SYSTEM or ATOMIC_DEVICE, the atomic hint will
+	 *	always be honored first.
+	 *	To clear the current preferred location, specify memory class
+	 *	as I915_MEMORY_CLASS_NONE.
 	 */
 	__u32 attribute;
 #define PRELIM_I915_VM_ADVISE				(1 << 16)
 #define PRELIM_I915_VM_ADVISE_ATOMIC_NONE		(PRELIM_I915_VM_ADVISE | 0)
 #define PRELIM_I915_VM_ADVISE_ATOMIC_SYSTEM		(PRELIM_I915_VM_ADVISE | 1)
 #define PRELIM_I915_VM_ADVISE_ATOMIC_DEVICE		(PRELIM_I915_VM_ADVISE | 2)
+#define PRELIM_I915_VM_ADVISE_PREFERRED_LOCATION	(PRELIM_I915_VM_ADVISE | 3)
 
-	__u32 rsvd[3];
+	/** Preferred location (memory region) for object backing */
+	struct prelim_drm_i915_gem_memory_class_instance region;
+
+	__u32 rsvd[2];
 };
 
 /**
