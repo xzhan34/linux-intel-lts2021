@@ -8,6 +8,7 @@
 
 #include <linux/types.h>
 
+struct drm_i915_gem_object;
 struct intel_gt;
 struct intel_guc;
 

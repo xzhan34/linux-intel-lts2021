@@ -1306,9 +1306,12 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 		goto err_unlock;
 
 	if (!(bound & I915_VMA_BIND_MASK)) {
-		err = i915_vma_insert(vma, size, alignment, flags);
-		if (err)
-			goto err_active;
+		/* For faultable VM, vma->node may already be allocated */
+		if (!drm_mm_node_allocated(&vma->node)) {
+			err = i915_vma_insert(vma, size, alignment, flags);
+			if (err)
+				goto err_active;
+		}
 
 		if (i915_is_ggtt(vma->vm))
 			__i915_vma_set_map_and_fenceable(vma);

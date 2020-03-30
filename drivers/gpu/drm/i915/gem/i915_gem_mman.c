@@ -281,7 +281,7 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 			continue;
 
 		/* Implicitly migrate BO to SMEM if criteria met */
-		if (i915_gem_object_should_migrate(obj, INTEL_REGION_SMEM)) {
+		if (i915_gem_object_should_migrate_smem(obj)) {
 			err = i915_gem_object_migrate_to_smem(obj, &ww, false);
 			if (err)
 				continue;

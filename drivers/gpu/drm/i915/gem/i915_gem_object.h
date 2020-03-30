@@ -312,32 +312,11 @@ static inline bool
 i915_gem_object_test_preferred_location(struct drm_i915_gem_object *obj,
 					enum intel_region_id region_id)
 {
-	bool have_preferred;
 
 	if (!obj->mm.preferred_region)
 		return false;
 
-	/*
-	 * test if target region is our preferred region but only honor
-	 * when the atomic hint doesn't exclude migration
-	 */
-	switch (obj->mm.preferred_region->type) {
-	case INTEL_MEMORY_SYSTEM:
-		have_preferred =
-			(obj->mm.preferred_region->id == region_id) &&
-			!i915_gem_object_allows_atomic_device(obj);
-		break;
-	case INTEL_MEMORY_LOCAL:
-		have_preferred =
-			(obj->mm.preferred_region->id == region_id) &&
-			!i915_gem_object_allows_atomic_system(obj);
-		break;
-	default:
-		have_preferred = false;
-		break;
-	}
-
-	return have_preferred;
+	return obj->mm.preferred_region->id == region_id;
 }
 
 static inline bool
@@ -795,8 +774,10 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 			 struct drm_i915_gem_object *src, bool compressed);
 int i915_setup_blt_windows(struct drm_i915_private *i915);
 void i915_teardown_blt_windows(struct drm_i915_private *i915);
-bool i915_gem_object_should_migrate(struct drm_i915_gem_object *obj,
-				    enum intel_region_id dst_region_id);
+bool i915_gem_object_should_migrate_smem(struct drm_i915_gem_object *obj);
+bool i915_gem_object_should_migrate_lmem(struct drm_i915_gem_object *obj,
+					 enum intel_region_id dst_region_id,
+					 bool is_atomic_fault);
 
 void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
 				     struct i915_request *rq);

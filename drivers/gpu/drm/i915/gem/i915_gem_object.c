@@ -220,33 +220,49 @@ bool i915_gem_object_can_bypass_llc(struct drm_i915_gem_object *obj)
 	return IS_JSL_EHL(i915);
 }
 
-bool i915_gem_object_should_migrate(struct drm_i915_gem_object *obj,
-				    enum intel_region_id dst_region_id)
+bool i915_gem_object_should_migrate_smem(struct drm_i915_gem_object *obj)
 {
-	struct intel_memory_region *dst_mem;
-	bool should_migrate = false;
-	u32 mask;
-
-	if (!obj->mm.n_placements || obj->mm.region.mem->id == dst_region_id)
+	if (!i915_gem_object_migratable(obj) ||
+	    obj->mm.region.mem->id == INTEL_REGION_SMEM)
 		return false;
 
-	/* reject migration if region not contained in placement list */
-	mask = obj->memory_mask;
-	if (!(mask & BIT(dst_region_id)))
+	/* reject migration if smem not contained in placement list */
+	if (!(obj->memory_mask & BIT(INTEL_REGION_SMEM)))
 		return false;
 
-	dst_mem = to_i915(obj->base.dev)->mm.regions[dst_region_id];
+	return i915_gem_object_allows_atomic_system(obj) ||
+	       i915_gem_object_test_preferred_location(obj, INTEL_REGION_SMEM);
+}
 
-	if (dst_mem->type == INTEL_MEMORY_SYSTEM)
-		should_migrate =
-			i915_gem_object_allows_atomic_system(obj) ||
-			i915_gem_object_test_preferred_location(obj, dst_region_id);
-	else if (dst_mem->type == INTEL_MEMORY_LOCAL)
-		should_migrate =
-			i915_gem_object_allows_atomic_device(obj) ||
-			i915_gem_object_test_preferred_location(obj, dst_region_id);
+bool i915_gem_object_should_migrate_lmem(struct drm_i915_gem_object *obj,
+					 enum intel_region_id dst_region_id,
+					 bool is_atomic_fault)
+{
+	if (!dst_region_id)
+		return false;
 
-	return should_migrate;
+	if (!i915_gem_object_migratable(obj) ||
+	    obj->mm.region.mem->id == dst_region_id)
+		return false;
+
+	/* HW support cross-tile atomic access, so no need to
+	 * migrate when object is already in lmem.
+	 */
+	if (is_atomic_fault && !i915_gem_object_is_lmem(obj))
+		return true;
+
+	if (i915_gem_object_test_preferred_location(obj, dst_region_id))
+		return true;
+
+	/*
+	 * No backing store: we won't migrate but still want
+	 * i915_gem_object_migrate() to reassign the BO's placment to
+	 * the faulting GT's memory region (first touch policy).
+	 */
+	if (!(i915_gem_object_has_pages(obj) || obj->base.filp))
+		return true;
+
+	return false;
 }
 
 static int __i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
@@ -787,6 +803,9 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 						      obj->flags & I915_BO_ALLOC_FLAGS);
 		if (IS_ERR(donor))
 			return PTR_ERR(donor);
+
+		if (nowait)
+			donor->flags |= I915_BO_FAULT_CLEAR;
 
 		donor->base.resv = obj->base.resv;
 	}

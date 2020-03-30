@@ -2,6 +2,8 @@
 /*
  * Copyright © 2022 Intel Corporation
  */
+#include "gem/i915_gem_lmem.h"
+#include "gem/i915_gem_mman.h"
 #include "gem/i915_gem_userptr.h"
 
 #include "i915_drv.h"
@@ -25,6 +27,13 @@ struct recoverable_page_fault_info {
        u8 engine_class;
        u8 engine_instance;
        u8 fault_unsuccessful;
+};
+
+enum access_type {
+	ACCESS_TYPE_READ = 0,
+	ACCESS_TYPE_WRITE = 1,
+	ACCESS_TYPE_ATOMIC = 2,
+	ACCESS_TYPE_RESERVED = 3,
 };
 
 void intel_gt_pagefault_process_cat_error_msg(struct intel_gt *gt, u32 guc_ctx_id)
@@ -135,7 +144,68 @@ static bool userptr_needs_rebind(struct drm_i915_gem_object *obj)
 	return ret;
 }
 
-static int validate_fault(struct i915_vma *vma, struct recoverable_page_fault_info *info)
+static int migrate_to_lmem(struct drm_i915_gem_object *obj,
+			   struct intel_gt *gt,
+			   enum intel_region_id lmem_id,
+			   struct i915_gem_ww_ctx *ww)
+{
+	struct intel_context *ce;
+
+	/* return if object has single placement or already in lmem_id */
+	if (!i915_gem_object_migratable(obj) ||
+	    obj->mm.region.mem->id == lmem_id)
+		return 0;
+
+	if (!gt->engine[BCS0])
+		return -ENODEV;
+
+	ce = gt->engine[BCS0]->blitter_context;
+
+	/*
+	 * FIXME: Move this to BUG_ON later when uapi enforces object alignment
+	 * to 64K for objects that can reside on both SMEM and LMEM.
+	 */
+	if (HAS_64K_PAGES(gt->i915) &&
+	    !IS_ALIGNED(obj->base.size, I915_GTT_PAGE_SIZE_64K)) {
+		DRM_DEBUG_DRIVER("Cannot migrate objects of different page sizes\n");
+		return -ENOTSUPP;
+	}
+
+	i915_gem_object_release_mmap(obj);
+	GEM_BUG_ON(obj->mm.mapping);
+	GEM_BUG_ON(obj->base.filp && mapping_mapped(obj->base.filp->f_mapping));
+
+	return i915_gem_object_migrate(obj, ww, ce, lmem_id, true);
+}
+
+static inline bool access_is_atomic(struct recoverable_page_fault_info *info)
+{
+	return (info->access_type == ACCESS_TYPE_ATOMIC);
+}
+
+static enum intel_region_id get_lmem_region_id(struct drm_i915_gem_object *obj, struct intel_gt *gt)
+{
+	int i;
+
+	if (obj->mm.preferred_region &&
+	    obj->mm.preferred_region->type == INTEL_MEMORY_LOCAL)
+		return obj->mm.preferred_region->id;
+
+	if (BIT(gt->lmem->id) & obj->memory_mask)
+		return gt->lmem->id;
+
+	for (i = 0; i < obj->mm.n_placements; i++) {
+		struct intel_memory_region *mr = obj->mm.placements[i];
+
+		if (mr->type == INTEL_MEMORY_LOCAL)
+			return mr->id;
+	}
+
+	return 0;
+}
+
+static int validate_fault(struct drm_i915_private *i915, struct i915_vma *vma,
+			  struct recoverable_page_fault_info *info)
 {
 	/* combined access_type and fault_type */
 	enum {
@@ -153,21 +223,36 @@ static int validate_fault(struct i915_vma *vma, struct recoverable_page_fault_in
 	case FAULT_READ_NOT_PRESENT:
 		break;
 	case FAULT_WRITE_NOT_PRESENT:
-		if (i915_gem_object_is_readonly(vma->obj))
+		if (i915_gem_object_is_readonly(vma->obj)) {
+			drm_err(&i915->drm, "Write Access Violation: read only\n");
 			err = -EACCES;
+		}
 		break;
 	case FAULT_ATOMIC_NOT_PRESENT:
+		/*
+		 * This case is early detection of ATOMIC ACCESS_VIOLATION.
+		 *
+		 * Imported (dma-buf) objects do not have a memory_mask (or
+		 * placement list), so allow the NOT_PRESENT fault to proceed
+		 * as we cannot test placement list.
+		 * The replayed memory access will catch a true ATOMIC
+		 * ACCESS_VIOLATION and fail appropriately.
+		 */
+		if (!vma->obj->memory_mask)
+			break;
+		fallthrough;
+	case FAULT_ATOMIC_ACCESS_VIOLATION:
+		if (!(vma->obj->memory_mask & REGION_LMEM_MASK)) {
+			drm_err(&i915->drm, "Atomic Access Violation\n");
+			err = -EACCES;
+		}
 		break;
 	case FAULT_WRITE_ACCESS_VIOLATION:
-		pr_err("Write Access Violation\n");
-		err = -EACCES;
-		break;
-	case FAULT_ATOMIC_ACCESS_VIOLATION:
-		pr_err("Atomic Access Violation\n");
+		drm_err(&i915->drm, "Write Access Violation\n");
 		err = -EACCES;
 		break;
 	default:
-		pr_err("Undefined Fault Type\n");
+		drm_err(&i915->drm, "Undefined Fault Type\n");
 		err = -EACCES;
 		break;
 	}
@@ -211,8 +296,10 @@ static struct dma_fence *
 handle_i915_mm_fault(struct intel_guc *guc,
 		     struct recoverable_page_fault_info *info)
 {
+	struct intel_gt *gt = guc_to_gt(guc);
 	struct dma_fence *fence = NULL;
 	struct i915_address_space *vm;
+	enum intel_region_id lmem_id;
 	struct i915_gem_ww_ctx ww;
 	struct i915_vma *vma;
 	int err = 0;
@@ -233,7 +320,7 @@ handle_i915_mm_fault(struct intel_guc *guc,
 
 	mark_engine_as_active(gt, info->engine_class, info->engine_instance);
 
-	err = validate_fault(vma, info);
+	err = validate_fault(gt->i915, vma, info);
 	if (err)
 		goto put_vma;
 
@@ -260,6 +347,21 @@ handle_i915_mm_fault(struct intel_guc *guc,
 		goto err_ww;
 
 	vma->obj->flags |= I915_BO_FAULT_CLEAR;
+
+	lmem_id = get_lmem_region_id(vma->obj, gt);
+	if (i915_gem_object_should_migrate_lmem(vma->obj, lmem_id,
+						access_is_atomic(info))) {
+		err = migrate_to_lmem(vma->obj, gt, lmem_id, &ww);
+		/*
+		 * Migration is best effort.
+		 * if we see -EDEADLK handle that with proper backoff. Otherwise
+		 * for scenarios like atomic operation, if migration fails,
+		 * gpu will fault again and we can retry.
+		 */
+		if (err == -EDEADLK)
+			goto err_ww;
+
+	}
 
 	err = i915_vma_bind(vma, &ww);
 	if (!err && userptr_needs_rebind(vma->obj)) {
