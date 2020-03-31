@@ -134,6 +134,39 @@
 #define GUC2HOST_NOTIFY_MEMORY_CAT_ERROR_MSG_1_CONTEXT_ID	GUC_HXG_EVENT_MSG_n_DATAn
 #define   CAT_ERROR_INV_SW_CTX					(-1)
 
+/**
+ * DOC: GUC_ACTION_GUC2HOST_NOTIFY_PAGE_FAULT
+ *
+ * This message is used by the GuC to notify host about page fault.
+ *
+ * This G2H message must be sent as `CTB HXG Message`_.
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_GUC_                                 |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_EVENT_                                   |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:16 | DATA0 = MBZ                                                  |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  15:0 | ACTION = _`GUC_ACTION_GUC2HOST_NOTIFY_PAGE_FAULT` = 0x6001   |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | DATA1 = **ALL_ENGINE_FAULT_REG** - value of register 0xcec4  |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 2 |  31:0 | DATA2 = **FAULT_TLB_RD_DATA0** - value of register 0xceb8    |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 3 |  31:0 | DATA3 = **FAULT_TLB_RD_DATA1** - value of register 0xcebc    |
+ *  +---+-------+--------------------------------------------------------------+
+ */
+#define GUC_ACTION_GUC2HOST_NOTIFY_PAGE_FAULT			0x6001
+
+#define GUC2HOST_NOTIFY_PAGE_FAULT_MSG_LEN			(GUC_HXG_EVENT_MSG_MIN_LEN + 3u)
+#define GUC2HOST_NOTIFY_PAGE_FAULT_MSG_0_MBZ			GUC_HXG_EVENT_MSG_0_DATA0
+#define GUC2HOST_NOTIFY_PAGE_FAULT_MSG_1_ALL_ENGINE_FAULT_REG	GUC_HXG_EVENT_MSG_n_DATAn
+#define GUC2HOST_NOTIFY_PAGE_FAULT_MSG_2_FAULT_TLB_RD_DATA0	GUC_HXG_EVENT_MSG_n_DATAn
+#define GUC2HOST_NOTIFY_PAGE_FAULT_MSG_3_FAULT_TLB_RD_DATA1	GUC_HXG_EVENT_MSG_n_DATAn
+
 
 /* legacy definitions */
 

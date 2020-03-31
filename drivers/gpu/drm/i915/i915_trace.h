@@ -14,6 +14,7 @@
 #include <drm/drm_drv.h>
 
 #include "gt/intel_engine.h"
+#include "gt/intel_gt_regs.h"
 
 #include "i915_drv.h"
 #include "i915_irq.h"
@@ -780,6 +781,35 @@ TRACE_EVENT(intel_gt_cat_error,
 
 	    TP_printk("GPU catastrophic memory error. GuC context: %s",
 		      __entry->guc_ctx_id)
+);
+
+TRACE_EVENT(intel_gt_pagefault,
+	    TP_PROTO(struct intel_gt *gt, u64 address, u32 fault_reg, bool is_ggtt),
+	    TP_ARGS(gt, address, fault_reg, is_ggtt),
+
+	    TP_STRUCT__entry(
+			     __field(struct intel_gt *, gt)
+			     __field(u64, address)
+			     __field(u32, fault_reg)
+			     __field(bool, is_ggtt)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->gt = gt;
+			   __entry->address = address;
+			   __entry->fault_reg = fault_reg;
+			   __entry->is_ggtt = is_ggtt;
+			   ),
+
+	    TP_printk("dev %p: GPU %s fault: address space %s, address: %#llx, engine ID: %u, source ID: %u, type: %u, fault level: %u",
+		      __entry->gt->i915,
+		      !!(__entry->fault_reg & RING_FAULT_ACCESS_TYPE) ? "Write" : "Read",
+		      __entry->is_ggtt ? "GGTT" : "PPGTT",
+		      __entry->address,
+		      GEN8_RING_FAULT_ENGINE_ID(__entry->fault_reg),
+		      RING_FAULT_SRCID(__entry->fault_reg),
+		      RING_FAULT_FAULT_TYPE(__entry->fault_reg),
+		      RING_FAULT_LEVEL(__entry->fault_reg))
 );
 
 #endif /* _I915_TRACE_H_ */

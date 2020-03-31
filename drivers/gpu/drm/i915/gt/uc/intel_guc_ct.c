@@ -1032,6 +1032,9 @@ static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 	case GUC_ACTION_GUC2HOST_NOTIFY_MEMORY_CAT_ERROR:
 		ret = intel_gt_pagefault_process_cat_error_msg(gt, hxg, hxg_len);
 		break;
+	case GUC_ACTION_GUC2HOST_NOTIFY_PAGE_FAULT:
+		ret = intel_gt_pagefault_process_page_fault_msg(gt, hxg, hxg_len);
+		break;
 	case INTEL_GUC_ACTION_STATE_CAPTURE_NOTIFICATION:
 		ret = intel_guc_error_capture_process_msg(guc, payload, len);
 		if (unlikely(ret))

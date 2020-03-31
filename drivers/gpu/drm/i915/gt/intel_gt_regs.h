@@ -1076,9 +1076,13 @@
 #define XEHP_FAULT_TLB_DATA1			MCR_REG(0xcebc)
 #define   FAULT_VA_HIGH_BITS			(0xf << 0)
 #define   FAULT_GTT_SEL				(1 << 4)
+#define GEN12_FAULT_VA_HIGH_SHIFT		44
+#define GEN12_FAULT_VA_LOW_SHIFT		12
 
 #define GEN12_RING_FAULT_REG			_MMIO(0xcec4)
 #define XEHP_RING_FAULT_REG			MCR_REG(0xcec4)
+#define   RING_FAULT_FAULT_TYPE(x)		(((x) >> 18) & 0x3)
+#define   RING_FAULT_ACCESS_TYPE		(1 << 17)
 #define   GEN8_RING_FAULT_ENGINE_ID(x)		(((x) >> 12) & 0x7)
 #define   RING_FAULT_GTTSEL_MASK		(1 << 11)
 #define   RING_FAULT_SRCID(x)			(((x) >> 3) & 0xff)
