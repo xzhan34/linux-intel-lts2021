@@ -12,6 +12,7 @@
 #include "i915_drv.h"
 #include "intel_guc_ct.h"
 #include "gt/intel_gt.h"
+#include "gt/intel_pagefault.h"
 
 static void ct_try_receive_message(struct intel_guc_ct *ct);
 
@@ -1000,6 +1001,7 @@ static int ct_handle_response(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *request)
 {
 	struct intel_guc *guc = ct_to_guc(ct);
+	struct intel_gt *gt = ct_to_gt(ct);
 	const u32 *hxg;
 	const u32 *payload;
 	u32 hxg_len, action, len;
@@ -1026,6 +1028,9 @@ static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 		break;
 	case INTEL_GUC_ACTION_CONTEXT_RESET_NOTIFICATION:
 		ret = intel_guc_context_reset_process_msg(guc, payload, len);
+		break;
+	case GUC_ACTION_GUC2HOST_NOTIFY_MEMORY_CAT_ERROR:
+		ret = intel_gt_pagefault_process_cat_error_msg(gt, hxg, hxg_len);
 		break;
 	case INTEL_GUC_ACTION_STATE_CAPTURE_NOTIFICATION:
 		ret = intel_guc_error_capture_process_msg(guc, payload, len);

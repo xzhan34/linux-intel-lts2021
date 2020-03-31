@@ -103,6 +103,38 @@
 #define HOST2GUC_CONTROL_CTB_RESPONSE_MSG_LEN		GUC_HXG_RESPONSE_MSG_MIN_LEN
 #define HOST2GUC_CONTROL_CTB_RESPONSE_MSG_0_MBZ		GUC_HXG_RESPONSE_MSG_0_DATA0
 
+/**
+ * DOC: GUC2HOST_NOTIFY_MEMORY_CAT_ERROR
+ *
+ * This message is used by the GuC to notify host about catastrophic memory error.
+ *
+ * This G2H message must be sent as `CTB HXG Message`_.
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_GUC_                                 |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_EVENT_                                   |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:16 | DATA0 = MBZ                                                  |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  15:0 | ACTION = _`GUC_ACTION_GUC2HOST_NOTIFY_MEMORY_CAT_ERROR` =    |
+ *  |   |       |          0x6000                                              |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | DATA1 = **CONTEXT_ID** - GuC context index of the context    |
+ *  |   |       |         which caused the CAT error, or -1 when no context    |
+ *  |   |       |         id is available.                                     |
+ *  +---+-------+--------------------------------------------------------------+
+ */
+#define GUC_ACTION_GUC2HOST_NOTIFY_MEMORY_CAT_ERROR		0x6000
+
+#define GUC2HOST_NOTIFY_MEMORY_CAT_ERROR_MSG_LEN		(GUC_HXG_EVENT_MSG_MIN_LEN + 1u)
+#define GUC2HOST_NOTIFY_MEMORY_CAT_ERROR_MSG_0_MBZ		GUC_HXG_EVENT_MSG_0_DATA0
+#define GUC2HOST_NOTIFY_MEMORY_CAT_ERROR_MSG_1_CONTEXT_ID	GUC_HXG_EVENT_MSG_n_DATAn
+#define   CAT_ERROR_INV_SW_CTX					(-1)
+
+
 /* legacy definitions */
 
 enum intel_guc_action {

@@ -764,6 +764,24 @@ DEFINE_EVENT(i915_context, i915_context_free,
 	TP_ARGS(ctx)
 );
 
+TRACE_EVENT(intel_gt_cat_error,
+	    TP_PROTO(struct intel_gt *gt, const char *guc_ctx_id),
+	    TP_ARGS(gt, guc_ctx_id),
+
+	    TP_STRUCT__entry(
+			     __field(struct intel_gt *, gt)
+			     __array(char, guc_ctx_id, 11)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->gt = gt;
+			   strscpy(__entry->guc_ctx_id, guc_ctx_id, 11);
+			   ),
+
+	    TP_printk("GPU catastrophic memory error. GuC context: %s",
+		      __entry->guc_ctx_id)
+);
+
 #endif /* _I915_TRACE_H_ */
 
 /* This part must be outside protection */
