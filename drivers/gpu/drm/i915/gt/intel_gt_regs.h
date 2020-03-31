@@ -1082,7 +1082,7 @@
 #define   GEN8_RING_FAULT_ENGINE_ID(x)		(((x) >> 12) & 0x7)
 #define   RING_FAULT_GTTSEL_MASK		(1 << 11)
 #define   RING_FAULT_SRCID(x)			(((x) >> 3) & 0xff)
-#define   RING_FAULT_FAULT_TYPE(x)		(((x) >> 1) & 0x3)
+#define   RING_FAULT_LEVEL(x)			(((x) >> 1) & 0x3)
 #define   RING_FAULT_VALID			(1 << 0)
 
 #define GEN12_GFX_TLB_INV_CR			_MMIO(0xced8)
