@@ -714,7 +714,7 @@ igt_create_migrate(struct intel_gt *gt,
 			continue;
 
 		err = i915_gem_object_migrate(obj, &ww, engine->kernel_context,
-					      dst->id);
+					      dst->id, false);
 		if (err)
 			continue;
 
@@ -1422,7 +1422,7 @@ static int lmem_pages_migrate_one(struct i915_gem_ww_ctx *ww,
 		return err;
 
 	if (i915_gem_object_is_lmem(obj)) {
-		err = i915_gem_object_migrate(obj, ww, ce, INTEL_REGION_SMEM);
+		err = i915_gem_object_migrate(obj, ww, ce, INTEL_REGION_SMEM, false);
 		if (err)
 			return err;
 
@@ -1442,7 +1442,7 @@ static int lmem_pages_migrate_one(struct i915_gem_ww_ctx *ww,
 		}
 
 	} else {
-		err = i915_gem_object_migrate(obj, ww, ce, gt->lmem->id);
+		err = i915_gem_object_migrate(obj, ww, ce, gt->lmem->id, false);
 		if (err)
 			return err;
 

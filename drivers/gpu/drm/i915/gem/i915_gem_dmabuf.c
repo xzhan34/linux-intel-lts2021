@@ -336,7 +336,7 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 		if (p2p_distance < 0 &&
 		    !to_i915(obj->base.dev)->params.prelim_override_p2p_dist) {
 			err = i915_gem_object_migrate(obj, &ww, ce,
-						      INTEL_REGION_SMEM);
+						      INTEL_REGION_SMEM, false);
 			if (err)
 				continue;
 		}

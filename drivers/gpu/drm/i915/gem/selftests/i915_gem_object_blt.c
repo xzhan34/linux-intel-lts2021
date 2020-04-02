@@ -145,7 +145,7 @@ static int __perf_copy_blt(struct drm_i915_gem_object *src,
 
 			t0 = ktime_get();
 
-			err = i915_gem_object_copy_blt(src, dst, ce);
+			err = i915_gem_object_copy_blt(src, dst, ce, false);
 			if (err)
 				break;
 
@@ -432,7 +432,7 @@ static int igt_copy_blt_thread(void *arg)
 		if (!(dst->cache_coherent & I915_BO_CACHE_COHERENT_FOR_WRITE))
 			dst->cache_dirty = true;
 
-		err = i915_gem_object_copy_blt(src, dst, ce);
+		err = i915_gem_object_copy_blt(src, dst, ce, false);
 		if (err)
 			goto err_unpin;
 
@@ -668,7 +668,7 @@ retry:
 		in->cache_dirty = true;
 	i915_gem_object_unpin_map(in);
 
-	err = i915_gem_object_ww_compressed_copy_blt(in, src, &ww, ce);
+	err = i915_gem_object_ww_compressed_copy_blt(in, src, &ww, ce, false);
 	if (err)
 		goto backoff;
 
@@ -724,7 +724,7 @@ retry:
 	if (err)
 		goto err_unpin_out;
 
-	err = i915_gem_object_ww_compressed_copy_blt(dst, out, &ww, ce);
+	err = i915_gem_object_ww_compressed_copy_blt(dst, out, &ww, ce, false);
 
 	if (err)
 		goto err_unpin_out;

@@ -352,12 +352,12 @@ void intel_emit_vma_release(struct intel_context *ce, struct i915_vma *vma)
 static int
 move_obj_to_gpu(struct drm_i915_gem_object *obj,
 		struct i915_request *rq,
-		bool write)
+		bool write, bool nowait)
 {
 	if (obj->cache_dirty & ~obj->cache_coherent)
 		i915_gem_clflush_object(obj, 0);
 
-	return i915_request_await_object(rq, obj, write);
+	return nowait ? 0 : i915_request_await_object(rq, obj, write);
 }
 
 int i915_gem_object_ww_fill_blt(struct drm_i915_gem_object *obj,
@@ -399,7 +399,7 @@ int i915_gem_object_ww_fill_blt(struct drm_i915_gem_object *obj,
 	if (unlikely(err))
 		goto out_request;
 
-	err = move_obj_to_gpu(vma->obj, rq, true);
+	err = move_obj_to_gpu(vma->obj, rq, true, false);
 	if (err == 0)
 		err = i915_vma_move_to_active(vma, rq, EXEC_OBJECT_WRITE);
 	if (unlikely(err))
@@ -788,6 +788,7 @@ static int __i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
 				struct drm_i915_gem_object *dst,
 				struct i915_gem_ww_ctx *ww,
 				struct intel_context *ce,
+				bool nowait,
 				bool compression)
 {
 	struct drm_i915_private *i915 = ce->vm->i915;
@@ -847,7 +848,7 @@ static int __i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
 		goto out_request;
 
 	for (i = 0; i < ARRAY_SIZE(vma); i++) {
-		err = move_obj_to_gpu(vma[i]->obj, rq, i);
+		err = move_obj_to_gpu(vma[i]->obj, rq, i, nowait);
 		if (unlikely(err))
 			goto out_request;
 	}
@@ -875,6 +876,12 @@ out_request:
 	if (unlikely(err))
 		i915_request_set_error_once(rq, err);
 
+	/*
+	 * Bump up rq priority for reserved bcs so that it won't be blocked by
+	 * other rqs which are blocked by page fault on other bcs due to current
+	 * GuC limitation.
+	 */
+	i915_request_set_priority(rq, I915_PRIORITY_MAX);
 	i915_request_add(rq);
 out_batch:
 	i915_gem_ww_unlock_single(batch->obj);
@@ -896,22 +903,25 @@ out:
 int i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
 				struct drm_i915_gem_object *dst,
 				struct i915_gem_ww_ctx *ww,
-				struct intel_context *ce)
+				struct intel_context *ce,
+				bool nowait)
 {
-	return __i915_gem_object_ww_copy_blt(src, dst, ww, ce, false);
+	return __i915_gem_object_ww_copy_blt(src, dst, ww, ce, nowait, false);
 }
 
 int i915_gem_object_ww_compressed_copy_blt(struct drm_i915_gem_object *src,
 				struct drm_i915_gem_object *dst,
 				struct i915_gem_ww_ctx *ww,
-				struct intel_context *ce)
+				struct intel_context *ce,
+				bool nowait)
 {
-	return __i915_gem_object_ww_copy_blt(src, dst, ww, ce, true);
+	return __i915_gem_object_ww_copy_blt(src, dst, ww, ce, nowait, true);
 }
 
 int i915_gem_object_copy_blt(struct drm_i915_gem_object *src,
 			     struct drm_i915_gem_object *dst,
-			     struct intel_context *ce)
+			     struct intel_context *ce,
+			     bool nowait)
 {
 	struct i915_gem_ww_ctx ww;
 	int err;
@@ -926,7 +936,7 @@ retry:
 	if (err)
 		goto out_err;
 
-	err = i915_gem_object_ww_copy_blt(src, dst, &ww, ce);
+	err = i915_gem_object_ww_copy_blt(src, dst, &ww, ce, nowait);
 out_err:
 	if (err == -EDEADLK) {
 		err = i915_gem_ww_ctx_backoff(&ww);

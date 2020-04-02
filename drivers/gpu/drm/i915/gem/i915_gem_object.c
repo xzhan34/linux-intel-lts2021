@@ -758,7 +758,8 @@ swap_pages(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor)
 int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 			    struct i915_gem_ww_ctx *ww,
 			    struct intel_context *ce,
-			    enum intel_region_id id)
+			    enum intel_region_id id,
+			    bool nowait)
 {
 	struct drm_i915_gem_object *donor;
 	int err = 0;
@@ -797,7 +798,7 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 
 	/* Copy backing store if we have to */
 	if (i915_gem_object_has_pages(obj) || obj->base.filp) {
-		err = i915_gem_object_ww_copy_blt(obj, donor, ww, ce);
+		err = i915_gem_object_ww_copy_blt(obj, donor, ww, ce, nowait);
 		if (err)
 			goto out;
 
@@ -1189,7 +1190,7 @@ int i915_gem_object_migrate_region(struct drm_i915_gem_object *obj,
 	for (i = 0; i < size; i++) {
 		struct intel_memory_region *region = regions[i];
 
-		ret = i915_gem_object_migrate(obj, ww, ce, region->id);
+		ret = i915_gem_object_migrate(obj, ww, ce, region->id, false);
 		if (!ret)
 			break;
 	}
@@ -1666,6 +1667,8 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 request:
 
 		i915_request_get(rq);
+		/* Avoid a GuC deadlock while scheduling inside pagefaults */
+		i915_request_set_priority(rq, I915_PRIORITY_MAX);
 		i915_request_add(rq);
 
 		if (!err)

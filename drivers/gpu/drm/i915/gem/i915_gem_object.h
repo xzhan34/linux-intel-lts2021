@@ -75,7 +75,8 @@ bool i915_gem_object_can_migrate(struct drm_i915_gem_object *obj,
 int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 			    struct i915_gem_ww_ctx *ww,
 			    struct intel_context *ce,
-			    enum intel_region_id id);
+			    enum intel_region_id id,
+			    bool nowait);
 int i915_gem_object_memcpy(struct drm_i915_gem_object *dst,
 			   struct drm_i915_gem_object *src);
 int i915_gem_object_migrate_region(struct drm_i915_gem_object *obj,
