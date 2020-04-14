@@ -727,23 +727,26 @@ int intel_guc_resume(struct intel_guc *guc)
  */
 
 /**
- * intel_guc_allocate_vma() - Allocate a GGTT VMA for GuC usage
+ * intel_guc_allocate_vma_with_bias() - Allocate a GGTT VMA for GuC usage above
+ * 					the provided offset
  * @guc:	the guc
  * @size:	size of area to allocate (both virtual space and memory)
+ * @bias:	minimum GGTT offset to be used for the vma
  *
- * This is a wrapper to create an object for use with the GuC. In order to
- * use it inside the GuC, an object needs to be pinned lifetime, so we allocate
- * both some backing storage and a range inside the Global GTT. We must pin
- * it in the GGTT somewhere other than than [0, GUC ggtt_pin_bias) because that
- * range is reserved inside GuC.
+ * This is a wrapper to create an object for use with the GuC, to be used for
+ * GuC objects with particular base offset requirements, and guarantees that the
+ * object is pinned above both the provided bias and ggtt_pin_bias. For objects
+ * with no extra offset requirements, use intel_guc_allocate_vma() instead.
  *
  * Return:	A i915_vma if successful, otherwise an ERR_PTR.
  */
-struct i915_vma *intel_guc_allocate_vma(struct intel_guc *guc, u32 size)
+struct i915_vma *intel_guc_allocate_vma_with_bias(struct intel_guc *guc,
+						  u32 size, u32 bias)
 {
 	struct intel_gt *gt = guc_to_gt(guc);
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
+	unsigned int flags;
 	int ret;
 
 	if (HAS_LMEM(gt->i915))
@@ -760,7 +763,8 @@ struct i915_vma *intel_guc_allocate_vma(struct intel_guc *guc, u32 size)
 	if (IS_ERR(vma))
 		goto err;
 
-	ret = i915_ggtt_pin_for_gt(vma, NULL, 0, 0);
+	flags = max(bias, i915_ggtt_pin_bias(vma)) | PIN_OFFSET_BIAS;
+	ret = i915_ggtt_pin(vma, NULL, 0, flags);
 	if (ret) {
 		vma = ERR_PTR(ret);
 		goto err;
@@ -771,6 +775,24 @@ struct i915_vma *intel_guc_allocate_vma(struct intel_guc *guc, u32 size)
 err:
 	i915_gem_object_put(obj);
 	return vma;
+}
+
+/**
+ * intel_guc_allocate_vma() - Allocate a GGTT VMA for GuC usage
+ * @guc:	the guc
+ * @size:	size of area to allocate (both virtual space and memory)
+ *
+ * This is a wrapper to create an object for use with the GuC. In order to
+ * use it inside the GuC, an object needs to be pinned lifetime, so we allocate
+ * both some backing storage and a range inside the Global GTT. We must pin
+ * it in the GGTT somewhere other than than [0, GUC ggtt_pin_bias) because that
+ * range is reserved inside GuC.
+ *
+ * Return:	A i915_vma if successful, otherwise an ERR_PTR.
+ */
+struct i915_vma *intel_guc_allocate_vma(struct intel_guc *guc, u32 size)
+{
+	return intel_guc_allocate_vma_with_bias(guc, size, 0);
 }
 
 /**

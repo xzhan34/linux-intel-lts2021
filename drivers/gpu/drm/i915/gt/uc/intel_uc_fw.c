@@ -899,6 +899,7 @@ static inline bool uc_fw_need_rsa_in_memory(struct intel_uc_fw *uc_fw)
 static int uc_fw_rsa_data_create(struct intel_uc_fw *uc_fw)
 {
 	struct intel_gt *gt = __uc_fw_to_gt(uc_fw);
+	struct intel_wopcm *wopcm = &gt->i915->wopcm;
 	struct i915_vma *vma;
 	size_t copied;
 	void *vaddr;
@@ -919,9 +920,17 @@ static int uc_fw_rsa_data_create(struct intel_uc_fw *uc_fw)
 	 * within the accessible range that only contains the RSA signature.
 	 * The GuC HW can use this extra pinning to perform the authentication
 	 * since its GGTT offset will be GuC accessible.
+	 *
+	 * Wa_14011315852
+	 * Bootrom requires the GuC RSA to be pinned above the max WOPCM address
+	 * assigned to the firmwares. Since pinning this slightly higher doesn't
+	 * hurt, we can do it unconditionally on all platforms and for both
+	 * binaries to keep the code simple.
 	 */
 	GEM_BUG_ON(uc_fw->rsa_size > PAGE_SIZE);
-	vma = intel_guc_allocate_vma(&gt->uc.guc, PAGE_SIZE);
+	vma = intel_guc_allocate_vma_with_bias(&gt->uc.guc, PAGE_SIZE,
+					       intel_wopcm_guc_base(wopcm) +
+					       intel_wopcm_guc_size(wopcm));
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 

@@ -387,6 +387,8 @@ int intel_guc_to_host_process_recv_msg(struct intel_guc *guc,
 int intel_guc_auth_huc(struct intel_guc *guc, u32 rsa_offset);
 int intel_guc_suspend(struct intel_guc *guc);
 int intel_guc_resume(struct intel_guc *guc);
+struct i915_vma *intel_guc_allocate_vma_with_bias(struct intel_guc *guc,
+						  u32 size, u32 bias);
 struct i915_vma *intel_guc_allocate_vma(struct intel_guc *guc, u32 size);
 int intel_guc_allocate_and_map_vma(struct intel_guc *guc, u32 size,
 				   struct i915_vma **out_vma, void **out_vaddr);
