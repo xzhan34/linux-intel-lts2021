@@ -618,6 +618,8 @@ struct drm_i915_gem_object {
 
 		void *gvt_info;
 	};
+
+	struct drm_i915_gem_object *swapto;
 };
 
 static inline struct drm_i915_gem_object *

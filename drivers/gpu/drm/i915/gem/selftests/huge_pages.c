@@ -1723,13 +1723,6 @@ static int igt_shrink_thp(void *arg)
 		goto out_wf;
 	}
 
-	if (should_swap == (obj->mm.page_sizes.sg || obj->mm.page_sizes.phys)) {
-		pr_err("unexpected residual page-size bits, should_swap=%s\n",
-		       str_yes_no(should_swap));
-		err = -EINVAL;
-		goto out_put;
-	}
-
 	err = i915_vma_pin(vma, 0, 0, flags);
 	if (err)
 		goto out_wf;

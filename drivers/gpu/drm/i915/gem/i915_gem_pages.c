@@ -297,7 +297,6 @@ __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj)
 	}
 
 	__i915_gem_object_reset_page_iter(obj, NULL);
-	obj->mm.page_sizes.phys = obj->mm.page_sizes.sg = 0;
 
 	flush_tlb_invalidate(obj);
 

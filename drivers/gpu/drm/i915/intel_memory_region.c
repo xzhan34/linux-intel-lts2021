@@ -289,19 +289,22 @@ next:
 			goto put;
 		}
 
-		if (!i915_gem_object_unbind(obj, 0)) {
-			if (i915_gem_object_trylock(obj)) {
-				/* May arrive from get_pages on another bo */
-				__i915_gem_object_put_pages(obj);
-				if (!i915_gem_object_has_pages(obj)) {
-					/* conservative estimate of reclaim */
-					found += obj->base.size;
-					wait = false; /* wait again after forward progress */
-				}
-				i915_gem_object_unlock(obj);
-			}
+		/* May arrive from get_pages on another bo */
+		if (!i915_gem_object_trylock(obj))
+			goto put;
+
+		if (!i915_gem_object_has_pages(obj))
+			goto unlock;
+
+		if (!i915_gem_object_unbind(obj, 0) &&
+		    !__i915_gem_object_put_pages(obj)) {
+			/* conservative estimate of reclaimed pages */
+			found += obj->base.size;
+			wait = false; /* wait again after forward progress */
 		}
 
+unlock:
+		i915_gem_object_unlock(obj);
 put:
 		i915_gem_object_put(obj);
 bookmark:

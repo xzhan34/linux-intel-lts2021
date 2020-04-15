@@ -9,6 +9,7 @@
 #include "i915_gem_region.h"
 #include "i915_drv.h"
 #include "i915_trace.h"
+#include "i915_gem_mman.h"
 
 void
 i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
@@ -17,7 +18,6 @@ i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
 	__intel_memory_region_put_pages_buddy(obj->mm.region.mem,
 					      &obj->mm.blocks);
 
-	obj->mm.dirty = false;
 	sg_free_table(pages);
 	kfree(pages);
 }

@@ -279,6 +279,104 @@ emit_ccs_clear(struct i915_request *rq, u64 offset, u32 length)
 }
 
 static int
+lmem_swapout(struct drm_i915_gem_object *obj,
+	     struct sg_table *pages, unsigned int sizes)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct drm_i915_gem_object *dst, *src;
+	int err;
+
+	GEM_BUG_ON(obj->swapto);
+	assert_object_held(obj);
+
+	/* create a shadow object on smem region */
+	dst = i915_gem_object_create_shmem(i915, obj->base.size);
+	if (IS_ERR(dst))
+		return PTR_ERR(dst);
+
+	/* Share the dma-resv between the shadow- and the parent object */
+	dst->base.resv = obj->base.resv;
+	assert_object_held(dst);
+
+	/*
+	 * create working object on the same region as 'obj',
+	 * if 'obj' is used directly, it is set pages and is pinned
+	 * again, other thread may wrongly use 'obj' pages.
+	 */
+	src = i915_gem_object_create_region(obj->mm.region.mem,
+					    obj->base.size, 0);
+	if (IS_ERR(src)) {
+		i915_gem_object_put(dst);
+		return PTR_ERR(src);
+	}
+
+	/* set and pin working object pages */
+	i915_gem_object_lock_isolated(src);
+	__i915_gem_object_set_pages(src, pages, sizes);
+	__i915_gem_object_pin_pages(src);
+
+	/* copying the pages */
+	err = i915_gem_object_memcpy(dst, src);
+
+	__i915_gem_object_unpin_pages(src);
+	__i915_gem_object_unset_pages(src);
+	i915_gem_object_unlock(src);
+	i915_gem_object_put(src);
+
+	if (!err)
+		obj->swapto = dst;
+	else
+		i915_gem_object_put(dst);
+
+	return err;
+}
+
+static int
+lmem_swapin(struct drm_i915_gem_object *obj,
+	    struct sg_table *pages, unsigned int sizes)
+{
+	struct drm_i915_gem_object *dst, *src = obj->swapto;
+	int err;
+
+	assert_object_held(obj);
+
+	/*
+	 * create working object on the same region as 'obj',
+	 * if 'obj' is used directly, it is set pages and is pinned
+	 * again, other thread may wrongly use 'obj' pages.
+	 */
+	dst = i915_gem_object_create_region(obj->mm.region.mem,
+					    obj->base.size, 0);
+	if (IS_ERR(dst)) {
+		err = PTR_ERR(dst);
+		return err;
+	}
+
+	/* @scr is sharing @obj's reservation object */
+	assert_object_held(src);
+
+	/* set and pin working object pages */
+	i915_gem_object_lock_isolated(dst);
+	__i915_gem_object_set_pages(dst, pages, sizes);
+	__i915_gem_object_pin_pages(dst);
+
+	/* copying the pages */
+	err = i915_gem_object_memcpy(dst, src);
+
+	__i915_gem_object_unpin_pages(dst);
+	__i915_gem_object_unset_pages(dst);
+	i915_gem_object_unlock(dst);
+	i915_gem_object_put(dst);
+
+	if (!err) {
+		obj->swapto = NULL;
+		i915_gem_object_put(src);
+	}
+
+	return err;
+}
+
+static int
 xy_emit_clear(struct i915_request *rq, u64 offset, u32 size, u32 page_shift)
 {
 	u32 mocs = 0;
@@ -533,7 +631,10 @@ static int lmem_get_pages(struct drm_i915_gem_object *obj)
 	if (IS_ERR(pages))
 		return PTR_ERR(pages);
 
-	err = lmem_clear(obj, pages, page_sizes, &rq);
+	if (obj->swapto)
+		err = lmem_swapin(obj, pages, page_sizes);
+	else
+		err = lmem_clear(obj, pages, page_sizes, &rq);
 	if (rq) {
 		i915_gem_object_migrate_prepare(obj, rq);
 		i915_sw_fence_complete(&rq->submit);
@@ -551,9 +652,36 @@ err:
 	return err;
 }
 
+static bool need_swap(const struct drm_i915_gem_object *obj)
+{
+	if (i915_gem_object_migrate_has_error(obj))
+		return false;
+
+	if (i915_gem_object_is_volatile(obj))
+		return false;
+
+	if (obj->mm.madv != I915_MADV_WILLNEED)
+		return false;
+
+	if (kref_read(&obj->base.refcount) == 0)
+		return false;
+
+	return obj->mm.dirty;
+}
+
 static void
 lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 {
+	if (need_swap(obj)) {
+		unsigned int sizes = obj->mm.page_sizes.phys;
+
+		if (lmem_swapout(obj, pages, sizes)) {
+			/* swapout failed, keep the pages */
+			__i915_gem_object_set_pages(obj, pages, sizes);
+			return;
+		}
+	}
+
 	i915_gem_object_migrate_finish(obj);
 	obj->flags &= ~I915_BO_SYNC_HINT;
 

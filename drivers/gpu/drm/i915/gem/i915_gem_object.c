@@ -259,7 +259,11 @@ void __i915_gem_free_object_rcu(struct rcu_head *head)
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 
 	i915_active_fence_fini(&obj->mm.migrate);
+
+	/* Reset shared reservation object */
+	obj->base.resv = &obj->base._resv;
 	dma_resv_fini(&obj->base._resv);
+
 	i915_gem_object_free(obj);
 
 	GEM_BUG_ON(!atomic_read(&i915->mm.free_count));
@@ -279,7 +283,7 @@ static void vma_offset_revoke_all(struct drm_vma_offset_node *node)
 	write_unlock(&node->vm_lock);
 }
 
-static void __i915_gem_object_free_mmaps(struct drm_i915_gem_object *obj)
+void __i915_gem_object_free_mmaps(struct drm_i915_gem_object *obj)
 {
 	/* Skip serialisation and waking the device if known to be not used. */
 
@@ -301,6 +305,9 @@ static void __i915_gem_object_free_mmaps(struct drm_i915_gem_object *obj)
 		}
 		obj->mmo.offsets = RB_ROOT;
 	}
+
+	if (unlikely(drm_mm_node_allocated(&obj->base.vma_node.vm_node)))
+		drm_gem_free_mmap_offset(&obj->base);
 }
 
 static void __i915_gem_object_free_vma(struct drm_i915_gem_object *obj)
@@ -351,8 +358,6 @@ void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 
 	if (obj->base.import_attach)
 		drm_prime_gem_destroy(&obj->base, NULL);
-
-	drm_gem_free_mmap_offset(&obj->base);
 
 	if (obj->ops->release)
 		obj->ops->release(obj);
@@ -405,6 +410,14 @@ static void i915_gem_free_object(struct drm_gem_object *gem_obj)
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 
 	GEM_BUG_ON(i915_gem_object_is_framebuffer(obj));
+
+	/*
+	 * If object had been swapped out, free the hidden object.
+	 */
+	if (obj->swapto) {
+		i915_gem_object_put(obj->swapto);
+		obj->swapto = NULL;
+	}
 
 	/*
 	 * Before we free the object, make sure any pure RCU-only
@@ -595,13 +608,23 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 	if (GEM_WARN_ON(obj->mm.madv != I915_MADV_WILLNEED))
 		return -EFAULT;
 
-	donor = i915_gem_object_create_region(to_i915(obj->base.dev)->mm.regions[id],
-					      obj->base.size,
-					      obj->flags & I915_BO_ALLOC_FLAGS);
-	if (IS_ERR(donor))
-		return PTR_ERR(donor);
+	if (id == INTEL_REGION_SMEM) {
+		err = __i915_gem_object_put_pages(obj);
+		if (err)
+			return err;
+	}
 
-	donor->base.resv = obj->base.resv;
+	if (obj->swapto && id == INTEL_REGION_SMEM) {
+		donor = fetch_and_zero(&obj->swapto);
+	} else {
+		donor = i915_gem_object_create_region(to_i915(obj->base.dev)->mm.regions[id],
+						      obj->base.size,
+						      obj->flags & I915_BO_ALLOC_FLAGS);
+		if (IS_ERR(donor))
+			return PTR_ERR(donor);
+
+		donor->base.resv = obj->base.resv;
+	}
 	assert_object_held(donor);
 	GEM_BUG_ON(donor->mm.region.mem->id != id);
 
@@ -645,6 +668,7 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 	swap_pages(obj, donor);
 
 	GEM_BUG_ON(obj->mm.region.mem->id != id);
+	GEM_BUG_ON(obj->swapto && id == INTEL_REGION_SMEM);
 
 out:
 	/* Need to set I915_MADV_DONTNEED so that shrinker can free it */
