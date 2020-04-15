@@ -270,6 +270,43 @@ static void show_xfer(struct seq_file *m,
 		   div64_u64(mul_u64_u32_shr(bytes, NSEC_PER_SEC, 20), time));
 }
 
+static void
+evict_stat(struct seq_file *m,
+	   const char *name,
+	   const char *direction,
+	   struct i915_mm_swap_stat *stat)
+{
+	unsigned long pages;
+	unsigned int seq;
+	u64 time, rate, size;
+	ktime_t ktime;
+
+	do {
+		seq = read_seqbegin(&stat->lock);
+		pages = stat->pages;
+		ktime = stat->time;
+	} while (read_seqretry(&stat->lock, seq));
+
+	time = ktime_to_us(ktime);
+	size = (u64)pages * PAGE_SIZE;
+	rate = time ? div64_u64(size, time) : 0;
+	rate = div64_ul(rate * USEC_PER_SEC, 1024 * 1024);
+	size = div64_ul(size, 1024 * 1024);
+
+	seq_printf(m, "%s swap %s %llu MiB in %llums, %llu MiB/s.\n",
+		   name, direction, size, ktime_to_ms(ktime),
+		   rate);
+}
+
+static void
+evict_stats(struct seq_file *m,
+	    const char *name,
+	    struct i915_mm_swap_stats *stats)
+{
+	evict_stat(m, name, "in", &stats->in);
+	evict_stat(m, name, "out", &stats->out);
+}
+
 static int i915_gem_object_info(struct seq_file *m, void *data)
 {
 	struct drm_i915_private *i915 = node_to_i915(m->private);
@@ -293,6 +330,9 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 			  gt->counters.map[INTEL_GT_CLEAR_BYTES],
 			  gt->counters.map[INTEL_GT_CLEAR_CYCLES]);
 	}
+
+	evict_stats(m, "Blitter", &i915->mm.blt_swap_stats);
+	evict_stats(m, "Memcpy", &i915->mm.memcpy_swap_stats);
 
 	return 0;
 }

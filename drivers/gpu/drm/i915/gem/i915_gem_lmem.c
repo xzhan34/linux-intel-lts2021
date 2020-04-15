@@ -214,6 +214,21 @@ i915_gem_object_create_lmem_from_data(struct drm_i915_private *i915,
 	return obj;
 }
 
+static void
+__update_stat(struct i915_mm_swap_stat *stat,
+	      unsigned long pages,
+	      ktime_t start)
+{
+	if (stat) {
+		start = ktime_get() - start;
+
+		write_seqlock(&stat->lock);
+		stat->time = ktime_add(stat->time, start);
+		stat->pages += pages;
+		write_sequnlock(&stat->lock);
+	}
+}
+
 static int emit_flush(struct i915_request *rq, unsigned int flags)
 {
 	u32 *cs;
@@ -283,7 +298,9 @@ lmem_swapout(struct drm_i915_gem_object *obj,
 	     struct sg_table *pages, unsigned int sizes)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct i915_mm_swap_stat *stat = NULL;
 	struct drm_i915_gem_object *dst, *src;
+	ktime_t start = ktime_get();
 	int err;
 
 	GEM_BUG_ON(obj->swapto);
@@ -317,6 +334,8 @@ lmem_swapout(struct drm_i915_gem_object *obj,
 
 	/* copying the pages */
 	err = i915_gem_object_memcpy(dst, src);
+	if (!err)
+		stat = &i915->mm.memcpy_swap_stats.out;
 
 	__i915_gem_object_unpin_pages(src);
 	__i915_gem_object_unset_pages(src);
@@ -328,6 +347,8 @@ lmem_swapout(struct drm_i915_gem_object *obj,
 	else
 		i915_gem_object_put(dst);
 
+	__update_stat(stat, obj->base.size >> PAGE_SHIFT, start);
+
 	return err;
 }
 
@@ -335,7 +356,10 @@ static int
 lmem_swapin(struct drm_i915_gem_object *obj,
 	    struct sg_table *pages, unsigned int sizes)
 {
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct drm_i915_gem_object *dst, *src = obj->swapto;
+	struct i915_mm_swap_stat *stat = NULL;
+	ktime_t start = ktime_get();
 	int err;
 
 	assert_object_held(obj);
@@ -362,6 +386,8 @@ lmem_swapin(struct drm_i915_gem_object *obj,
 
 	/* copying the pages */
 	err = i915_gem_object_memcpy(dst, src);
+	if (!err)
+		stat = &i915->mm.memcpy_swap_stats.in;
 
 	__i915_gem_object_unpin_pages(dst);
 	__i915_gem_object_unset_pages(dst);
@@ -372,6 +398,8 @@ lmem_swapin(struct drm_i915_gem_object *obj,
 		obj->swapto = NULL;
 		i915_gem_object_put(src);
 	}
+
+	__update_stat(stat, obj->base.size >> PAGE_SHIFT, start);
 
 	return err;
 }
