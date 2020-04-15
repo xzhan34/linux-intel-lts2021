@@ -241,8 +241,6 @@ shmem_truncate(struct drm_i915_gem_object *obj)
 	 * backing pages, *now*.
 	 */
 	shmem_truncate_range(file_inode(obj->base.filp), 0, (loff_t)-1);
-	obj->mm.madv = __I915_MADV_PURGED;
-	obj->mm.pages = ERR_PTR(-EFAULT);
 }
 
 static void

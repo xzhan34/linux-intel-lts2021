@@ -515,8 +515,6 @@ struct drm_i915_gem_object {
 		struct ttm_resource *res;
 		struct list_head blocks;
 
-		struct list_head tmp_link;
-
 		struct sg_table *pages;
 		void *mapping;
 

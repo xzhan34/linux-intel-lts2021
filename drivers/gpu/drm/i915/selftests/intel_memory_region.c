@@ -1171,7 +1171,7 @@ static void igt_mark_evictable(struct drm_i915_gem_object *obj)
 	obj->mm.madv = I915_MADV_DONTNEED;
 
 	spin_lock(&mem->objects.lock);
-	list_move(&obj->mm.region.link, &mem->objects.purgeable);
+	list_move_tail(&obj->mm.region.link, &mem->objects.purgeable);
 	spin_unlock(&mem->objects.lock);
 }
 

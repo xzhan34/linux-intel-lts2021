@@ -7,6 +7,8 @@
 
 #include <uapi/drm/i915_drm.h>
 
+#include "gt/intel_gt_requests.h"
+
 #include "i915_buddy.h"
 #include "intel_memory_region.h"
 #include "i915_drv.h"
@@ -157,28 +159,29 @@ intel_memory_region_lookup(struct drm_i915_private *i915,
 	return NULL;
 }
 
-static u64
+static void
 intel_memory_region_free_pages(struct intel_memory_region *mem,
 			       struct list_head *blocks)
 {
 	struct i915_buddy_block *block, *on;
-	u64 size = 0;
 
 	list_for_each_entry_safe(block, on, blocks, link) {
-		size += i915_buddy_block_size(&mem->mm, block);
+		mem->avail += i915_buddy_block_size(&mem->mm, block);
 		i915_buddy_free(&mem->mm, block);
 	}
-	INIT_LIST_HEAD(blocks);
 
-	return size;
+	INIT_LIST_HEAD(blocks);
 }
 
 void
 __intel_memory_region_put_pages_buddy(struct intel_memory_region *mem,
 				      struct list_head *blocks)
 {
+	if (unlikely(list_empty(blocks)))
+		return;
+
 	mutex_lock(&mem->mm_lock);
-	mem->avail += intel_memory_region_free_pages(mem, blocks);
+	intel_memory_region_free_pages(mem, blocks);
 	mutex_unlock(&mem->mm_lock);
 }
 
@@ -207,6 +210,174 @@ __intel_memory_region_put_block_buddy(struct i915_buddy_block *block)
 		schedule_work(&mem->pd_put.work);
 }
 
+static int intel_memory_region_evict(struct intel_memory_region *mem,
+				     resource_size_t target)
+{
+	struct list_head *phases[] = {
+		/*
+		 * Purgeable objects are deemed to be free by userspace
+		 * and exist purely as a means to cache pages. They are
+		 * a resource that we can reallocate from as userspace
+		 * must revalidate the purgeable object prior to use,
+		 * and be prepared to recover if the content was lost.
+		 *
+		 * It is always preferrable to reuse the purgeable objects
+		 * as we we can immediately reallocate their pages without
+		 * swapping them out to shmemfs, even to prefer waiting
+		 * for those to complete prior to looking at inactive
+		 * objects, as those inactive objects will need to be swapped
+		 * out and so impose their own execution barrier, similar
+		 * to waiting for work completion on the purgeable lists.
+		 */
+		&mem->objects.purgeable,
+		&mem->objects.list,
+		NULL,
+	};
+	struct intel_memory_region_link bookmark = {};
+	struct intel_memory_region_link *pos;
+	struct list_head **phase = phases;
+	bool wait = false, busy = false;
+	resource_size_t found = 0;
+	LIST_HEAD(still_in_list);
+	LIST_HEAD(blocks);
+	long timeout = 0;
+	int err = 0;
+
+next:
+	spin_lock(&mem->objects.lock);
+	list_for_each_entry(pos, *phase, link) {
+		struct drm_i915_gem_object *obj;
+
+		if (!pos->mem) /* skip over other bookmarks */
+			continue;
+
+		if (signal_pending(current)) {
+			err = -EINTR;
+			break;
+		}
+
+		list_add_tail(&bookmark.link, &pos->link);
+
+		obj = container_of(pos, typeof(*obj), mm.region);
+		if (!i915_gem_object_get_rcu(obj)) {
+			list_del_init(&pos->link);
+			list_replace_init(&obj->mm.blocks, &blocks);
+			found += obj->base.size;
+			obj = NULL;
+		} else {
+			list_move_tail(&pos->link, &still_in_list);
+		}
+
+		spin_unlock(&mem->objects.lock);
+
+		if (!obj) {
+			__intel_memory_region_put_pages_buddy(mem, &blocks);
+			goto bookmark;
+		}
+
+		if (i915_gem_object_is_framebuffer(obj))
+			goto put;
+
+		/* Flush activity prior to grabbing locks */
+		timeout = __i915_gem_object_wait(obj,
+						 I915_WAIT_INTERRUPTIBLE |
+						 I915_WAIT_ALL,
+						 timeout);
+		if (timeout < 0) {
+			busy = true;
+			timeout = 0;
+			goto put;
+		}
+
+		if (!i915_gem_object_unbind(obj, 0)) {
+			if (i915_gem_object_trylock(obj)) {
+				/* May arrive from get_pages on another bo */
+				__i915_gem_object_put_pages(obj);
+				if (!i915_gem_object_has_pages(obj)) {
+					/* conservative estimate of reclaim */
+					found += obj->base.size;
+					wait = false; /* wait again after forward progress */
+				}
+				i915_gem_object_unlock(obj);
+			}
+		}
+
+put:
+		i915_gem_object_put(obj);
+bookmark:
+		cond_resched();
+		spin_lock(&mem->objects.lock);
+
+		__list_del_entry(&bookmark.link);
+
+		err = 0;
+		if (found >= target)
+			break;
+
+		pos = &bookmark;
+	}
+	list_splice_tail_init(&still_in_list, *phase);
+	spin_unlock(&mem->objects.lock);
+	if (err || found >= target)
+		return err;
+
+	if (!wait && busy) {
+		/* Repeat, waiting for the active objects */
+		timeout = msecs_to_jiffies(CONFIG_DRM_I915_FENCE_TIMEOUT);
+		wait = true;
+		busy = false;
+		goto next;
+	}
+
+	if (*++phase) {
+		/* And try to release all stale kernel objects */
+		intel_gt_retire_requests(mem->gt);
+
+		timeout = 0;
+		wait = false;
+		busy = false;
+		goto next;
+	}
+
+	/*
+	 * Keep retrying the allocation until there is nothing more to evict.
+	 *
+	 * If we have made any forward progress towards completing our
+	 * allocation; retry. On the next pass, especially if we are competing
+	 * with other threads, we may find more to evict and succeed. It is
+	 * not until there is nothing left to evict on this pass and make
+	 * no forward progress, do we conclude that it is better to report
+	 * failure.
+	 */
+	return found ? 0 : -ENXIO;
+}
+
+static unsigned int
+__max_order(const struct intel_memory_region *mem, unsigned long n_pages)
+{
+	if (n_pages >> mem->mm.max_order)
+		return mem->mm.max_order;
+
+	return __fls(n_pages);
+}
+
+static bool available_chunks(const struct intel_memory_region *mem,
+			     resource_size_t sz)
+{
+	/*
+	 * Only allow this client to take from the pool of freed chunks
+	 * only if there is enough memory available to satisfy all
+	 * current allocation requests. If there is not enough memory
+	 * available, we need to evict objects and we want to prevent
+	 * the next allocation stealing our reclaimed chunk before we
+	 * can use it for ourselves. So effectively when eviction
+	 * has been started, every allocation goes through the eviction
+	 * loop and will be ordered fairly by the ww_mutex, ensuring
+	 * all clients continue to make forward progress.
+	 */
+	return mem->avail >= mem->evict + sz;
+}
+
 int
 __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 				      resource_size_t size,
@@ -215,6 +386,8 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 {
 	unsigned int min_order = 0;
 	unsigned long n_pages;
+	unsigned int order;
+	int err = 0;
 
 	GEM_BUG_ON(!IS_ALIGNED(size, mem->mm.chunk_size));
 	GEM_BUG_ON(!list_empty(blocks));
@@ -233,60 +406,50 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 		return -E2BIG;
 
 	n_pages = size >> ilog2(mem->mm.chunk_size);
+	order = __max_order(mem, n_pages);
+	GEM_BUG_ON(order < min_order);
 
 	mutex_lock(&mem->mm_lock);
-
 	do {
+		resource_size_t sz = mem->mm.chunk_size << order;
 		struct i915_buddy_block *block;
-		unsigned int order;
-		bool retry = true;
-retry:
-		order = min_t(unsigned int, __fls(n_pages), mem->mm.max_order);
-		GEM_BUG_ON(order < min_order);
 
-		do {
+		block = ERR_PTR(-ENXIO);
+		if (available_chunks(mem, sz))
 			block = i915_buddy_alloc(&mem->mm, order);
-			if (!IS_ERR(block))
+		if (!IS_ERR(block)) {
+			GEM_BUG_ON(i915_buddy_block_order(block) != order);
+			list_add_tail(&block->link, blocks);
+			mem->avail -= sz;
+			block->private = mem;
+
+			n_pages -= BIT(order);
+			if (!n_pages)
 				break;
 
-			if (order-- == min_order) {
-				resource_size_t target;
-				int err;
+			while (!(n_pages >> order))
+				order--;
+		} else if (order-- == min_order) {
+			sz = n_pages * mem->mm.chunk_size;
 
-				if (!retry)
-					goto err_free_blocks;
+			/* Reserve the memory we reclaim for ourselves! */
+			mem->evict += sz;
+			mutex_unlock(&mem->mm_lock);
 
-				target = n_pages * mem->mm.chunk_size;
+			err = intel_memory_region_evict(mem, sz);
+			order = __max_order(mem, n_pages);
 
-				mutex_unlock(&mem->mm_lock);
-				err = i915_gem_shrink_memory_region(mem,
-								    target);
-				mutex_lock(&mem->mm_lock);
-				if (err)
-					goto err_free_blocks;
-
-				retry = false;
-				goto retry;
+			mutex_lock(&mem->mm_lock);
+			mem->evict -= sz;
+			if (err) {
+				intel_memory_region_free_pages(mem, blocks);
+				break;
 			}
-		} while (1);
-
-		n_pages -= BIT(order);
-
-		block->private = mem;
-		list_add_tail(&block->link, blocks);
-
-		if (!n_pages)
-			break;
+		}
 	} while (1);
-
-	mem->avail -= size;
 	mutex_unlock(&mem->mm_lock);
-	return 0;
 
-err_free_blocks:
-	intel_memory_region_free_pages(mem, blocks);
-	mutex_unlock(&mem->mm_lock);
-	return -ENXIO;
+	return err;
 }
 
 struct i915_buddy_block *

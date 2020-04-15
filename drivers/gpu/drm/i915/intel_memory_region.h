@@ -87,6 +87,7 @@ struct intel_memory_region {
 	resource_size_t min_page_size;
 	resource_size_t total;
 	resource_size_t avail;
+	resource_size_t evict;
 
 	u16 type;
 	u16 instance;

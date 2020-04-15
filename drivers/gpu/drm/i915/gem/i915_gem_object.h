@@ -602,6 +602,10 @@ static inline void __start_cpu_write(struct drm_i915_gem_object *obj)
 
 void i915_gem_fence_wait_priority(struct dma_fence *fence, int prio);
 
+long
+__i915_gem_object_wait(struct drm_i915_gem_object *obj,
+		     unsigned int flags,
+		     long timeout);
 int i915_gem_object_wait(struct drm_i915_gem_object *obj,
 			 unsigned int flags,
 			 long timeout);

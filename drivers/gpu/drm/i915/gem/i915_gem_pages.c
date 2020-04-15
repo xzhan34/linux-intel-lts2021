@@ -201,6 +201,9 @@ void i915_gem_object_truncate(struct drm_i915_gem_object *obj)
 {
 	if (obj->ops->truncate)
 		obj->ops->truncate(obj);
+
+	obj->mm.madv = __I915_MADV_PURGED;
+	obj->mm.pages = ERR_PTR(-EFAULT);
 }
 
 /* Try to discard unwanted pages */
@@ -328,6 +331,9 @@ int __i915_gem_object_put_pages(struct drm_i915_gem_object *obj)
 	 */
 	if (!IS_ERR_OR_NULL(pages))
 		obj->ops->put_pages(obj, pages);
+
+	if (obj->mm.madv != I915_MADV_WILLNEED)
+		i915_gem_object_truncate(obj);
 
 	return 0;
 }

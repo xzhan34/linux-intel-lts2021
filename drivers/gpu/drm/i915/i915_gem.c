@@ -155,6 +155,11 @@ try_again:
 		if (!i915_vma_is_bound(vma, I915_VMA_BIND_MASK))
 			continue;
 
+		if (i915_vma_is_pinned(vma)) {
+			ret = -EBUSY;
+			break;
+		}
+
 		if (flags & I915_GEM_OBJECT_UNBIND_TEST) {
 			ret = -EBUSY;
 			break;

@@ -175,20 +175,28 @@ i915_gem_object_wait_priority(struct drm_i915_gem_object *obj,
  * @flags: how to wait (under a lock, for all rendering or just for writes etc)
  * @timeout: how long to wait
  */
-int
-i915_gem_object_wait(struct drm_i915_gem_object *obj,
-		     unsigned int flags,
-		     long timeout)
+long
+__i915_gem_object_wait(struct drm_i915_gem_object *obj,
+		       unsigned int flags,
+		       long timeout)
 {
 	might_sleep();
-	GEM_BUG_ON(timeout < 0);
+	if (GEM_WARN_ON(timeout < 0))
+		return timeout;
 
 	timeout = i915_gem_object_migrate_wait(obj, flags, timeout);
 	if (timeout < 0)
 		return timeout;
 
-	timeout = i915_gem_object_wait_reservation(obj->base.resv,
-						   flags, timeout);
+	return i915_gem_object_wait_reservation(obj->base.resv, flags, timeout);
+}
+
+int
+i915_gem_object_wait(struct drm_i915_gem_object *obj,
+		     unsigned int flags,
+		     long timeout)
+{
+	timeout = __i915_gem_object_wait(obj, flags, timeout);
 	return timeout < 0 ? timeout : 0;
 }
 

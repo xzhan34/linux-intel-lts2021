@@ -60,15 +60,7 @@ static bool drop_pages(struct drm_i915_gem_object *obj,
 static void try_to_writeback(struct drm_i915_gem_object *obj,
 			     unsigned int flags)
 {
-	switch (obj->mm.madv) {
-	case I915_MADV_DONTNEED:
-		i915_gem_object_truncate(obj);
-		return;
-	case __I915_MADV_PURGED:
-		return;
-	}
-
-	if (flags & I915_SHRINK_WRITEBACK)
+	if (flags & I915_SHRINK_WRITEBACK && obj->mm.madv == I915_MADV_WILLNEED)
 		i915_gem_object_writeback(obj);
 }
 
@@ -282,64 +274,6 @@ unsigned long i915_gem_shrink_all(struct drm_i915_private *i915)
 	}
 
 	return freed;
-}
-
-int i915_gem_shrink_memory_region(struct intel_memory_region *mem,
-				  resource_size_t target)
-{
-	struct drm_i915_private *i915 = mem->i915;
-	struct drm_i915_gem_object *obj;
-	resource_size_t purged;
-	LIST_HEAD(purgeable);
-	int err = -ENOSPC;
-
-	intel_gt_retire_requests(to_gt(i915));
-
-	purged = 0;
-
-	spin_lock(&mem->objects.lock);
-
-	while ((obj = list_first_entry_or_null(&mem->objects.purgeable,
-					       typeof(*obj),
-					       mm.region.link))) {
-		list_move_tail(&obj->mm.region.link, &purgeable);
-
-		if (!i915_gem_object_has_pages(obj))
-			continue;
-
-		if (i915_gem_object_is_framebuffer(obj))
-			continue;
-
-		if (!kref_get_unless_zero(&obj->base.refcount))
-			continue;
-
-		spin_unlock(&mem->objects.lock);
-
-		if (!i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE)) {
-			if (i915_gem_object_trylock(obj)) {
-				__i915_gem_object_put_pages(obj);
-				if (!i915_gem_object_has_pages(obj)) {
-					purged += obj->base.size;
-					if (!i915_gem_object_is_volatile(obj))
-						obj->mm.madv = __I915_MADV_PURGED;
-				}
-				i915_gem_object_unlock(obj);
-			}
-		}
-
-		i915_gem_object_put(obj);
-
-		spin_lock(&mem->objects.lock);
-
-		if (purged >= target) {
-			err = 0;
-			break;
-		}
-	}
-
-	list_splice_tail(&purgeable, &mem->objects.purgeable);
-	spin_unlock(&mem->objects.lock);
-	return err;
 }
 
 static unsigned long
