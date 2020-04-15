@@ -24,6 +24,7 @@
 
 #include <linux/highmem.h>
 #include <linux/sched/mm.h>
+#include <linux/iosys-map.h>
 
 #include <drm/drm_cache.h>
 
@@ -36,6 +37,7 @@
 #include "i915_gem_clflush.h"
 #include "i915_gem_context.h"
 #include "i915_gem_dmabuf.h"
+#include "i915_gem_lmem.h"
 #include "i915_gem_mman.h"
 #include "i915_gem_object.h"
 #include "i915_gem_object_blt.h"
@@ -649,6 +651,159 @@ out:
 	donor->mm.madv = I915_MADV_DONTNEED; /* XXX set_madv() */
 	i915_gem_object_put(donor);
 	return err;
+}
+
+struct object_memcpy_info {
+	struct drm_i915_gem_object *obj;
+	intel_wakeref_t wakeref;
+	bool write;
+	int clflush;
+	struct page *page;
+	struct iosys_map map;
+	struct iosys_map *(*get_map)(struct object_memcpy_info *info,
+			   unsigned long idx);
+	void (*put_map)(struct object_memcpy_info *info);
+};
+
+static struct iosys_map *
+lmem_get_map(struct object_memcpy_info *info, unsigned long idx)
+{
+	void __iomem *vaddr;
+
+	vaddr = i915_gem_object_lmem_io_map_page(info->obj, idx);
+	iosys_map_set_vaddr_iomem(&info->map, vaddr);
+
+	return &info->map;
+}
+
+static void lmem_put_map(struct object_memcpy_info *info)
+{
+	io_mapping_unmap(info->map.vaddr_iomem);
+}
+
+static struct iosys_map *
+smem_get_map(struct object_memcpy_info *info, unsigned long idx)
+{
+	void *vaddr;
+
+	info->page = i915_gem_object_get_page(info->obj, idx);
+	vaddr = kmap(info->page);
+	iosys_map_set_vaddr(&info->map, vaddr);
+	if (info->clflush & CLFLUSH_BEFORE)
+		drm_clflush_virt_range(info->map.vaddr, PAGE_SIZE);
+	return &info->map;
+}
+
+static void smem_put_map(struct object_memcpy_info *info)
+{
+	if (info->clflush & CLFLUSH_AFTER)
+		drm_clflush_virt_range(info->map.vaddr, PAGE_SIZE);
+	kunmap(info->page);
+}
+
+static int
+i915_gem_object_prepare_memcpy(struct drm_i915_gem_object *obj,
+			       struct object_memcpy_info *info,
+			       bool write)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	int ret;
+
+	assert_object_held(obj);
+	ret = i915_gem_object_wait(obj,
+				   I915_WAIT_INTERRUPTIBLE,
+				   MAX_SCHEDULE_TIMEOUT);
+	if (ret)
+		return ret;
+
+	ret = i915_gem_object_pin_pages(obj);
+	if (ret)
+		return ret;
+
+	if (i915_gem_object_is_lmem(obj)) {
+		ret = i915_gem_object_set_to_wc_domain(obj, write);
+		if (!ret) {
+			info->wakeref =
+				intel_runtime_pm_get(&i915->runtime_pm);
+			info->get_map = lmem_get_map;
+			info->put_map = lmem_put_map;
+		}
+	} else {
+		if (write)
+			ret = i915_gem_object_prepare_write(obj,
+							    &info->clflush);
+		else
+			ret = i915_gem_object_prepare_read(obj,
+							   &info->clflush);
+
+		if (!ret) {
+			i915_gem_object_finish_access(obj);
+			info->get_map = smem_get_map;
+			info->put_map = smem_put_map;
+		}
+	}
+
+	if (!ret) {
+		info->obj = obj;
+		info->write = write;
+	} else {
+		i915_gem_object_unpin_pages(obj);
+	}
+
+	return ret;
+}
+
+static void
+i915_gem_object_finish_memcpy(struct object_memcpy_info *info)
+{
+	struct drm_i915_private *i915 = to_i915(info->obj->base.dev);
+
+	if (i915_gem_object_is_lmem(info->obj)) {
+		intel_runtime_pm_put(&i915->runtime_pm, info->wakeref);
+	} else {
+		if (info->write) {
+			i915_gem_object_flush_frontbuffer(info->obj,
+							  ORIGIN_CPU);
+			info->obj->mm.dirty = true;
+		}
+	}
+	i915_gem_object_unpin_pages(info->obj);
+}
+
+int i915_gem_object_memcpy(struct drm_i915_gem_object *dst,
+			   struct drm_i915_gem_object *src)
+{
+	struct object_memcpy_info sinfo, dinfo;
+	struct iosys_map *smap, *dmap;
+	unsigned long npages;
+	int i, ret;
+
+	ret = i915_gem_object_prepare_memcpy(src, &sinfo, false);
+	if (ret)
+		return ret;
+
+	ret = i915_gem_object_prepare_memcpy(dst, &dinfo, true);
+	if (ret)
+		goto finish_src;
+
+	npages = src->base.size / PAGE_SIZE;
+	for (i = 0; i < npages; i++) {
+		smap = sinfo.get_map(&sinfo, i);
+		dmap = dinfo.get_map(&dinfo, i);
+
+		i915_memcpy_iosys_map(dmap, smap, PAGE_SIZE);
+
+		dinfo.put_map(&dinfo);
+		sinfo.put_map(&sinfo);
+
+		cond_resched();
+	}
+
+	i915_gem_object_finish_memcpy(&dinfo);
+finish_src:
+	i915_gem_object_finish_memcpy(&sinfo);
+
+	return ret;
 }
 
 void __i915_gem_object_flush_frontbuffer(struct drm_i915_gem_object *obj,
