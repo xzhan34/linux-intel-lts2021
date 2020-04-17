@@ -177,6 +177,7 @@ struct prelim_i915_user_extension {
 /* 0x5e is free, please use if needed */
 #define PRELIM_DRM_I915_GEM_VM_BIND		0x5d
 #define PRELIM_DRM_I915_GEM_VM_UNBIND		0x5c
+#define PRELIM_DRM_I915_GEM_VM_ADVISE		0x5b
 #define PRELIM_DRM_I915_GEM_WAIT_USER_FENCE	0x5a
 #define PRELIM_DRM_I915_UUID_REGISTER		0x58
 #define PRELIM_DRM_I915_UUID_UNREGISTER		0x57
@@ -186,6 +187,7 @@ struct prelim_i915_user_extension {
 #define PRELIM_DRM_IOCTL_I915_GEM_CREATE_EXT		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_CREATE, struct prelim_drm_i915_gem_create_ext)
 #define PRELIM_DRM_IOCTL_I915_GEM_VM_BIND		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_BIND, struct prelim_drm_i915_gem_vm_bind)
 #define PRELIM_DRM_IOCTL_I915_GEM_VM_UNBIND		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_UNBIND, struct prelim_drm_i915_gem_vm_bind)
+#define PRELIM_DRM_IOCTL_I915_GEM_VM_ADVISE		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_ADVISE, struct prelim_drm_i915_gem_vm_advise)
 #define PRELIM_DRM_IOCTL_I915_GEM_WAIT_USER_FENCE	DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_WAIT_USER_FENCE, struct prelim_drm_i915_gem_wait_user_fence)
 #define PRELIM_DRM_IOCTL_I915_UUID_REGISTER		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_UUID_REGISTER, struct prelim_drm_i915_uuid_control)
 #define PRELIM_DRM_IOCTL_I915_UUID_UNREGISTER		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_UUID_UNREGISTER, struct prelim_drm_i915_uuid_control)
@@ -975,6 +977,50 @@ struct prelim_drm_i915_gem_vm_bind {
 #define PRELIM_I915_GEM_VM_BIND_CAPTURE		(1ull << 61)
 
 	__u64 extensions;
+};
+
+/**
+ * struct prelim_drm_i915_gem_vm_advise
+ *
+ * Set attribute (hint) for an address range or whole buffer object.
+ *
+ * To apply attribute to whole buffer object, specify:  handle
+ * To apply attribute to address range, specify:  vm_id, start, and length.
+ */
+struct prelim_drm_i915_gem_vm_advise {
+	/** vm that contains address range (specified with start, length) */
+	__u32 vm_id;
+
+	/** BO handle to apply hint */
+	__u32 handle;
+
+	/** VA start of address range to apply hint */
+	__u64 start;
+
+	/** Length of range to apply attribute */
+	__u64 length;
+
+	/**
+	 * Attributes to apply to address range or buffer object
+	 *
+	 * ATOMIC_SYSTEM
+	 *      inform that atomic access is enabled for both CPU and GPU.
+	 *      For some platforms, this may be required for correctness
+	 *      and this hint will influence migration policy.
+	 * ATOMIC_DEVICE
+	 *      inform that atomic access is enabled for GPU devices. For
+	 *      some platforms, this may be required for correctness and
+	 *      this hint will influence migration policy.
+	 * ATOMIC_NONE
+	 *	clears above ATOMIC_SYSTEM / ATOMIC_DEVICE hint.
+	 */
+	__u32 attribute;
+#define PRELIM_I915_VM_ADVISE				(1 << 16)
+#define PRELIM_I915_VM_ADVISE_ATOMIC_NONE		(PRELIM_I915_VM_ADVISE | 0)
+#define PRELIM_I915_VM_ADVISE_ATOMIC_SYSTEM		(PRELIM_I915_VM_ADVISE | 1)
+#define PRELIM_I915_VM_ADVISE_ATOMIC_DEVICE		(PRELIM_I915_VM_ADVISE | 2)
+
+	__u32 rsvd[3];
 };
 
 /**

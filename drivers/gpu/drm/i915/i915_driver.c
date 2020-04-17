@@ -2333,6 +2333,27 @@ static int i915_gem_vm_unbind_ioctl(struct drm_device *dev, void *data,
 	return ret;
 }
 
+static int i915_gem_vm_advise_ioctl(struct drm_device *dev, void *data,
+				    struct drm_file *file)
+{
+	struct prelim_drm_i915_gem_vm_advise *args = data;
+	struct drm_i915_gem_object *obj;
+	int ret;
+
+	/* XXX page granularity and system allocator support not available */
+	if (!args->handle)
+		return -ENOTSUPP;
+
+	obj = i915_gem_object_lookup(file, args->handle);
+	if (!obj)
+		return -ENOENT;
+
+	ret = i915_gem_object_set_hint(obj, args);
+	i915_gem_object_put(obj);
+
+	return ret;
+}
+
 static const struct drm_ioctl_desc i915_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(I915_INIT, drm_noop, DRM_AUTH|DRM_MASTER|DRM_ROOT_ONLY),
 	DRM_IOCTL_DEF_DRV(I915_FLUSH, drm_noop, DRM_AUTH),
@@ -2396,6 +2417,7 @@ static const struct drm_ioctl_desc i915_ioctls[] = {
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_CREATE_EXT, i915_gem_create_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_VM_BIND, i915_gem_vm_bind_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_VM_UNBIND, i915_gem_vm_unbind_ioctl, DRM_RENDER_ALLOW),
+	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_VM_ADVISE, i915_gem_vm_advise_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_WAIT_USER_FENCE, i915_gem_wait_user_fence_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_UUID_REGISTER, i915_uuid_register_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_UUID_UNREGISTER, i915_uuid_unregister_ioctl, DRM_RENDER_ALLOW),

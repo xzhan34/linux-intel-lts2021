@@ -575,9 +575,13 @@ struct drm_i915_gem_object {
 		struct list_head link;
 
 		/**
-		 * Advice: are the backing pages purgeable?
+		 * Advice: are the backing pages purgeable, atomics enabled?
 		 */
 		unsigned int madv:2;
+		unsigned int madv_atomic:2;
+#define I915_BO_ATOMIC_NONE	0
+#define I915_BO_ATOMIC_SYSTEM	1
+#define I915_BO_ATOMIC_DEVICE	2
 
 		/**
 		 * This is set if the object has been written to since the

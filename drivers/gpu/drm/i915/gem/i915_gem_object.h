@@ -631,6 +631,8 @@ i915_gem_object_pin_to_display_plane(struct drm_i915_gem_object *obj,
 void i915_gem_object_make_unshrinkable(struct drm_i915_gem_object *obj);
 void i915_gem_object_make_shrinkable(struct drm_i915_gem_object *obj);
 void i915_gem_object_make_purgeable(struct drm_i915_gem_object *obj);
+int i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
+			     struct prelim_drm_i915_gem_vm_advise *args);
 
 static inline bool cpu_write_needs_clflush(struct drm_i915_gem_object *obj)
 {

@@ -220,6 +220,72 @@ bool i915_gem_object_can_bypass_llc(struct drm_i915_gem_object *obj)
 	return IS_JSL_EHL(i915);
 }
 
+static int __i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
+				      struct i915_gem_ww_ctx *ww,
+				      struct prelim_drm_i915_gem_vm_advise *args)
+{
+	int err = 0;
+
+	/*
+	 * Could treat these hints as DGFX only, but as these are hints
+	 * this seems unnecessary burden for user to worry about
+	 */
+	switch (args->attribute) {
+	case PRELIM_I915_VM_ADVISE_ATOMIC_DEVICE:
+		/*
+		 * if backing is not in device memory, clear mappings so that
+		 * we migrate local to the GPU on the next GPU access
+		 */
+		if (!i915_gem_object_is_lmem(obj)) {
+			err = i915_gem_object_unbind(obj, ww,
+						     I915_GEM_OBJECT_UNBIND_ACTIVE);
+			if (err)
+				break;
+		}
+		obj->mm.madv_atomic = I915_BO_ATOMIC_DEVICE;
+		break;
+	case PRELIM_I915_VM_ADVISE_ATOMIC_SYSTEM:
+		/*
+		 * clear mappings such that we will migrate local to the
+		 * faulting device on the next GPU or CPU access
+		 */
+		if (!i915_gem_object_is_lmem(obj)) {
+			err = i915_gem_object_unbind(obj, ww,
+						     I915_GEM_OBJECT_UNBIND_ACTIVE);
+			if (err)
+				break;
+		} else {
+			i915_gem_object_release_mmap(obj);
+		}
+		obj->mm.madv_atomic = I915_BO_ATOMIC_SYSTEM;
+		break;
+	case PRELIM_I915_VM_ADVISE_ATOMIC_NONE:
+		obj->mm.madv_atomic = I915_BO_ATOMIC_NONE;
+		break;
+	default:
+		err = -EINVAL;
+	}
+
+	return err;
+}
+
+/* Similar to system madvise, we convert hints to stored flags */
+int i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
+			     struct prelim_drm_i915_gem_vm_advise *args)
+{
+	struct i915_gem_ww_ctx ww;
+	int err = 0;
+
+	for_i915_gem_ww(&ww, err, true) {
+		err = i915_gem_object_lock(obj, &ww);
+		if (err)
+			continue;
+		err = __i915_gem_object_set_hint(obj, &ww, args);
+	}
+
+	return err;
+}
+
 static int i915_gem_open_object(struct drm_gem_object *gem, struct drm_file *file)
 {
 	struct drm_i915_file_private *fpriv = file->driver_priv;
