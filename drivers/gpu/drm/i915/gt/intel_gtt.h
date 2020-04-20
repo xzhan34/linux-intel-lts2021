@@ -267,6 +267,7 @@ struct i915_address_space {
 
 	struct inode *inode;
 
+	u32 asid;
 	u32 poison; /* value used to fill the scratch page */
 
 	/*

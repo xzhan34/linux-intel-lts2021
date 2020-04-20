@@ -144,6 +144,10 @@ void i915_address_space_fini(struct i915_address_space *vm)
 	i915_active_fence_fini(&vm->user_fence);
 
 	drm_mm_takedown(&vm->mm);
+
+	if (!i915_is_ggtt(vm) && HAS_UM_QUEUES(vm->i915))
+		GEM_WARN_ON(!xa_erase(&vm->i915->asid_resv.xa, vm->asid));
+
 	mutex_destroy(&vm->mutex);
 	i915_gem_object_put(vm->root_obj);
 	GEM_BUG_ON(!RB_EMPTY_ROOT(&vm->va.rb_root));
@@ -313,6 +317,23 @@ int i915_address_space_init(struct i915_address_space *vm, int subclass)
 	vm->has_scratch = true;
 
 	i915_active_init(&vm->active, __i915_vm_active, __i915_vm_retire, 0);
+
+	if (HAS_UM_QUEUES(vm->i915) && subclass == VM_CLASS_PPGTT) {
+		u32 asid;
+		int err;
+		/* ASID field is 20-bit wide */
+		err = xa_alloc_cyclic(&vm->i915->asid_resv.xa,
+				      &asid, vm,
+				      XA_LIMIT(0, I915_MAX_ASID - 1),
+				      &vm->i915->asid_resv.next_id,
+				      GFP_KERNEL);
+		if (unlikely(err < 0)) {
+			iput(vm->inode);
+			return err;
+		}
+
+		vm->asid = asid;
+	}
 
 	return 0;
 }
