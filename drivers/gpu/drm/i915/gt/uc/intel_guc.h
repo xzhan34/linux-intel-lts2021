@@ -419,7 +419,7 @@ int intel_guc_invalidate_tlb_full(struct intel_guc *guc,
 				  enum intel_guc_tlb_inval_mode mode);
 int intel_guc_invalidate_tlb_page_selective(struct intel_guc *guc,
 					    enum intel_guc_tlb_inval_mode mode,
-					    u64 start, u64 length);
+					    u64 start, u64 length, u32 asid);
 int intel_guc_invalidate_tlb_page_selective_ctx(struct intel_guc *guc,
 						enum intel_guc_tlb_inval_mode mode,
 						u64 start, u64 length, u32 ctxid);

@@ -1507,6 +1507,9 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 #define HAS_MEM_SPARING_SUPPORT(dev_priv) \
 	(INTEL_INFO(dev_priv)->has_mem_sparing)
 
+#define HAS_ASID_TLB_INVALIDATION(i915) \
+	(INTEL_INFO(i915)->has_asid_tlb_invalidation)
+
 #define HAS_GUC_PROGRAMMABLE_MOCS(i915) (INTEL_INFO(i915)->has_guc_programmable_mocs)
 
 static inline bool

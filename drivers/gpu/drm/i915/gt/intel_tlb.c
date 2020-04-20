@@ -359,7 +359,7 @@ bool intel_gt_invalidate_tlb_range(struct intel_gt *gt,
 	with_intel_gt_pm_if_awake(gt, wakeref)
 		ret = intel_guc_invalidate_tlb_page_selective(guc,
 							      INTEL_GUC_TLB_INVAL_MODE_HEAVY,
-							      start, size) == 0;
+							      start, size, 0) == 0;
 
 	return ret;
 }

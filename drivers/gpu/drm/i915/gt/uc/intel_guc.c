@@ -1337,7 +1337,7 @@ int intel_guc_invalidate_tlb_full(struct intel_guc *guc,
  */
 int intel_guc_invalidate_tlb_page_selective(struct intel_guc *guc,
 					    enum intel_guc_tlb_inval_mode mode,
-					    u64 start, u64 length)
+					    u64 start, u64 length, u32 asid)
 {
 	u64 vm_total = BIT_ULL(INTEL_INFO(guc_to_gt(guc)->i915)->ppgtt_size);
 
@@ -1352,7 +1352,7 @@ int intel_guc_invalidate_tlb_page_selective(struct intel_guc *guc,
 		INTEL_GUC_TLB_INVAL_PAGE_SELECTIVE << INTEL_GUC_TLB_INVAL_TYPE_SHIFT |
 			mode << INTEL_GUC_TLB_INVAL_MODE_SHIFT |
 			INTEL_GUC_TLB_INVAL_FLUSH_CACHE,
-		0,
+		asid,
 		length >= vm_total ? 1 : lower_32_bits(start),
 		upper_32_bits(start),
 		address_mask,
