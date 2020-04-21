@@ -54,7 +54,6 @@ struct file;
  */
 enum drm_minor_type {
 	DRM_MINOR_PRIMARY,
-	DRM_MINOR_CONTROL,
 	DRM_MINOR_RENDER,
 };
 

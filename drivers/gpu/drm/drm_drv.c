@@ -125,8 +125,8 @@ static int drm_minor_alloc(struct drm_device *dev, unsigned int type)
 	spin_lock_irqsave(&drm_minor_lock, flags);
 	r = idr_alloc(&drm_minors_idr,
 		      NULL,
-		      64 * type,
-		      64 * (type + 1),
+		      128 * type,
+		      128 * (type + 1),
 		      GFP_NOWAIT);
 	spin_unlock_irqrestore(&drm_minor_lock, flags);
 	idr_preload_end();
