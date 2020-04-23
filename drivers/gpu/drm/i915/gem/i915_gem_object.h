@@ -671,6 +671,11 @@ static inline int i915_gem_object_userptr_validate(struct drm_i915_gem_object *o
 
 #endif
 
+int i915_window_blt_copy(struct drm_i915_gem_object *dst,
+			 struct drm_i915_gem_object *src);
+int i915_setup_blt_windows(struct drm_i915_private *i915);
+void i915_teardown_blt_windows(struct drm_i915_private *i915);
+
 void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
 				     struct i915_request *rq);
 long i915_gem_object_migrate_wait(struct drm_i915_gem_object *obj,

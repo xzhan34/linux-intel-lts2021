@@ -343,6 +343,12 @@ struct i915_gem_mm {
 	u64 shrink_memory;
 	u32 shrink_count;
 
+	struct i915_vma *lmem_window[2];
+	struct i915_vma *smem_window[2];
+
+	/* To protect above two set of vmas */
+	struct mutex window_mutex;
+
 	struct i915_mm_swap_stats blt_swap_stats;
 	struct i915_mm_swap_stats memcpy_swap_stats;
 

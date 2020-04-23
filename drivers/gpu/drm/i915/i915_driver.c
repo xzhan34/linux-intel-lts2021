@@ -1002,9 +1002,15 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (ret)
 		goto out_cleanup_modeset2;
 
+	if (HAS_LMEM(i915)) {
+		ret = i915_setup_blt_windows(i915);
+		if (ret)
+			goto out_cleanup_gem;
+	}
+
 	ret = intel_modeset_init(i915);
 	if (ret)
-		goto out_cleanup_gem;
+		goto out_cleanup_blt_windows;
 
 	i915_driver_register(i915);
 
@@ -1016,6 +1022,8 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	return 0;
 
+out_cleanup_blt_windows:
+	i915_teardown_blt_windows(i915);
 out_cleanup_gem:
 	i915_gem_suspend(i915);
 	i915_gem_driver_remove(i915);
@@ -1058,6 +1066,9 @@ void i915_driver_remove(struct drm_i915_private *i915)
 	synchronize_rcu();
 
 	i915_gem_suspend(i915);
+
+	if (HAS_LMEM(i915))
+		i915_teardown_blt_windows(i915);
 
 	intel_gvt_driver_remove(i915);
 
