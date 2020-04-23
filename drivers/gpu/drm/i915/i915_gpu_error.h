@@ -37,6 +37,27 @@ struct i915_compressed_pages {
 	u32 *pages[0];
 };
 
+struct i915_uuid_resource {
+	/* This is for internal tracking.
+	 * During error handler the whole structure is passed
+	 * to error dump which holds data structure for a while.
+	 * Use i915_uuid_get() and i915_uuid_put() for this.
+	 */
+	struct kref ref;
+	/* Helps keep track if someting depends on this uuid */
+	atomic_t bind_count;
+
+	/* String formatted like "%08x-%04x-%04x-%04x-%012x" */
+	char uuid[36];
+	/* Predefined or previously registered UUID indicating class */
+	u32 uuid_class;
+	/* Copy of the CPU memory payload associated with UUID */
+	void *ptr;
+	/* Length of the payload in bytes */
+	u64 size;
+	u32 handle;
+};
+
 struct i915_vma_coredump {
 	struct i915_vma_coredump *next;
 
@@ -348,6 +369,18 @@ int i915_uuid_register_ioctl(struct drm_device *dev, void *data,
 			     struct drm_file *file);
 int i915_uuid_unregister_ioctl(struct drm_device *dev, void *data,
 			       struct drm_file *file);
+void i915_uuid_init(struct i915_drm_client *client);
+void i915_uuid_cleanup(struct i915_drm_client *client);
+
+static inline void i915_uuid_get(struct i915_uuid_resource *uuid_res)
+{
+	kref_get(&uuid_res->ref);
+}
+void __i915_uuid_free(struct kref *ref);
+static inline void i915_uuid_put(struct i915_uuid_resource *uuid_res)
+{
+	kref_put(&uuid_res->ref, __i915_uuid_free);
+}
 #else
 
 static inline void intel_klog_error_capture(struct intel_gt *gt,
@@ -448,6 +481,23 @@ i915_uuid_unregister_ioctl(struct drm_device *dev, void *data,
 			   struct drm_file *file)
 {
 	return -EOPNOTSUPP;
+}
+
+
+static inline void i915_uuid_init(struct i915_drm_client *client)
+{
+}
+
+static inline void i915_uuid_cleanup(struct i915_drm_client *client)
+{
+}
+
+static inline void i915_uuid_get(struct i915_uuid_resource *uuid_res)
+{
+}
+
+static inline void i915_uuid_put(struct i915_uuid_resource *uuid_res)
+{
 }
 
 #endif /* IS_ENABLED(CONFIG_DRM_I915_CAPTURE_ERROR) */

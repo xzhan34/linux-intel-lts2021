@@ -2281,10 +2281,42 @@ void i915_disable_error_state(struct drm_i915_private *i915, int err)
 	spin_unlock_irq(&i915->gpu_error.lock);
 }
 
-int i915_uuid_register_ioctl(struct drm_device *dev, void *data,
-			    struct drm_file *file)
+/** FIXME:
+ * The copying of the data shall be postponed to
+ * creation of the error dump. This is temporary
+ * and will be fixed.
+ */
+static int
+__i915_uuid_copy_from_user(struct prelim_drm_i915_uuid_control *uuid_arg,
+			   struct i915_uuid_resource *uuid_res)
 {
+	if (!access_ok(u64_to_user_ptr(uuid_arg->ptr), uuid_arg->size))
+		return -EFAULT;
+
+	uuid_res->ptr = kvmalloc(uuid_arg->size, GFP_KERNEL);
+	if (!uuid_res->ptr)
+		return -ENOMEM;
+
+	/* This limits us to a maximum payload size of 2G */
+	if (copy_from_user(uuid_res->ptr, u64_to_user_ptr(uuid_arg->ptr),
+			   uuid_arg->size)) {
+		kvfree(uuid_res->ptr);
+		uuid_res->ptr = NULL;
+		return -EFAULT;
+	}
+
+	return 0;
+}
+
+int i915_uuid_register_ioctl(struct drm_device *dev, void *data,
+			     struct drm_file *file)
+{
+	struct drm_i915_file_private *file_priv = file->driver_priv;
+	struct i915_drm_client *client = file_priv->client;
 	struct prelim_drm_i915_uuid_control *uuid_arg = data;
+	struct i915_uuid_resource *uuid_res;
+	struct i915_uuid_resource *uuid_res_base;
+	struct xa_limit uuid_limit_32b;
 	int ret;
 
 	/* MBZ */
@@ -2296,12 +2328,75 @@ int i915_uuid_register_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		return ret;
 
+	if (!uuid_is_valid((const char *)uuid_arg->uuid))
+		return -EINVAL;
+
+	/* For class STRING pointer and size must be valid */
+	if (uuid_arg->uuid_class == PRELIM_I915_UUID_CLASS_STRING) {
+		if (!uuid_arg->ptr || !uuid_arg->size)
+			return -EINVAL;
+	} else {
+		if ((!uuid_arg->ptr && uuid_arg->size) ||
+		    (uuid_arg->ptr && !uuid_arg->size))
+			return -EINVAL;
+	}
+
+	uuid_res = kzalloc(sizeof(*uuid_res), GFP_KERNEL);
+	if (!uuid_res)
+		return -ENOMEM;
+
+	if (uuid_arg->ptr) {
+		ret = __i915_uuid_copy_from_user(uuid_arg, uuid_res);
+		if (ret)
+			goto err;
+	}
+
+	xa_lock(&client->uuids_xa);
+	uuid_res_base = xa_load(&client->uuids_xa, uuid_arg->uuid_class);
+	if (!uuid_res_base) {
+		ret = -EINVAL;
+		goto err_unlock;
+	}
+
+	kref_init(&uuid_res->ref);
+	atomic_set(&uuid_res->bind_count, 0);
+	uuid_res->size = uuid_arg->size;
+	uuid_res->uuid_class = uuid_arg->uuid_class;
+	memcpy(uuid_res->uuid, uuid_arg->uuid, sizeof(uuid_res->uuid));
+
+	/* Limit upper so that the string class is special */
+	uuid_limit_32b.min = 0;
+	uuid_limit_32b.max = PRELIM_I915_UUID_CLASS_MAX_RESERVED - 1;
+
+	ret = __xa_alloc(&client->uuids_xa,
+			 &uuid_res->handle,
+			 uuid_res,
+			 uuid_limit_32b,
+			 GFP_ATOMIC);
+	if (ret < 0)
+		goto err_unlock;
+
+	atomic_inc(&uuid_res_base->bind_count);
+	xa_unlock(&client->uuids_xa);
+
+	/* Output for the client */
+	uuid_arg->handle = uuid_res->handle;
+	return 0;
+
+ err_unlock:
+	xa_unlock(&client->uuids_xa);
+err:
+	kfree(uuid_res);
 	return ret;
 }
 
 int i915_uuid_unregister_ioctl(struct drm_device *dev, void *data,
 			       struct drm_file *file)
 {
+	struct drm_i915_file_private *file_priv = file->driver_priv;
+	struct i915_drm_client *client = file_priv->client;
+	struct i915_uuid_resource *uuid_res;
+	struct i915_uuid_resource *uuid_res_base;
 	struct prelim_drm_i915_uuid_control *uuid_arg = data;
 	int ret;
 
@@ -2314,7 +2409,141 @@ int i915_uuid_unregister_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		return ret;
 
+	if (uuid_arg->handle >= PRELIM_I915_UUID_CLASS_MAX_RESERVED)
+		return -EINVAL;
+
+	xa_lock(&client->uuids_xa);
+	uuid_res = xa_load(&client->uuids_xa, uuid_arg->handle);
+	if (!uuid_res) {
+		ret = -ENOENT;
+		goto err;
+	}
+
+	if (atomic_read(&uuid_res->bind_count)) {
+		ret =  -EBUSY;
+		goto err;
+	}
+
+	__xa_erase(&client->uuids_xa, uuid_arg->handle);
+
+	uuid_res_base = xa_load(&client->uuids_xa, uuid_res->uuid_class);
+	GEM_BUG_ON(!uuid_res_base);
+	GEM_BUG_ON(!atomic_read(&uuid_res_base->bind_count));
+	atomic_dec(&uuid_res_base->bind_count);
+	xa_unlock(&client->uuids_xa);
+
+	i915_uuid_put(uuid_res);
+	return 0;
+
+err:
+	xa_unlock(&client->uuids_xa);
 	return ret;
+}
+
+void __i915_uuid_free(struct kref *ref)
+{
+	struct i915_uuid_resource *uuid =
+		container_of(ref, typeof(*uuid), ref);
+
+	if (uuid->handle < PRELIM_I915_UUID_CLASS_MAX_RESERVED)
+		kvfree(uuid->ptr);
+
+	kfree(uuid);
+}
+
+/* Those are predefined UUID Resource classes.
+ * The handle must be > than I915_UUID_CLASS_MAX_RESERVED.
+ * The uuid shall be valid UUID type.
+ *
+ * Note: A predefined class shall be of a type STRING and contain
+ *       a valid string describing it.
+ */
+static struct i915_uuid_resource_predefined {
+	u32 handle;
+	char uuid[36];
+	u32 class;
+	const char *str;
+} uuid_predefined_classes[] = {
+	{
+		.handle = PRELIM_I915_UUID_CLASS_STRING,
+		.uuid = {"d9900de4-be09-56ab-84a5-dfc280f52ee5"},
+		.class = PRELIM_I915_UUID_CLASS_STRING,
+		.str = __stringify_1(PRELIM_I915_UUID_CLASS_STRING),
+	},
+
+	/* last */
+	{ .uuid[0] = 0, }
+};
+
+static void __uuid_init_classes(struct xarray *xa)
+{
+	struct i915_uuid_resource_predefined *u;
+	struct i915_uuid_resource *uuid_res;
+	unsigned long index = 0;
+
+	u = uuid_predefined_classes;
+	BUILD_BUG_ON(sizeof(u->uuid) != UUID_STRING_LEN);
+
+	while (u->uuid[0]) {
+		if (u->handle <= PRELIM_I915_UUID_CLASS_MAX_RESERVED)
+			goto err;
+
+		if (u->class != PRELIM_I915_UUID_CLASS_STRING)
+			goto err;
+
+		if (!u->str)
+			goto err;
+
+		if (!uuid_is_valid((const char *)u->uuid))
+			goto err;
+
+		uuid_res = kzalloc(sizeof(*uuid_res), GFP_KERNEL);
+		if (!uuid_res)
+			goto err;
+
+		memcpy(uuid_res->uuid,
+		       u->uuid,
+		       sizeof(uuid_res->uuid));
+		uuid_res->uuid_class = u->class;
+		uuid_res->ptr = (void *)u->str;
+		uuid_res->size = strlen(u->str);
+		uuid_res->handle = u->handle;
+		kref_init(&uuid_res->ref);
+		atomic_set(&uuid_res->bind_count, 0);
+		if (xa_insert(xa, uuid_res->handle, uuid_res, GFP_KERNEL)) {
+			kfree(uuid_res);
+			goto err;
+		}
+		u = &uuid_predefined_classes[++index];
+	}
+	return;
+
+err:
+	do {
+		u = &uuid_predefined_classes[index];
+		uuid_res = __xa_erase(xa, u->handle);
+		kfree(uuid_res);
+	} while (index--);
+
+	DRM_DEBUG_DRIVER("Failed to initialize predefined UUID Classes. "
+			 "UUID Resources funcionality is not operational\n");
+}
+
+void i915_uuid_init(struct i915_drm_client *client)
+{
+	xa_init_flags(&client->uuids_xa, XA_FLAGS_ALLOC);
+	__uuid_init_classes(&client->uuids_xa);
+}
+
+void i915_uuid_cleanup(struct i915_drm_client *client)
+{
+	struct i915_uuid_resource *uuid_res = NULL;
+	unsigned long idx;
+
+	xa_for_each(&client->uuids_xa, idx, uuid_res)
+		i915_uuid_put(uuid_res);
+
+	xa_destroy(&client->uuids_xa);
 }
 
 void intel_klog_error_capture(struct intel_gt *gt,

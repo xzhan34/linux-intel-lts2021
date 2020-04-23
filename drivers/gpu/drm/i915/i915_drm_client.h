@@ -81,6 +81,12 @@ struct i915_drm_client {
 	atomic64_t resident_created_devm_bytes;
 	atomic64_t imported_devm_bytes;
 	atomic64_t resident_imported_devm_bytes;
+
+	/*
+	 * A placeholder for all UUID Resources defined and registered for
+	 * a single client.
+	 */
+	struct xarray uuids_xa;
 };
 
 void i915_drm_clients_init(struct i915_drm_clients *clients,
