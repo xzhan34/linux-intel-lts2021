@@ -58,6 +58,20 @@ struct i915_uuid_resource {
 	u32 handle;
 };
 
+struct i915_uuid_resource_coredump {
+	struct i915_uuid_resource_coredump *next;
+	/* UUID of the resource */
+	char uuid[36];
+	/* UUID of the class this is instance of. 0 means base */
+	char class[36];
+
+	bool string_class;
+	union {
+		char *str;
+		struct i915_compressed_pages *cpages;
+	};
+};
+
 struct i915_vma_coredump {
 	struct i915_vma_coredump *next;
 
@@ -138,6 +152,8 @@ struct intel_engine_coredump {
 		int guilty;
 		struct i915_sched_attr sched_attr;
 		bool sip_installed;
+
+		struct i915_uuid_resource_coredump *uuid_dump;
 	} context;
 
 	struct i915_vma_coredump *vma;
