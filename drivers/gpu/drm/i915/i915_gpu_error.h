@@ -344,6 +344,10 @@ struct i915_gpu_coredump *i915_first_error_state(struct drm_i915_private *i915);
 void i915_reset_error_state(struct drm_i915_private *i915);
 void i915_disable_error_state(struct drm_i915_private *i915, int err);
 
+int i915_uuid_register_ioctl(struct drm_device *dev, void *data,
+			     struct drm_file *file);
+int i915_uuid_unregister_ioctl(struct drm_device *dev, void *data,
+			       struct drm_file *file);
 #else
 
 static inline void intel_klog_error_capture(struct intel_gt *gt,
@@ -430,6 +434,20 @@ static inline void i915_reset_error_state(struct drm_i915_private *i915)
 static inline void i915_disable_error_state(struct drm_i915_private *i915,
 					    int err)
 {
+}
+
+static inline int
+i915_uuid_register_ioctl(struct drm_device *dev, void *data,
+			 struct drm_file *file)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int
+i915_uuid_unregister_ioctl(struct drm_device *dev, void *data,
+			   struct drm_file *file)
+{
+	return -EOPNOTSUPP;
 }
 
 #endif /* IS_ENABLED(CONFIG_DRM_I915_CAPTURE_ERROR) */

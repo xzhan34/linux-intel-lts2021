@@ -57,6 +57,7 @@
 #include "i915_gpu_error.h"
 #include "i915_memcpy.h"
 #include "i915_scatterlist.h"
+#include "i915_user_extensions.h"
 #include "i915_utils.h"
 
 #define ATOMIC_MAYFAIL (GFP_ATOMIC | __GFP_NOWARN)
@@ -2278,6 +2279,42 @@ void i915_disable_error_state(struct drm_i915_private *i915, int err)
 	if (!i915->gpu_error.first_error)
 		i915->gpu_error.first_error = ERR_PTR(err);
 	spin_unlock_irq(&i915->gpu_error.lock);
+}
+
+int i915_uuid_register_ioctl(struct drm_device *dev, void *data,
+			    struct drm_file *file)
+{
+	struct prelim_drm_i915_uuid_control *uuid_arg = data;
+	int ret;
+
+	/* MBZ */
+	if (uuid_arg->flags)
+		return -EINVAL;
+
+	ret = i915_user_extensions(u64_to_user_ptr(uuid_arg->extensions),
+				   NULL, 0, NULL);
+	if (ret)
+		return ret;
+
+	return ret;
+}
+
+int i915_uuid_unregister_ioctl(struct drm_device *dev, void *data,
+			       struct drm_file *file)
+{
+	struct prelim_drm_i915_uuid_control *uuid_arg = data;
+	int ret;
+
+	/* MBZ */
+	if (uuid_arg->flags)
+		return -EINVAL;
+
+	ret = i915_user_extensions(u64_to_user_ptr(uuid_arg->extensions),
+				   NULL, 0, NULL);
+	if (ret)
+		return ret;
+
+	return ret;
 }
 
 void intel_klog_error_capture(struct intel_gt *gt,

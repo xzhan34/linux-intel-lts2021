@@ -51,12 +51,16 @@ struct prelim_i915_user_extension {
 #define PRELIM_DRM_I915_GEM_VM_BIND		0x5d
 #define PRELIM_DRM_I915_GEM_VM_UNBIND		0x5c
 #define PRELIM_DRM_I915_GEM_WAIT_USER_FENCE	0x5a
+#define PRELIM_DRM_I915_UUID_REGISTER		0x58
+#define PRELIM_DRM_I915_UUID_UNREGISTER		0x57
 
 
 #define PRELIM_DRM_IOCTL_I915_GEM_CREATE_EXT		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_CREATE, struct prelim_drm_i915_gem_create_ext)
 #define PRELIM_DRM_IOCTL_I915_GEM_VM_BIND		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_BIND, struct prelim_drm_i915_gem_vm_bind)
 #define PRELIM_DRM_IOCTL_I915_GEM_VM_UNBIND		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_UNBIND, struct prelim_drm_i915_gem_vm_bind)
 #define PRELIM_DRM_IOCTL_I915_GEM_WAIT_USER_FENCE	DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_WAIT_USER_FENCE, struct prelim_drm_i915_gem_wait_user_fence)
+#define PRELIM_DRM_IOCTL_I915_UUID_REGISTER		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_UUID_REGISTER, struct prelim_drm_i915_uuid_control)
+#define PRELIM_DRM_IOCTL_I915_UUID_UNREGISTER		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_UUID_UNREGISTER, struct prelim_drm_i915_uuid_control)
 /* End PRELIM ioctl's */
 
 /* getparam */
@@ -287,6 +291,39 @@ enum prelim_drm_i915_perf_property_id {
 
 	PRELIM_DRM_I915_PERF_PROP_MAX = DRM_I915_PERF_PROP_MAX - 1 + \
 					(PRELIM_DRM_I915_PERF_PROP_LAST & 0xffff)
+};
+
+struct prelim_drm_i915_uuid_control {
+	char  uuid[36]; /* String formatted like
+			 *      "%08x-%04x-%04x-%04x-%012x"
+			 */
+
+	__u32 uuid_class; /* Predefined UUID class or handle to
+			   * the previously registered UUID Class
+			   */
+
+	__u32 flags;	/* MBZ */
+
+	__u64 ptr;	/* Pointer to CPU memory payload associated
+			 * with the UUID Resource.
+			 * For uuid_class I915_UUID_CLASS_STRING
+			 * it must point to valid string buffer.
+			 * Otherwise must point to page aligned buffer
+			 * or be NULL.
+			 */
+
+	__u64 size;	/* Length of the payload in bytes */
+
+#define PRELIM_I915_UUID_CLASS_STRING	((__u32)-1)
+/*
+ * d9900de4-be09-56ab-84a5-dfc280f52ee5 =
+ *                          sha1(“I915_UUID_CLASS_STRING”)[0..35]
+ */
+#define PRELIM_I915_UUID_CLASS_MAX_RESERVED ((__u32)-1024)
+
+	__u32 handle; /* Output: Registered handle ID */
+
+	__u64 extensions; /* MBZ */
 };
 
 enum prelim_drm_i915_gem_memory_class {
