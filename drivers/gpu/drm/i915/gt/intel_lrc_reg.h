@@ -32,8 +32,13 @@
 
 /* GEN12+ Reg State Context */
 #define GEN12_CTX_SEMAPHORE_TOKEN		(0x1a + 1)
+#define PVC_CTX_ACC_CTR_THOLD			(0x2a + 1)
 #define PVC_CTX_ASID				(0x2e + 1)
 #define XEHPSDV_CTX_CCS_PWR_CLK_STATE		(0x4B + 1)
+
+#define ACC_GRANULARITY_S	20
+#define ACC_TRIGGER_S		0
+#define ACC_NOTIFY_S		16
 
 #define ASSIGN_CTX_PDP(ppgtt, reg_state, n) do { \
 	u32 *reg_state__ = (reg_state); \

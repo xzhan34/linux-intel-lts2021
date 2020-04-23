@@ -1204,7 +1204,8 @@ int i915_gem_object_migrate_region(struct drm_i915_gem_object *obj,
 
 	ret = i915_gem_object_prepare_move(obj, ww);
 	if (ret) {
-		DRM_ERROR("Cannot set memory region, object in use(%d)\n", ret);
+		if (ret != -EDEADLK)
+			DRM_ERROR("Cannot set memory region, object in use(%d)\n", ret);
 	        goto err;
 	}
 

@@ -244,6 +244,10 @@ struct i915_gem_context {
 	 */
 	char name[TASK_COMM_LEN + 8];
 
+	u8 acc_granularity;
+	u16 acc_trigger;
+	u16 acc_notify;
+
 	/** @stale: tracks stale engines to be destroyed */
 	struct {
 		/** @lock: guards engines */

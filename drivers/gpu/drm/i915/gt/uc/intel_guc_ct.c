@@ -1098,6 +1098,9 @@ static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 		CT_ERROR(ct, "Received GuC exception notification!\n");
 		ret = 0;
 		break;
+	case INTEL_GUC_ACTION_ACCESS_COUNTER_NOTIFY:
+		ret = intel_access_counter_req_process_msg(guc, payload, len);
+		break;
 	default:
 		ret = -EOPNOTSUPP;
 		break;

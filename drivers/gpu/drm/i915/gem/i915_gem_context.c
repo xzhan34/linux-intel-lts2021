@@ -821,6 +821,10 @@ static struct i915_gem_context *__create_context(struct intel_gt *gt)
 	kref_init(&ctx->ref);
 	ctx->i915 = i915;
 	ctx->sched.priority = I915_PRIORITY_NORMAL;
+	ctx->acc_granularity = 0;
+	ctx->acc_notify = 0;
+	ctx->acc_trigger = 0;
+
 	mutex_init(&ctx->mutex);
 	INIT_LIST_HEAD(&ctx->link);
 
@@ -2260,6 +2264,51 @@ static int set_runalone(struct i915_gem_context *ctx,
 	return 0;
 }
 
+static int set_acc(struct i915_gem_context *ctx,
+		   struct drm_i915_gem_context_param *args)
+{
+	struct prelim_drm_i915_gem_context_param_acc user_acc;
+	struct drm_i915_private *i915 = ctx->i915;
+
+	if (!(intel_uc_uses_guc_submission(&to_gt(i915)->uc)))
+		return -ENODEV;
+
+	if (!(INTEL_INFO(i915)->has_access_counter))
+		return -ENODEV;
+
+	if (args->size < sizeof(user_acc))
+		return -EINVAL;
+
+	if (copy_from_user(&user_acc, u64_to_user_ptr(args->value),
+			sizeof(user_acc)))
+		return -EFAULT;
+
+	DRM_DEBUG("User ACC settings: acg=%d trigger=%d notify=%d\n",
+		user_acc.granularity, user_acc.trigger, user_acc.notify);
+
+	/*
+	 * There is no need to do range checking for trigger and
+	 * notify as they are defined the same as the HW.
+	 */
+	if (user_acc.granularity > PRELIM_I915_CONTEXT_ACG_64M)
+		return -EINVAL;
+
+	/* Wa_14012038966:pvc[bd_a0] */
+	if (IS_PVC_BD_STEP(i915, STEP_A0, STEP_B0) &&
+	    user_acc.trigger == 1)
+		return -EINVAL;
+
+	ctx->acc_granularity = user_acc.granularity;
+	ctx->acc_trigger = user_acc.trigger;
+	ctx->acc_notify = user_acc.notify;
+
+	args->size = 0;
+	DRM_DEBUG("Done ACC settings: acg=%d trigger=%d notify=%d\n",
+		ctx->acc_granularity, ctx->acc_trigger, ctx->acc_notify);
+
+	return 0;
+}
+
 static int ctx_setparam(struct drm_i915_file_private *fpriv,
 			struct i915_gem_context *ctx,
 			struct drm_i915_gem_context_param *args,
@@ -2310,6 +2359,20 @@ static int ctx_setparam(struct drm_i915_file_private *fpriv,
 			ret = set_runalone(ctx, args);
 		else
 			return -EPERM;
+		break;
+
+	case PRELIM_I915_CONTEXT_PARAM_ACC:
+		/*
+		 * Only allowed to be called from i915_gem_context_create_ioctl
+		 * extension as access counter settings are only allowed to be
+		 * set once.
+		 */
+		if (is_ctx_create)
+			ret = set_acc(ctx, args);
+		else {
+			DRM_DEBUG("Allowed only in creating context!\n");
+			return -EPERM;
+		}
 		break;
 
 	case I915_CONTEXT_PARAM_SSEU:
@@ -2520,6 +2583,29 @@ out:
 	return 0;
 }
 
+static int get_acc(struct i915_gem_context *ctx,
+		   struct drm_i915_gem_context_param *args)
+{
+	struct prelim_drm_i915_gem_context_param_acc user_acc = {
+		.granularity = ctx->acc_granularity,
+		.notify = ctx->acc_notify,
+		.trigger = ctx->acc_trigger,
+	};
+
+	if (args->size == 0)
+		goto out;
+	else if (args->size < sizeof(user_acc))
+		return -EINVAL;
+
+	if (copy_to_user(u64_to_user_ptr(args->value), &user_acc,
+			 sizeof(user_acc)))
+		return -EFAULT;
+
+out:
+	args->size = sizeof(user_acc);
+	return 0;
+}
+
 int i915_gem_context_getparam_ioctl(struct drm_device *dev, void *data,
 				    struct drm_file *file)
 {
@@ -2560,6 +2646,10 @@ int i915_gem_context_getparam_ioctl(struct drm_device *dev, void *data,
 	case I915_CONTEXT_PARAM_PRIORITY:
 		args->size = 0;
 		args->value = ctx->sched.priority;
+		break;
+
+	case PRELIM_I915_CONTEXT_PARAM_ACC:
+		ret = get_acc(ctx, args);
 		break;
 
 	case I915_CONTEXT_PARAM_SSEU:

@@ -530,14 +530,29 @@ static inline struct i915_vma *i915_find_vma(struct i915_address_space *vm,
 					     u64 addr)
 {
 	struct drm_mm_node *node;
+	struct i915_vma *vma = NULL;
 
 	mutex_lock(&vm->mutex);
 	node = i915_gem_gtt_lookup(vm, addr);
-	mutex_unlock(&vm->mutex);
-	if (unlikely(!node))
-		return NULL;
+	if (likely(node)) {
+		vma = container_of(node, struct i915_vma, node);
+		if (vma) {
+			vma = i915_vma_tryget(vma);
+			if (vma) {
+				struct i915_vma *vma_temp = __i915_vma_get(vma);
 
-	return container_of(node, struct i915_vma, node);
+				if (vma_temp)
+					vma = vma_temp;
+				else {
+					i915_vma_put(vma);
+					vma = NULL;
+				}
+			}
+		}
+	}
+	mutex_unlock(&vm->mutex);
+
+	return vma;
 }
 
 static inline int

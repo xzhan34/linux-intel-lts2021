@@ -132,7 +132,8 @@ static int i915_vma_unbind_persistent(struct i915_vma *vma,
 	/* VM already locked */
 	if (ww && ww == i915_gem_get_locking_ctx(vma->vm->root_obj)) {
 		/* locked for other than unbinding? */
-		if (!vma->vm->root_obj->evict_locked)
+		if (!(flags & I915_GEM_OBJECT_UNBIND_ACTIVE) &&
+		    (!vma->vm->root_obj->evict_locked))
 			return -EBUSY;
 
 		/* locked for unbinding */

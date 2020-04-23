@@ -89,6 +89,7 @@ typedef u64 gen8_pte_t;
 
 #define GEN12_PPGTT_PTE_LM	BIT_ULL(11)
 #define GEN12_USM_PPGTT_PTE_AE	BIT_ULL(10)
+#define GEN12_PPGTT_PTE_NC	BIT_ULL(5)
 
 /*
  *  DOC: GEN12 GGTT Table Entry format

@@ -1786,7 +1786,9 @@ void __i915_vma_evict(struct i915_vma *vma)
 	atomic_and(~(I915_VMA_BIND_MASK | I915_VMA_ERROR | I915_VMA_GGTT_WRITE),
 		   &vma->flags);
 
-	i915_vma_detach(vma);
+	if(!i915_vm_page_fault_enabled(vma->vm) || i915_vma_is_purged(vma) ||
+	   !i915_vma_is_persistent(vma))
+		i915_vma_detach(vma);
 	vma_unbind_pages(vma);
 }
 
@@ -1817,7 +1819,10 @@ int __i915_vma_unbind(struct i915_vma *vma)
 	GEM_BUG_ON(i915_vma_is_active(vma));
 	__i915_vma_evict(vma);
 
-	drm_mm_remove_node(&vma->node);
+	if(!i915_vm_page_fault_enabled(vm) || i915_vma_is_purged(vma) ||
+	   !i915_vma_is_persistent(vma))
+		drm_mm_remove_node(&vma->node);
+
 	if (i915_vma_is_persistent(vma)) {
 		spin_lock(&vm->vm_rebind_lock);
 

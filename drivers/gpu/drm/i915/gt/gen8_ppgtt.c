@@ -221,7 +221,7 @@ static u64 gen8_pte_encode(dma_addr_t addr,
 		pte &= ~GEN8_PAGE_RW;
 
 	if (flags & PTE_LM)
-		pte |= GEN12_PPGTT_PTE_LM;
+		pte |= GEN12_PPGTT_PTE_LM | GEN12_PPGTT_PTE_NC;
 	if (flags & PTE_AE)
 		pte |= GEN12_USM_PPGTT_PTE_AE;
 

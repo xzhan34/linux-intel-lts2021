@@ -146,6 +146,7 @@ enum intel_ppgtt_type {
 	/* Keep has_* in alphabetical order */ \
 	func(has_64bit_reloc); \
 	func(has_64k_pages); \
+	func(has_access_counter); \
 	func(has_asid_tlb_invalidation); \
 	func(has_coherent_ggtt); \
 	func(has_gmd_id); \

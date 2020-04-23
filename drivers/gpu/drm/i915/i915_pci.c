@@ -1145,6 +1145,7 @@ static const struct intel_device_info ats_m_info = {
 	.has_3d_pipeline = 0, \
 	/* FIXME: remove as soon as PVC support for LMEM 4K pages is working */ \
 	.has_64k_pages = 1, \
+	.has_access_counter = 1, \
 	.has_asid_tlb_invalidation = 1, \
 	.has_full_ps64 = 1, \
 	.has_guc_deprivilege = 1, \

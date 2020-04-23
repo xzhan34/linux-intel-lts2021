@@ -2763,8 +2763,26 @@ static u32 map_guc_prio_to_lrc_desc_prio(u8 prio)
 
 static inline void update_um_queues_regs(struct intel_context *ce)
 {
-	if (HAS_UM_QUEUES(ce->engine->i915))
+	struct i915_gem_context *ctx;
+
+	rcu_read_lock();
+	ctx = rcu_dereference(ce->gem_context);
+	rcu_read_unlock();
+
+	if (HAS_UM_QUEUES(ce->engine->i915)) {
 		ce->lrc_reg_state[PVC_CTX_ASID] = ce->vm->asid;
+
+		if (INTEL_INFO(ce->engine->i915)->has_access_counter && ctx) {
+			ce->lrc_reg_state[PVC_CTX_ACC_CTR_THOLD] =
+				(ctx->acc_notify << ACC_NOTIFY_S) |
+				ctx->acc_trigger;
+			ce->lrc_reg_state[PVC_CTX_ASID] |=
+				(ctx->acc_granularity << ACC_GRANULARITY_S);
+			DRM_DEBUG("set acc thold = 0x%x asid | granularity = 0x%x\n",
+				ce->lrc_reg_state[PVC_CTX_ACC_CTR_THOLD],
+				ce->lrc_reg_state[PVC_CTX_ASID]);
+		}
+	}
 }
 
 static void prepare_context_registration_info_v69(struct intel_context *ce)

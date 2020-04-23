@@ -6,6 +6,7 @@
 #ifndef _GT_INTEL_PAGEFAULT_H
 #define _GT_INTEL_PAGEFAULT_H
 
+#include <linux/sizes.h>
 #include <linux/types.h>
 
 struct drm_i915_gem_object;
@@ -25,6 +26,38 @@ struct recoverable_page_fault_info {
 	u8 fault_unsuccessful;
 };
 
+struct acc_info {
+	u64 va_range_base;
+	u32 asid;
+	u32 sub_granularity;
+	u8 granularity;
+	u8 vfid;
+	u8 access_type;
+	u8 engine_class;
+	u8 engine_instance;
+};
+
+static inline int granularity_in_byte(int val)
+{
+	switch (val) {
+	case 0:
+		return SZ_128K;
+	case 1:
+		return SZ_2M;
+	case 2:
+		return SZ_16M;
+	case 3:
+		return SZ_64M;
+	default:
+		return 0;
+	}
+}
+
+static inline int sub_granularity_in_byte(int val)
+{
+	return (granularity_in_byte(val) / 32);
+}
+
 const char *intel_pagefault_type2str(unsigned int type);
 
 const char *intel_access_type2str(unsigned int type);
@@ -33,5 +66,6 @@ void intel_gt_pagefault_process_cat_error_msg(struct intel_gt *gt, u32 guc_ctx_i
 int intel_gt_pagefault_process_page_fault_msg(struct intel_gt *gt, const u32 *msg, u32 len);
 int intel_pagefault_req_process_msg(struct intel_guc *guc, const u32 *payload,
 				    u32 len);
+int intel_access_counter_req_process_msg(struct intel_guc *guc,
+					 const u32 *payload, u32 len);
 #endif /* _GT_INTEL_PAGEFAULT_H */
-

@@ -5,6 +5,7 @@
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_mman.h"
 #include "gem/i915_gem_userptr.h"
+#include "gem/i915_gem_vm_bind.h"
 
 #include "i915_drv.h"
 #include "i915_trace.h"
@@ -133,10 +134,11 @@ int intel_gt_pagefault_process_page_fault_msg(struct intel_gt *gt, const u32 *ms
 	return 0;
 }
 
-static void print_recoverable_fault(struct recoverable_page_fault_info *info)
+static void print_recoverable_fault(struct recoverable_page_fault_info *info,
+				    const char *reason, int ret)
 {
-	/*XXX: Move to trace_printk */
-	DRM_DEBUG_DRIVER("\n\tASID: %d\n"
+	DRM_DEBUG_DRIVER("\n\t%s: error %d\n"
+			 "\tASID: %d\n"
 			 "\tVFID: %d\n"
 			 "\tPDATA: 0x%04x\n"
 			 "\tFaulted Address: 0x%08x_%08x\n"
@@ -145,6 +147,7 @@ static void print_recoverable_fault(struct recoverable_page_fault_info *info)
 			 "\tFaultLevel: %d\n"
 			 "\tEngineClass: %d\n"
 			 "\tEngineInstance: %d\n",
+			 reason, ret,
 			 info->asid,
 			 info->vfid,
 			 info->pdata,
@@ -177,6 +180,7 @@ static int migrate_to_lmem(struct drm_i915_gem_object *obj,
 			   struct i915_gem_ww_ctx *ww)
 {
 	struct intel_context *ce;
+	int ret;
 
 	/* return if object has single placement or already in lmem_id */
 	if (!i915_gem_object_migratable(obj) ||
@@ -201,6 +205,14 @@ static int migrate_to_lmem(struct drm_i915_gem_object *obj,
 	i915_gem_object_release_mmap(obj);
 	GEM_BUG_ON(obj->mm.mapping);
 	GEM_BUG_ON(obj->base.filp && mapping_mapped(obj->base.filp->f_mapping));
+
+	/* unmap to avoid further update to the page[s] */
+	ret = i915_gem_object_unbind(obj, ww, I915_GEM_OBJECT_UNBIND_ACTIVE);
+	if (ret) {
+		if (ret != -EDEADLK)
+			DRM_ERROR("Cannot unmap obj(%d)\n", ret);
+		return ret;
+	}
 
 	return i915_gem_object_migrate(obj, ww, ce, lmem_id, true);
 }
@@ -370,8 +382,6 @@ handle_i915_mm_fault(struct intel_guc *guc,
 		return ERR_PTR(-ENOENT);
 
 	vma = i915_find_vma(vm, info->page_addr);
-	if (vma)
-		vma = i915_vma_tryget(vma);
 
 	trace_i915_mm_fault(gt->i915, vm, vma, info);
 
@@ -472,6 +482,7 @@ put_vma:
 	fence = i915_active_fence_get_or_error(&vma->active.excl);
 
 	i915_vma_put(vma);
+	__i915_vma_put(vma);
 
 	return fence ?: ERR_PTR(err);
 }
@@ -565,7 +576,9 @@ static void fault_complete(struct dma_fence_work *work)
 	struct fault_reply *f = container_of(work, typeof(*f), base);
 
 	if (work->dma.error) {
-		print_recoverable_fault(&f->info);
+		print_recoverable_fault(&f->info,
+					"Fault response: Unsuccessful",
+					work->dma.error);
 		f->info.fault_unsuccessful = true;
 	}
 
@@ -664,4 +677,147 @@ const char *intel_access_type2str(unsigned int type)
 		return "invalid access type";
 
 	return access[type];
+}
+
+static struct i915_vma *get_acc_vma(struct intel_guc *guc,
+				    struct acc_info *info)
+{
+	struct i915_address_space *vm;
+	u64 page_va;
+
+	vm = faulted_vm(guc, info->asid);
+	if (GEM_WARN_ON(!vm))
+		return NULL;
+
+	page_va = info->va_range_base + (ffs(info->sub_granularity) - 1)
+		  * sub_granularity_in_byte(info->granularity);
+
+	return i915_find_vma(vm, page_va);
+}
+
+static int acc_migrate_to_lmem(struct intel_gt *gt, struct i915_vma *vma)
+{
+	struct i915_gem_ww_ctx ww;
+	int err = 0;
+
+	i915_gem_vm_bind_lock(vma->vm);
+
+	if (!i915_vma_is_bound(vma, PIN_RESIDENT)) {
+		i915_gem_vm_bind_unlock(vma->vm);
+		return 0;
+	}
+
+	i915_gem_ww_ctx_init(&ww, false);
+
+retry:
+	err = i915_gem_object_lock(vma->obj, &ww);
+	if (!err) {
+		enum intel_region_id lmem_id;
+
+		lmem_id = get_lmem_region_id(vma->obj, gt);
+		if (lmem_id)
+			err = migrate_to_lmem(vma->obj, gt, lmem_id, &ww);
+	}
+
+	if (err == -EDEADLK) {
+		err = i915_gem_ww_ctx_backoff(&ww);
+		if (!err)
+			goto retry;
+	}
+
+	i915_gem_ww_ctx_fini(&ww);
+	i915_gem_vm_bind_unlock(vma->vm);
+
+	return err;
+}
+
+static void print_access_counter(struct acc_info *info)
+{
+	DRM_DEBUG_DRIVER("Access counter request:\n"
+			"\tType: %s\n"
+			"\tASID: %d\n"
+			"\tVFID: %d\n"
+			"\tEngine: %s[%d]\n"
+			"\tGranularity: 0x%x KB Region/ %d KB sub-granularity\n"
+			"\tSub_Granularity Vector: 0x%08x\n"
+			"\tVA Range base: 0x%016llx\n",
+			info->access_type ? "AC_NTFY_VAL" : "AC_TRIG_VAL",
+			info->asid, info->vfid,
+			intel_engine_class_repr(info->engine_class),
+			info->engine_instance,
+			granularity_in_byte(info->granularity) / SZ_1K,
+			sub_granularity_in_byte(info->granularity) / SZ_1K,
+			info->sub_granularity,
+			info->va_range_base
+			);
+}
+
+static int handle_i915_acc(struct intel_guc *guc,
+			   struct acc_info *info)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+	struct i915_vma *vma;
+
+	mark_engine_as_active(gt, info->engine_class, info->engine_instance);
+
+	if (info->access_type) {
+		print_access_counter(info);
+		return 0;
+	}
+
+	vma = get_acc_vma(guc, info);
+	if (!vma) {
+		print_access_counter(info);
+		DRM_DEBUG_DRIVER("get_acc_vma failed\n");
+		return 0;
+	}
+
+	if (i915_gem_object_is_userptr(vma->obj)) {
+		int err = i915_gem_object_userptr_submit_init(vma->obj);
+
+		if (err) {
+			print_access_counter(info);
+			DRM_DEBUG_DRIVER("userptr_submit_init failed %d\n", err);
+			goto put_vma;
+		}
+	}
+
+	acc_migrate_to_lmem(gt, vma);
+
+	if (i915_gem_object_is_userptr(vma->obj))
+		i915_gem_object_userptr_submit_done(vma->obj);
+put_vma:
+	i915_vma_put(vma);
+	__i915_vma_put(vma);
+
+	return 0;
+}
+
+static void get_access_counter_info(struct access_counter_desc *desc,
+				    struct acc_info *info)
+{
+	info->granularity = FIELD_GET(ACCESS_COUNTER_GRANULARITY, desc->dw2);
+	info->sub_granularity =	FIELD_GET(ACCESS_COUNTER_SUBG_HI, desc->dw1) << 31 |
+				FIELD_GET(ACCESS_COUNTER_SUBG_LO, desc->dw0);
+	info->engine_class = FIELD_GET(ACCESS_COUNTER_ENG_CLASS, desc->dw1);
+	info->engine_instance = FIELD_GET(ACCESS_COUNTER_ENG_INSTANCE, desc->dw1);
+	info->asid =  FIELD_GET(ACCESS_COUNTER_ASID, desc->dw1);
+	info->vfid =  FIELD_GET(ACCESS_COUNTER_VFID, desc->dw2);
+	info->access_type = FIELD_GET(ACCESS_COUNTER_TYPE, desc->dw0);
+	info->va_range_base = make_u64(desc->dw3 & ACCESS_COUNTER_VIRTUAL_ADDR_RANGE_HI,
+			      desc->dw2 & ACCESS_COUNTER_VIRTUAL_ADDR_RANGE_LO);
+
+	GEM_BUG_ON(info->engine_class > MAX_ENGINE_CLASS ||
+		   info->engine_instance > MAX_ENGINE_INSTANCE);
+}
+
+int intel_access_counter_req_process_msg(struct intel_guc *guc, const u32 *payload, u32 len)
+{
+	struct acc_info info = {};
+
+	if (unlikely(len != 4))
+		return -EPROTO;
+
+	get_access_counter_info((struct access_counter_desc *)payload, &info);
+	return handle_i915_acc(guc, &info);
 }
