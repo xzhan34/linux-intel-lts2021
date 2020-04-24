@@ -55,6 +55,13 @@ static phys_addr_t calc_ctrl_surf_instr_dwords(struct drm_i915_private *i915,
 	 */
 	total_size += 2 * MI_FLUSH_DW_SIZE;
 
+	/*
+	 * Wa_1409498409: xehpsdv
+	 * Account for the extra flush in xehp_emit_ccs_copy()
+	 */
+	if (IS_XEHPSDV(i915))
+		total_size += MI_FLUSH_DW_SIZE;
+
 	/* Final emission is always qword-aligned */
 	return round_up(total_size, 2);
 }
@@ -69,7 +76,13 @@ static u32 *xehp_emit_ccs_copy(u32 *cmd, struct intel_gt *gt,
 				  gt->mocs.uc_index);
 	u32 *origcmd = cmd;
 
-	cmd = i915_flush_dw(cmd, MI_FLUSH_DW_LLC | MI_FLUSH_DW_CCS);
+	/* Wa_1409498409: xehpsdv */
+	if (IS_XEHPSDV(gt->i915)) {
+		cmd = i915_flush_dw(cmd, MI_FLUSH_DW_LLC);
+		cmd = i915_flush_dw(cmd, MI_FLUSH_DW_CCS);
+	} else {
+		cmd = i915_flush_dw(cmd, MI_FLUSH_DW_LLC | MI_FLUSH_DW_CCS);
+	}
 
 	/*
 	 * The XY_CTRL_SURF_COPY_BLT instruction is used to copy the CCS
