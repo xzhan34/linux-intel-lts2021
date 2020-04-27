@@ -524,6 +524,20 @@ static inline bool i915_vma_is_bind_complete(struct i915_vma *vma)
 	return !i915_active_fence_isset(&vma->active.excl);
 }
 
+static inline struct i915_vma *i915_find_vma(struct i915_address_space *vm,
+					     u64 addr)
+{
+	struct drm_mm_node *node;
+
+	mutex_lock(&vm->mutex);
+	node = i915_gem_gtt_lookup(vm, addr);
+	mutex_unlock(&vm->mutex);
+	if (unlikely(!node))
+		return NULL;
+
+	return container_of(node, struct i915_vma, node);
+}
+
 static inline int
 __i915_request_await_bind(struct i915_request *rq, struct i915_vma *vma)
 {

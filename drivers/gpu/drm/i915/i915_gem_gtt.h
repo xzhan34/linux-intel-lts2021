@@ -32,6 +32,9 @@ int i915_gem_gtt_insert(struct i915_address_space *vm,
 			u64 size, u64 alignment, unsigned long color,
 			u64 start, u64 end, unsigned int flags);
 
+struct drm_mm_node *i915_gem_gtt_lookup(struct i915_address_space *vm,
+					u64 addr);
+
 /* Flags used by pin/bind&friends. */
 #define PIN_NOEVICT		BIT_ULL(0)
 #define PIN_NOSEARCH		BIT_ULL(1)
