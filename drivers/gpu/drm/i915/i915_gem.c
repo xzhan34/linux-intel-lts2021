@@ -1172,6 +1172,7 @@ void i915_gem_driver_remove(struct drm_i915_private *dev_priv)
 	struct intel_gt *gt;
 	unsigned int i;
 
+	/* Flush any outstanding unpin_work. */
 	intel_wakeref_auto_fini(&to_gt(dev_priv)->ggtt->userfault_wakeref);
 
 	for_each_gt(gt, dev_priv, i) {
@@ -1180,10 +1181,8 @@ void i915_gem_driver_remove(struct drm_i915_private *dev_priv)
 	}
 	dev_priv->uabi_engines = RB_ROOT;
 
-	/* Flush any outstanding unpin_work. */
+	/* Finish any generated work, and free all leftover objects. */
 	i915_gem_drain_workqueue(dev_priv);
-
-	i915_gem_drain_freed_objects(dev_priv);
 }
 
 void i915_gem_driver_release(struct drm_i915_private *dev_priv)

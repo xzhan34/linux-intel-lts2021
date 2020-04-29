@@ -1245,6 +1245,64 @@ static bool suspend_to_idle(struct drm_i915_private *dev_priv)
 	return false;
 }
 
+static void intel_evict_lmem(struct drm_i915_private *i915)
+{
+	struct intel_memory_region_link bookmark = {};
+	struct intel_memory_region *mem;
+	int id;
+
+	for_each_memory_region(mem, i915, id) {
+		struct intel_memory_region_link *pos, *next;
+		struct list_head *phases[] = {
+			&mem->objects.purgeable,
+			&mem->objects.list,
+			NULL,
+		}, **phase = phases;
+
+		if (mem->type != INTEL_MEMORY_LOCAL || !mem->total)
+			continue;
+
+		spin_lock(&mem->objects.lock);
+		do list_for_each_entry_safe(pos, next, *phase, link) {
+			struct drm_i915_gem_object *obj;
+			struct i915_gem_ww_ctx ww;
+			int err;
+
+			if (!pos->mem)
+				continue;
+
+			obj = container_of(pos, typeof(*obj), mm.region);
+			if (!i915_gem_object_has_pages(obj))
+				continue;
+
+			if (!kref_get_unless_zero(&obj->base.refcount))
+				continue;
+
+			list_add(&bookmark.link, &pos->link);
+			spin_unlock(&mem->objects.lock);
+
+			for_i915_gem_ww(&ww, err, true) {
+				err = i915_gem_object_lock(obj, &ww);
+				if (err)
+					continue;
+
+				if (!i915_gem_object_has_pages(obj))
+					break;
+
+				if (!i915_gem_object_unbind(obj, 0))
+					__i915_gem_object_put_pages(obj);
+			}
+
+			i915_gem_object_put(obj);
+
+			spin_lock(&mem->objects.lock);
+			list_safe_reset_next(&bookmark, next, link);
+			__list_del_entry(&bookmark.link);
+		} while (*++phase);
+		spin_unlock(&mem->objects.lock);
+	}
+}
+
 static int i915_drm_prepare(struct drm_device *dev)
 {
 	struct drm_i915_private *i915 = to_i915(dev);
@@ -1256,6 +1314,12 @@ static int i915_drm_prepare(struct drm_device *dev)
 	 * the GPU is not woken again.
 	 */
 	i915_gem_suspend(i915);
+
+	/*
+	 * FIXME: After parking  GPU, we are waking up the GPU by doing
+	 * intel_evict_lmem(), which needs to be avoid.
+	 */
+	intel_evict_lmem(i915);
 
 	return 0;
 }
@@ -1269,7 +1333,8 @@ static int i915_drm_suspend(struct drm_device *dev)
 	disable_rpm_wakeref_asserts(&dev_priv->runtime_pm);
 
 	/* We do a lot of poking in a lot of registers, make sure they work
-	 * properly. */
+	 * properly.
+	 */
 	intel_power_domains_disable(dev_priv);
 	if (HAS_DISPLAY(dev_priv))
 		drm_kms_helper_poll_disable(dev);
@@ -1286,10 +1351,6 @@ static int i915_drm_suspend(struct drm_device *dev)
 	intel_suspend_encoders(dev_priv);
 
 	intel_suspend_hw(dev_priv);
-
-	/* Must be called before GGTT is suspended. */
-	intel_dpt_suspend(dev_priv);
-	i915_ggtt_suspend(to_gt(dev_priv)->ggtt);
 
 	i915_save_display(dev_priv);
 
@@ -1331,7 +1392,13 @@ static int i915_drm_suspend_late(struct drm_device *dev, bool hibernation)
 
 	disable_rpm_wakeref_asserts(rpm);
 
-	i915_gem_suspend_late(dev_priv);
+	/* Must be called before GGTT is suspended. */
+	intel_dpt_suspend(dev_priv);
+	ret = i915_gem_suspend_late(dev_priv);
+	if (ret) {
+		drm_err(&dev_priv->drm, "Suspend swapout failed: %d\n", ret);
+		return ret;
+	}
 
 	for_each_gt(gt, dev_priv, i)
 		intel_uncore_suspend(gt->uncore);
@@ -1395,29 +1462,13 @@ int i915_driver_suspend_switcheroo(struct drm_i915_private *i915,
 static int i915_drm_resume(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = to_i915(dev);
-	struct intel_gt *gt;
-	int ret, i;
+	int ret;
 
 	disable_rpm_wakeref_asserts(&dev_priv->runtime_pm);
 
 	ret = intel_pcode_init(&dev_priv->uncore);
 	if (ret)
 		return ret;
-
-	sanitize_gpu(dev_priv);
-
-	ret = i915_ggtt_enable_hw(dev_priv);
-	if (ret)
-		drm_err(&dev_priv->drm, "failed to re-enable GGTT\n");
-
-	i915_ggtt_resume(to_gt(dev_priv)->ggtt);
-
-	for_each_gt(gt, dev_priv, i)
-		if (GRAPHICS_VER(gt->i915) >= 8)
-			setup_private_pat(gt);
-
-	/* Must be called after GGTT is resumed. */
-	intel_dpt_resume(dev_priv);
 
 	intel_dmc_ucode_resume(dev_priv);
 
@@ -1547,6 +1598,16 @@ static int i915_drm_resume_early(struct drm_device *dev)
 	intel_display_power_resume_early(dev_priv);
 
 	intel_power_domains_resume(dev_priv);
+
+	sanitize_gpu(dev_priv);
+
+	ret = i915_ggtt_enable_hw(dev_priv);
+	if (ret)
+		drm_err(&dev_priv->drm, "failed to re-enable GGTT\n");
+
+	i915_gem_resume_early(dev_priv);
+	/* Must be called after GGTT is resumed. */
+	intel_dpt_resume(dev_priv);
 
 out:
 	enable_rpm_wakeref_asserts(&dev_priv->runtime_pm);

@@ -213,6 +213,15 @@ void intel_gt_pm_fini(struct intel_gt *gt)
 	intel_rc6_fini(&gt->rc6);
 }
 
+void intel_gt_resume_early(struct intel_gt *gt)
+{
+	if (gt->type != GT_MEDIA)
+		i915_ggtt_resume(gt->ggtt);
+
+	if (GRAPHICS_VER(gt->i915) >= 8)
+		setup_private_pat(gt);
+}
+
 int intel_gt_resume(struct intel_gt *gt)
 {
 	struct intel_engine_cs *engine;
@@ -308,8 +317,6 @@ void intel_gt_suspend_prepare(struct intel_gt *gt)
 	user_forcewake(gt, true);
 	wait_for_suspend(gt);
 
-	intel_uc_suspend(&gt->uc);
-
 	intel_pxp_suspend(&gt->pxp, false);
 }
 
@@ -334,6 +341,8 @@ void intel_gt_suspend_late(struct intel_gt *gt)
 
 	GEM_BUG_ON(gt->awake);
 
+	intel_uc_suspend(&gt->uc);
+
 	/*
 	 * On disabling the device, we want to turn off HW access to memory
 	 * that we no longer own.
@@ -351,6 +360,9 @@ void intel_gt_suspend_late(struct intel_gt *gt)
 		intel_rps_disable(&gt->rps);
 		intel_rc6_disable(&gt->rc6);
 		intel_llc_disable(&gt->llc);
+
+		if (gt->type != GT_MEDIA)
+			i915_ggtt_suspend(gt->ggtt);
 	}
 
 	gt_sanitize(gt, false); /* Be paranoid, remove all residual GPU state */

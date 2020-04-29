@@ -111,7 +111,6 @@ static suspend_state_t do_suspend(struct drm_i915_private *i915)
 	intel_wakeref_t wakeref;
 
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
-		i915_ggtt_suspend(to_gt(i915)->ggtt);
 		i915_gem_suspend_late(i915);
 	}
 
@@ -124,9 +123,8 @@ static suspend_state_t do_hibernate(struct drm_i915_private *i915)
 	intel_wakeref_t wakeref;
 
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
-		i915_ggtt_suspend(to_gt(i915)->ggtt);
-
 		i915_gem_freeze(i915);
+		i915_gem_suspend_late(i915);
 		i915_gem_freeze_late(i915);
 	}
 
@@ -142,9 +140,7 @@ static void do_resume(struct drm_i915_private *i915, suspend_state_t saved)
 	 * that runtime-pm just works.
 	 */
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
-		i915_ggtt_resume(to_gt(i915)->ggtt);
-		if (GRAPHICS_VER(i915) >= 8)
-			setup_private_pat(to_gt(i915));
+		i915_gem_resume_early(i915);
 		i915_gem_resume(i915);
 	}
 
