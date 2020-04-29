@@ -649,6 +649,12 @@ struct drm_i915_gem_object {
 		/* Whether this object currently resides in local memory */
 		bool resident:1;
 	} client;
+
+	/*
+	 * To store the memory mask which represents the user preference about
+	 * which memory region the object should reside in
+	 */
+	u32 memory_mask;
 };
 
 static inline struct drm_i915_gem_object *

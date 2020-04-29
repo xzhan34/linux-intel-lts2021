@@ -15,6 +15,9 @@
 #include "i915_trace.h"
 #include "i915_user_extensions.h"
 
+static u32 placement_mask(struct intel_memory_region **placements,
+			  int n_placements);
+
 u32 i915_gem_object_max_page_size(struct drm_i915_gem_object *obj)
 {
 	u32 max_page_size = I915_GTT_PAGE_SIZE_4K;
@@ -50,6 +53,8 @@ static void object_set_placements(struct drm_i915_gem_object *obj,
 		obj->mm.placements = placements;
 		obj->mm.n_placements = n_placements;
 	}
+
+	obj->memory_mask = placement_mask(obj->mm.placements, obj->mm.n_placements);
 }
 
 static u64 object_limit(struct drm_i915_gem_object *obj)
@@ -104,6 +109,20 @@ static int i915_gem_publish(struct drm_i915_gem_object *obj,
 
 	*size_p = size;
 	return 0;
+}
+
+static u32 placement_mask(struct intel_memory_region **placements,
+			  int n_placements)
+{
+	u32 mask = 0;
+	int i;
+
+	for (i = 0; i < n_placements; i++)
+		mask |= BIT(placements[i]->id);
+
+	GEM_BUG_ON(!mask);
+
+	return mask;
 }
 
 static int
