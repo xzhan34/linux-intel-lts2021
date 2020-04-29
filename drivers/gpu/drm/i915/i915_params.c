@@ -55,6 +55,10 @@ i915_param_named(modeset, int, 0400,
 	"Use kernel modesetting [KMS] (0=disable, "
 	"1=on, -1=force vga console preference [default])");
 
+i915_param_named_unsafe(force_pch, int, 0400,
+	"Force PCH type on boot (-1=auto detected by PCI ID, "
+	"0=PCH_NONE, see enum intel_pch for additional values)");
+
 i915_param_named_unsafe(enable_dc, int, 0400,
 	"Enable power-saving display C-states. "
 	"(-1=auto [default]; 0=disable; 1=up to DC5; 2=up to DC6; "
