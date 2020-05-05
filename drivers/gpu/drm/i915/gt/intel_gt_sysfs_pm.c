@@ -27,6 +27,43 @@ static u32 get_residency(struct intel_gt *gt, i915_reg_t reg)
 	return DIV_ROUND_CLOSEST_ULL(res, 1000);
 }
 
+static ssize_t rc6_enable_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buff, size_t count)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	intel_wakeref_t wakeref;
+	ssize_t ret;
+	u32 val;
+
+	ret = kstrtou32(buff, 0, &val);
+	if (ret)
+		return ret;
+
+	wakeref = intel_runtime_pm_get(gt->uncore->rpm);
+
+	if (val) {
+		if (gt->rc6.enabled)
+			goto unlock;
+
+		if (!gt->rc6.wakeref)
+			intel_rc6_rpm_get(&gt->rc6);
+
+		intel_rc6_enable(&gt->rc6);
+		intel_rc6_unpark(&gt->rc6);
+	} else {
+		intel_rc6_disable(&gt->rc6);
+
+		if (gt->rc6.wakeref)
+			intel_rc6_rpm_put(&gt->rc6);
+	}
+
+unlock:
+	intel_runtime_pm_put(gt->uncore->rpm, wakeref);
+
+	return count;
+}
+
 static ssize_t rc6_enable_show(struct device *dev,
 			       struct device_attribute *attr,
 			       char *buff)
@@ -76,7 +113,7 @@ static ssize_t media_rc6_residency_ms_show(struct device *dev,
 	return scnprintf(buff, PAGE_SIZE, "%u\n", rc6_residency);
 }
 
-static DEVICE_ATTR_RO(rc6_enable);
+static DEVICE_ATTR_RW(rc6_enable);
 static DEVICE_ATTR_RO(rc6_residency_ms);
 static DEVICE_ATTR_RO(rc6p_residency_ms);
 static DEVICE_ATTR_RO(rc6pp_residency_ms);

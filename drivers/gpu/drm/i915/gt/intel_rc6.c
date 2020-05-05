@@ -518,14 +518,14 @@ static bool rc6_supported(struct intel_rc6 *rc6)
 	return i915->params.enable_rc6;
 }
 
-static void rpm_get(struct intel_rc6 *rc6)
+void intel_rc6_rpm_get(struct intel_rc6 *rc6)
 {
 	GEM_BUG_ON(rc6->wakeref);
 	pm_runtime_get_sync(rc6_to_i915(rc6)->drm.dev);
 	rc6->wakeref = true;
 }
 
-static void rpm_put(struct intel_rc6 *rc6)
+void intel_rc6_rpm_put(struct intel_rc6 *rc6)
 {
 	GEM_BUG_ON(!rc6->wakeref);
 	pm_runtime_put(rc6_to_i915(rc6)->drm.dev);
@@ -570,7 +570,7 @@ void intel_rc6_init(struct intel_rc6 *rc6)
 	int err;
 
 	/* Disable runtime-pm until we can save the GPU state with rc6 pctx */
-	rpm_get(rc6);
+	intel_rc6_rpm_get(rc6);
 
 	if (!rc6_exists(rc6))
 		return;
@@ -594,7 +594,7 @@ void intel_rc6_init(struct intel_rc6 *rc6)
 void intel_rc6_sanitize(struct intel_rc6 *rc6)
 {
 	if (rc6->enabled) { /* unbalanced suspend/resume */
-		rpm_get(rc6);
+		intel_rc6_rpm_get(rc6);
 		rc6->enabled = false;
 	}
 
@@ -637,7 +637,7 @@ void intel_rc6_enable(struct intel_rc6 *rc6)
 		return;
 
 	/* rc6 is ready, runtime-pm is go! */
-	rpm_put(rc6);
+	intel_rc6_rpm_put(rc6);
 	rc6->enabled = true;
 }
 
@@ -685,7 +685,7 @@ void intel_rc6_disable(struct intel_rc6 *rc6)
 	if (!rc6->enabled)
 		return;
 
-	rpm_get(rc6);
+	intel_rc6_rpm_get(rc6);
 	rc6->enabled = false;
 
 	__intel_rc6_disable(rc6);
@@ -705,7 +705,7 @@ void intel_rc6_fini(struct intel_rc6 *rc6)
 		i915_gem_object_put(pctx);
 
 	if (rc6->wakeref)
-		rpm_put(rc6);
+		intel_rc6_rpm_put(rc6);
 }
 
 static u64 vlv_residency_raw(struct intel_uncore *uncore, const i915_reg_t reg)
