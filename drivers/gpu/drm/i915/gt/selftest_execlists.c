@@ -1296,6 +1296,13 @@ static int live_timeslice_queue(void *arg)
 	if (!CONFIG_DRM_I915_TIMESLICE_DURATION)
 		return 0;
 
+	/*
+	 * the test is targeted at a low-level implementation behaviour of
+	 * execlists submission, so not applicable to guc submission
+	 */
+	if (intel_uc_uses_guc_submission(&gt->uc))
+		return 0;
+
 	obj = i915_gem_object_create_internal(gt->i915, PAGE_SIZE);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
