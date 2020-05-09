@@ -594,17 +594,17 @@ static bool assert_mmap_offset(struct drm_i915_private *i915,
 			       int expected)
 {
 	struct drm_i915_gem_object *obj;
-	u64 offset;
-	int ret;
+	struct i915_mmap_offset * mmo;
 
 	obj = i915_gem_object_create_internal(i915, size);
 	if (IS_ERR(obj))
 		return expected && expected == PTR_ERR(obj);
 
-	ret = __assign_mmap_offset(obj, I915_MMAP_TYPE_GTT, &offset, NULL);
+	mmo = i915_gem_mmap_offset_attach(obj, I915_MMAP_TYPE_GTT, NULL);
+
 	i915_gem_object_put(obj);
 
-	return ret == expected;
+	return PTR_ERR_OR_ZERO(mmo) == expected;
 }
 
 static void disable_retire_worker(struct drm_i915_private *i915)

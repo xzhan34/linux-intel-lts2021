@@ -10,6 +10,8 @@
 
 #include "gem/i915_gem_dmabuf.h"
 #include "i915_drv.h"
+#include "i915_gem_lmem.h"
+#include "i915_gem_mman.h"
 #include "i915_gem_object.h"
 #include "i915_scatterlist.h"
 
@@ -94,7 +96,41 @@ static void i915_gem_dmabuf_vunmap(struct dma_buf *dma_buf,
 	i915_gem_object_unpin_map(obj);
 }
 
-static int i915_gem_dmabuf_mmap(struct dma_buf *dma_buf, struct vm_area_struct *vma)
+/**
+ * i915_gem_dmabuf_update_vma - Setup VMA information for exported LMEM
+ * objects
+ * @obj: valid LMEM object
+ * @vma: va;od vma
+ *
+ * NOTE: on success, the final _object_put() will be done by the VMA
+ * vm_close() callback.
+ */
+static int i915_gem_dmabuf_update_vma(struct drm_i915_gem_object *obj,
+				      struct vm_area_struct *vma)
+{
+	struct i915_mmap_offset *mmo;
+	int err;
+
+	i915_gem_object_get(obj);
+	mmo = i915_gem_mmap_offset_attach(obj, I915_MMAP_TYPE_WC, NULL);
+	if (IS_ERR(mmo)) {
+		err = PTR_ERR(mmo);
+		goto out;
+	}
+
+	err = i915_gem_update_vma_info(obj, mmo, vma);
+	if (err)
+		goto out;
+
+	return 0;
+
+out:
+	i915_gem_object_put(obj);
+	return err;
+}
+
+static int i915_gem_dmabuf_mmap(struct dma_buf *dma_buf,
+				struct vm_area_struct *vma)
 {
 	struct drm_i915_gem_object *obj = dma_buf_to_obj(dma_buf);
 	int ret;
@@ -102,16 +138,21 @@ static int i915_gem_dmabuf_mmap(struct dma_buf *dma_buf, struct vm_area_struct *
 	if (obj->base.size < vma->vm_end - vma->vm_start)
 		return -EINVAL;
 
-	if (!obj->base.filp)
-		return -ENODEV;
+	/* shmem */
+	if (obj->base.filp) {
+		ret = call_mmap(obj->base.filp, vma);
+		if (ret)
+			return ret;
 
-	ret = call_mmap(obj->base.filp, vma);
-	if (ret)
-		return ret;
+		vma_set_file(vma, obj->base.filp);
 
-	vma_set_file(vma, obj->base.filp);
+		return 0;
+	}
 
-	return 0;
+	if (i915_gem_object_is_lmem(obj))
+		return i915_gem_dmabuf_update_vma(obj, vma);
+
+	return -ENODEV;
 }
 
 static int i915_gem_begin_cpu_access(struct dma_buf *dma_buf, enum dma_data_direction direction)
