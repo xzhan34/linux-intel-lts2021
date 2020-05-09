@@ -404,6 +404,9 @@ int i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
 	if (IS_ERR(vma[1]))
 		return PTR_ERR(vma[1]);
 
+	if (src->base.size >= dst->base.size)
+		dst->flags |= I915_BO_SKIP_CLEAR;
+
 	intel_engine_pm_get(ce->engine);
 	err = intel_context_pin_ww(ce, ww);
 	if (err)

@@ -46,7 +46,7 @@ gsc_ext_om_alloc(struct intel_gsc *gsc, struct intel_gsc_intf *intf, size_t size
 
 	obj = i915_gem_object_create_lmem(gt->i915, size,
 					  I915_BO_ALLOC_CONTIGUOUS |
-					  I915_BO_ALLOC_CPU_CLEAR);
+					  I915_BO_CPU_CLEAR);
 	if (IS_ERR(obj)) {
 		drm_err(&gt->i915->drm, "Failed to allocate gsc memory\n");
 		return PTR_ERR(obj);

@@ -145,8 +145,11 @@ static int lmem_clear(struct drm_i915_gem_object *obj,
 	unsigned int flags = obj->flags;
 	int err = 0;
 
+	if (flags & I915_BO_SKIP_CLEAR)
+		return 0;
+
 	/* Intended for kernel internal use only */
-	if (flags & I915_BO_ALLOC_CPU_CLEAR)
+	if (flags & I915_BO_CPU_CLEAR)
 		clear_cpu(mem, pages);
 
 	return err;

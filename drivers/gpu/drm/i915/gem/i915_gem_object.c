@@ -28,6 +28,8 @@
 #include <drm/drm_cache.h>
 
 #include "display/intel_frontbuffer.h"
+#include "gt/intel_gt.h"
+#include "gt/intel_gt_requests.h"
 #include "pxp/intel_pxp.h"
 
 #include "i915_drv.h"
@@ -36,6 +38,9 @@
 #include "i915_gem_dmabuf.h"
 #include "i915_gem_mman.h"
 #include "i915_gem_object.h"
+#include "i915_gem_object_blt.h"
+#include "i915_gem_region.h"
+#include "i915_gem_tiling.h"
 #include "i915_memcpy.h"
 #include "i915_trace.h"
 
@@ -294,6 +299,7 @@ void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 	__i915_gem_object_put_pages(obj);
 	GEM_BUG_ON(i915_gem_object_has_pages(obj));
 	GEM_BUG_ON(!list_empty(&obj->mm.region_link));
+	GEM_BUG_ON(!list_empty(&obj->mm.link));
 	bitmap_free(obj->bit_17);
 
 	if (obj->base.import_attach)
@@ -374,6 +380,181 @@ static void i915_gem_free_object(struct drm_gem_object *gem_obj)
 
 	if (llist_add(&obj->freed, &i915->mm.free_list))
 		queue_work(i915->wq, &i915->mm.free_work);
+}
+
+int i915_gem_object_prepare_move(struct drm_i915_gem_object *obj)
+{
+	int err;
+
+	assert_object_held(obj);
+
+	if (obj->mm.madv != I915_MADV_WILLNEED)
+		return -EINVAL;
+
+	if (i915_gem_object_needs_bit17_swizzle(obj))
+		return -EINVAL;
+
+	if (i915_gem_object_is_framebuffer(obj))
+		return -EBUSY;
+
+	GEM_BUG_ON(obj->mm.mapping);
+	GEM_BUG_ON(obj->base.filp && mapping_mapped(obj->base.filp->f_mapping));
+
+	err = i915_gem_object_wait(obj,
+				   I915_WAIT_INTERRUPTIBLE |
+				   I915_WAIT_ALL,
+				   MAX_SCHEDULE_TIMEOUT);
+	if (err)
+		return err;
+
+	return i915_gem_object_unbind(obj,
+				      I915_GEM_OBJECT_UNBIND_ACTIVE);
+}
+
+static void lists_swap(struct list_head *a, struct list_head *b)
+{
+	struct list_head tmp;
+
+	list_replace(a, &tmp);
+	list_replace(b, a);
+	list_replace(&tmp, b);
+}
+
+static void
+swap_blocks(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor)
+{
+	struct intel_memory_region *a = obj->mm.region;
+	struct intel_memory_region *b = donor->mm.region;
+
+	GEM_BUG_ON(a == b);
+	if (a->id > b->id)
+		swap(a, b);
+
+	mutex_lock(&a->mm_lock);
+	mutex_lock_nested(&b->mm_lock, SINGLE_DEPTH_NESTING);
+
+	lists_swap(&obj->mm.blocks, &donor->mm.blocks);
+
+	mutex_unlock(&b->mm_lock);
+	mutex_unlock(&a->mm_lock);
+}
+
+static void
+swap_region(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor)
+{
+	struct intel_memory_region *a = obj->mm.region;
+	struct intel_memory_region *b = donor->mm.region;
+
+	GEM_BUG_ON(a == b);
+	if (a->id > b->id)
+		swap(a, b);
+
+	mutex_lock(&a->objects.lock);
+	mutex_lock_nested(&b->objects.lock, SINGLE_DEPTH_NESTING);
+
+	lists_swap(&obj->mm.region_link, &donor->mm.region_link);
+	swap(obj->mm.region, donor->mm.region);
+
+	mutex_unlock(&b->objects.lock);
+	mutex_unlock(&a->objects.lock);
+}
+
+static void
+swap_shrinker(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	unsigned long flags;
+
+	spin_lock_irqsave(&i915->mm.obj_lock, flags);
+	lists_swap(&obj->mm.link, &donor->mm.link);
+	swap(obj->mm.shrink_pin, donor->mm.shrink_pin);
+	spin_unlock_irqrestore(&i915->mm.obj_lock, flags);
+}
+
+static void
+swap_pages(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor)
+{
+	swap(obj->mm.pages, donor->mm.pages);
+	swap(obj->mm.mapping, donor->mm.mapping);
+	swap(obj->mm.page_sizes, donor->mm.page_sizes);
+
+	__i915_gem_object_reset_page_iter(obj, obj->mm.pages);
+	__i915_gem_object_reset_page_iter(donor, donor->mm.pages);
+}
+
+int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
+			    struct i915_gem_ww_ctx *ww,
+			    struct intel_context *ce,
+			    enum intel_region_id id)
+{
+	struct drm_i915_gem_object *donor;
+	int err = 0;
+
+	assert_object_held(obj);
+
+	GEM_BUG_ON(id >= INTEL_REGION_UNKNOWN);
+	if (obj->mm.region->id == id)
+		return 0;
+
+	if (GEM_WARN_ON(obj->mm.madv != I915_MADV_WILLNEED))
+		return -EFAULT;
+
+	donor = i915_gem_object_create_region(to_i915(obj->base.dev)->mm.regions[id],
+					      obj->base.size,
+					      obj->flags & I915_BO_ALLOC_FLAGS);
+	if (IS_ERR(donor))
+		return PTR_ERR(donor);
+
+	donor->base.resv = obj->base.resv;
+	assert_object_held(donor);
+	GEM_BUG_ON(donor->mm.region->id != id);
+
+	/* Prevent concurrent access to the backing store by the user */
+	i915_gem_object_release_mmap(obj);
+
+	/* Copy backing store if we have to */
+	if (i915_gem_object_has_pages(obj) || obj->base.filp) {
+		err = i915_gem_object_ww_copy_blt(obj, donor, ww, ce);
+		if (err)
+			goto out;
+
+		/*
+		 * Occasionally i915_gem_object_wait() called inside
+		 * i915_gem_object_set_to_cpu_domain() get interrupted
+		 * and return -ERESTARTSYS, this will make migration
+		 * operation fail. So adding a non-interruptible wait
+		 * before changing the object domain.
+		 */
+		err = i915_gem_object_wait(donor, 0, MAX_SCHEDULE_TIMEOUT);
+		if (err)
+			goto out;
+
+		err = i915_gem_object_unbind(donor, 0);
+		if (err)
+			goto out;
+
+		err = i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE);
+		if (err)
+			goto out;
+	}
+
+	swap(obj->base.size, donor->base.size);
+	swap(obj->base.filp, donor->base.filp);
+	swap(obj->flags, donor->flags);
+	swap(obj->ops, donor->ops);
+
+	swap_blocks(obj, donor);
+	swap_region(obj, donor);
+	swap_shrinker(obj, donor);
+	swap_pages(obj, donor);
+
+	GEM_BUG_ON(obj->mm.region->id != id);
+
+out:
+	/* Need to set I915_MADV_DONTNEED so that shrinker can free it */
+	donor->mm.madv = I915_MADV_DONTNEED; /* XXX set_madv() */
+	i915_gem_object_put(donor);
+	return err;
 }
 
 void __i915_gem_object_flush_frontbuffer(struct drm_i915_gem_object *obj,

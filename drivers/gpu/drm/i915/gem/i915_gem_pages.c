@@ -38,12 +38,9 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 		obj->cache_dirty = false;
 	}
 
-	obj->mm.get_page.sg_pos = pages->sgl;
-	obj->mm.get_page.sg_idx = 0;
-	obj->mm.get_dma_page.sg_pos = pages->sgl;
-	obj->mm.get_dma_page.sg_idx = 0;
-
 	obj->mm.pages = pages;
+	obj->mm.get_page.sg_pos = pages->sgl;
+	obj->mm.get_dma_page.sg_pos = pages->sgl;
 
 	GEM_BUG_ON(!sg_page_sizes);
 	obj->mm.page_sizes.phys = sg_page_sizes;
@@ -194,7 +191,8 @@ void i915_gem_object_writeback(struct drm_i915_gem_object *obj)
 		obj->ops->writeback(obj);
 }
 
-static void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj)
+void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj,
+				       struct sg_table *pages)
 {
 	struct radix_tree_iter iter;
 	void __rcu **slot;
@@ -205,6 +203,11 @@ static void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj)
 	radix_tree_for_each_slot(slot, &obj->mm.get_dma_page.radix, &iter, 0)
 		radix_tree_delete(&obj->mm.get_dma_page.radix, iter.index);
 	rcu_read_unlock();
+
+	obj->mm.get_page.sg_pos = pages ? pages->sgl : NULL;
+	obj->mm.get_page.sg_idx = 0;
+	obj->mm.get_dma_page.sg_pos = pages ? pages->sgl : NULL;
+	obj->mm.get_dma_page.sg_idx = 0;
 }
 
 static bool is_iomap_addr(struct drm_i915_gem_object *obj, void *ptr)
@@ -268,7 +271,7 @@ __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj)
 		obj->mm.mapping = NULL;
 	}
 
-	__i915_gem_object_reset_page_iter(obj);
+	__i915_gem_object_reset_page_iter(obj, NULL);
 	obj->mm.page_sizes.phys = obj->mm.page_sizes.sg = 0;
 
 	flush_tlb_invalidate(obj);

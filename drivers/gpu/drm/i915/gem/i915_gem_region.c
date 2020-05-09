@@ -144,8 +144,6 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 	 * future.
 	 */
 
-	GEM_BUG_ON(flags & ~I915_BO_ALLOC_FLAGS);
-
 	if (!mem)
 		return ERR_PTR(-ENODEV);
 
