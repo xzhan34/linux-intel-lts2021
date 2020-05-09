@@ -5796,6 +5796,13 @@ enum hardware_error {
 						_ERR_STAT_GT_NONFATAL))
 #define  EU_GRF_ERROR			(1 << 15)
 #define  EU_IC_ERROR			(1 << 14)
+#define  SLM_ERROR			(1 << 13)
+
+#define _SLM_ECC_ERROR_CNT		0xe7f4
+#define _SLM_UNCORR_ECC_ERROR_CNT	0xe7c0
+#define SLM_ECC_ERROR_CNTR(x)		_MMIO((x) == HARDWARE_ERROR_CORRECTABLE ? \
+						_SLM_ECC_ERROR_CNT : \
+						_SLM_UNCORR_ECC_ERROR_CNT)
 
 #define ILK_DISPLAY_CHICKEN2	_MMIO(0x42004)
 /* Required on all Ironlake and Sandybridge according to the B-Spec. */

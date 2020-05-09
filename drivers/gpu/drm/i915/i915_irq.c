@@ -2784,7 +2784,7 @@ gen12_gt_hw_error_handler(struct drm_i915_private * const i915,
 {
 	void __iomem * const regs = i915->uncore.regs;
 	const char *hw_err_str = hardware_error_type_to_str(hw_err);
-	u32 other_errors = ~(EU_GRF_ERROR | EU_IC_ERROR);
+	u32 other_errors = ~(EU_GRF_ERROR | EU_IC_ERROR | SLM_ERROR);
 	u32 errstat;
 
 	lockdep_assert_held(&i915->irq_lock);
@@ -2812,6 +2812,14 @@ gen12_gt_hw_error_handler(struct drm_i915_private * const i915,
 
 	if (errstat & EU_IC_ERROR)
 		DRM_ERROR("detected EU IC %s hardware error\n", hw_err_str);
+
+	if (errstat & SLM_ERROR) {
+		struct drm_i915_private *dev_priv = i915;
+
+		DRM_ERROR("detected %u SLM %s hardware error(s)\n",
+			  intel_uncore_read(&dev_priv->uncore, SLM_ECC_ERROR_CNTR(hw_err)),
+			  hw_err_str);
+	}
 
 	/*
 	 * TODO: The remaining GT errors don't have a
