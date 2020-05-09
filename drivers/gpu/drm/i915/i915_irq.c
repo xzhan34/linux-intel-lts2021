@@ -2763,6 +2763,124 @@ static irqreturn_t gen8_irq_handler(int irq, void *arg)
 	return IRQ_HANDLED;
 }
 
+static const char *
+hardware_error_type_to_str(const enum hardware_error hw_err)
+{
+	switch (hw_err) {
+	case HARDWARE_ERROR_CORRECTABLE:
+		return "CORRECTABLE";
+	case HARDWARE_ERROR_NONFATAL:
+		return "NONFATAL";
+	case HARDWARE_ERROR_FATAL:
+		return "FATAL";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+static void
+gen12_gt_hw_error_handler(struct drm_i915_private * const i915,
+			  const enum hardware_error hw_err)
+{
+	void __iomem * const regs = i915->uncore.regs;
+	const char *hw_err_str = hardware_error_type_to_str(hw_err);
+	u32 other_errors = ~(EU_GRF_ERROR | EU_IC_ERROR);
+	u32 errstat;
+
+	lockdep_assert_held(&i915->irq_lock);
+
+	errstat = raw_reg_read(regs, ERR_STAT_GT_REG(hw_err));
+
+	if (unlikely(!errstat)) {
+		DRM_ERROR("ERR_STAT_GT_REG_%s blank!\n", hw_err_str);
+		return;
+	}
+
+	/*
+	 * TODO: The GT Non Fatal Error Status Register
+	 * only has reserved bitfields defined.
+	 * Remove once there is something to service.
+	 */
+	if (hw_err == HARDWARE_ERROR_NONFATAL) {
+		DRM_ERROR("detected Non-Fatal hardware error\n");
+		raw_reg_write(regs, ERR_STAT_GT_REG(hw_err), errstat);
+		return;
+	}
+
+	if (errstat & EU_GRF_ERROR)
+		DRM_ERROR("detected EU GRF %s hardware error\n", hw_err_str);
+
+	if (errstat & EU_IC_ERROR)
+		DRM_ERROR("detected EU IC %s hardware error\n", hw_err_str);
+
+	/*
+	 * TODO: The remaining GT errors don't have a
+	 * need for targeted logging at the moment. We
+	 * still want to log detection of these errors, but
+	 * let's aggregate them until someone has a need for them.
+	 */
+	if (errstat & other_errors)
+		DRM_ERROR("detected hardware error(s) in ERR_STAT_GT_REG_%s: 0x%08x\n",
+			  hw_err_str, errstat & other_errors);
+
+	raw_reg_write(regs, ERR_STAT_GT_REG(hw_err), errstat);
+}
+
+static void
+gen12_hw_error_source_handler(struct drm_i915_private * const i915,
+			      const enum hardware_error hw_err)
+{
+	void __iomem * const regs = i915->uncore.regs;
+	const char *hw_err_str = hardware_error_type_to_str(hw_err);
+	u32 errsrc;
+
+	spin_lock(&i915->irq_lock);
+	errsrc = raw_reg_read(regs, DEV_ERR_STAT_REG(hw_err));
+
+	if (unlikely(!errsrc)) {
+		DRM_ERROR("DEV_ERR_STAT_REG_%s blank!\n", hw_err_str);
+		goto out_unlock;
+	}
+
+	if (errsrc & DEV_ERR_STAT_GT_ERROR)
+		gen12_gt_hw_error_handler(i915, hw_err);
+
+	if (errsrc & ~DEV_ERR_STAT_GT_ERROR)
+		DRM_ERROR("non-GT hardware error(s) in DEV_ERR_STAT_REG_%s: 0x%08x\n",
+			  hw_err_str, errsrc & ~DEV_ERR_STAT_GT_ERROR);
+
+	raw_reg_write(regs, DEV_ERR_STAT_REG(hw_err), errsrc);
+
+out_unlock:
+	spin_unlock(&i915->irq_lock);
+}
+
+/*
+ * GEN12+ adds three Error bits to the Master Interrupt
+ * Register to support dgfx card error handling.
+ * These three bits are used to convey the class of error:
+ * FATAL, NONFATAL, or CORRECTABLE.
+ *
+ * To process an interrupt:
+ *	1. Determine source of error (IP block) by reading
+ *	   the Device Error Source Register (RW1C) that
+ *	   corresponds to the class of error being serviced.
+ *	2. For GT as the generating IP block, read and log
+ *	   the GT Error Register (RW1C) that corresponds to
+ *	   the class of error being serviced.
+ */
+static void
+gen12_hw_error_irq_handler(struct drm_i915_private * const i915,
+			   const u32 master_ctl)
+{
+	enum hardware_error hw_err;
+
+	for (hw_err = 0; hw_err < HARDWARE_ERROR_MAX; hw_err++) {
+		if (master_ctl & GEN12_ERROR_IRQ(hw_err))
+			gen12_hw_error_source_handler(i915, hw_err);
+	}
+}
+
 static u32
 gen11_gu_misc_irq_ack(struct drm_i915_private *i915, const u32 master_ctl)
 {
@@ -2908,6 +3026,8 @@ static irqreturn_t dg1_irq_handler(int irq, void *arg)
 	}
 
 	gen11_gt_irq_handler(gt, master_ctl);
+
+	gen12_hw_error_irq_handler(i915, master_ctl);
 
 	if (master_ctl & GEN11_DISPLAY_IRQ)
 		gen11_display_irq_handler(i915);

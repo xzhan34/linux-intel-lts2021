@@ -5674,6 +5674,10 @@
 #define  GEN11_MASTER_IRQ		(1 << 31)
 #define  GEN11_PCU_IRQ			(1 << 30)
 #define  GEN11_GU_MISC_IRQ		(1 << 29)
+#define  GEN12_FATAL_ERROR_IRQ		(1 << 28)
+#define  GEN12_NON_FATAL_ERROR_IRQ	(1 << 27)
+#define  GEN12_CORRECTABLE_ERROR_IRQ	(1 << 26)
+#define  GEN12_ERROR_IRQ(x)		(1 << (26 + (x)))
 #define  GEN11_DISPLAY_IRQ		(1 << 16)
 #define  GEN11_GT_DW_IRQ(x)		(1 << (x))
 #define  GEN11_GT_DW1_IRQ		(1 << 1)
@@ -5768,6 +5772,30 @@
 
 #define GEN12_DCPR_STATUS_1				_MMIO(0x46440)
 #define  XELPDP_PMDEMAND_INFLIGHT_STATUS		REG_BIT(26)
+
+enum hardware_error {
+	HARDWARE_ERROR_CORRECTABLE = 0,
+	HARDWARE_ERROR_NONFATAL = 1,
+	HARDWARE_ERROR_FATAL = 2,
+	HARDWARE_ERROR_MAX,
+};
+
+#define _DEV_ERR_STAT_FATAL		0x100174
+#define _DEV_ERR_STAT_NONFATAL		0x100178
+#define _DEV_ERR_STAT_CORRECTABLE	0x10017c
+#define DEV_ERR_STAT_REG(x)		_MMIO(_PICK_EVEN((x), \
+						_DEV_ERR_STAT_CORRECTABLE, \
+						_DEV_ERR_STAT_NONFATAL))
+#define  DEV_ERR_STAT_GT_ERROR		(1 << 0)
+
+#define _ERR_STAT_GT_COR		0x100160
+#define _ERR_STAT_GT_NONFATAL		0x100164
+#define _ERR_STAT_GT_FATAL		0x100168
+#define ERR_STAT_GT_REG(x)		_MMIO(_PICK_EVEN((x), \
+						_ERR_STAT_GT_COR, \
+						_ERR_STAT_GT_NONFATAL))
+#define  EU_GRF_ERROR			(1 << 15)
+#define  EU_IC_ERROR			(1 << 14)
 
 #define ILK_DISPLAY_CHICKEN2	_MMIO(0x42004)
 /* Required on all Ironlake and Sandybridge according to the B-Spec. */
