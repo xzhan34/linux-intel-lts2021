@@ -33,6 +33,7 @@ static int shmem_get_pages(struct drm_i915_gem_object *obj)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct intel_memory_region *mem = obj->mm.region;
+	resource_size_t size = obj->base.size;
 	struct address_space *mapping;
 	struct sg_table *st;
 	struct scatterlist *sg;
@@ -193,6 +194,8 @@ rebuild_st:
 
 	__i915_gem_object_set_pages(obj, st, sg_page_sizes);
 
+	mem->avail -= size;
+
 	return 0;
 
 err_sg:
@@ -319,6 +322,8 @@ __i915_gem_object_release_shmem(struct drm_i915_gem_object *obj,
 
 void i915_gem_object_put_pages_shmem(struct drm_i915_gem_object *obj, struct sg_table *pages)
 {
+	struct intel_memory_region *mem = obj->mm.region;
+	resource_size_t size = obj->base.size;
 	struct sgt_iter sgt_iter;
 	struct pagevec pvec;
 	struct page *page;
@@ -347,6 +352,8 @@ void i915_gem_object_put_pages_shmem(struct drm_i915_gem_object *obj, struct sg_
 	if (pagevec_count(&pvec))
 		check_release_pagevec(&pvec);
 	obj->mm.dirty = false;
+
+	mem->avail += size;
 
 	sg_free_table(pages);
 	kfree(pages);
