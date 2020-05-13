@@ -12,6 +12,7 @@
 
 #include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_lmem.h"
+#include "gem/i915_gem_region.h"
 #include "gem/i915_gem_vm_bind.h" /* XXX */
 
 #include "i915_trace.h"
@@ -36,7 +37,7 @@ struct drm_i915_gem_object *alloc_pt_lmem(struct i915_address_space *vm, int sz)
 {
 	struct drm_i915_gem_object *obj;
 
-	obj = i915_gem_object_create_lmem(vm->i915, sz,
+	obj = intel_gt_object_create_lmem(vm->gt, sz,
 					  I915_BO_ALLOC_IGNORE_MIN_PAGE_SIZE);
 	/*
 	 * Ensure all paging structures for this vm share the same dma-resv
