@@ -7,6 +7,7 @@
 #include <linux/delay.h>
 
 #include "csr.h"
+#include "fw.h"
 #include "iaf_drv.h"
 #include "io.h"
 #include "mbdb.h"
@@ -71,6 +72,10 @@ mbdb_op_build_cw_and_acquire_ibox_set_hdlr(struct fsubdev *sd, const u8 op_code,
 {
 	bool posted = FIELD_GET(OP_CODE_POSTED, flags);
 	struct mbdb_ibox *ibox;
+
+	if (FIELD_GET(OP_CODE_CHECK_IS_VALID, flags))
+		if (!is_opcode_valid(sd, op_code))
+			return ERR_PTR(-EPERM);
 
 	ibox = mbdb_ibox_acquire(sd, op_code, response, rsp_len, posted, op_rsp_handler);
 	if (IS_ERR(ibox)) {
@@ -482,6 +487,69 @@ static void ops_serdes_eqinfo_rsp_handler(struct mbdb_ibox *ibox)
 		sd_err(mbdb_ibox_sd(ibox), "mbdb inbox rsp_len mismatch: cw 0x%016llx actual %u expected %u\n",
 		       ibox->cw, rsp_len, ibox->rsp_len);
 	}
+}
+
+int ops_linkmgr_trace_mask_set(struct fsubdev *sd, u64 mask)
+{
+	const u8 op_code = MBOX_OP_CODE_LINK_MGR_TRACE_MASK_SET;
+	struct mbdb_ibox *ibox;
+	struct mbdb_linkmgr_trace_mask_set_req {
+		u64 mask;
+	} __packed req;
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), NULL, 0, &cw,
+						 NON_POSTED_CHECK_OP);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.mask = mask;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_linkmgr_trace_mask_get(struct fsubdev *sd, u64 *mask)
+{
+	const u8 op_code = MBOX_OP_CODE_LINK_MGR_TRACE_MASK_GET;
+	struct mbdb_ibox *ibox;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, 0, mask, sizeof(*mask), &cw,
+						 NON_POSTED_CHECK_OP);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	return ops_execute(sd, &cw, 0, NULL, ibox);
+}
+
+int ops_linkmgr_trace_dump(struct fsubdev *sd, u32 cnt, bool first,
+			   struct mbdb_op_linkmgr_trace_dump_rsp *rsp)
+{
+	const u8 op_code = MBOX_OP_CODE_LINK_MGR_TRACE_DUMP;
+	struct mbdb_ibox *ibox;
+	struct mbdb_linkmgr_trace_dump_req {
+		u32 cnt;
+		u32 first;
+	} __packed req;
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), rsp, sizeof(*rsp), &cw,
+						 NON_POSTED_CHECK_OP);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.cnt = cnt;
+	req.first = first;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
 }
 
 int ops_serdes_eqinfo_get(struct fsubdev *sd, u32 port, struct mbdb_serdes_eq_info_get_rsp *rsp)
@@ -919,6 +987,13 @@ int ops_qsfpmgr_fault_trap_ack(struct fsubdev *sd, bool posted)
 	struct mbdb_ibox *ibox;
 	u64 cw;
 
+	/*
+	 * This opcode is optional and may not be supported in firmware.
+	 * Return EIO so the caller logs a message indicating we cannot issue the ack opcode.
+	 */
+	if (!test_bit(op_code, sd->fw_version.supported_opcodes))
+		return -EIO;
+
 	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, 0, NULL, 0, &cw,
 						 POSTED_CHECK_OP(posted));
 	if (IS_ERR(ibox))
@@ -1194,6 +1269,21 @@ int ops_csr_raw_read_nolock(struct fsubdev *sd, u32 addr, size_t read_len, void 
 int ops_csr_raw_read(struct fsubdev *sd, u32 addr, size_t read_len, void *data)
 {
 	return ops_csr_raw_read_exec(sd, addr, read_len, data, LOCK);
+}
+
+int ops_fw_version(struct fsubdev *sd,
+		   struct mbdb_op_fw_version_rsp *fw_version)
+{
+	const u8 op_code = MBOX_OP_CODE_FW_VERSION;
+	struct mbdb_ibox *ibox;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, 0, fw_version, sizeof(*fw_version),
+						 &cw, NON_POSTED);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	return ops_execute(sd, &cw, 0, NULL, ibox);
 }
 
 int ops_mem_posted_wr(struct fsubdev *sd, u32 addr, const u8 *data, u32 len)

@@ -1588,22 +1588,28 @@ void create_fabric_port_debugfs_files(struct fsubdev *sd, struct fport *port)
 	debugfs_create_file(LCB_COUNTERS_FILE_NAME, 0400, sd->debugfs_port_dir, port,
 			    &lcb_counters_fops);
 
-	debugfs_create_file(SERDES_HISTOGRAM_FILE_NAME, 0400, sd->debugfs_port_dir, port,
-			    &serdes_histogram_fops);
+	if (test_bit(MBOX_OP_CODE_SERDES_HISTOGRAM_GET, port->sd->fw_version.supported_opcodes))
+		debugfs_create_file(SERDES_HISTOGRAM_FILE_NAME, 0400, sd->debugfs_port_dir, port,
+				    &serdes_histogram_fops);
 
-	debugfs_create_file(SERDES_EQINFO_FILE_NAME, 0400, sd->debugfs_port_dir, port,
-			    &serdes_eqinfo_fops);
+	if (test_bit(MBOX_OP_CODE_SERDES_EQINFO_GET, port->sd->fw_version.supported_opcodes))
+		debugfs_create_file(SERDES_EQINFO_FILE_NAME, 0400, sd->debugfs_port_dir, port,
+				    &serdes_eqinfo_fops);
 
-	debugfs_create_file(SERDES_CHANNEL_ESTIMATION_FILE_NAME, 0400, sd->debugfs_port_dir,
-			    port, &serdes_channel_estimation_fops);
+	if (test_bit(MBOX_OP_CODE_SERDES_CHEST_GET, port->sd->fw_version.supported_opcodes))
+		debugfs_create_file(SERDES_CHANNEL_ESTIMATION_FILE_NAME, 0400, sd->debugfs_port_dir,
+				    port, &serdes_channel_estimation_fops);
 
 	debugfs_create_file(REMOTE_TX_LANES_FILE_NAME, 0400, sd->debugfs_port_dir, port,
 			    &remote_lanes_fops);
 
 	enable_nodes_init(sd, port);
-	tx_tuning_nodes_init(port, sd->debugfs_port_dir);
 
-	tx_dcc_margin_nodes_init(port, sd->debugfs_port_dir);
+	if (test_bit(MBOX_OP_CODE_VARIABLE_TABLE_READ, port->sd->fw_version.supported_opcodes))
+		tx_tuning_nodes_init(port, sd->debugfs_port_dir);
+
+	if (test_bit(MBOX_OP_CODE_SERDES_TX_DCC_MARGIN, port->sd->fw_version.supported_opcodes))
+		tx_dcc_margin_nodes_init(port, sd->debugfs_port_dir);
 }
 
 /*

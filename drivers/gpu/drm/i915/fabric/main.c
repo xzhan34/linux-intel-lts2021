@@ -24,6 +24,8 @@
 
 #include "csr.h"
 #include "debugfs.h"
+#include "dev_diag.h"
+#include "fw.h"
 #include "iaf_drv.h"
 #include "mbdb.h"
 #include "mei_iaf_user.h"
@@ -415,15 +417,6 @@ static const struct iaf_ops iaf_ops = {
 	.parent_event = handle_parent_event,
 };
 
-static void create_sd_debugfs_dir(struct fsubdev *sd)
-{
-	/*
-	 * currently works in all startup modes, could be conditioned here by
-	 * setting sd->debugfs_dir = ERR_PTR(-ENODEV) instead
-	 */
-	sd->debugfs_dir = debugfs_create_dir(sd->name, sd->fdev->dir_node);
-}
-
 static int validate_product(struct fsubdev *sd)
 {
 	if (dev_is_startup_debug(sd->fdev))
@@ -497,6 +490,8 @@ static int add_subdevice(struct fsubdev *sd, struct fdev *dev, int index)
 		return err;
 	}
 
+	sd->fw_running = false;
+
 	mutex_init(&sd->pm_work_lock);
 	sd->ok_to_schedule_pm_work = false;
 
@@ -516,9 +511,11 @@ static int add_subdevice(struct fsubdev *sd, struct fdev *dev, int index)
 		return err;
 	}
 
-	create_sd_debugfs_dir(sd);
+	mutex_init(&sd->cport_init_ctrl_reg_lock);
 
-	err = create_mbdb(sd, sd->debugfs_dir);
+	create_dev_debugfs_dir(sd);
+
+	err = create_mbdb(sd);
 
 	if (err) {
 		sd_err(sd, "Message Box allocation failure\n");
@@ -538,6 +535,7 @@ static void remove_subdevice(struct fsubdev *sd)
 {
 	destroy_fports(sd);
 	destroy_mbdb(sd);
+	mutex_destroy(&sd->cport_init_ctrl_reg_lock);
 	free_irq(sd->irq, sd);
 	iounmap(sd->csr_base);
 	sd_dbg(sd, "Removed IAF resource: %p\n", sd->csr_base);
@@ -603,6 +601,12 @@ static int iaf_remove(struct platform_device *pdev)
 	 */
 	iaf_mei_stop(dev);
 
+	/*
+	 * NOTE: any remove steps performed prior to this flush will race
+	 *       with the asynchronous device initialization
+	 */
+	flush_any_outstanding_fw_initializations(dev);
+
 	remove_debugfs(dev);
 
 	iaf_sysfs_remove(dev);
@@ -621,6 +625,12 @@ static int iaf_remove(struct platform_device *pdev)
 	WARN(kref_read(&dev->refs), "fabric_id 0x%08x has %u references",
 	     dev->fabric_id, kref_read(&dev->refs));
 
+	kfree(dev->psc.brand);
+	kfree(dev->psc.product);
+	for (i = 0; i < pd->sd_cnt; i++)
+		if (!dev->psc.ini_buf[i].do_not_free)
+			kfree(dev->psc.ini_buf[i].data);
+	kfree(dev->psc.presence_rules);
 	kfree(dev);
 #if !IS_ENABLED(CONFIG_AUXILIARY_BUS)
 	return 0;
@@ -630,6 +640,56 @@ static int iaf_remove(struct platform_device *pdev)
 static u32 dev_fabric_id(struct iaf_pdata *pd)
 {
 	return pd->product << PRODUCT_SHIFT | pd->index;
+}
+
+/**
+ * iaf_complete_init_dev - Complete initialization for a device
+ * @dev: the device to operate on
+ *
+ * called by load_and_init_subdev [fw.c] after last sd initialized
+ * - set up sysfs
+ * - indicate that all sd's for this device have been initialized
+ * - commit software version number for anti-rollback
+ */
+void iaf_complete_init_dev(struct fdev *dev)
+{
+	/*
+	 * currently works in all startup modes, could be conditioned here by
+	 * skipping this call
+	 */
+	iaf_sysfs_init(dev);
+
+	/*
+	 * when appropriate, indicate that all sd's for this device have been
+	 * fully initialized
+	 */
+	if (!dev_is_runtime_debug(dev))
+		/* checked by netlink agent to reject early requests */
+		smp_store_release(&dev->all_sds_inited, true);
+
+	/*
+	 * Poke the MEI submodule to indicate that the device is functioning properly. If enabled
+	 * and currently allowed, automatic anti-rollback protection will be initiated.
+	 */
+	iaf_mei_indicate_device_ok(dev);
+
+	dev_dbg(fdev_dev(dev), "device init complete\n");
+}
+
+static void read_gpio_link_config_pins(struct fdev *dev)
+{
+	u64 gpio_ctrl;
+
+	if (unlikely(READ_ONCE(dev->dev_disabled)))
+		return;
+
+	gpio_ctrl = readq(dev->sd[0].csr_base + CSR_GPIO_CTRL);
+
+	dev->link_config = FIELD_GET(GPIO_CTRL_PIN_LINK_CONFIG, gpio_ctrl);
+
+	if (FIELD_GET(GPIO_CTRL_OE_LINK_CONFIG, gpio_ctrl))
+		dev_warn(fdev_dev(dev), "Link config pins are configured as outputs: %02llx\n",
+			 FIELD_GET(GPIO_CTRL_OE_LINK_CONFIG, gpio_ctrl));
 }
 
 #if IS_ENABLED(CONFIG_AUXILIARY_BUS)
@@ -747,7 +807,20 @@ static int iaf_probe(struct platform_device *pdev)
 		goto add_error;
 	}
 
+	/* read link config before initializing FW since it may also use GPIO */
+	read_gpio_link_config_pins(dev);
+
+	fw_init_dev(dev);
+
+	err = load_and_init_fw(dev);
+	if (err)
+		goto load_error;
+
 	return 0;
+
+load_error:
+	flush_any_outstanding_fw_initializations(dev);
+	iaf_mei_stop(dev);
 
 add_error:
 	iaf_sysfs_remove(dev);
@@ -790,9 +863,27 @@ static struct platform_driver iaf_driver = {
 };
 #endif
 
+/*
+ * If the driver is waiting for the SPI driver to become available,
+ * (to get PSCBIN information from the IFWI, short circuit the wait
+ * time so unload can complete without waiting for the timeout.
+ */
+static void fw_abort(void)
+{
+	struct fdev *dev;
+	unsigned long i;
+
+	xa_lock(&intel_fdevs);
+	xa_for_each(&intel_fdevs, i, dev)
+		complete_all(&dev->psc.abort);
+	xa_unlock(&intel_fdevs);
+}
+
 static void __exit iaf_unload_module(void)
 {
 	pr_notice("Unloading %s\n", MODULEDETAILS);
+
+	fw_abort();
 
 	flush_workqueue(iaf_unbound_wq);
 
@@ -828,6 +919,7 @@ static int __init iaf_load_module(void)
 	create_debugfs_root_nodes();
 
 	mbdb_init_module();
+	fw_init_module();
 
 #if IS_ENABLED(CONFIG_AUXILIARY_BUS)
 	err = auxiliary_driver_register(&iaf_driver);
@@ -856,3 +948,6 @@ MODULE_ALIAS("auxiliary:i915.iaf");
 #else
 MODULE_ALIAS("platform:iaf");
 #endif
+MODULE_FIRMWARE("i915/pvc_iaf_ver1.bin");
+MODULE_FIRMWARE("i915/pvc_iaf_ver1e.bin");
+MODULE_FIRMWARE("i915/default_iaf.pscbin");

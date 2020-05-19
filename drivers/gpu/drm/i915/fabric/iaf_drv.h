@@ -11,8 +11,9 @@
 #else
 #include <linux/platform_device.h>
 #endif
-#include <linux/debugfs.h>
 #include <linux/irqreturn.h>
+#include <linux/mtd/mtd.h>
+#include <linux/semaphore.h>
 #include <linux/slab.h>
 #include <linux/timer.h>
 #include <linux/kref.h>
@@ -22,10 +23,14 @@
 
 #include "csr.h"
 
+#include "statedump.h"
+
 #define DRIVER_NAME "iaf"
 
 #undef pr_fmt
 #define pr_fmt(fmt) DRIVER_NAME ": " fmt
+
+#define MAILBOX_OPCODE_COUNT 256
 
 /*
  * The maximum number of tiles for the PVC product type.
@@ -34,6 +39,11 @@
  * a product type table.
  */
 #define IAF_MAX_SUB_DEVS 2
+
+/*
+ * The maximum characters kept from the PSCBIN "version" information
+ */
+#define MAX_PSCBIN_VERSION 64
 
 #define PORT_COUNT            13
 #define PORT_FABRIC_COUNT      8
@@ -205,6 +215,20 @@
 			dev_dbg(fport_dev(_p), SD_PORT_FMT _fmt, \
 				sd_index(_p->sd), _p->lpn, ##__VA_ARGS__); \
 		} while (0)
+
+/**
+ * struct mbdb_op_fw_version_rsp - currently loaded firmware information
+ * @mbox_version: this version will be 0
+ * @environment: 0 = bootloader, 1 = run-time firmware
+ * @fw_version_string: ASCII-NUL terminated version string. e.g "w.x.y.z" 255.255.255.255
+ * @supported_opcodes: bit mask of opcodes that the environment supports as requests from the host
+ */
+struct mbdb_op_fw_version_rsp {
+	u8 mbox_version;
+	u8 environment;
+	u8 fw_version_string[22];
+	DECLARE_BITMAP(supported_opcodes, MAILBOX_OPCODE_COUNT);
+} __packed;
 
 /**
  * struct mbdb_op_switchinfo - Per-IAF subdevice information
@@ -661,20 +685,6 @@ struct fport_status {
 	DECLARE_BITMAP(errors, NUM_FPORT_ERRORS);
 };
 
-struct state_dump {
-	struct debugfs_blob_wrapper blob;
-	/*
-	 * Blocks so only one process can state dump across open/read/release
-	 * of the debugfs node
-	 */
-	struct semaphore state_dump_sem;
-	/*
-	 * Stops all new mailbox traffic and waits until all ops in the device
-	 * have finished
-	 */
-	struct rw_semaphore state_dump_mbdb_sem;
-};
-
 /**
  * struct fsubdev - Per-subdevice state
  * @fdev: link to containing device
@@ -683,13 +693,17 @@ struct state_dump {
  * @irq: assigned interrupt
  * @name: small string to describe SD
  * @asic_rev_info: raw contents of the asic rev info register
+ * @fw_work: workitem for firmware programming
  * @pm_work: workitem for port management
  * @ue_work: workitem for uevent processing
  * @rescan_work: workitem to signal PM thread if ports need rescanning
  * @debugfs_dir: sd-level debugfs dentry
  * @debugfs_port_dir: debugfs_dir/port-level debugfs dentry
  * @kobj: kobject for this sd in the sysfs tree
+ * @fw_comm_errors: attribute for fw_comm_errors sysfs file
+ * @fw_error: attribute for fw_error sysfs file
  * @sd_failure: attribute for sd_failure sysfs file
+ * @firmware_version: attribute for firmware_version sysfs file
  * @guid: GUID retrieved from firmware
  * @switchinfo: switch information read directly from firmware
  * @extended_port_cnt: count of all ports including CPORT and bridge ports
@@ -697,6 +711,8 @@ struct state_dump {
  * @PORT_COUNT: number of supported fabric ports
  * @fport_lpns: bitmap of which logical ports are fabric ports
  * @bport_lpns: bitmap of which logical ports are bridge ports
+ * @fw_version: version information of firmware
+ * @fw_running: whether runtime firmware is initialized/running
  * @errors: bitmap of active error states
  * @pm_work_lock: protects ok_to_schedule_pm_work
  * @ok_to_schedule_pm_work: indicates it is OK to request port management
@@ -713,6 +729,7 @@ struct state_dump {
  * @lqi_trap_count: number of link quality issue trap notifications reported
  * @qsfp_fault_trap_count: number of qsfp faulted trap notifications reported
  * @qsfp_present_trap_count: number of qsfp present trap notifications reported
+ * @cport_init_ctrl_reg_lock: controls access to the cport_init_ctrl_reg
  * @statedump: state dump data information
  *
  * Used throughout the driver to maintain information about a given subdevice.
@@ -733,6 +750,7 @@ struct fsubdev {
 	u64 asic_rev_info;
 
 	/* work items for thread synchronization */
+	struct work_struct fw_work;
 	struct work_struct pm_work;
 	struct delayed_work ue_work;
 	struct work_struct rescan_work;
@@ -741,7 +759,10 @@ struct fsubdev {
 	struct dentry *debugfs_dir;
 	struct dentry *debugfs_port_dir;
 	struct kobject *kobj;
+	struct device_attribute fw_comm_errors;
+	struct device_attribute fw_error;
 	struct device_attribute sd_failure;
+	struct device_attribute firmware_version;
 
 	u64 guid;
 	struct mbdb_op_switchinfo switchinfo;
@@ -749,6 +770,10 @@ struct fsubdev {
 	u8 port_cnt;
 	DECLARE_BITMAP(fport_lpns, PORT_COUNT);
 	DECLARE_BITMAP(bport_lpns, PORT_COUNT);
+	struct mbdb_op_fw_version_rsp fw_version;
+
+	/* essentially const after async probe (RISC RESET invalidates driver state anyway) */
+	bool fw_running;
 
 	/* atomic, never cleared after sync probe */
 	DECLARE_BITMAP(errors, NUM_SD_ERRORS);
@@ -786,6 +811,9 @@ struct fsubdev {
 	atomic64_t lqi_trap_count;
 	atomic64_t qsfp_fault_trap_count;
 	atomic64_t qsfp_present_trap_count;
+
+	/* protects cport_init_ctrl_reg */
+	struct mutex cport_init_ctrl_reg_lock;
 
 	/* protections are documented in &struct statedump */
 	struct state_dump statedump;
@@ -881,6 +909,8 @@ struct psc_presence_rule {
  * struct fdev - Device structure for IAF/fabric device component
  * @sd: subdevice structures
  * @dev_disabled: On a PCIe error, disable access to the PCI bus
+ * @fwinit_refcnt: number of subdevices needing firmware initialization
+ * @all_sds_inited: indicates all subdevices have been initialized
  * @pdev: bus device passed in probe
  * @pd: platform specific data
  * @fabric_id: xarray index based on parent index and product type
@@ -890,12 +920,32 @@ struct psc_presence_rule {
  * @mappings_ref.remove_in_progress: indicate unmap should show completion
  * @mappings_ref.complete: completion after all buffers are unmapped
  * @mappings_ref: Reference count of parent mapped buffers
+ * @fw: used for interacting with FW API
  * @mei_ops_lock: mutex lock for mei_ops/dev/bind_continuation/work
  * @mei_ops: bound MEI operation functions (if not NULL)
  * @mei_dev: device to use with @mei_ops
  * @mei_bind_continuation: set when unbound @mei_ops needed, called by bind
  * @mei_continuation_timer: used to timeout receipt of MEI bind continuation
  * @mei_work: work struct for MEI completion
+ * @psc.work: work struct for PSC processing
+ * @psc.done: signals that PSC processing is done
+ * @psc.abort: indicates whether to stop waiting for PSC availability
+ * @psc.err: indicates whether PSC processing encountered an error
+ * @psc.data: PSC data, from flash or FW API
+ * @psc.size: size of PSC data, from flash or FW API
+ * @psc.as_fw: used to access PSC override via FW API
+ * @psc.mtd: used to access PSC data from NVMEM via MTD API
+ * @psc.brand: copied, NUL-terminated brand string extracted from PSC data
+ * @psc.product: copied, NUL-terminated product string extracted from PSC data
+ * @psc.version: copied, NUL-terminated version string constructed from PSC data
+ * @psc.ini_buf: buffers for extracting ini_bin data from NVMEM
+ * @psc.ini_buf.data: copied PSC data of @psc.ini_buf
+ * @psc.ini_buf.idx: PSC data indices of @psc.ini_buf to identify buffers for reuse
+ * @psc.ini_buf.size: PSC data size of @psc.ini_buf to identify buffers for reuse
+ * @psc.ini_buf.do_not_free: @psc.ini_buf.data refers to another buffer that will be freed
+ * @psc.n_presence_rules: number of presence rules for this device in PSC data
+ * @psc.presence_rules: copied presence rules for this device, extracted from PSC data
+ * @psc: PSC processing info
  * @dir_node: debugfs directory node for this device
  * @fabric_node: debugfs file fabric symbolic link
  * @dpa_node: debugfs file dpa symbolic link
@@ -908,6 +958,8 @@ struct psc_presence_rule {
 struct fdev {
 	struct fsubdev sd[IAF_MAX_SUB_DEVS];
 	bool dev_disabled;
+	atomic_t fwinit_refcnt;
+	bool all_sds_inited;
 #if IS_ENABLED(CONFIG_AUXILIARY_BUS)
 	struct auxiliary_device *pdev;
 #else
@@ -925,6 +977,7 @@ struct fdev {
 		struct completion complete;
 	} mappings_ref;
 
+	const struct firmware *fw;
 	/* protects mei_ops/mei_dev/mei_bind_continuation */
 	struct mutex mei_ops_lock;
 	const struct i915_iaf_component_ops *mei_ops;
@@ -932,6 +985,27 @@ struct fdev {
 	void (*mei_bind_continuation)(struct fdev *dev);
 	struct timer_list mei_continuation_timer;
 	struct work_struct mei_work;
+	struct {
+		struct work_struct work;
+		struct completion done;
+		struct completion abort;
+		int err;
+		const u8 *data;
+		size_t size;
+		const struct firmware *as_fw;
+		struct mtd_info *mtd;
+		char *brand;
+		char *product;
+		char version[MAX_PSCBIN_VERSION];
+		struct {
+			const u8 *data;
+			u32 idx;
+			u32 size;
+			bool do_not_free;
+		} ini_buf[IAF_MAX_SUB_DEVS];
+		size_t n_presence_rules;
+		struct psc_presence_rule *presence_rules;
+	} psc;
 	struct dentry *dir_node;
 	struct dentry *fabric_node;
 	struct dentry *dpa_node;
@@ -939,6 +1013,8 @@ struct fdev {
 	struct completion fdev_released;
 	enum iaf_startup_mode startup_mode;
 };
+
+u64 bps_link_speed(u8 port_info_link_speed);
 
 void fdev_put(struct fdev *dev);
 void fdev_get_early(struct fdev *dev);
@@ -1069,6 +1145,8 @@ void indicate_subdevice_error(struct fsubdev *sd, enum sd_error err);
 /* The following two functions increase device reference count: */
 struct fdev *fdev_find_by_sd_guid(u64 guid);
 struct fsubdev *find_sd_id(u32 fabric_id, u8 sd_index);
+
+void iaf_complete_init_dev(struct fdev *dev);
 
 extern struct workqueue_struct *iaf_unbound_wq;
 

@@ -493,6 +493,20 @@ int ops_csr_raw_read_nolock(struct fsubdev *sd, u32 addr, size_t read_len, void 
 int ops_csr_raw_read(struct fsubdev *sd, u32 addr, size_t read_len, void *data)
 	__attribute__((nonnull(1, 4)));
 
+int ops_fw_version(struct fsubdev *sd,
+		   struct mbdb_op_fw_version_rsp *fw_version)
+	__attribute__((nonnull(1, 2)));
+
+int ops_linkmgr_trace_dump(struct fsubdev *sd, u32 cnt, bool begin,
+			   struct mbdb_op_linkmgr_trace_dump_rsp *rsp)
+	__attribute__((nonnull(1, 4)));
+
+int ops_linkmgr_trace_mask_get(struct fsubdev *sd, u64 *mask)
+	__attribute__((nonnull(1, 2)));
+
+int ops_linkmgr_trace_mask_set(struct fsubdev *sd, u64 mask)
+	__attribute__((nonnull(1)));
+
 int ops_mem_posted_wr(struct fsubdev *sd, u32 addr, const u8 *data, u32 len)
 	__attribute__((nonnull(1)));
 

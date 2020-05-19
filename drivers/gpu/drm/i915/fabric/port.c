@@ -9,6 +9,7 @@
 #include <linux/module.h>
 #include <linux/timekeeping.h>
 
+#include "fw.h"
 #include "port.h"
 #include "port_diag.h"
 #include "ops.h"
@@ -1426,8 +1427,8 @@ static void linkup_timer_expired(struct timer_list *timer)
  */
 static u32 ports_to_automatically_enable(struct fsubdev *sd)
 {
-	struct psc_presence_rule *rule = NULL;
-	size_t rule_count = 0;
+	struct psc_presence_rule *rule = sd->fdev->psc.presence_rules;
+	size_t rule_count = sd->fdev->psc.n_presence_rules;
 	u32 link_config = sd->fdev->link_config;
 	u32 port_enable_map;
 	size_t i;
@@ -1606,6 +1607,7 @@ init_failed:
 
 void destroy_fports(struct fsubdev *sd)
 {
+	struct mbdb_op_fw_version_rsp *fw_version = &sd->fw_version;
 	bool pm_wq_was_active;
 	struct fport *p;
 	u8 lpn;
@@ -1630,6 +1632,16 @@ void destroy_fports(struct fsubdev *sd)
 		cancel_work_sync(&sd->pm_work);
 	}
 	/* else INIT_WORK calls were not completed */
+
+	if (sd->fw_running) {
+		/* ignore MBDB errors here */
+		ops_linkmgr_port_lqi_trap_ena_set(sd, false, true);
+		ops_linkmgr_port_lwd_trap_ena_set(sd, false, true);
+		ops_linkmgr_psc_trap_ena_set(sd, false, true);
+	}
+
+	if (param_reset && (fw_version->environment & FW_VERSION_INIT_BIT))
+		ops_reset(sd, true);
 
 	for_each_fabric_port(p, lpn, sd)
 		if (p->state == PM_PORT_STATE_ISOLATED)

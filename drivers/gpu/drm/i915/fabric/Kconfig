@@ -17,6 +17,23 @@ config IAF_DEBUG_ENABLE
 	help
 	  Support Intel Accelerator Fabric debug Kconfig options
 
+config IAF_DEBUG_ALTERNATE_FW_LOAD
+	bool "Enable Intel Accelerator Fabric load of alternative FW images"
+	depends on IAF_DEBUG_ENABLE
+	default y
+	help
+	  Allow fw_image to specify alternate firmware and psc_file_override
+	  to load PSC binaries using the FW API instead of SPI flash
+
+config IAF_DEBUG_FIRMWARE_ROPTION
+	bool "Enable Intel Accelerator Fabric firmware roptions"
+	depends on IAF_DEBUG_ENABLE
+	default y
+	help
+	  DO NOT UPSTREAM:
+	  Allow firmware_roption to specify the value of the firmware roption
+	  debug register
+
 config IAF_DEBUG_STARTUP
 	bool "Enable Intel Accelerator Fabric debug startup mode"
 	depends on IAF_DEBUG_ENABLE
