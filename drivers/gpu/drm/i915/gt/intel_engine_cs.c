@@ -508,6 +508,11 @@ static int intel_engine_setup(struct intel_gt *gt, enum intel_engine_id id,
 	engine->props.timeslice_duration_ms =
 		CONFIG_DRM_I915_TIMESLICE_DURATION;
 
+	/* FIXME: Balancer IGT test starts to fail below 5ms timeslice */
+	if (intel_guc_submission_is_wanted(&gt->uc.guc) &&
+	    (engine->props.timeslice_duration_ms < 5))
+		engine->props.timeslice_duration_ms = 5;
+
 	/*
 	 * Mid-thread pre-emption is not available in Gen12. Unfortunately,
 	 * some compute workloads run quite long threads. That means they get
