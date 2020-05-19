@@ -25,6 +25,14 @@ config IAF_DEBUG_ALTERNATE_FW_LOAD
 	  Allow fw_image to specify alternate firmware and psc_file_override
 	  to load PSC binaries using the FW API instead of SPI flash
 
+config IAF_DEBUG_SELFTESTS
+	bool "Enable Intel Accelerator Fabric tests"
+	depends on IAF_DEBUG_ENABLE
+	default n
+	help
+	  Enable Intel Accelerator Fabric driver self-tests to be triggered
+	  by the 'selftests' module parameter
+
 config IAF_DEBUG_FIRMWARE_ROPTION
 	bool "Enable Intel Accelerator Fabric firmware roptions"
 	depends on IAF_DEBUG_ENABLE

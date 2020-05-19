@@ -35,6 +35,9 @@
 #include "routing_engine.h"
 #include "routing_event.h"
 #include "routing_p2p.h"
+#if IS_ENABLED(CONFIG_IAF_DEBUG_SELFTESTS)
+#include "selftests/selftest.h"
+#endif
 #include "sysfs.h"
 
 #define MODULEDETAILS "Intel Corp. Intel fabric Driver"
@@ -989,6 +992,13 @@ static int __init iaf_load_module(void)
 		return -ENOMEM;
 
 	create_debugfs_root_nodes();
+
+#if IS_ENABLED(CONFIG_IAF_DEBUG_SELFTESTS)
+	if (selftests_run()) {
+		err = -ENODEV;
+		goto exit;
+	}
+#endif
 
 	routing_init();
 	rem_init();

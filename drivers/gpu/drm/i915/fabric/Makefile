@@ -33,4 +33,10 @@ iaf-y := debugfs.o \
 
 iaf-$(CONFIG_IAF_DEBUG_MBOX_ACCESS) += mbox.o
 
+#export CONFIG_IAF_DEBUG_SELFTESTS=y
+subdir-ccflags-$(CONFIG_IAF_DEBUG_SELFTESTS) += -DCONFIG_IAF_DEBUG_SELFTESTS
+iaf-$(CONFIG_IAF_DEBUG_SELFTESTS) += selftests/selftest.o\
+				     selftests/routing_selftest.o\
+				     selftests/routing_mock.o\
+
 CFLAGS_trace.o = -I$(src)
