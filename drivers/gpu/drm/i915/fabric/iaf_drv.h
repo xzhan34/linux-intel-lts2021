@@ -11,12 +11,15 @@
 #else
 #include <linux/platform_device.h>
 #endif
+#include <linux/debugfs.h>
 #include <linux/irqreturn.h>
 #include <linux/slab.h>
 #include <linux/timer.h>
 #include <linux/kref.h>
 
 #include <drm/intel_iaf_platform.h>
+
+#include "csr.h"
 
 #define DRIVER_NAME "iaf"
 
@@ -30,6 +33,10 @@
  * a product type table.
  */
 #define IAF_MAX_SUB_DEVS 2
+
+#define PORT_COUNT            13
+#define PORT_FABRIC_COUNT      8
+#define PORT_PHYSICAL_START    1
 
 /*
  * Recognized discrete socket IDs
@@ -133,6 +140,8 @@
 				sd_index(_sd), ##__VA_ARGS__); \
 		} while (0)
 
+#define LANES 4
+
 enum iaf_startup_mode {
 	STARTUP_MODE_DEFAULT = 0,
 	STARTUP_MODE_PRELOAD = 1,
@@ -159,6 +168,20 @@ enum sd_error {
 	NUM_SD_ERRORS
 };
 
+struct state_dump {
+	struct debugfs_blob_wrapper blob;
+	/*
+	 * Blocks so only one process can state dump across open/read/release
+	 * of the debugfs node
+	 */
+	struct semaphore state_dump_sem;
+	/*
+	 * Stops all new mailbox traffic and waits until all ops in the device
+	 * have finished
+	 */
+	struct rw_semaphore state_dump_mbdb_sem;
+};
+
 /**
  * struct fsubdev - Per-subdevice state
  * @fdev: link to containing device
@@ -173,7 +196,9 @@ enum sd_error {
  * @guid: GUID retrieved from firmware
  * @switchinfo: switch information read directly from firmware
  * @port_cnt: count of all fabric ports
+ * @bport_lpns: bitmap of which logical ports are bridge ports
  * @errors: bitmap of active error states
+ * @statedump: state dump data information
  *
  * Used throughout the driver to maintain information about a given subdevice.
  *
@@ -199,9 +224,13 @@ struct fsubdev {
 
 	u64 guid;
 	u8 port_cnt;
+	DECLARE_BITMAP(bport_lpns, PORT_COUNT);
 
 	/* atomic, never cleared after sync probe */
 	DECLARE_BITMAP(errors, NUM_SD_ERRORS);
+
+	/* protections are documented in &struct statedump */
+	struct state_dump statedump;
 };
 
 /**

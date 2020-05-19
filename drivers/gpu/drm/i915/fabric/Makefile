@@ -4,13 +4,13 @@
 #
 # Intel Connectivity fabric driver
 #
-#
 
 obj-$(CONFIG_DRM_I915_INTEL_FABRIC) += iaf.o
 
 iaf-y := debugfs.o \
 	 main.o \
 	 mbdb.o \
+	 ops.o \
 	 sysfs.o \
 	 trace.o \
 

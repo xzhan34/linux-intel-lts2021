@@ -117,6 +117,87 @@ struct mbox_msg {
 	u64 param_area[MBOX_PARAM_AREA_IN_QWORDS];
 } __packed;
 
+#define LANE_DATA_ELEMENTS 128
+
+struct mbdb_serdes_eq_info {
+	u32 eq_p4_rev;
+	u32 eq_p4_time;
+	u32 rxd_txd_p4_rev;
+	u32 rxd_txd_p4_time;
+	u8 eq_compile_options;
+	u8 agc_mode;
+	u8 agc1_lms_mu;
+	u8 agc1_peak_ncyc_exp;
+	u8 agc2_lms_mu;
+	u8 agc2_peak_ncyc_exp;
+	u8 agc_lpf_mu;
+	u8 agc_targ;
+	u8 agc1_lms_en;
+	u8 agc1_lms_ld;
+	u8 agc2_lms_en;
+	u8 agc2_lms_ld;
+	u8 agc1_lms_ld_val;
+	u8 agc1_ctl;
+	u8 agc1_peak;
+	u8 agc1_ppeak;
+	u8 agc2_lms_ld_val;
+	u8 agc2_ctl[4];
+	u8 agc2_peak[4];
+	u8 agc2_ppeak[4];
+	u8 cdr_prop_mu;
+	u8 cdr_intg_mu;
+	u8 cdr_flt_mu;
+	u8 cdr_pherr_scale;
+	u8 cdr_ss_en;
+	u8 cdr_flt_en;
+	u8 cdr_intg_en;
+	u8 cdr_phase;
+	s8 cdr_intg;
+	s16 cdr_ph_err_flt;
+	u64 cntr_ilv_excl_msk;
+	s32 ppm;
+	u8 cntr_sh;
+	u8 hcntr[5];
+	s16 cntr_ch_est[5];
+	u8 ffe_lms_mu;
+	u8 ffe_lms_lk_mu_delta;
+	u8 ffe_lms_lk_en;
+	u8 dfe_lms_mu;
+	s16 eq_targ[4];
+	s16 dfe_nthr[2];
+	s16 dfe_zthr[2];
+	s16 dfe_pthr[2];
+	s16 hffe[30];
+	s16 reserved1[30];
+	s32 gf0;
+	s16 hdfe;
+	u8 nrz_slice_en;
+	u8 rmt_tx_lane;
+	u16 lms_sum_err;
+	u16 lms_sum_err_shf;
+	u8 tx_fir_eh[4];
+	u8 tx_fir_eh_m1;
+	u8 pll_lol_cnt;
+	u16 pmon_ulvt_freq;
+} __packed;
+
+struct mbdb_serdes_eq_info_get_rsp {
+	struct mbdb_serdes_eq_info eq_info[LANES];
+} __packed;
+
+struct mbdb_serdes_histogram_data {
+	u16 data[LANE_DATA_ELEMENTS];
+} __packed;
+
+struct mbdb_serdes_histogram_rsp {
+	struct mbdb_serdes_histogram_data lane[LANES];
+} __packed;
+
+struct mbdb_statedump_rsp {
+	u64 descs[MBOX_PARAM_AREA_IN_QWORDS];
+	u16 desc_count;
+} __packed;
+
 struct mbdb_op_ini_table_load_req {
 	u32 header1;
 	u32 header2;
@@ -206,6 +287,15 @@ struct mbdb_ibox *
 mbdb_op_build_cw_and_acquire_ibox(struct fsubdev *sd, const u8 op_code, size_t parm_len,
 				  void *response, u32 rsp_len, u64 *cw, unsigned long flags)
 	__attribute__((nonnull(1, 6)));
+
+int ops_serdes_eqinfo_get(struct fsubdev *sd, u32 port, struct mbdb_serdes_eq_info_get_rsp *rsp)
+		__attribute__((nonnull(1, 3)));
+
+int ops_serdes_histogram_get(struct fsubdev *sd, u32 port, struct mbdb_serdes_histogram_rsp *rsp)
+	__attribute__((nonnull(1, 3)));
+
+int ops_statedump(struct fsubdev *sd, u32 offset, struct mbdb_statedump_rsp *rsp)
+	__attribute__((nonnull(1, 3)));
 
 int ops_port_status_get(struct fsubdev *sd, u32 port, u8 num_csr_ranges,
 			const struct mbdb_op_csr_range *csr_ranges,

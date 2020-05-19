@@ -4,14 +4,12 @@
  *
  */
 
-#include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/semaphore.h>
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/slab.h>
 #include <linux/completion.h>
-#include <linux/fs.h>
 #include <linux/io.h>
 
 #include "iaf_drv.h"

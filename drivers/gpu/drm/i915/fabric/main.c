@@ -9,8 +9,6 @@
 #include <linux/platform_device.h>
 #endif
 #include <linux/bitfield.h>
-#include <linux/debugfs.h>
-#include <linux/fs.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/list.h>
