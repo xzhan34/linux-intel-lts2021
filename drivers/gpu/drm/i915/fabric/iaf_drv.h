@@ -165,6 +165,7 @@ enum sd_error {
  * @irq: assigned interrupt
  * @name: small string to describe SD
  * @asic_rev_info: raw contents of the asic rev info register
+ * @debugfs_dir: sd-level debugfs dentry
  * @kobj: kobject for this sd in the sysfs tree
  * @sd_failure: attribute for sd_failure sysfs file
  * @guid: GUID retrieved from firmware
@@ -188,6 +189,7 @@ struct fsubdev {
 	u64 asic_rev_info;
 
 	/* values const after async probe */
+	struct dentry *debugfs_dir;
 	struct kobject *kobj;
 	struct device_attribute sd_failure;
 
@@ -210,6 +212,9 @@ struct fsubdev {
  * @mappings_ref.remove_in_progress: indicate unmap should show completion
  * @mappings_ref.complete: completion after all buffers are unmapped
  * @mappings_ref: Reference count of parent mapped buffers
+ * @dir_node: debugfs directory node for this device
+ * @fabric_node: debugfs file fabric symbolic link
+ * @dpa_node: debugfs file dpa symbolic link
  * @refs: references on this instance
  * @fdev_released: signals fdev has been erased from the xarray
  * @startup_mode: startup mode
@@ -235,6 +240,9 @@ struct fdev {
 		struct completion complete;
 	} mappings_ref;
 
+	struct dentry *dir_node;
+	struct dentry *fabric_node;
+	struct dentry *dpa_node;
 	struct kref refs;
 	struct completion fdev_released;
 	enum iaf_startup_mode startup_mode;
@@ -315,6 +323,8 @@ static inline struct device *fdev_dev(const struct fdev *dev)
 {
 	return &dev->pdev->dev;
 }
+
+struct dentry *get_debugfs_root_node(void);
 
 /* The following two functions increase device reference count: */
 struct fdev *fdev_find_by_sd_guid(u64 guid);

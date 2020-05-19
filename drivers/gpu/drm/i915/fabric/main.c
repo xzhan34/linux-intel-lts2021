@@ -9,6 +9,8 @@
 #include <linux/platform_device.h>
 #endif
 #include <linux/bitfield.h>
+#include <linux/debugfs.h>
+#include <linux/fs.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/list.h>
@@ -16,12 +18,14 @@
 #include <linux/mutex.h>
 #include <linux/pm_runtime.h>
 #include <linux/rwsem.h>
+#include <linux/sizes.h>
 #include <linux/xarray.h>
 #include <generated/utsrelease.h>
 
 #include <drm/intel_iaf_platform.h>
 
 #include "csr.h"
+#include "debugfs.h"
 #include "iaf_drv.h"
 #include "sysfs.h"
 
@@ -79,7 +83,7 @@ static int mode_get(char *val, const struct kernel_param *kp)
 	return snprintf(val, PAGE_SIZE, startup_mode_name(param_startup_mode));
 }
 
-static struct kernel_param_ops startup_mode_ops = {
+static const struct kernel_param_ops startup_mode_ops = {
 	.set = mode_set,
 	.get = mode_get,
 };
@@ -100,6 +104,8 @@ MODULE_PARM_DESC(startup_mode,
 		 "\t\t - preload: Assume firmware/ini has already been loaded"
 		 );
 #endif
+
+#define ROOT_NODE DRIVER_NAME
 
 #define RELEASE_TIMEOUT (HZ * 60)
 
@@ -391,6 +397,15 @@ static const struct iaf_ops iaf_ops = {
 	.parent_event = handle_parent_event,
 };
 
+static void create_sd_debugfs_dir(struct fsubdev *sd)
+{
+	/*
+	 * currently works in all startup modes, could be conditioned here by
+	 * setting sd->debugfs_dir = ERR_PTR(-ENODEV) instead
+	 */
+	sd->debugfs_dir = debugfs_create_dir(sd->name, sd->fdev->dir_node);
+}
+
 static int validate_product(struct fsubdev *sd)
 {
 	if (dev_is_startup_debug(sd->fdev))
@@ -480,6 +495,8 @@ static int add_subdevice(struct fsubdev *sd, struct fdev *dev, int index)
 		return err;
 	}
 
+	create_sd_debugfs_dir(sd);
+
 	sd_dbg(sd, "Adding IAF subdevice: %d\n", index);
 
 	return 0;
@@ -544,6 +561,8 @@ static int iaf_remove(struct platform_device *pdev)
 	dev_dbg(&pdev->dev, "Removing %s\n", dev_name(&pdev->dev));
 
 	mappings_ref_wait(dev);
+
+	remove_debugfs(dev);
 
 	iaf_sysfs_remove(dev);
 
@@ -673,6 +692,8 @@ static int iaf_probe(struct platform_device *pdev)
 		goto sysfs_error;
 	}
 
+	init_debugfs(dev);
+
 	for (sds_added = 0; sds_added < pd->sd_cnt; ++sds_added) {
 		err = add_subdevice(&dev->sd[sds_added], dev, sds_added);
 		if (err)
@@ -689,6 +710,8 @@ add_error:
 	pd->unregister_dev(pd->parent, dev);
 
 sysfs_error:
+	remove_debugfs(dev);
+	dev->dir_node = NULL;
 	fdev_wait_on_release(dev);
 	pm_runtime_put(&pdev->dev);
 	pm_runtime_allow(&pdev->dev);
@@ -729,6 +752,9 @@ static void __exit iaf_unload_module(void)
 #else
 	platform_driver_unregister(&iaf_driver);
 #endif
+
+	remove_debugfs_root_nodes();
+
 	pr_notice("%s Unloaded\n", MODULEDETAILS);
 }
 module_exit(iaf_unload_module);
@@ -744,6 +770,8 @@ static int __init iaf_load_module(void)
 	pr_notice("Initializing %s\n", MODULEDETAILS);
 	pr_debug("Built for Linux Kernel %s\n", UTS_RELEASE);
 
+	create_debugfs_root_nodes();
+
 #if IS_ENABLED(CONFIG_AUXILIARY_BUS)
 	err = auxiliary_driver_register(&iaf_driver);
 	if (err)
@@ -753,6 +781,9 @@ static int __init iaf_load_module(void)
 	if (err)
 		pr_err("Cannot register with platform bus\n");
 #endif
+
+	if (err)
+		remove_debugfs_root_nodes();
 
 	return err;
 }

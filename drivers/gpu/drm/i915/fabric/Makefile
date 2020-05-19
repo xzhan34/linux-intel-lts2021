@@ -8,5 +8,6 @@
 
 obj-$(CONFIG_DRM_I915_INTEL_FABRIC) += iaf.o
 
-iaf-y := main.o \
+iaf-y := debugfs.o \
+         main.o \
 	 sysfs.o \
