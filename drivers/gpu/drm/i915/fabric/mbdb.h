@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * Copyright(c) 2019 - 2022 Intel Corporation.
+ * Copyright(c) 2019 - 2023 Intel Corporation.
  *
  */
 
@@ -12,7 +12,6 @@
 #include <linux/bitfield.h>
 
 #include "iaf_drv.h"
-#include "ops.h"
 
 #define MBOX_CW_OPCODE GENMASK_ULL(7, 0)
 #define MBOX_CW_IS_REQ BIT_ULL_MASK(8)
@@ -25,6 +24,34 @@
 #define MBOX_CW_SEQ_NO_MASK 0x3F
 
 #define CP_ADDR_MBDB_BASE 0x6000
+
+enum mbdb_msg_type {
+	MBOX_RESPONSE = 0,
+	MBOX_REQUEST  = 1
+};
+
+enum posted {
+	MBOX_RESPONSE_REQUESTED    = 0,
+	MBOX_NO_RESPONSE_REQUESTED = 1
+};
+
+struct mbdb_ibox;
+
+typedef void (*op_response_handler)(struct mbdb_ibox *ibox);
+
+struct mbdb_ibox {
+	struct list_head ibox_list_link;
+	struct mbdb *mbdb;
+	struct completion ibox_full;
+	u64 cw;
+	u32 tid;
+	u16 rsp_len;
+	void *response;
+	int rsp_status; /* MBDB_RSP_STATUS value from the cw or errno from a response handler */
+	op_response_handler op_rsp_handler;
+	u8 op_code;
+	u8 retries;
+};
 
 /* Outbox related */
 u8 mbdb_outbox_seqno(struct fsubdev *sd);

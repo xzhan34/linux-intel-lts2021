@@ -11,6 +11,8 @@ iaf-y := debugfs.o \
 	 main.o \
 	 mbdb.o \
 	 ops.o \
+	 port.o \
+	 port_diag.o \
 	 sysfs.o \
 	 trace.o \
 

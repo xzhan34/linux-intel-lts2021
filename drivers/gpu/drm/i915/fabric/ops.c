@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /*
- * Copyright(c) 2019 - 2022 Intel Corporation.
+ * Copyright(c) 2019 - 2023 Intel Corporation.
  *
  */
 
@@ -9,8 +9,8 @@
 #include "csr.h"
 #include "iaf_drv.h"
 #include "io.h"
-#include "ops.h"
 #include "mbdb.h"
+#include "ops.h"
 #include "trace.h"
 
 #define MAX_OP_RETRIES 16
@@ -20,12 +20,9 @@ enum lock_state {
 	NOLOCK,
 };
 
-void ops_default_rsp_handler_nowarn(struct mbdb_ibox *ibox)
+void ops_rsp_handler_relaxed(struct mbdb_ibox *ibox)
 {
 	u16 rsp_len = mbdb_mbox_params_len(ibox->cw);
-
-	if (unlikely(READ_ONCE(mbdb_ibox_sd(ibox)->fdev->dev_disabled)))
-		return;
 
 	if (unlikely(rsp_len != ibox->rsp_len))
 		/* Adjust response returned by firmware */
@@ -34,13 +31,15 @@ void ops_default_rsp_handler_nowarn(struct mbdb_ibox *ibox)
 	io_readq_aligned(mbdb_ibox_gp_inbox_param_addr(ibox), ibox->response, rsp_len);
 }
 
-void ops_default_rsp_handler(struct mbdb_ibox *ibox)
+void ops_rsp_handler_default(struct mbdb_ibox *ibox)
 {
-	if (unlikely(mbdb_mbox_params_len(ibox->cw) != ibox->rsp_len))
-		sd_warn(mbdb_ibox_sd(ibox), "mbdb inbox rsp_len mismatch: cw 0x%016llx actual %u expected %u\n",
-			ibox->cw, mbdb_mbox_params_len(ibox->cw), ibox->rsp_len);
-
-	ops_default_rsp_handler_nowarn(ibox);
+	if (unlikely(mbdb_mbox_params_len(ibox->cw) != ibox->rsp_len)) {
+		ibox->rsp_status = -EINVAL;
+		sd_err(mbdb_ibox_sd(ibox), "mbdb inbox rsp_len mismatch: cw 0x%016llx actual %u expected %u\n",
+		       ibox->cw, mbdb_mbox_params_len(ibox->cw), ibox->rsp_len);
+	} else {
+		ops_rsp_handler_relaxed(ibox);
+	}
 }
 
 /**
@@ -92,7 +91,397 @@ mbdb_op_build_cw_and_acquire_ibox(struct fsubdev *sd, const u8 op_code, size_t p
 				  void *response, u32 rsp_len, u64 *cw, unsigned long flags)
 {
 	return mbdb_op_build_cw_and_acquire_ibox_set_hdlr(sd, op_code, parm_len, response, rsp_len,
-							  cw, flags, ops_default_rsp_handler);
+							  cw, flags, ops_rsp_handler_default);
+}
+
+int ops_tx_dcc_interp_override_enable_set(struct fsubdev *sd, u32 port, u32 lane, u32 enable,
+					  bool posted)
+{
+	const u8 op_code = MBOX_OP_CODE_SERDES_TX_DCC_MARGIN;
+	struct mbdb_ibox *ibox;
+	struct dcc_interp_override_enable_set {
+		u32 sub_op;
+		u32 port;
+		u32 lane;
+		u32 enable;
+	} __packed req = {};
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), NULL, 0, &cw,
+						 POSTED_CHECK_OP(posted));
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.sub_op = SERDES_MARGIN_SUB_OP_CODE_TX_DCC_INTERP_OV_EN_SET;
+	req.port = port;
+	req.lane = lane;
+	req.enable = enable;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_tx_dcc_interp_override_enable_get(struct fsubdev *sd, u32 port, u32 lane,
+					  struct tx_dcc_interp_override_enable_get_rsp *rsp)
+{
+	const u8 op_code = MBOX_OP_CODE_SERDES_TX_DCC_MARGIN;
+	struct mbdb_ibox *ibox;
+	struct dcc_interp_override_enable_get {
+		u32 sub_op;
+		u32 port;
+		u32 lane;
+	} __packed req = {};
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), rsp, sizeof(*rsp), &cw,
+						 NON_POSTED_CHECK_OP);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.sub_op = SERDES_MARGIN_SUB_OP_CODE_TX_DCC_INTERP_OV_EN_GET;
+	req.port = port;
+	req.lane = lane;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_tx_dcc_interp_override_set(struct fsubdev *sd, u32 port, u32 lane, u32 value, bool posted)
+{
+	const u8 op_code = MBOX_OP_CODE_SERDES_TX_DCC_MARGIN;
+	struct mbdb_ibox *ibox;
+	struct dcc_interp_override_set {
+		u32 sub_op;
+		u32 port;
+		u32 lane;
+		u32 value;
+	} __packed req = {};
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), NULL, 0, &cw,
+						 POSTED_CHECK_OP(posted));
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.sub_op = SERDES_MARGIN_SUB_OP_CODE_TX_DCC_INTERP_OVVL_SET;
+	req.port = port;
+	req.lane = lane;
+	req.value = value;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_tx_dcc_interp_override_get(struct fsubdev *sd, u32 port, u32 lane,
+				   struct tx_dcc_interp_override_get_rsp *rsp)
+{
+	const u8 op_code = MBOX_OP_CODE_SERDES_TX_DCC_MARGIN;
+	struct mbdb_ibox *ibox;
+	struct dcc_interp_override_get {
+		u32 sub_op;
+		u32 port;
+		u32 lane;
+	} __packed req = {};
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), rsp, sizeof(*rsp), &cw,
+						 NON_POSTED_CHECK_OP);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.sub_op = SERDES_MARGIN_SUB_OP_CODE_TX_DCC_INTERP_OVVL_GET;
+	req.port = port;
+	req.lane = lane;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_maint_mode_set(struct fsubdev *sd, u32 port, u32 mode, bool posted)
+{
+	const u8 op_code = MBOX_OP_CODE_SERDES_TX_DCC_MARGIN;
+	struct mbdb_ibox *ibox;
+	struct maint_mode_set_req {
+		u32 sub_op;
+		u32 port;
+		u32 mode;
+	} __packed req = {};
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), NULL, 0, &cw,
+						 POSTED_CHECK_OP(posted));
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.sub_op = SERDES_MARGIN_SUB_OP_CODE_MAINT_MODE_SET;
+	req.port = port;
+	req.mode = mode;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_maint_mode_get(struct fsubdev *sd, u32 port, struct maint_mode_get_rsp *rsp)
+{
+	const u8 op_code = MBOX_OP_CODE_SERDES_TX_DCC_MARGIN;
+	struct mbdb_ibox *ibox;
+	struct maint_mode_get_req {
+		u32 sub_op;
+		u32 port;
+	} __packed req = {};
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), rsp, sizeof(*rsp), &cw,
+						 NON_POSTED_CHECK_OP);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.sub_op = SERDES_MARGIN_SUB_OP_CODE_MAINT_MODE_GET;
+	req.port = port;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_tx_dcc_index_set(struct fsubdev *sd, u32 port, u32 lane, u32 index, bool posted)
+{
+	const u8 op_code = MBOX_OP_CODE_SERDES_TX_DCC_MARGIN;
+	struct mbdb_ibox *ibox;
+	struct serdes_margin_param_set_req {
+		u32 sub_op;
+		u32 port;
+		u32 lane;
+		u32 index;
+	} __packed req = {};
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), NULL, 0, &cw,
+						 POSTED_CHECK_OP(posted));
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.sub_op = SERDES_MARGIN_SUB_OP_CODE_TX_DCC_INDEX_SET;
+	req.port = port;
+	req.lane = lane;
+	req.index = index;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_tx_dcc_interp_get(struct fsubdev *sd, u32 port, u32 lane, struct tx_dcc_interp_get_rsp *rsp)
+{
+	const u8 op_code = MBOX_OP_CODE_SERDES_TX_DCC_MARGIN;
+	struct mbdb_ibox *ibox;
+	struct dcc_interp_get_req {
+		u32 sub_op;
+		u32 port;
+		u32 lane;
+	} __packed req = {};
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), rsp, sizeof(*rsp), &cw,
+						 NON_POSTED_CHECK_OP);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.sub_op = SERDES_MARGIN_SUB_OP_CODE_TX_DCC_INTERP_GET;
+	req.port = port;
+	req.lane = lane;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_tx_dcc_margin_param_set(struct fsubdev *sd, u32 port, u16 value, bool posted)
+{
+	const u8 op_code = MBOX_OP_CODE_SERDES_TX_DCC_MARGIN;
+	struct mbdb_ibox *ibox;
+	struct serdes_margin_param_set_req {
+		u32 sub_op;
+		u32 port;
+		u16 value;
+	} __packed req = {};
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), NULL, 0, &cw,
+						 POSTED_CHECK_OP(posted));
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.sub_op = SERDES_MARGIN_SUB_OP_CODE_TX_DCC_MARGIN_PARAM_SET;
+	req.port = port;
+	req.value = value;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_tx_dcc_margin_param_get(struct fsubdev *sd, u32 port,
+				struct tx_dcc_margin_param_get_rsp *rsp)
+{
+	const u8 op_code = MBOX_OP_CODE_SERDES_TX_DCC_MARGIN;
+	struct mbdb_ibox *ibox;
+	struct serdes_margin_param_get_req {
+		u32 sub_op;
+		u32 port;
+	} __packed req = {};
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), rsp, sizeof(*rsp), &cw,
+						 NON_POSTED_CHECK_OP);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.sub_op = SERDES_MARGIN_SUB_OP_CODE_TX_DCC_MARGIN_PARAM_GET;
+	req.port = port;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_serdes_channel_estimate_get(struct fsubdev *sd, u32 port, u32 lane,
+				    struct mbdb_serdes_ch_est_rsp *rsp)
+{
+	const u8 op_code = MBOX_OP_CODE_SERDES_CHEST_GET;
+	struct mbdb_ibox *ibox;
+	struct mbdb_serdes_ch_est_req {
+		u32 port;
+		u32 lane;
+		u32 ilv;
+		u32 range_min;
+		u32 range_max;
+	} __packed req = {};
+	struct mbdb_op_param op_param;
+	u64 cw;
+	int ret;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox_set_hdlr(sd, op_code, sizeof(req), rsp->data,
+							  sizeof(rsp->data), &cw,
+							  NON_POSTED_CHECK_OP,
+							  ops_rsp_handler_relaxed);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.port = port;
+	req.lane = lane;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	ret = ops_execute(sd, &cw, 1, &op_param, ibox);
+	if (!ret)
+		rsp->elements = mbdb_mbox_params_len(cw) / sizeof(rsp->data[0]);
+
+	return ret;
+}
+
+int ops_port_var_table_write(struct fsubdev *sd, u32 port, u32 link_speed,
+			     struct port_var_data *data, bool posted)
+{
+	const u8 op_code = MBOX_OP_CODE_VARIABLE_TABLE_WRITE;
+	struct mbdb_ibox *ibox;
+	struct mbdb_var_table_write_req {
+		u32 port;
+		u32 link_speed;
+		struct port_var_data data;
+	} __packed req;
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	/* must write a valid port/speed setting, can write multiple speeds */
+	if (!port || !(link_speed & (LINK_SPEED_SLOW | LINK_SPEED_FAST)))
+		return -EINVAL;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), NULL, 0, &cw,
+						 POSTED_CHECK_OP(posted));
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.port = port;
+	req.link_speed = link_speed;
+	memcpy(&req.data, data, sizeof(*data));
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_port_var_table_read(struct fsubdev *sd, u32 port, u32 link_speed, struct port_var_data *rsp)
+{
+	const u8 op_code = MBOX_OP_CODE_VARIABLE_TABLE_READ;
+	struct mbdb_ibox *ibox;
+	struct mbdb_var_table_read_req {
+		u32 port;
+		u32 link_speed;
+	} __packed req;
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	/* must read a single valid port/speed setting */
+	if (!port || (bool)(link_speed & LINK_SPEED_SLOW) == (bool)(link_speed & LINK_SPEED_FAST))
+		return -EINVAL;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), rsp, sizeof(*rsp), &cw,
+						 NON_POSTED_CHECK_OP);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	req.port = port;
+	req.link_speed = link_speed;
+
+	op_param.len = sizeof(req);
+	op_param.data = &req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+static void ops_serdes_eqinfo_rsp_handler(struct mbdb_ibox *ibox)
+{
+	u16 rsp_len = mbdb_mbox_params_len(ibox->cw);
+	struct mbdb_serdes_eq_info_get_rsp *rsp = ibox->response;
+	u64 __iomem *gp_inbox_param_addr = mbdb_ibox_gp_inbox_param_addr(ibox);
+
+	/* B0 response received */
+	if (rsp_len == sizeof(struct mbdb_serdes_eq_info_get_rsp)) {
+		ops_element_copy(gp_inbox_param_addr, rsp, rsp_len / LANES,
+				 sizeof(*rsp) / LANES, LANES);
+	} else {
+		ibox->rsp_status = -EINVAL;
+		sd_err(mbdb_ibox_sd(ibox), "mbdb inbox rsp_len mismatch: cw 0x%016llx actual %u expected %u\n",
+		       ibox->cw, rsp_len, ibox->rsp_len);
+	}
 }
 
 int ops_serdes_eqinfo_get(struct fsubdev *sd, u32 port, struct mbdb_serdes_eq_info_get_rsp *rsp)
@@ -105,8 +494,9 @@ int ops_serdes_eqinfo_get(struct fsubdev *sd, u32 port, struct mbdb_serdes_eq_in
 	struct mbdb_op_param op_param;
 	u64 cw;
 
-	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(req), rsp, sizeof(*rsp), &cw,
-						 NON_POSTED_CHECK_OP);
+	ibox = mbdb_op_build_cw_and_acquire_ibox_set_hdlr(sd, op_code, sizeof(req), rsp,
+							  sizeof(*rsp), &cw, NON_POSTED_CHECK_OP,
+							  ops_serdes_eqinfo_rsp_handler);
 	if (IS_ERR(ibox))
 		return PTR_ERR(ibox);
 
@@ -155,7 +545,7 @@ int ops_statedump(struct fsubdev *sd, u32 offset, struct mbdb_statedump_rsp *rsp
 	ibox = mbdb_op_build_cw_and_acquire_ibox_set_hdlr(sd, op_code, sizeof(req), rsp->descs,
 							  sizeof(rsp->descs), &cw,
 							  NON_POSTED_CHECK_OP,
-							  ops_default_rsp_handler_nowarn);
+							  ops_rsp_handler_relaxed);
 	if (IS_ERR(ibox))
 		return PTR_ERR(ibox);
 
@@ -347,6 +737,102 @@ int ops_rpipe_set(struct fsubdev *sd, struct mbdb_op_rpipe_set *req,
 	op_param.data = req;
 
 	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+void ops_portinfo_rsp_handler(struct mbdb_ibox *ibox)
+{
+	u16 rsp_len = mbdb_mbox_params_len(ibox->cw);
+	struct mbdb_op_portinfo *rsp;
+	struct portinfo *per_portinfo;
+	u8 port_count;
+	size_t fw_portinfo_sz;
+	u8 __iomem *gp_inbox_param_addr;
+
+	if (likely(rsp_len == ibox->rsp_len)) {
+		io_readq_aligned(mbdb_ibox_gp_inbox_param_addr(ibox), ibox->response, rsp_len);
+		return;
+	}
+
+	sd_warn(mbdb_ibox_sd(ibox), "mbdb inbox rsp_len mismatch: cw 0x%016llx actual %u expected %u\n",
+		ibox->cw, rsp_len, ibox->rsp_len);
+
+	gp_inbox_param_addr = (u8 __iomem *)mbdb_ibox_gp_inbox_param_addr(ibox);
+
+	rsp = ibox->response;
+	per_portinfo = rsp->per_portinfo;
+
+	io_readq_aligned((u64 __iomem *)gp_inbox_param_addr, rsp, sizeof(*rsp));
+
+	port_count = hweight32(rsp->port_mask);
+
+	fw_portinfo_sz = (rsp_len - sizeof(*rsp)) / port_count;
+
+	ops_element_copy((void __iomem *)(gp_inbox_param_addr + sizeof(*rsp)), per_portinfo,
+			 fw_portinfo_sz, sizeof(struct portinfo), port_count);
+}
+
+int ops_portinfo_get(struct fsubdev *sd, u32 port_mask,
+		     struct mbdb_op_portinfo *rsp)
+{
+	const u8 op_code = MBOX_OP_CODE_PORTINFO_GET;
+	struct mbdb_ibox *ibox;
+	struct mbdb_op_param op_param;
+	u64 cw;
+	size_t rsp_len;
+
+	rsp_len = sizeof(*rsp) + (hweight32(port_mask) * sizeof(struct portinfo));
+	if (rsp_len > MBOX_PARAM_AREA_IN_BYTES) {
+		sd_err(sd, "Too many ports specified.\n");
+		return -EINVAL;
+	}
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox_set_hdlr(sd, op_code, sizeof(port_mask), rsp,
+							  rsp_len, &cw, NON_POSTED_CHECK_OP,
+							  ops_portinfo_rsp_handler);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	op_param.len = sizeof(port_mask);
+	op_param.data = &port_mask;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_switchinfo_set(struct fsubdev *sd, struct mbdb_op_switchinfo *req,
+		       struct mbdb_op_switchinfo *rsp, bool posted)
+{
+	const u8 op_code = MBOX_OP_CODE_SWITCHINFO_SET;
+	struct mbdb_ibox *ibox;
+	struct mbdb_op_param op_param;
+	u64 cw;
+
+	if (WARN_ON(!posted && !rsp))
+		return -EINVAL;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, sizeof(*req), rsp,
+						 posted ? 0 : sizeof(*rsp), &cw,
+						 POSTED_CHECK_OP(posted));
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	op_param.len = sizeof(*req);
+	op_param.data = req;
+
+	return ops_execute(sd, &cw, 1, &op_param, ibox);
+}
+
+int ops_switchinfo_get(struct fsubdev *sd, struct mbdb_op_switchinfo *rsp)
+{
+	const u8 op_code = MBOX_OP_CODE_SWITCHINFO_GET;
+	struct mbdb_ibox *ibox;
+	u64 cw;
+
+	ibox = mbdb_op_build_cw_and_acquire_ibox(sd, op_code, 0, rsp, sizeof(*rsp), &cw,
+						 NON_POSTED_CHECK_OP);
+	if (IS_ERR(ibox))
+		return PTR_ERR(ibox);
+
+	return ops_execute(sd, &cw, 0, NULL, ibox);
 }
 
 int ops_linkmgr_psc_trap_ack(struct fsubdev *sd, bool posted)

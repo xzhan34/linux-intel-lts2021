@@ -26,12 +26,17 @@
 #include "debugfs.h"
 #include "iaf_drv.h"
 #include "mbdb.h"
+#include "port.h"
 #include "sysfs.h"
 
 #define MODULEDETAILS "Intel Corp. Intel fabric Driver"
 
 /* xarray of IAF devices */
 static DEFINE_XARRAY_ALLOC(intel_fdevs);
+
+/* Protects routable_list access and data with shared/excl semantics */
+DECLARE_RWSEM(routable_lock);
+LIST_HEAD(routable_list);
 
 /*
  * Used for creating unique xarray hash.  Products need to be defined
@@ -129,6 +134,15 @@ static struct fdev *fdev_get(struct fdev *dev)
 		return dev;
 
 	return NULL;
+}
+
+/**
+ * fdev_get_early - Acquire a reference unconditionally from probe context.
+ * @dev: the device to operate on
+ */
+void fdev_get_early(struct fdev *dev)
+{
+	kref_get(&dev->refs);
 }
 
 int fdev_insert(struct fdev *dev)
@@ -482,6 +496,9 @@ static int add_subdevice(struct fsubdev *sd, struct fdev *dev, int index)
 		return err;
 	}
 
+	mutex_init(&sd->pm_work_lock);
+	sd->ok_to_schedule_pm_work = false;
+
 	res = iaf_find_res(dev, IORESOURCE_IRQ, index);
 	if (!res) {
 		sd_err(sd, "No IRQ resource available\n");
@@ -511,11 +528,14 @@ static int add_subdevice(struct fsubdev *sd, struct fdev *dev, int index)
 
 	sd_dbg(sd, "Adding IAF subdevice: %d\n", index);
 
+	INIT_LIST_HEAD(&sd->routable_link);
+
 	return 0;
 }
 
 static void remove_subdevice(struct fsubdev *sd)
 {
+	destroy_fports(sd);
 	destroy_mbdb(sd);
 	free_irq(sd->irq, sd);
 	iounmap(sd->csr_base);

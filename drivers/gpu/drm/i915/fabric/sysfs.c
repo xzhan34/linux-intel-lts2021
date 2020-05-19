@@ -7,8 +7,34 @@
 #include <linux/device.h>
 #include "csr.h"
 #include "iaf_drv.h"
+#include "mbdb.h"
 #include "ops.h"
+#include "port.h"
 #include "sysfs.h"
+
+static ssize_t link_failures_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct fport *port;
+	struct fport_status status;
+
+	port = container_of(attr, struct fport, link_failures);
+
+	get_fport_status(port->sd, port->lpn, &status);
+
+	return sysfs_emit(buf, "%llu\n", status.link_failures);
+}
+
+static ssize_t link_degrades_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct fport *port;
+	struct fport_status status;
+
+	port = container_of(attr, struct fport, link_degrades);
+
+	get_fport_status(port->sd, port->lpn, &status);
+
+	return sysfs_emit(buf, "%llu\n", status.link_degrades);
+}
 
 static ssize_t sd_failure_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -36,6 +62,14 @@ static const struct attribute *iaf_attrs[] = {
 
 static void iaf_sysfs_cleanup(struct fsubdev *sd)
 {
+	struct fport *port;
+	u8 lpn;
+
+	for_each_fabric_port(port, lpn, sd) {
+		kobject_put(port->kobj);
+		port->kobj = NULL;
+	}
+
 	kobject_put(sd->kobj);
 	sd->kobj = NULL;
 }
@@ -51,6 +85,41 @@ static int iaf_sysfs_add_node(const char *name, umode_t mode, show_fn show,
 	attr->show = show;
 
 	return sysfs_create_file(parent, &attr->attr);
+}
+
+static int iaf_sysfs_add_port_nodes(struct fsubdev *sd)
+{
+	struct fport *port;
+	u8 lpn;
+
+	for_each_fabric_port(port, lpn, sd) {
+		int err;
+		char port_name[9];
+
+		snprintf(port_name, sizeof(port_name), "port.%u", lpn);
+
+		port->kobj = kobject_create_and_add(port_name, sd->kobj);
+		if (!port->kobj)
+			return -ENOMEM;
+
+		err = iaf_sysfs_add_node("link_failures", 0400, link_failures_show,
+					 &port->link_failures, port->kobj);
+		if (err) {
+			sd_warn(sd, "Failed to add sysfs node %s for port %s\n", "link_failures",
+				port_name);
+			return err;
+		}
+
+		err = iaf_sysfs_add_node("link_degrades", 0400, link_degrades_show,
+					 &port->link_degrades, port->kobj);
+		if (err) {
+			sd_warn(sd, "Failed to add sysfs node %s for port %s\n", "link_degrades",
+				port_name);
+			return err;
+		}
+	}
+
+	return 0;
 }
 
 static int iaf_sysfs_add_sd_nodes(struct fsubdev *sd)
@@ -73,6 +142,10 @@ static void iaf_sysfs_sd_init(struct fsubdev *sd)
 		sd_warn(sd, "Failed to add sysfs directory %s\n", sd->name);
 		return;
 	}
+
+	err = iaf_sysfs_add_port_nodes(sd);
+	if (err)
+		goto error_return;
 
 	err = iaf_sysfs_add_sd_nodes(sd);
 	if (err)
