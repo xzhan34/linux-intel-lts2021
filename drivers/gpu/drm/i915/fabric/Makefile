@@ -31,4 +31,6 @@ iaf-y := debugfs.o \
 	 sysfs.o \
 	 trace.o \
 
+iaf-$(CONFIG_IAF_DEBUG_MBOX_ACCESS) += mbox.o
+
 CFLAGS_trace.o = -I$(src)

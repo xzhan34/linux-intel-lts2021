@@ -34,6 +34,15 @@ config IAF_DEBUG_FIRMWARE_ROPTION
 	  Allow firmware_roption to specify the value of the firmware roption
 	  debug register
 
+config IAF_DEBUG_MBOX_ACCESS
+	bool "Enable Intel Accelerator Fabric mbox access interface"
+	depends on IAF_DEBUG_ENABLE
+	default y
+	help
+	  DO NOT UPSTREAM:
+	  The mbox interface is an external debug mechanism
+	  for supporting debugging of the fabric device firmware
+
 config IAF_DEBUG_STARTUP
 	bool "Enable Intel Accelerator Fabric debug startup mode"
 	depends on IAF_DEBUG_ENABLE

@@ -28,6 +28,7 @@
 #include "fw.h"
 #include "iaf_drv.h"
 #include "mbdb.h"
+#include "mbox.h"
 #include "mei_iaf_user.h"
 #include "netlink.h"
 #include "port.h"
@@ -943,6 +944,7 @@ static void __exit iaf_unload_module(void)
 {
 	pr_notice("Unloading %s\n", MODULEDETAILS);
 
+	mbox_term_module();
 	nl_term();
 
 	fw_abort();
@@ -991,6 +993,7 @@ static int __init iaf_load_module(void)
 	routing_init();
 	rem_init();
 	mbdb_init_module();
+	mbox_init_module();
 	err = nl_init();
 	if (err)
 		goto exit;
@@ -1008,6 +1011,7 @@ static int __init iaf_load_module(void)
 
 exit:
 	if (err) {
+		mbox_term_module();
 		nl_term();
 		remove_debugfs_root_nodes();
 		destroy_workqueue(iaf_unbound_wq);
