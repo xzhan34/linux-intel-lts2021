@@ -180,12 +180,141 @@ struct create_ext {
 	unsigned long flags;
 };
 
+static void repr_placements(char *buf, size_t size,
+			    struct intel_memory_region **placements,
+			    int n_placements)
+{
+	int i;
+
+	buf[0] = '\0';
+
+	for (i = 0; i < n_placements; i++) {
+		struct intel_memory_region *mr = placements[i];
+		int r;
+
+		r = snprintf(buf, size, "\n  %s -> { class: %d, inst: %d }",
+			     mr->name, mr->type, mr->instance);
+		if (r >= size)
+			return;
+
+		buf += r;
+		size -= r;
+	}
+}
+
+static int prelim_set_placements(struct prelim_drm_i915_gem_object_param *args,
+			  struct create_ext *ext_data)
+{
+	struct drm_i915_private *i915 = ext_data->i915;
+	struct prelim_drm_i915_gem_memory_class_instance __user *uregions =
+		u64_to_user_ptr(args->data);
+	struct drm_i915_gem_object *obj = ext_data->vanilla_object;
+	struct intel_memory_region **placements;
+	u32 mask;
+	int i, ret = 0;
+
+	if (args->handle) {
+		DRM_DEBUG("Handle should be zero\n");
+		ret = -EINVAL;
+	}
+
+	if (!args->size) {
+		DRM_DEBUG("Size is zero\n");
+		ret = -EINVAL;
+	}
+
+	if (args->size > ARRAY_SIZE(i915->mm.regions)) {
+		DRM_DEBUG("Too many placements\n");
+		ret = -EINVAL;
+	}
+
+	if (ret)
+		return ret;
+
+	placements = kmalloc_array(args->size,
+				   sizeof(struct intel_memory_region *),
+				   GFP_KERNEL);
+	if (!placements)
+		return -ENOMEM;
+
+	mask = 0;
+	for (i = 0; i < args->size; i++) {
+		struct prelim_drm_i915_gem_memory_class_instance region;
+		struct intel_memory_region *mr;
+
+		if (copy_from_user(&region, uregions, sizeof(region))) {
+			ret = -EFAULT;
+			goto out_free;
+		}
+
+		mr = intel_memory_region_lookup(i915,
+						region.memory_class,
+						region.memory_instance);
+		if (!mr || mr->private) {
+			DRM_DEBUG("Device is missing region { class: %d, inst: %d } at index = %d\n",
+				  region.memory_class, region.memory_instance, i);
+			ret = -EINVAL;
+			goto out_dump;
+		}
+
+		if (mask & BIT(mr->id)) {
+			DRM_DEBUG("Found duplicate placement %s -> { class: %d, inst: %d } at index = %d\n",
+				  mr->name, region.memory_class,
+				  region.memory_instance, i);
+			ret = -EINVAL;
+			goto out_dump;
+		}
+
+		placements[i] = mr;
+		mask |= BIT(mr->id);
+
+		++uregions;
+	}
+
+	if (obj->mm.placements) {
+		ret = -EINVAL;
+		goto out_dump;
+	}
+
+	object_set_placements(obj, placements, args->size);
+	if (args->size == 1)
+		kfree(placements);
+
+	return 0;
+
+out_dump:
+	if (1) {
+		char buf[256];
+
+		if (obj->mm.placements) {
+			repr_placements(buf,
+					sizeof(buf),
+					obj->mm.placements,
+					obj->mm.n_placements);
+			DRM_DEBUG("Placements were already set in previous SETPARAM. Existing placements: %s\n",
+				  buf);
+		}
+
+		repr_placements(buf, sizeof(buf), placements, i);
+		DRM_DEBUG("New placements(so far validated): %s\n", buf);
+	}
+
+out_free:
+	kfree(placements);
+	return ret;
+}
+
 static int __create_setparam(struct prelim_drm_i915_gem_object_param *args,
 			     struct create_ext *ext_data)
 {
 	if (!(args->param & PRELIM_I915_OBJECT_PARAM)) {
 		DRM_DEBUG("Missing I915_OBJECT_PARAM namespace\n");
 		return -EINVAL;
+	}
+
+	switch (lower_32_bits(args->param)) {
+	case PRELIM_I915_PARAM_MEMORY_REGIONS:
+		return prelim_set_placements(args, ext_data);
 	}
 
 	return -EINVAL;
@@ -220,6 +349,8 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_private *i915 = to_i915(dev);
 	struct prelim_drm_i915_gem_create_ext *args = data;
 	struct create_ext ext_data = { .i915 = i915 };
+	struct intel_memory_region **placements_ext;
+	struct intel_memory_region *stack[1];
 	struct drm_i915_gem_object *obj;
 	int ret;
 
@@ -234,8 +365,16 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 				   prelim_create_extensions,
 				   ARRAY_SIZE(prelim_create_extensions),
 				   &ext_data);
+	placements_ext = obj->mm.placements;
 	if (ret)
 		goto object_free;
+
+	if (!placements_ext) {
+		enum intel_memory_type mem_type = INTEL_MEMORY_SYSTEM;
+
+		stack[0] = intel_memory_region_by_type(i915, mem_type);
+		object_set_placements(obj, stack, 1);
+	}
 
 	ret = i915_gem_setup(obj, args->size);
 	if (ret)
@@ -247,30 +386,11 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 	return i915_gem_publish(obj, file, &args->size, &args->handle);
 
 object_free:
+	if (obj->mm.n_placements > 1)
+		kfree(placements_ext);
+
 	i915_gem_object_free(obj);
 	return ret;
-}
-
-static void repr_placements(char *buf, size_t size,
-			    struct intel_memory_region **placements,
-			    int n_placements)
-{
-	int i;
-
-	buf[0] = '\0';
-
-	for (i = 0; i < n_placements; i++) {
-		struct intel_memory_region *mr = placements[i];
-		int r;
-
-		r = snprintf(buf, size, "\n  %s -> { class: %d, inst: %d }",
-			     mr->name, mr->type, mr->instance);
-		if (r >= size)
-			return;
-
-		buf += r;
-		size -= r;
-	}
 }
 
 static int set_placements(struct drm_i915_gem_create_ext_memory_regions *args,

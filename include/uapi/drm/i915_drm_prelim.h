@@ -88,6 +88,19 @@ struct prelim_drm_i915_gem_object_param {
  */
 #define PRELIM_I915_OBJECT_PARAM  (1ull << 48)
 
+/*
+ * PRELIM_I915_PARAM_MEMORY_REGIONS:
+ *
+ * Set the data pointer with the desired set of placements in priority
+ * order(each entry must be unique and supported by the device), as an array of
+ * prelim_drm_i915_gem_memory_class_instance, or an equivalent layout of class:instance
+ * pair encodings. See PRELIM_DRM_I915_QUERY_MEMORY_REGIONS for how to query the
+ * supported regions.
+ *
+ * Note that this requires the PRELIM_I915_OBJECT_PARAM namespace:
+ *	.param = PRELIM_I915_OBJECT_PARAM | PRELIM_I915_PARAM_MEMORY_REGIONS
+ */
+#define PRELIM_I915_PARAM_MEMORY_REGIONS ((1 << 16) | 0x1)
 	__u64 param;
 
 	/* Data value or pointer */
