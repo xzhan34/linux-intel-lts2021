@@ -17,6 +17,7 @@
 #include <linux/timer.h>
 #include <linux/kref.h>
 
+#include <drm/i915_mei_iaf_interface.h>
 #include <drm/intel_iaf_platform.h>
 
 #include "csr.h"
@@ -889,6 +890,12 @@ struct psc_presence_rule {
  * @mappings_ref.remove_in_progress: indicate unmap should show completion
  * @mappings_ref.complete: completion after all buffers are unmapped
  * @mappings_ref: Reference count of parent mapped buffers
+ * @mei_ops_lock: mutex lock for mei_ops/dev/bind_continuation/work
+ * @mei_ops: bound MEI operation functions (if not NULL)
+ * @mei_dev: device to use with @mei_ops
+ * @mei_bind_continuation: set when unbound @mei_ops needed, called by bind
+ * @mei_continuation_timer: used to timeout receipt of MEI bind continuation
+ * @mei_work: work struct for MEI completion
  * @dir_node: debugfs directory node for this device
  * @fabric_node: debugfs file fabric symbolic link
  * @dpa_node: debugfs file dpa symbolic link
@@ -918,6 +925,13 @@ struct fdev {
 		struct completion complete;
 	} mappings_ref;
 
+	/* protects mei_ops/mei_dev/mei_bind_continuation */
+	struct mutex mei_ops_lock;
+	const struct i915_iaf_component_ops *mei_ops;
+	struct device *mei_dev;
+	void (*mei_bind_continuation)(struct fdev *dev);
+	struct timer_list mei_continuation_timer;
+	struct work_struct mei_work;
 	struct dentry *dir_node;
 	struct dentry *fabric_node;
 	struct dentry *dpa_node;

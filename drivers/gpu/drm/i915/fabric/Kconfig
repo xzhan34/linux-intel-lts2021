@@ -24,3 +24,4 @@ config IAF_DEBUG_STARTUP
 	help
 	  DO NOT UPSTREAM:
 	  Allow startup_mode parameter to boot devices into debug modes
+

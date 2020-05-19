@@ -26,6 +26,7 @@
 #include "debugfs.h"
 #include "iaf_drv.h"
 #include "mbdb.h"
+#include "mei_iaf_user.h"
 #include "port.h"
 #include "sysfs.h"
 
@@ -595,6 +596,13 @@ static int iaf_remove(struct platform_device *pdev)
 
 	mappings_ref_wait(dev);
 
+	/*
+	 * intentionally unregister with mei before the flush to maximize
+	 * the chance that remove will prevent an outstanding async init
+	 * from programming a new min SVN
+	 */
+	iaf_mei_stop(dev);
+
 	remove_debugfs(dev);
 
 	iaf_sysfs_remove(dev);
@@ -731,6 +739,12 @@ static int iaf_probe(struct platform_device *pdev)
 		err = add_subdevice(&dev->sd[sds_added], dev, sds_added);
 		if (err)
 			goto add_error;
+	}
+
+	err = iaf_mei_start(dev);
+	if (err) {
+		dev_err(fdev_dev(dev), "failed to register as MEI user\n");
+		goto add_error;
 	}
 
 	return 0;
