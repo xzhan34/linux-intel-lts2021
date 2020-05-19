@@ -18,6 +18,7 @@
 #include "mbdb.h"
 #include "ops.h"
 #include "port.h"
+#include "routing_engine.h"
 #include "statedump.h"
 
 #define FW_VERSION_FILE_NAME "fw_version"
@@ -246,6 +247,8 @@ static ssize_t risc_reset_write(struct file *fp, const char __user *buf,
 
 	if (!mutex_trylock(&sd->cport_init_ctrl_reg_lock))
 		return -EAGAIN;
+
+	routing_sd_destroy(sd);
 
 	cport_init_ctrl_reg_addr = sd->csr_base + CPORT_INIT_CTRL_ADDR;
 	cport_init_ctrl_reg_val = readq(cport_init_ctrl_reg_addr);

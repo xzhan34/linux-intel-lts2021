@@ -30,6 +30,9 @@
 #include "mbdb.h"
 #include "mei_iaf_user.h"
 #include "port.h"
+#include "routing_engine.h"
+#include "routing_event.h"
+#include "routing_p2p.h"
 #include "sysfs.h"
 
 #define MODULEDETAILS "Intel Corp. Intel fabric Driver"
@@ -249,6 +252,17 @@ struct fsubdev *find_sd_id(u32 fabric_id, u8 sd_index)
 	return ERR_PTR(-EINVAL);
 }
 
+struct fsubdev *find_routable_sd(u64 guid)
+{
+	struct fsubdev *sd = NULL;
+
+	list_for_each_entry(sd, &routable_list, routable_link)
+		if (sd->guid == guid)
+			return sd;
+
+	return NULL;
+}
+
 /* configured by request_irq() to refer to corresponding struct fsubdev */
 static irqreturn_t handle_iaf_irq(int irq, void *arg)
 {
@@ -277,6 +291,7 @@ static struct query_info *handle_query(void *handle, u32 fabric_id)
 	if (qi) {
 		qi->src_cnt = src->pd->sd_cnt;
 		qi->dst_cnt = dst->pd->sd_cnt;
+		routing_p2p_lookup(src, dst, qi);
 	} else {
 		qi = ERR_PTR(-ENOMEM);
 	}
@@ -292,22 +307,30 @@ static struct query_info *handle_query(void *handle, u32 fabric_id)
  *
  * Allow the parent to indicate that a buffer has been mapped
  *
+ * NOTE: NO other lock can be taken with mapping_ref lock held.
+ * (see disable_<usage_>fports()).
+ *
  * return: -1 reference count failed, do not allow mapping
  */
 static int mappings_ref_get(struct fdev *dev)
 {
+	/* protect port_unroute_list read */
+	lock_shared(&routable_lock);
 	mutex_lock(&dev->mappings_ref.lock);
 
 	dev_dbg(fdev_dev(dev), "count: %d\n", dev->mappings_ref.count);
 
-	if (dev->mappings_ref.remove_in_progress) {
+	if (!list_empty(&dev->port_unroute_list) ||
+	    dev->mappings_ref.remove_in_progress) {
 		mutex_unlock(&dev->mappings_ref.lock);
-		return -1;
+		unlock_shared(&routable_lock);
+		return -EBUSY;
 	}
 
 	dev->mappings_ref.count++;
 
 	mutex_unlock(&dev->mappings_ref.lock);
+	unlock_shared(&routable_lock);
 
 	return 0;
 }
@@ -524,6 +547,8 @@ static int add_subdevice(struct fsubdev *sd, struct fdev *dev, int index)
 		return err;
 	}
 
+	routing_sd_init(sd);
+
 	sd_dbg(sd, "Adding IAF subdevice: %d\n", index);
 
 	INIT_LIST_HEAD(&sd->routable_link);
@@ -615,8 +640,17 @@ static int iaf_remove(struct platform_device *pdev)
 
 	fdev_wait_on_release(dev);
 
+	/*
+	 * synchronize with routing to remove the device without disrupting
+	 * traffic.  note that during driver unload, both the routing engine
+	 * and event manager will be stopped, and this will not wait
+	 */
+	routing_dev_unroute(dev);
+
 	for (i = 0; i < pd->sd_cnt; i++)
 		remove_subdevice(&dev->sd[i]);
+
+	routing_p2p_clear(dev);
 
 	pm_runtime_put(fdev_dev(dev));
 	pm_runtime_allow(fdev_dev(dev));
@@ -773,6 +807,7 @@ static int iaf_probe(struct platform_device *pdev)
 	dev->mappings_ref.count = 1;
 	mutex_init(&dev->mappings_ref.lock);
 	init_completion(&dev->mappings_ref.complete);
+	INIT_LIST_HEAD(&dev->port_unroute_list);
 
 	/*
 	 * The IAF cannot be suspended via runtime, but the parent could have
@@ -887,11 +922,19 @@ static void __exit iaf_unload_module(void)
 
 	flush_workqueue(iaf_unbound_wq);
 
+	/* notify routing event manager to minimize delays since we are shutting down */
+	rem_shutting_down();
+
+	/* remove all existing iaf devices */
 #if IS_ENABLED(CONFIG_AUXILIARY_BUS)
 	auxiliary_driver_unregister(&iaf_driver);
 #else
 	platform_driver_unregister(&iaf_driver);
 #endif
+	/* stop routing and destroy the network topology */
+	rem_stop();
+	routing_stop();
+	routing_destroy();
 
 	remove_debugfs_root_nodes();
 
@@ -918,6 +961,8 @@ static int __init iaf_load_module(void)
 
 	create_debugfs_root_nodes();
 
+	routing_init();
+	rem_init();
 	mbdb_init_module();
 	fw_init_module();
 

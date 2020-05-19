@@ -7,3 +7,4 @@
 #include "iaf_drv.h"
 #include "trace_mbx.h"
 #include "trace_pm.h"
+#include "trace_rt.h"

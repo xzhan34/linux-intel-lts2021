@@ -13,6 +13,9 @@
 #include "port.h"
 #include "port_diag.h"
 #include "ops.h"
+#include "routing_debug.h"
+#include "routing_engine.h"
+#include "routing_event.h"
 #include "trace.h"
 
 /*
@@ -1362,6 +1365,9 @@ static void update_ports_work(struct work_struct *work)
 	if (initializing || fio.status_changed)
 		publish_status_updates(sd);
 
+	if (fio.routing_changed)
+		rem_request();
+
 	if (initializing || port_change || qsfp_change || rescanning) {
 		mutex_lock(&sd->pm_work_lock);
 		if (sd->ok_to_schedule_pm_work)
@@ -1496,6 +1502,8 @@ static int initial_port_state(struct fsubdev *sd)
 		}
 		timer_setup(&p->linkup_timer, linkup_timer_expired, 0);
 
+		INIT_LIST_HEAD(&p->unroute_link);
+
 		create_port_debugfs_dir(sd, lpn);
 
 		switch (mode) {
@@ -1534,6 +1542,8 @@ static int initial_port_state(struct fsubdev *sd)
 			sd_err(sd, "p.%u: Invalid port mode %u\n", lpn, mode);
 			return -ENOENT;
 		}
+
+		routing_debug_port_init(sd, lpn);
 	}
 
 	/* published and unpublished queryable port state */
@@ -1596,6 +1606,10 @@ void initialize_fports(struct fsubdev *sd)
 	if (err)
 		goto init_failed;
 
+	err = routing_sd_once(sd);
+	if (err)
+		goto init_failed;
+
 	signal_pm_thread(sd, INIT_EVENT);
 
 	return;
@@ -1640,12 +1654,16 @@ void destroy_fports(struct fsubdev *sd)
 		ops_linkmgr_psc_trap_ena_set(sd, false, true);
 	}
 
+	routing_sd_destroy(sd);
+
 	if (param_reset && (fw_version->environment & FW_VERSION_INIT_BIT))
 		ops_reset(sd, true);
 
 	for_each_fabric_port(p, lpn, sd)
 		if (p->state == PM_PORT_STATE_ISOLATED)
 			atomic_dec(&isolated_port_cnt);
+
+	rem_request();
 }
 
 int enable_fports(struct fsubdev *sd, unsigned long *lpnmask, u8 max_ports)
@@ -1662,14 +1680,28 @@ int enable_fports(struct fsubdev *sd, unsigned long *lpnmask, u8 max_ports)
 
 int disable_fports(struct fsubdev *sd, unsigned long *lpnmask, u8 max_ports)
 {
-	int changed = 0;
+	bool any_was_enabled = false;
 	struct fport *p;
 	u8 lpn;
 
-	for_each_masked_port(p, lpn, sd->port, lpnmask, max_ports)
-		changed |= test_and_clear_bit(PORT_CONTROL_ENABLED, p->controls);
+	/* routing lock, then mappings lock */
+	lock_exclusive(&routable_lock);
+	if (mappings_ref_check(sd->fdev)) {
+		unlock_exclusive(&routable_lock);
+		return -EAGAIN;
+	}
 
-	return changed ? signal_pm_thread(sd, NL_PM_CMD_EVENT) : 0;
+	for_each_masked_port(p, lpn, sd->port, lpnmask, max_ports) {
+		bool enabled = test_and_clear_bit(PORT_CONTROL_ENABLED, p->controls);
+
+		if (enabled && test_bit(PORT_CONTROL_ROUTABLE, p->controls) &&
+		    list_empty(&p->unroute_link))
+			list_add_tail(&p->unroute_link, &sd->fdev->port_unroute_list);
+		any_was_enabled |= enabled;
+	}
+	unlock_exclusive(&routable_lock);
+
+	return any_was_enabled ? signal_pm_thread(sd, NL_PM_CMD_EVENT) : 0;
 }
 
 int enable_usage_fports(struct fsubdev *sd, unsigned long *lpnmask, u8 max_ports)
@@ -1681,17 +1713,35 @@ int enable_usage_fports(struct fsubdev *sd, unsigned long *lpnmask, u8 max_ports
 	for_each_masked_port(p, lpn, sd->port, lpnmask, max_ports)
 		unchanged &= test_and_set_bit(PORT_CONTROL_ROUTABLE, p->controls);
 
+	if (!unchanged)
+		rem_request();
+
 	return 0;
 }
 
 int disable_usage_fports(struct fsubdev *sd, unsigned long *lpnmask, u8 max_ports)
 {
-	int changed = 0;
+	bool any_was_routable = false;
 	struct fport *p;
 	u8 lpn;
 
-	for_each_masked_port(p, lpn, sd->port, lpnmask, max_ports)
-		changed |= test_and_clear_bit(PORT_CONTROL_ROUTABLE, p->controls);
+	lock_exclusive(&routable_lock);
+	if (mappings_ref_check(sd->fdev)) {
+		unlock_exclusive(&routable_lock);
+		return -EAGAIN;
+	}
+
+	for_each_masked_port(p, lpn, sd->port, lpnmask, max_ports) {
+		bool routable = test_and_clear_bit(PORT_CONTROL_ROUTABLE, p->controls);
+
+		if (routable && list_empty(&p->unroute_link))
+			list_add_tail(&p->unroute_link, &sd->fdev->port_unroute_list);
+		any_was_routable |= routable;
+	}
+	unlock_exclusive(&routable_lock);
+
+	if (any_was_routable)
+		rem_request();
 
 	return 0;
 }

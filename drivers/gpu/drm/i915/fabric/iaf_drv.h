@@ -13,6 +13,7 @@
 #endif
 #include <linux/irqreturn.h>
 #include <linux/mtd/mtd.h>
+#include <linux/rwsem.h>
 #include <linux/semaphore.h>
 #include <linux/slab.h>
 #include <linux/timer.h>
@@ -48,6 +49,8 @@
 #define PORT_COUNT            13
 #define PORT_FABRIC_COUNT      8
 #define PORT_PHYSICAL_START    1
+
+#define CPORT_LPN_MASK BIT(0)
 
 /*
  * Recognized discrete socket IDs
@@ -488,6 +491,19 @@ struct port_lane {
 	u32 lane_number;
 };
 
+/*
+ * fport_routing - routing-specific port data
+ * @routable: true if the port meets the port_is_routable condition
+ * @neighbor: reference to neighbor port
+ *
+ * These values are saved under the exclusive routing lock, remain
+ * valid under a downgrade to shared, and are invalided on unlock.
+ */
+struct fport_routing {
+	bool routable;
+	struct fport *neighbor;
+};
+
 /**
  * struct fport - Per-port state, used for fabric ports only
  * @sd: link to containing subdevice
@@ -505,6 +521,8 @@ struct port_lane {
  *		  successful sweep
  * @flap_check_since: timestamp indicating beginning of current flap-check leaky bucket period
  * @linkup_timer: to verify port link up timeliness
+ * @routing: routing-specific data
+ * @unroute_link: Entry into the list of ports that are waiting to be unrouted.
  * @controls: atomically-accessed control bits to enable/disable features
  * @routed: indicates whether this port was included in the routing logic
  *
@@ -537,6 +555,12 @@ struct fport {
 	u16 bounce_count;
 	s64 flap_check_since;
 	struct timer_list linkup_timer;
+
+	/* protected by routable_lock, written by routing with exclusive lock */
+	struct fport_routing routing;
+
+	/* protected by routable_lock, written by routing or parent device with exclusive lock */
+	struct list_head unroute_link;
 
 	/* atomic with no need for additional barrier constraints */
 	DECLARE_BITMAP(controls, NUM_PORT_CONTROLS);
@@ -576,6 +600,11 @@ struct mbdb_op_portinfo {
 
 struct mbdb; /* from mbdb.c */
 struct fdev; /* from this file */
+
+struct routing_topology; /* from routing_topology.h */
+struct routing_plane; /* from routing_topology.h */
+struct routing_dfid_map; /* from routing_topology.h */
+struct routing_uft; /* from routing_topology.h */
 
 /**
  * enum pm_trigger_reasons - Cause for PM thread trigger
@@ -685,6 +714,66 @@ struct fport_status {
 	DECLARE_BITMAP(errors, NUM_FPORT_ERRORS);
 };
 
+struct routing_fidgen {
+	/*
+	 * mask over the full physical address (NOT 46-bit bridge address
+	 * line)
+	 *   [51:0] address mask
+	 */
+	u64 mask_a;
+	u64 mask_b;
+	u64 mask_d;
+	u64 mask_h;
+
+	/* [6:6] shift right flag */
+	/* [5:0] shift amount */
+	u8 shift_a;
+	u8 shift_b;
+	u8 shift_h;
+
+	/* [2:0] hash mask modulo operand */
+	u8 modulo;
+};
+
+/**
+ * struct fsubdev_routing_info - Tracks per-sd routing state.
+ * @topo: the topology context that tracks sweep state
+ * @plane_link: entry in plane list
+ * @plane: pointer to plane
+ * @state: routing-level subdevice state
+ * @uft: currently active routing tables
+ * @uft_next: next uft being built by active sweep
+ * @dfid_map: currently active DPA->DFID map
+ * @dfid_map_next: next DFID map being built by active sweep
+ * @fidgen: bridge fidgen register configuration
+ * @dpa_idx_base: dpa lookup table index base
+ * @dpa_idx_range: dpa lookup table range
+ * @fid_group: abstract fid "group" which determines assigned fids
+ * @fid_mgmt: management fid for cport
+ * @fid_base: base fid of the bridge's fid block
+ * @plane_index: per-plane index of this subdevice
+ */
+struct fsubdev_routing_info {
+	struct routing_topology *topo;
+	struct list_head plane_link;
+	struct routing_plane *plane;
+	enum fsubdev_routing_info_state {
+		TILE_ROUTING_STATE_ERROR = 0,
+		TILE_ROUTING_STATE_VALID,
+	} state;
+	struct routing_uft *uft;
+	struct routing_uft *uft_next;
+	struct routing_dfid_map *dfid_map;
+	struct routing_dfid_map *dfid_map_next;
+	struct routing_fidgen fidgen;
+	u16 dpa_idx_base;
+	u16 dpa_idx_range;
+	u16 fid_group;
+	u16 fid_mgmt;
+	u16 fid_base;
+	u16 plane_index;
+};
+
 /**
  * struct fsubdev - Per-subdevice state
  * @fdev: link to containing device
@@ -718,6 +807,7 @@ struct fport_status {
  * @ok_to_schedule_pm_work: indicates it is OK to request port management
  * @pm_triggers: event triggering for port management
  * @routable_link: link in global routable_list
+ * @routing: routing information
  * @port: internal port state, includes references into @portinfo_op
  * @portinfo_op: all port information, read from firmware via MBDB op
  * @_portstatus: logical port status, access via @port_status/@next_port_status
@@ -789,6 +879,7 @@ struct fsubdev {
 
 	/* protected by routable_lock, written by routing with exclusive lock */
 	struct list_head routable_link;
+	struct fsubdev_routing_info routing;
 
 	/* protections are documented in &struct fport */
 	struct fport port[PORT_COUNT];
@@ -915,6 +1006,7 @@ struct psc_presence_rule {
  * @pd: platform specific data
  * @fabric_id: xarray index based on parent index and product type
  * @link_config: link config pin values read from GPIO at startup
+ * @port_unroute_list: list of ports with pending unroute request
  * @mappings_ref.lock: protect the mappings_ref data
  * @mappings_ref.count: current mapped buffer count
  * @mappings_ref.remove_in_progress: indicate unmap should show completion
@@ -946,6 +1038,8 @@ struct psc_presence_rule {
  * @psc.n_presence_rules: number of presence rules for this device in PSC data
  * @psc.presence_rules: copied presence rules for this device, extracted from PSC data
  * @psc: PSC processing info
+ * @p2p: the active cached peer connectivity results (rcu protected)
+ * @p2p_next: the pending peer connectivity results
  * @dir_node: debugfs directory node for this device
  * @fabric_node: debugfs file fabric symbolic link
  * @dpa_node: debugfs file dpa symbolic link
@@ -968,6 +1062,7 @@ struct fdev {
 	const struct iaf_pdata *pd;
 	u32 fabric_id;
 	u32 link_config;
+	struct list_head port_unroute_list;
 
 	struct {
 		/* protect the mapping count and remove_in_progress flag */
@@ -1006,6 +1101,8 @@ struct fdev {
 		size_t n_presence_rules;
 		struct psc_presence_rule *presence_rules;
 	} psc;
+	struct routing_p2p_entry __rcu *p2p;
+	struct routing_p2p_entry *p2p_next;
 	struct dentry *dir_node;
 	struct dentry *fabric_node;
 	struct dentry *dpa_node;
@@ -1146,7 +1243,12 @@ void indicate_subdevice_error(struct fsubdev *sd, enum sd_error err);
 struct fdev *fdev_find_by_sd_guid(u64 guid);
 struct fsubdev *find_sd_id(u32 fabric_id, u8 sd_index);
 
+/* routable_lock must be held across this (shared OK) */
+struct fsubdev *find_routable_sd(u64 guid);
+
 void iaf_complete_init_dev(struct fdev *dev);
+
+bool mappings_ref_check(struct fdev *dev);
 
 extern struct workqueue_struct *iaf_unbound_wq;
 

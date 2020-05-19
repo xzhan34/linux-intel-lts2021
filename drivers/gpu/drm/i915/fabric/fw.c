@@ -19,6 +19,7 @@
 #include "ops.h"
 #include "mbdb.h"
 #include "port.h"
+#include "routing_engine.h"
 #include "sysfs.h"
 
 /*
