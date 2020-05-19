@@ -144,6 +144,7 @@ enum iaf_startup_mode {
 
 struct fsubdev; /* from this file */
 
+struct mbdb; /* from mbdb.c */
 struct fdev; /* from this file */
 
 /**
@@ -161,6 +162,7 @@ enum sd_error {
 /**
  * struct fsubdev - Per-subdevice state
  * @fdev: link to containing device
+ * @mbdb: link to dedicated mailbox struct
  * @csr_base: base address of this subdevice's memory
  * @irq: assigned interrupt
  * @name: small string to describe SD
@@ -169,6 +171,7 @@ enum sd_error {
  * @kobj: kobject for this sd in the sysfs tree
  * @sd_failure: attribute for sd_failure sysfs file
  * @guid: GUID retrieved from firmware
+ * @switchinfo: switch information read directly from firmware
  * @port_cnt: count of all fabric ports
  * @errors: bitmap of active error states
  *
@@ -181,6 +184,7 @@ enum sd_error {
 struct fsubdev {
 	/* pointers const after sync probe, content protection is by object type */
 	struct fdev *fdev;
+	struct mbdb *mbdb;
 	char __iomem *csr_base;
 
 	/* values const after sync probe */
@@ -325,9 +329,15 @@ static inline struct device *fdev_dev(const struct fdev *dev)
 }
 
 struct dentry *get_debugfs_root_node(void);
+ssize_t blob_read(struct file *file, char __user *user_buffer, size_t count, loff_t *ppos);
+int blob_release(struct inode *inode, struct file *file);
+
+void indicate_subdevice_error(struct fsubdev *sd, enum sd_error err);
 
 /* The following two functions increase device reference count: */
 struct fdev *fdev_find_by_sd_guid(u64 guid);
 struct fsubdev *find_sd_id(u32 fabric_id, u8 sd_index);
+
+extern struct workqueue_struct *iaf_unbound_wq;
 
 #endif

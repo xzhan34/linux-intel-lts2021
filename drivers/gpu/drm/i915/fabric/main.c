@@ -27,6 +27,7 @@
 #include "csr.h"
 #include "debugfs.h"
 #include "iaf_drv.h"
+#include "mbdb.h"
 #include "sysfs.h"
 
 #define MODULEDETAILS "Intel Corp. Intel fabric Driver"
@@ -41,6 +42,8 @@ static DEFINE_XARRAY_ALLOC(intel_fdevs);
 #define PRODUCT_SHIFT 16
 
 static enum iaf_startup_mode param_startup_mode = STARTUP_MODE_DEFAULT;
+
+struct workqueue_struct *iaf_unbound_wq;
 
 static const char *startup_mode_name(enum iaf_startup_mode m)
 {
@@ -234,7 +237,9 @@ struct fsubdev *find_sd_id(u32 fabric_id, u8 sd_index)
 /* configured by request_irq() to refer to corresponding struct fsubdev */
 static irqreturn_t handle_iaf_irq(int irq, void *arg)
 {
-	return IRQ_HANDLED;
+	struct fsubdev *sd = arg;
+
+	return mbdb_handle_irq(sd);
 }
 
 static struct query_info *handle_query(void *handle, u32 fabric_id)
@@ -497,6 +502,15 @@ static int add_subdevice(struct fsubdev *sd, struct fdev *dev, int index)
 
 	create_sd_debugfs_dir(sd);
 
+	err = create_mbdb(sd, sd->debugfs_dir);
+
+	if (err) {
+		sd_err(sd, "Message Box allocation failure\n");
+		free_irq(sd->irq, sd);
+		iounmap(sd->csr_base);
+		return err;
+	}
+
 	sd_dbg(sd, "Adding IAF subdevice: %d\n", index);
 
 	return 0;
@@ -504,6 +518,7 @@ static int add_subdevice(struct fsubdev *sd, struct fdev *dev, int index)
 
 static void remove_subdevice(struct fsubdev *sd)
 {
+	destroy_mbdb(sd);
 	free_irq(sd->irq, sd);
 	iounmap(sd->csr_base);
 	sd_dbg(sd, "Removed IAF resource: %p\n", sd->csr_base);
@@ -747,6 +762,8 @@ static void __exit iaf_unload_module(void)
 {
 	pr_notice("Unloading %s\n", MODULEDETAILS);
 
+	flush_workqueue(iaf_unbound_wq);
+
 #if IS_ENABLED(CONFIG_AUXILIARY_BUS)
 	auxiliary_driver_unregister(&iaf_driver);
 #else
@@ -754,6 +771,8 @@ static void __exit iaf_unload_module(void)
 #endif
 
 	remove_debugfs_root_nodes();
+
+	destroy_workqueue(iaf_unbound_wq);
 
 	pr_notice("%s Unloaded\n", MODULEDETAILS);
 }
@@ -770,7 +789,13 @@ static int __init iaf_load_module(void)
 	pr_notice("Initializing %s\n", MODULEDETAILS);
 	pr_debug("Built for Linux Kernel %s\n", UTS_RELEASE);
 
+	iaf_unbound_wq = alloc_workqueue("iaf_unbound_wq", WQ_UNBOUND, WQ_UNBOUND_MAX_ACTIVE);
+	if (!iaf_unbound_wq)
+		return -ENOMEM;
+
 	create_debugfs_root_nodes();
+
+	mbdb_init_module();
 
 #if IS_ENABLED(CONFIG_AUXILIARY_BUS)
 	err = auxiliary_driver_register(&iaf_driver);
@@ -782,8 +807,10 @@ static int __init iaf_load_module(void)
 		pr_err("Cannot register with platform bus\n");
 #endif
 
-	if (err)
+	if (err) {
 		remove_debugfs_root_nodes();
+		destroy_workqueue(iaf_unbound_wq);
+	}
 
 	return err;
 }

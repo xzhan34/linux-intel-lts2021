@@ -379,7 +379,10 @@ i915_spi-y := spi/intel_spi_drv.o
 
 # exclude some broken headers from the test coverage
 no-header-test := \
-	display/intel_vbt_defs.h
+	display/intel_vbt_defs.h \
+	fabric/io.h \
+	fabric/mbdb.h \
+	$(null)
 
 always-$(CONFIG_DRM_I915_WERROR) += \
 	$(patsubst %.h,%.hdrtest, $(filter-out $(no-header-test), \

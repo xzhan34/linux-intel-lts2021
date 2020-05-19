@@ -1,0 +1,8 @@
+/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright(c) 2019 - 2021 Intel Corporation.
+ *
+ */
+
+#include "iaf_drv.h"
+#include "trace_mbx.h"

@@ -7,6 +7,7 @@
 #include <linux/device.h>
 #include "csr.h"
 #include "iaf_drv.h"
+#include "ops.h"
 #include "sysfs.h"
 
 static ssize_t sd_failure_show(struct device *dev, struct device_attribute *attr, char *buf)
