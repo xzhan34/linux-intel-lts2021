@@ -1237,6 +1237,15 @@ static inline struct device *fport_dev(const struct fport *port)
 	return &port->sd->fdev->pdev->dev;
 }
 
+#define BYTES_PER_FLIT 8
+
+static inline u64 flits_to_bytes(u64 flits)
+{
+	u64 bytes;
+
+	return __builtin_umulll_overflow(flits, BYTES_PER_FLIT, &bytes) ? ULLONG_MAX : bytes;
+}
+
 void indicate_subdevice_error(struct fsubdev *sd, enum sd_error err);
 
 /* The following two functions increase device reference count: */

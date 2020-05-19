@@ -29,6 +29,7 @@
 #include "iaf_drv.h"
 #include "mbdb.h"
 #include "mei_iaf_user.h"
+#include "netlink.h"
 #include "port.h"
 #include "routing_engine.h"
 #include "routing_event.h"
@@ -117,7 +118,31 @@ MODULE_PARM_DESC(startup_mode,
 		 );
 #endif
 
-#define ROOT_NODE DRIVER_NAME
+/* BPS Link Speed indexed by bit # as returned by fls set in port info fields */
+static u64 bps_link_speeds[] = {
+	0, /* fls returns index 0 when no bits are set. */
+	BPS_LINK_SPEED_12G,
+	BPS_LINK_SPEED_25G,
+	BPS_LINK_SPEED_53G,
+	BPS_LINK_SPEED_90G,
+	0,
+	0,
+	0,
+	0,
+};
+
+/**
+ * bps_link_speed - Returns link speed in bps for highest bit set in
+ *                  port info link speed
+ * @port_info_link_speed: speed as encoded in port info link speed
+ *
+ * Return: Speed in bits per second.
+ * 0 when no bits are set or bit set is out of range
+ */
+u64 bps_link_speed(u8 port_info_link_speed)
+{
+	return bps_link_speeds[fls(port_info_link_speed)];
+}
 
 #define RELEASE_TIMEOUT (HZ * 60)
 
@@ -918,6 +943,8 @@ static void __exit iaf_unload_module(void)
 {
 	pr_notice("Unloading %s\n", MODULEDETAILS);
 
+	nl_term();
+
 	fw_abort();
 
 	flush_workqueue(iaf_unbound_wq);
@@ -964,6 +991,9 @@ static int __init iaf_load_module(void)
 	routing_init();
 	rem_init();
 	mbdb_init_module();
+	err = nl_init();
+	if (err)
+		goto exit;
 	fw_init_module();
 
 #if IS_ENABLED(CONFIG_AUXILIARY_BUS)
@@ -976,7 +1006,9 @@ static int __init iaf_load_module(void)
 		pr_err("Cannot register with platform bus\n");
 #endif
 
+exit:
 	if (err) {
+		nl_term();
 		remove_debugfs_root_nodes();
 		destroy_workqueue(iaf_unbound_wq);
 	}

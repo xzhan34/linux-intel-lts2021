@@ -14,6 +14,7 @@ iaf-y := debugfs.o \
 	 main.o \
 	 mei_iaf_user.o \
 	 mbdb.o \
+	 netlink.o \
 	 ops.o \
 	 parallel.o \
 	 port.o \
