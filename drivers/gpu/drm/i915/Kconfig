@@ -174,3 +174,8 @@ menu "drm/i915 Unstable Evolution"
 	depends on DRM_I915
 	source "drivers/gpu/drm/i915/Kconfig.unstable"
 endmenu
+
+menu "drm/i915/fabric Intel Fabric Connectivity driver support"
+	depends on DRM_I915
+	source "drivers/gpu/drm/i915/fabric/Kconfig"
+endmenu
