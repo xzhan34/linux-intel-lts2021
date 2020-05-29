@@ -351,6 +351,11 @@ int i915_gem_set_caching_ioctl(struct drm_device *dev, void *data,
 		goto out;
 	}
 
+	if (i915_gem_object_is_lmem(obj) && level != I915_CACHING_NONE) {
+		ret = -EINVAL;
+		goto out;
+	}
+
 	ret = i915_gem_object_lock_interruptible(obj, NULL);
 	if (ret)
 		goto out;
