@@ -353,6 +353,7 @@ alloc_vm_end:
 				}
 			}
 
+			mock_vma->size = BIT_ULL(size);
 			mock_vma->pages = obj->mm.pages;
 			mock_vma->node.size = BIT_ULL(size);
 			mock_vma->node.start = addr;
