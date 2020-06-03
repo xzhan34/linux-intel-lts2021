@@ -31,8 +31,6 @@ struct i915_drm_clients {
 	struct kobject *root;
 };
 
-struct i915_drm_client;
-
 struct i915_engine_busy_attribute {
 	struct device_attribute attr;
 	struct i915_drm_client *client;
@@ -64,9 +62,12 @@ struct i915_drm_client {
 
 	struct kobject *root;
 	struct kobject *busy_root;
+	struct kobject *devm_stats_root;
 	struct {
 		struct device_attribute pid;
 		struct device_attribute name;
+		struct device_attribute created_devm_bytes;
+		struct device_attribute imported_devm_bytes;
 		struct i915_engine_busy_attribute busy[MAX_ENGINE_CLASS + 1];
 	} attr;
 
@@ -74,6 +75,8 @@ struct i915_drm_client {
 	 * @past_runtime: Accumulation of pphwsp runtimes from closed contexts.
 	 */
 	atomic64_t past_runtime[MAX_ENGINE_CLASS + 1];
+	atomic64_t created_devm_bytes;
+	atomic64_t imported_devm_bytes;
 };
 
 void i915_drm_clients_init(struct i915_drm_clients *clients,
@@ -100,6 +103,13 @@ struct i915_drm_client *i915_drm_client_add(struct i915_drm_clients *clients,
 
 int i915_drm_client_update(struct i915_drm_client *client,
 			   struct task_struct *task);
+
+void i915_drm_client_init_bo(struct drm_i915_gem_object *obj);
+int i915_drm_client_add_bo(struct i915_drm_client *client,
+			   struct drm_i915_gem_object *obj);
+void i915_drm_client_del_bo(struct i915_drm_client *client,
+			    struct drm_i915_gem_object *obj);
+void i915_drm_client_fini_bo(struct drm_i915_gem_object *obj);
 
 static inline const struct i915_drm_client_name *
 __i915_drm_client_name(const struct i915_drm_client *client)

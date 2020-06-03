@@ -150,6 +150,8 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	mutex_init(&obj->mm.get_page.lock);
 	INIT_RADIX_TREE(&obj->mm.get_dma_page.radix, GFP_KERNEL | __GFP_NOWARN);
 	mutex_init(&obj->mm.get_dma_page.lock);
+
+	i915_drm_client_init_bo(obj);
 }
 
 /**
@@ -200,6 +202,13 @@ bool i915_gem_object_can_bypass_llc(struct drm_i915_gem_object *obj)
 	return IS_JSL_EHL(i915);
 }
 
+static int i915_gem_open_object(struct drm_gem_object *gem, struct drm_file *file)
+{
+	struct drm_i915_file_private *fpriv = file->driver_priv;
+
+	return i915_drm_client_add_bo(fpriv->client, to_intel_bo(gem));
+}
+
 static void i915_gem_close_object(struct drm_gem_object *gem, struct drm_file *file)
 {
 	struct drm_i915_gem_object *obj = to_intel_bo(gem);
@@ -208,6 +217,8 @@ static void i915_gem_close_object(struct drm_gem_object *gem, struct drm_file *f
 	struct i915_mmap_offset *mmo, *mn;
 	struct i915_lut_handle *lut, *ln;
 	LIST_HEAD(close);
+
+	i915_drm_client_del_bo(fpriv->client, obj);
 
 	spin_lock(&obj->lut_lock);
 	list_for_each_entry_safe(lut, ln, &obj->lut_list, obj_link) {
@@ -348,6 +359,8 @@ static void __i915_gem_object_free_vma(struct drm_i915_gem_object *obj)
 void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 {
 	trace_i915_gem_object_destroy(obj);
+
+	i915_drm_client_fini_bo(obj);
 
 	__i915_gem_object_free_mmaps(obj);
 	__i915_gem_object_free_vma(obj);
@@ -1000,6 +1013,7 @@ int __init i915_objects_module_init(void)
 
 static const struct drm_gem_object_funcs i915_gem_object_funcs = {
 	.free = i915_gem_free_object,
+	.open = i915_gem_open_object,
 	.close = i915_gem_close_object,
 	.export = i915_gem_prime_export,
 };

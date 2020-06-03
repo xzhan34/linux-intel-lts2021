@@ -19,6 +19,13 @@
 #include "i915_gem.h"
 #include "i915_utils.h"
 
+struct i915_drm_client_bo {
+	struct rb_node node;
+	struct i915_drm_client *client;
+	unsigned int count;
+	bool shared;
+};
+
 /* compat: 2efc459d06f1 ("sysfs: Add sysfs_emit and sysfs_emit_at to format sysfs output") */
 #define sysfs_emit(buf, fmt...) scnprintf(buf, PAGE_SIZE, fmt)
 
@@ -99,6 +106,38 @@ show_busy(struct device *kdev, struct device_attribute *attr, char *buf)
 	return sysfs_emit(buf, "%llu\n", total);
 }
 
+/*
+ * The objs created by a client which have a possible placement in Local
+ * Memory only are accounted. Their sizes are aggregated and presented via
+ * this sysfs entry
+ */
+static ssize_t show_client_created_devm_bytes(struct device *kdev,
+					      struct device_attribute *attr,
+					      char *buf)
+{
+	struct i915_drm_client *client =
+		container_of(attr, typeof(*client), attr.created_devm_bytes);
+
+	return sysfs_emit(buf, "%llu\n",
+			  atomic64_read(&client->created_devm_bytes));
+}
+
+/*
+ * The objs imported by a client via PRIME/FLINK which have a possible
+ * placement in Local  Memory only are accounted. Their sizes are aggregated
+ * and presented via this sysfs entry
+ */
+static ssize_t show_client_imported_devm_bytes(struct device *kdev,
+					       struct device_attribute *attr,
+					       char *buf)
+{
+	struct i915_drm_client *client =
+		container_of(attr, typeof(*client), attr.imported_devm_bytes);
+
+	return sysfs_emit(buf, "%llu\n",
+			  atomic64_read(&client->imported_devm_bytes));
+}
+
 static const char * const uabi_class_names[] = {
 	[I915_ENGINE_CLASS_RENDER] = "0",
 	[I915_ENGINE_CLASS_COPY] = "1",
@@ -154,6 +193,171 @@ static void __client_unregister_sysfs_busy(struct i915_drm_client *client)
 	kobject_put(fetch_and_zero(&client->busy_root));
 }
 
+void i915_drm_client_init_bo(struct drm_i915_gem_object *obj)
+{
+	spin_lock_init(&obj->client.lock);
+	obj->client.rb = RB_ROOT;
+}
+
+static bool object_has_lmem(const struct drm_i915_gem_object *obj)
+{
+	int i;
+
+	for (i = 0; i < obj->mm.n_placements; i++) {
+		struct intel_memory_region *placement = obj->mm.placements[i];
+
+		if (placement->type == INTEL_MEMORY_LOCAL)
+			return true;
+	}
+
+	return false;
+}
+
+static int sort_client_key(const void *key, const struct rb_node *node)
+{
+	const struct i915_drm_client_bo *cb = rb_entry(node, typeof(*cb), node);
+
+	return ptrdiff(key, cb->client);
+}
+
+static int sort_client(struct rb_node *node, const struct rb_node *parent)
+{
+	const struct i915_drm_client_bo *cb = rb_entry(node, typeof(*cb), node);
+
+	return sort_client_key(cb->client, parent);
+}
+
+int i915_drm_client_add_bo(struct i915_drm_client *client,
+			   struct drm_i915_gem_object *obj)
+{
+	struct i915_drm_client_bo *cb;
+	struct rb_node *old;
+
+	/* only objs which can reside in LOCAL MEMORY are tracked */
+	if (!object_has_lmem(obj))
+		return 0;
+
+	cb = kzalloc(sizeof(*cb), GFP_KERNEL);
+	if (!cb)
+		return -ENOMEM;
+
+	cb->client = client;
+	cb->shared = obj->base.dma_buf;
+
+	spin_lock(&obj->client.lock);
+
+	old = rb_find_add(&cb->node, &obj->client.rb, sort_client);
+	if (old) {
+		kfree(cb);
+		cb = rb_entry(old, typeof(*cb), node);
+	} else {
+		if (cb->shared)
+			atomic64_add(obj->base.size,
+				     &client->imported_devm_bytes);
+		else
+			atomic64_add(obj->base.size,
+				     &client->created_devm_bytes);
+	}
+
+	cb->count++;
+	spin_unlock(&obj->client.lock);
+
+	return 0;
+}
+
+static struct i915_drm_client_bo *
+lookup_client(struct i915_drm_client *client,
+	      struct drm_i915_gem_object *obj)
+{
+	struct rb_node *rb = rb_find(client, &obj->client.rb, sort_client_key);
+
+	GEM_BUG_ON(offsetof(struct i915_drm_client_bo, node));
+	return rb_entry(rb, struct i915_drm_client_bo, node);
+}
+
+void i915_drm_client_del_bo(struct i915_drm_client *client,
+			    struct drm_i915_gem_object *obj)
+{
+	struct i915_drm_client_bo *cb;
+
+	spin_lock(&obj->client.lock);
+	cb = lookup_client(client, obj);
+	if (cb && !--cb->count) {
+		if (cb->shared)
+			atomic64_sub(obj->base.size,
+				     &client->imported_devm_bytes);
+		else
+			atomic64_sub(obj->base.size,
+				     &client->created_devm_bytes);
+
+		rb_erase(&cb->node, &obj->client.rb);
+		kfree(cb);
+	}
+	spin_unlock(&obj->client.lock);
+}
+
+void i915_drm_client_fini_bo(struct drm_i915_gem_object *obj)
+{
+	GEM_BUG_ON(!RB_EMPTY_ROOT(&obj->client.rb));
+}
+
+static int
+__client_register_sysfs_memory_stats(struct i915_drm_client *client)
+{
+	const struct {
+		const char *name;
+		struct device_attribute *attr;
+		ssize_t (*show)(struct device *dev,
+				struct device_attribute *attr,
+				char *buf);
+	} files[] = {
+		{
+			"created_bytes",
+			&client->attr.created_devm_bytes,
+			show_client_created_devm_bytes
+		},
+		{
+			"imported_bytes",
+			&client->attr.imported_devm_bytes,
+			show_client_imported_devm_bytes
+		},
+	};
+	unsigned int i;
+	int ret;
+
+	client->devm_stats_root =
+		kobject_create_and_add("total_device_memory_buffer_objects",
+				       client->root);
+	if (!client->devm_stats_root)
+		return -ENOMEM;
+
+	for (i = 0; i < ARRAY_SIZE(files); i++) {
+		struct device_attribute *attr = files[i].attr;
+
+		sysfs_attr_init(&attr->attr);
+
+		attr->attr.name = files[i].name;
+		attr->attr.mode = 0444;
+		attr->show = files[i].show;
+
+		ret = sysfs_create_file(client->devm_stats_root,
+					(struct attribute *)attr);
+		if (ret)
+			goto out;
+	}
+out:
+	if (ret)
+		kobject_put(client->devm_stats_root);
+
+	return ret;
+}
+
+static void
+__client_unregister_sysfs_memory_stats(struct i915_drm_client *client)
+{
+	kobject_put(fetch_and_zero(&client->devm_stats_root));
+}
+
 static int __client_register_sysfs(struct i915_drm_client *client)
 {
 	const struct {
@@ -193,6 +397,10 @@ static int __client_register_sysfs(struct i915_drm_client *client)
 	}
 
 	ret = __client_register_sysfs_busy(client);
+	if (ret)
+		goto out;
+
+	ret = __client_register_sysfs_memory_stats(client);
 
 out:
 	if (ret)
@@ -204,6 +412,7 @@ out:
 static void __client_unregister_sysfs(struct i915_drm_client *client)
 {
 	__client_unregister_sysfs_busy(client);
+	__client_unregister_sysfs_memory_stats(client);
 
 	kobject_put(fetch_and_zero(&client->root));
 }

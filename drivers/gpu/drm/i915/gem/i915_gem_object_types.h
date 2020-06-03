@@ -625,6 +625,13 @@ struct drm_i915_gem_object {
 	};
 
 	struct drm_i915_gem_object *swapto;
+
+	struct {
+		spinlock_t lock;
+
+		/* list of clients which allocated/imported this object */
+		struct rb_root rb;
+	} client;
 };
 
 static inline struct drm_i915_gem_object *
