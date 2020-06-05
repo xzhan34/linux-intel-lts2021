@@ -26,9 +26,16 @@
 #include "i915_scheduler.h"
 
 struct drm_i915_private;
-struct i915_vma_compress;
+struct i915_page_compress;
 struct intel_engine_capture_vma;
 struct intel_overlay_error_state;
+
+struct i915_compressed_pages {
+	int num_pages;
+	int page_count;
+	int unused;
+	u32 *pages[0];
+};
 
 struct i915_vma_coredump {
 	struct i915_vma_coredump *next;
@@ -39,10 +46,7 @@ struct i915_vma_coredump {
 	u64 gtt_size;
 	u32 gtt_page_sizes;
 
-	int num_pages;
-	int page_count;
-	int unused;
-	u32 *pages[];
+	struct i915_compressed_pages *cpages;
 };
 
 struct i915_request_coredump {
@@ -303,17 +307,18 @@ intel_engine_coredump_alloc(struct intel_engine_cs *engine, gfp_t gfp, u32 dump_
 struct intel_engine_capture_vma *
 intel_engine_coredump_add_request(struct intel_engine_coredump *ee,
 				  struct i915_request *rq,
-				  gfp_t gfp);
+				  gfp_t gfp,
+				  struct i915_page_compress *compress);
 
 void intel_engine_coredump_add_vma(struct intel_engine_coredump *ee,
 				   struct intel_engine_capture_vma *capture,
-				   struct i915_vma_compress *compress);
+				   struct i915_page_compress *compress);
 
-struct i915_vma_compress *
+struct i915_page_compress *
 i915_vma_capture_prepare(struct intel_gt_coredump *gt);
 
 void i915_vma_capture_finish(struct intel_gt_coredump *gt,
-			     struct i915_vma_compress *compress);
+			     struct i915_page_compress *compress);
 
 void i915_error_state_store(struct i915_gpu_coredump *error);
 
@@ -378,7 +383,8 @@ intel_engine_coredump_alloc(struct intel_engine_cs *engine, gfp_t gfp, u32 dump_
 static inline struct intel_engine_capture_vma *
 intel_engine_coredump_add_request(struct intel_engine_coredump *ee,
 				  struct i915_request *rq,
-				  gfp_t gfp)
+				  gfp_t gfp,
+				  struct i915_page_compress *compress)
 {
 	return NULL;
 }
@@ -386,11 +392,11 @@ intel_engine_coredump_add_request(struct intel_engine_coredump *ee,
 static inline void
 intel_engine_coredump_add_vma(struct intel_engine_coredump *ee,
 			      struct intel_engine_capture_vma *capture,
-			      struct i915_vma_compress *compress)
+			      struct i915_page_compress *compress)
 {
 }
 
-static inline struct i915_vma_compress *
+static inline struct i915_page_compress *
 i915_vma_capture_prepare(struct intel_gt_coredump *gt)
 {
 	return NULL;
@@ -398,7 +404,7 @@ i915_vma_capture_prepare(struct intel_gt_coredump *gt)
 
 static inline void
 i915_vma_capture_finish(struct intel_gt_coredump *gt,
-			struct i915_vma_compress *compress)
+			struct i915_page_compress *compress)
 {
 }
 

@@ -2220,14 +2220,16 @@ static void execlists_capture_work(struct work_struct *work)
 	struct intel_engine_cs *engine = cap->rq->engine;
 	struct intel_gt_coredump *gt = cap->error->gt;
 	struct intel_engine_capture_vma *vma;
+	struct i915_page_compress *compress = i915_vma_capture_prepare(gt);
 
-	/* Compress all the objects attached to the request, slow! */
-	vma = intel_engine_coredump_add_request(gt->engine, cap->rq, gfp);
-	if (vma) {
-		struct i915_vma_compress *compress =
-			i915_vma_capture_prepare(gt);
-
-		intel_engine_coredump_add_vma(gt->engine, vma, compress);
+	if (compress) {
+		/* Compress all the objects attached to the request, slow! */
+		vma = intel_engine_coredump_add_request(gt->engine,
+							cap->rq, gfp,
+							compress);
+		if (vma)
+			intel_engine_coredump_add_vma(gt->engine,
+						      vma, compress);
 		i915_vma_capture_finish(gt, compress);
 	}
 

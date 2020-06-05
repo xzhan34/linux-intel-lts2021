@@ -242,13 +242,13 @@ static void pool_free(struct pagevec *pv, void *addr)
 
 #ifdef CONFIG_DRM_I915_COMPRESS_ERROR
 
-struct i915_vma_compress {
+struct i915_page_compress {
 	struct pagevec pool;
 	struct z_stream_s zstream;
 	void *tmp;
 };
 
-static bool compress_init(struct i915_vma_compress *c)
+static bool compress_init(struct i915_page_compress *c)
 {
 	struct z_stream_s *zstream = &c->zstream;
 
@@ -270,7 +270,7 @@ static bool compress_init(struct i915_vma_compress *c)
 	return true;
 }
 
-static bool compress_start(struct i915_vma_compress *c)
+static bool compress_start(struct i915_page_compress *c)
 {
 	struct z_stream_s *zstream = &c->zstream;
 	void *workspace = zstream->workspace;
@@ -281,8 +281,8 @@ static bool compress_start(struct i915_vma_compress *c)
 	return zlib_deflateInit(zstream, Z_DEFAULT_COMPRESSION) == Z_OK;
 }
 
-static void *compress_next_page(struct i915_vma_compress *c,
-				struct i915_vma_coredump *dst)
+static void *compress_next_page(struct i915_page_compress *c,
+				struct i915_compressed_pages *dst)
 {
 	void *page;
 
@@ -296,9 +296,9 @@ static void *compress_next_page(struct i915_vma_compress *c,
 	return dst->pages[dst->page_count++] = page;
 }
 
-static int compress_page(struct i915_vma_compress *c,
+static int compress_page(struct i915_page_compress *c,
 			 void *src,
-			 struct i915_vma_coredump *dst,
+			 struct i915_compressed_pages *dst,
 			 bool wc)
 {
 	struct z_stream_s *zstream = &c->zstream;
@@ -330,8 +330,8 @@ static int compress_page(struct i915_vma_compress *c,
 	return 0;
 }
 
-static int compress_flush(struct i915_vma_compress *c,
-			  struct i915_vma_coredump *dst)
+static int compress_flush(struct i915_page_compress *c,
+			  struct i915_compressed_pages *dst)
 {
 	struct z_stream_s *zstream = &c->zstream;
 
@@ -359,12 +359,12 @@ end:
 	return 0;
 }
 
-static void compress_finish(struct i915_vma_compress *c)
+static void compress_finish(struct i915_page_compress *c)
 {
 	zlib_deflateEnd(&c->zstream);
 }
 
-static void compress_fini(struct i915_vma_compress *c)
+static void compress_fini(struct i915_page_compress *c)
 {
 	kfree(c->zstream.workspace);
 	if (c->tmp)
@@ -379,23 +379,23 @@ static void err_compression_marker(struct drm_i915_error_state_buf *m)
 
 #else
 
-struct i915_vma_compress {
+struct i915_page_compress {
 	struct pagevec pool;
 };
 
-static bool compress_init(struct i915_vma_compress *c)
+static bool compress_init(struct i915_page_compress *c)
 {
 	return pool_init(&c->pool, I915_GFP_ALLOW_FAIL) == 0;
 }
 
-static bool compress_start(struct i915_vma_compress *c)
+static bool compress_start(struct i915_page_compress *c)
 {
 	return true;
 }
 
-static int compress_page(struct i915_vma_compress *c,
+static int compress_page(struct i915_page_compress *c,
 			 void *src,
-			 struct i915_vma_coredump *dst,
+			 struct i915_compressed_pages *dst,
 			 bool wc)
 {
 	void *ptr;
@@ -412,17 +412,17 @@ static int compress_page(struct i915_vma_compress *c,
 	return 0;
 }
 
-static int compress_flush(struct i915_vma_compress *c,
-			  struct i915_vma_coredump *dst)
+static int compress_flush(struct i915_page_compress *c,
+			  struct i915_compressed_pages *dst)
 {
 	return 0;
 }
 
-static void compress_finish(struct i915_vma_compress *c)
+static void compress_finish(struct i915_page_compress *c)
 {
 }
 
-static void compress_fini(struct i915_vma_compress *c)
+static void compress_fini(struct i915_page_compress *c)
 {
 	pool_fini(&c->pool);
 }
@@ -433,6 +433,29 @@ static void err_compression_marker(struct drm_i915_error_state_buf *m)
 }
 
 #endif
+
+static void compress_print_pages(struct drm_i915_error_state_buf *m,
+				 struct i915_compressed_pages *cpages)
+{
+	char out[ASCII85_BUFSZ];
+	u64 page;
+
+	err_compression_marker(m);
+	for (page = 0; page < cpages->page_count; page++) {
+		u64 i, len;
+
+		len = PAGE_SIZE;
+		if (page == cpages->page_count - 1)
+			len -= cpages->unused;
+
+		len = ascii85_encode_len(len);
+
+		for (i = 0; i < len; i++)
+			err_puts(m, ascii85_encode(cpages->pages[page][i],
+						   out));
+	}
+	i915_error_printf(m, "\n");
+}
 
 static void error_print_instdone(struct drm_i915_error_state_buf *m,
 				 const struct intel_engine_coredump *ee)
@@ -630,9 +653,6 @@ void intel_gpu_error_print_vma(struct drm_i915_error_state_buf *m,
 			       const struct intel_engine_cs *engine,
 			       const struct i915_vma_coredump *vma)
 {
-	char out[ASCII85_BUFSZ];
-	int page;
-
 	if (!vma)
 		return;
 
@@ -643,20 +663,7 @@ void intel_gpu_error_print_vma(struct drm_i915_error_state_buf *m,
 
 	if (vma->gtt_page_sizes > I915_GTT_PAGE_SIZE_4K)
 		err_printf(m, "gtt_page_sizes = 0x%08x\n", vma->gtt_page_sizes);
-
-	err_compression_marker(m);
-	for (page = 0; page < vma->page_count; page++) {
-		int i, len;
-
-		len = PAGE_SIZE;
-		if (page == vma->page_count - 1)
-			len -= vma->unused;
-		len = ascii85_encode_len(len);
-
-		for (i = 0; i < len; i++)
-			err_puts(m, ascii85_encode(vma->pages[page][i], out));
-	}
-	err_puts(m, "\n");
+	compress_print_pages(m, vma->cpages);
 }
 
 static void err_print_capabilities(struct drm_i915_error_state_buf *m,
@@ -1024,11 +1031,12 @@ static void i915_vma_coredump_free(struct i915_vma_coredump *vma)
 {
 	while (vma) {
 		struct i915_vma_coredump *next = vma->next;
+		struct i915_compressed_pages *cpages = vma->cpages;
 		int page;
 
-		for (page = 0; page < vma->page_count; page++)
-			free_page((unsigned long)vma->pages[page]);
-
+		for (page = 0; page < cpages->page_count; page++)
+			free_page((unsigned long)cpages->pages[page]);
+		kfree(cpages);
 		kfree(vma);
 		vma = next;
 	}
@@ -1093,7 +1101,7 @@ static struct i915_vma_coredump *
 i915_vma_coredump_create(const struct intel_gt *gt,
 			 const struct i915_vma *vma,
 			 const char *name,
-			 struct i915_vma_compress *compress)
+			 struct i915_page_compress *compress)
 {
 	struct i915_ggtt *ggtt = gt->ggtt;
 	const u64 slot = ggtt->error_capture.start;
@@ -1110,11 +1118,19 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 
 	num_pages = min_t(u64, vma->size, vma->obj->base.size) >> PAGE_SHIFT;
 	num_pages = DIV_ROUND_UP(10 * num_pages, 8); /* worstcase zlib growth */
-	dst = kmalloc(sizeof(*dst) + num_pages * sizeof(u32 *), I915_GFP_ALLOW_FAIL);
+	dst = kmalloc(sizeof(*dst), I915_GFP_ALLOW_FAIL);
 	if (!dst)
 		return NULL;
 
+	dst->cpages = kmalloc(sizeof(*dst->cpages) + num_pages * sizeof(u32 *),
+			      I915_GFP_ALLOW_FAIL);
+	if (!dst->cpages) {
+		kfree(dst);
+		return NULL;
+	}
+
 	if (!compress_start(compress)) {
+		kfree(dst->cpages);
 		kfree(dst);
 		return NULL;
 	}
@@ -1125,9 +1141,9 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	dst->gtt_offset = i915_vma_offset(vma);
 	dst->gtt_size = i915_vma_size(vma);
 	dst->gtt_page_sizes = vma->page_sizes.gtt;
-	dst->num_pages = num_pages;
-	dst->page_count = 0;
-	dst->unused = 0;
+	dst->cpages->num_pages = num_pages;
+	dst->cpages->page_count = 0;
+	dst->cpages->unused = 0;
 
 	offset = (vma->ggtt_view.type == I915_GGTT_VIEW_PARTIAL) ?
 		 vma->ggtt_view.partial.offset : 0;
@@ -1148,7 +1164,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 
 			s = io_mapping_map_wc(&ggtt->iomap, slot, PAGE_SIZE);
 			ret = compress_page(compress,
-					    (void  __force *)s, dst,
+					    (void  __force *)s, dst->cpages,
 					    true);
 			io_mapping_unmap(s);
 
@@ -1173,7 +1189,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 					      dma - mem->region.start,
 					      PAGE_SIZE);
 			ret = compress_page(compress,
-					    (void __force *)s, dst,
+					    (void __force *)s, dst->cpages,
 					    true);
 			io_mapping_unmap(s);
 			if (ret || (vma->size <= ((n - offset) * PAGE_SIZE)))
@@ -1191,7 +1207,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 			drm_clflush_pages(&page, 1);
 
 			s = kmap(page);
-			ret = compress_page(compress, s, dst, false);
+			ret = compress_page(compress, s, dst->cpages, false);
 			kunmap(page);
 
 			drm_clflush_pages(&page, 1);
@@ -1201,9 +1217,11 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 		}
 	}
 
-	if (ret || compress_flush(compress, dst)) {
-		while (dst->page_count--)
-			pool_free(&compress->pool, dst->pages[dst->page_count]);
+	if (ret || compress_flush(compress, dst->cpages)) {
+		while (dst->cpages->page_count--)
+			pool_free(&compress->pool,
+				  dst->cpages->pages[dst->cpages->page_count]);
+		kfree(dst->cpages);
 		kfree(dst);
 		dst = NULL;
 	}
@@ -1438,7 +1456,8 @@ static void engine_record_execlists(struct intel_engine_coredump *ee)
 }
 
 static bool record_context(struct i915_gem_context_coredump *e,
-			   const struct i915_request *rq)
+			   const struct i915_request *rq,
+			   struct i915_page_compress *compress)
 {
 	struct i915_gem_context *ctx;
 	bool simulated;
@@ -1575,11 +1594,12 @@ intel_engine_coredump_alloc(struct intel_engine_cs *engine, gfp_t gfp, u32 dump_
 struct intel_engine_capture_vma *
 intel_engine_coredump_add_request(struct intel_engine_coredump *ee,
 				  struct i915_request *rq,
-				  gfp_t gfp)
+				  gfp_t gfp,
+				  struct i915_page_compress *compress)
 {
 	struct intel_engine_capture_vma *vma = NULL;
 
-	ee->simulated |= record_context(&ee->context, rq);
+	ee->simulated |= record_context(&ee->context, rq, compress);
 	if (ee->simulated)
 		return NULL;
 
@@ -1604,7 +1624,7 @@ intel_engine_coredump_add_request(struct intel_engine_coredump *ee,
 void
 intel_engine_coredump_add_vma(struct intel_engine_coredump *ee,
 			      struct intel_engine_capture_vma *capture,
-			      struct i915_vma_compress *compress)
+			      struct i915_page_compress *compress)
 {
 	const struct intel_engine_cs *engine = ee->engine;
 
@@ -1638,7 +1658,7 @@ intel_engine_coredump_add_vma(struct intel_engine_coredump *ee,
 
 static struct intel_engine_coredump *
 capture_engine(struct intel_engine_cs *engine,
-	       struct i915_vma_compress *compress,
+	       struct i915_page_compress *compress,
 	       u32 dump_flags)
 {
 	struct intel_engine_capture_vma *capture;
@@ -1682,7 +1702,8 @@ capture_engine(struct intel_engine_cs *engine,
 	capture = NULL;
 	if (rq) {
 		capture = intel_engine_coredump_add_request(ee, rq,
-							    ATOMIC_MAYFAIL);
+							    ATOMIC_MAYFAIL,
+							    compress);
 		i915_request_put(rq);
 	}
 	if (!capture) {
@@ -1701,7 +1722,7 @@ capture_engine(struct intel_engine_cs *engine,
 static void
 gt_record_engines(struct intel_gt_coredump *gt,
 		  intel_engine_mask_t engine_mask,
-		  struct i915_vma_compress *compress,
+		  struct i915_page_compress *compress,
 		  u32 dump_flags)
 {
 	struct intel_engine_cs *engine;
@@ -1754,7 +1775,7 @@ static void gt_record_guc_ctb(struct intel_ctb_coredump *saved,
 
 static struct intel_uc_coredump *
 gt_record_uc(struct intel_gt_coredump *gt,
-	     struct i915_vma_compress *compress)
+	     struct i915_page_compress *compress)
 {
 	const struct intel_uc *uc = &gt->_gt->uc;
 	struct intel_uc_coredump *error_uc;
@@ -2088,10 +2109,10 @@ intel_gt_coredump_alloc(struct intel_gt *gt, gfp_t gfp, u32 dump_flags)
 	return gc;
 }
 
-struct i915_vma_compress *
+struct i915_page_compress *
 i915_vma_capture_prepare(struct intel_gt_coredump *gt)
 {
-	struct i915_vma_compress *compress;
+	struct i915_page_compress *compress;
 
 	compress = kmalloc(sizeof(*compress), I915_GFP_ALLOW_FAIL);
 	if (!compress)
@@ -2106,7 +2127,7 @@ i915_vma_capture_prepare(struct intel_gt_coredump *gt)
 }
 
 void i915_vma_capture_finish(struct intel_gt_coredump *gt,
-			     struct i915_vma_compress *compress)
+			     struct i915_page_compress *compress)
 {
 	if (!compress)
 		return;
@@ -2132,7 +2153,7 @@ i915_gpu_coredump(struct intel_gt *gt, intel_engine_mask_t engine_mask, u32 dump
 
 	error->gt = intel_gt_coredump_alloc(gt, I915_GFP_ALLOW_FAIL, dump_flags);
 	if (error->gt) {
-		struct i915_vma_compress *compress;
+		struct i915_page_compress *compress;
 
 		compress = i915_vma_capture_prepare(error->gt);
 		if (!compress) {
