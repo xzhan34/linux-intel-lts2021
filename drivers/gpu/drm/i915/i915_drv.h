@@ -347,7 +347,7 @@ struct i915_gem_mm {
 	struct i915_vma *smem_window[2];
 
 	/* To protect above two set of vmas */
-	struct mutex window_mutex;
+	wait_queue_head_t window_queue;
 
 	struct i915_mm_swap_stats blt_swap_stats;
 	struct i915_mm_swap_stats memcpy_swap_stats;
