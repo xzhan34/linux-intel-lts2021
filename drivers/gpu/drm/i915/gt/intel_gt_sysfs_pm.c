@@ -32,16 +32,8 @@ static ssize_t rc6_enable_show(struct device *dev,
 			       char *buff)
 {
 	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
-	u8 mask = 0;
 
-	if (HAS_RC6(gt->i915))
-		mask |= BIT(0);
-	if (HAS_RC6p(gt->i915))
-		mask |= BIT(1);
-	if (HAS_RC6pp(gt->i915))
-		mask |= BIT(2);
-
-	return scnprintf(buff, PAGE_SIZE, "%x\n", mask);
+	return scnprintf(buff, PAGE_SIZE, "%d\n", gt->rc6.enabled);
 }
 
 static ssize_t rc6_residency_ms_show(struct device *dev,
