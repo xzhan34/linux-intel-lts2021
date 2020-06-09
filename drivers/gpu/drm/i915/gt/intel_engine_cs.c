@@ -1301,6 +1301,16 @@ create_blitter_context(struct intel_engine_cs *engine)
 						  &blitter, "blitter_context");
 }
 
+static struct intel_context *
+create_evict_context(struct intel_engine_cs *engine)
+{
+	static struct lock_class_key evict;
+
+	return intel_engine_create_pinned_context(engine, engine->gt->vm, SZ_4K,
+						  I915_GEM_HWS_EVICT_ADDR,
+						  &evict, "evict_context");
+}
+
 /**
  * intel_engines_init_common - initialize cengine state which might require hw access
  * @engine: Engine to initialize.
@@ -1339,24 +1349,37 @@ static int engine_init_common(struct intel_engine_cs *engine)
 	engine->emit_fini_breadcrumb_dw = ret;
 
 	/*
-	 * The blitter context is used to quickly memset or migrate objects
-	 * in local memory, so it has to always be available.
+	 * The blitter and evict contexts are used to clear and migrate objects
+	 * in local memory so they have to always be available.
 	 */
 	if (engine->class == COPY_ENGINE_CLASS &&
 	    ce->timeline != engine->legacy.timeline) {
 		ce = create_blitter_context(engine);
 		if (IS_ERR(ce)) {
 			ret = PTR_ERR(ce);
-			goto err_context;
+			goto err_blitter;
 		}
 
 		engine->blitter_context = ce;
+
+		if (HAS_LMEM(engine->i915)) {
+			ce = create_evict_context(engine);
+			if (IS_ERR(ce)) {
+				ret = PTR_ERR(ce);
+				goto err_evict;
+			}
+
+			engine->evict_context = ce;
+		}
 	}
 
 	return 0;
 
+err_evict:
+	destroy_pinned_context(fetch_and_zero(&engine->blitter_context));
+err_blitter:
 err_context:
-	intel_engine_destroy_pinned_context(ce);
+	destroy_pinned_context(fetch_and_zero(&engine->kernel_context));
 	return ret;
 }
 
@@ -1422,6 +1445,7 @@ void intel_engine_cleanup_common(struct intel_engine_cs *engine)
 	if (engine->default_state)
 		fput(engine->default_state);
 
+	destroy_pinned_context(engine->evict_context);
 	destroy_pinned_context(engine->blitter_context);
 	destroy_pinned_context(engine->kernel_context);
 
