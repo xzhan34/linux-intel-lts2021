@@ -729,6 +729,7 @@ static i915_query_funcs_table i915_query_funcs_prelim[] = {
 #define MAKE_TABLE_IDX(id)		[PRELIM_DRM_I915_QUERY_MASK(PRELIM_DRM_I915_QUERY_##id) - 1]
 
 	MAKE_TABLE_IDX(MEMORY_REGIONS) = prelim_query_memregion_info,
+	MAKE_TABLE_IDX(HWCONFIG_TABLE) = query_hwconfig_blob,
 	MAKE_TABLE_IDX(ENGINE_INFO) = prelim_query_engine_info,
 
 #undef MAKE_TABLE_IDX

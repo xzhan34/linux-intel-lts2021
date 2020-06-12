@@ -181,6 +181,8 @@ struct prelim_drm_i915_query_item {
 #define PRELIM_DRM_I915_QUERY			(1 << 16)
 #define PRELIM_DRM_I915_QUERY_MASK(x)		(x & 0xffff)
 #define PRELIM_DRM_I915_QUERY_MEMORY_REGIONS	(PRELIM_DRM_I915_QUERY | 4)
+/* Deprecated: HWConfig is now upstream, do not use the prelim version anymore */
+#define PRELIM_DRM_I915_QUERY_HWCONFIG_TABLE	(PRELIM_DRM_I915_QUERY | 6)
 #define PRELIM_DRM_I915_QUERY_ENGINE_INFO	(PRELIM_DRM_I915_QUERY | 13)
 };
 
