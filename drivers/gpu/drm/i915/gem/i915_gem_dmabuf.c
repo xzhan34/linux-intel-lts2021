@@ -6,7 +6,6 @@
 
 #include <linux/dma-buf.h>
 #include <linux/highmem.h>
-#include <linux/dma-resv.h>
 #include <linux/scatterlist.h>
 
 #include "gem/i915_gem_dmabuf.h"
@@ -67,7 +66,6 @@ static void i915_gem_unmap_dma_buf(struct dma_buf_attachment *attach,
 				   enum dma_data_direction dir)
 {
 	dma_unmap_sgtable(attach->dev, sgt, dir, DMA_ATTR_SKIP_CPU_SYNC);
-	sg_free_table(sgt);
 	kfree(sgt);
 }
 
@@ -75,9 +73,11 @@ static int i915_gem_dmabuf_vmap(struct dma_buf *dma_buf,
 				struct iosys_map *map)
 {
 	struct drm_i915_gem_object *obj = dma_buf_to_obj(dma_buf);
+	enum i915_map_type type;
 	void *vaddr;
 
-	vaddr = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WB);
+	type = i915_gem_object_has_struct_page(obj) ? I915_MAP_WB : I915_MAP_WC;
+	vaddr = i915_gem_object_pin_map_unlocked(obj, type);
 	if (IS_ERR(vaddr))
 		return PTR_ERR(vaddr);
 
@@ -167,7 +167,10 @@ retry:
 	if (!err)
 		err = i915_gem_object_pin_pages(obj);
 	if (!err) {
-		err = i915_gem_object_set_to_cpu_domain(obj, write);
+		if (i915_gem_object_has_struct_page(obj))
+			err = i915_gem_object_set_to_cpu_domain(obj, write);
+		else
+			err = i915_gem_object_set_to_wc_domain(obj, write);
 		i915_gem_object_unpin_pages(obj);
 	}
 	if (err == -EDEADLK) {
