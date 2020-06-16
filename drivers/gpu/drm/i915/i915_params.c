@@ -221,6 +221,9 @@ i915_param_named_unsafe(enable_rc6, bool, 0400,
 i915_param_named_unsafe(rc6_ignore_steppings, bool, 0400,
 	"Allow RC6 to be enabled on steppings where it would be disabled. (default: false)");
 
+i915_param_named_unsafe(enable_pagefault, bool, 0600,
+	"Enable device page fault. (default: false)");
+
 #if IS_ENABLED(CONFIG_DRM_I915_GVT)
 i915_param_named(enable_gvt, bool, 0400,
 	"Enable support for Intel GVT-g graphics virtualization host support(default:false)");
