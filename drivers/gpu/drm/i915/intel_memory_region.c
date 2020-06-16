@@ -332,7 +332,7 @@ bookmark:
 		goto next;
 	}
 
-	if (*++phase) {
+	if (*++phase && mem->i915->params.enable_eviction) {
 		/* And try to release all stale kernel objects */
 		intel_gt_retire_requests(mem->gt);
 
