@@ -298,6 +298,15 @@ i915_param_named_unsafe(debug_pages, uint, 0400,
 
 i915_param_named_unsafe(enable_mem_fence, bool, 0400,
 			"Set this true to enable MEM_FENCE workaround (default: false");
+/*
+ * This module parameter is needed because SRIOV PF and IAF are mutually
+ * exclusive (see HSDES #14014623804).  Until this is fixed, the driver
+ * needs to be able to enable/disable the IAF infrastructure (specifically
+ * Device Physical Addressing).  Since there will be no enable/disable for the
+ * SRIOV PF path, this parameter is needed to explicitly disable IAF when
+ * SRIOV PF is required.
+ */
+i915_param_named(enable_iaf, bool, 0400, "Enable IAF feature (default: true)");
 
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,

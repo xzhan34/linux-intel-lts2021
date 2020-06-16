@@ -92,6 +92,7 @@ struct drm_printer;
 	param(bool, allow_non_persist_without_reset, false, 0400) \
 	param(bool, enable_fake_int_wa, true, 0400) \
 	param(bool, enable_pagefault, false, 0600) \
+	param(bool, enable_iaf, true, 0400) \
 	param(bool, enable_hw_throttle_blt, false, 0400) \
 	param(bool, enable_rc6, true, 0400) \
 	param(bool, rc6_ignore_steppings, false, 0400) \
