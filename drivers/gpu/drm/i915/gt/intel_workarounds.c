@@ -1500,6 +1500,13 @@ xehpsdv_gt_workarounds_init(struct intel_gt *gt, struct i915_wa_list *wal)
 
 	xehp_init_mcr(gt, wal);
 
+	/* Wa_14010924592: xehpsdv */
+	if (i915->params.enable_hw_throttle_blt &&
+	    IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0, STEP_B0))
+		wa_write_clr_set(wal, MERT_TAGBITSONIOSFP,
+				 MERT_TAG_BITS_MASK | MERT_TAG_LOCK,
+				 MERT_TAG_BITS_TAG_10 | MERT_TAG_LOCK);
+
 	/* Wa_1409757795:xehpsdv */
 	wa_mcr_write_or(wal, SCCGCTL94DC, CG3DDISURB);
 
@@ -3034,6 +3041,13 @@ xcs_engine_wa_init(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 			 RING_SEMA_WAIT_POLL(engine->mmio_base),
 			 1);
 	}
+
+	if (engine->class == COPY_ENGINE_CLASS &&
+	    i915->params.enable_hw_throttle_blt &&
+	    IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0, STEP_B0))
+		wa_masked_field_set(wal, GAB_MODE,
+				    GAB_MODE_THROTTLE_RATE_MASK,
+				    GAB_MODE_THROTTLE_RATE);
 }
 
 static void

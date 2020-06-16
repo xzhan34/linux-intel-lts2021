@@ -396,6 +396,13 @@
 #define   MMCD_PCLA				(1 << 31)
 #define   MMCD_HOTSPOT_EN			(1 << 27)
 
+#define MERT_TAGBITSONIOSFP			_MMIO(0x51f0)
+#define   MERT_TAG_BITS_MASK			REG_GENMASK(1, 0)
+#define   MERT_TAG_BITS_TAG_8			0x0
+#define   MERT_TAG_BITS_TAG_10			0x1
+#define   MERT_TAG_BITS_TAG_5			0x2
+#define   MERT_TAG_LOCK				REG_BIT(31)
+
 /* There are the 4 64-bit counter registers, one for each stream output */
 #define GEN7_SO_NUM_PRIMS_WRITTEN(n)		_MMIO(0x5200 + (n) * 8)
 #define GEN7_SO_NUM_PRIMS_WRITTEN_UDW(n)	_MMIO(0x5200 + (n) * 8 + 4)
@@ -1487,6 +1494,10 @@
 #define   CHV_FGT_EU_DIS_SS1_R0_MASK		(0xf << CHV_FGT_EU_DIS_SS1_R0_SHIFT)
 #define   CHV_FGT_EU_DIS_SS1_R1_SHIFT		28
 #define   CHV_FGT_EU_DIS_SS1_R1_MASK		(0xf << CHV_FGT_EU_DIS_SS1_R1_SHIFT)
+
+#define GAB_MODE				_MMIO(0x220a0)
+#define   GAB_MODE_THROTTLE_RATE_MASK		REG_GENMASK(15, 10)
+#define   GAB_MODE_THROTTLE_RATE		REG_FIELD_PREP(GAB_MODE_THROTTLE_RATE_MASK, 63)
 
 #define BCS_SWCTRL				_MMIO(0x22200)
 #define   BCS_SRC_Y				REG_BIT(0)

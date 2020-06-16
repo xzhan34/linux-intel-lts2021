@@ -82,6 +82,7 @@ struct drm_printer;
 	param(unsigned int, lmem_size, 0, 0400) \
 	param(unsigned int, enable_eviction, 3, 0600) \
 	/* leave bools at the end to not create holes */ \
+	param(bool, enable_hw_throttle_blt, true, 0400) \
 	param(bool, enable_rc6, true, 0400) \
 	param(bool, enable_hangcheck, true, 0600) \
 	param(bool, load_detect_test, false, 0600) \

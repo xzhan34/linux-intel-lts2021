@@ -252,6 +252,9 @@ i915_param_named_unsafe(enable_non_private_objects, bool, 0400,
 i915_param_named_unsafe(debug_eu, int, 0400,
 	"Enable EU debug capabilities (default: 0)");
 
+i915_param_named_unsafe(enable_hw_throttle_blt, bool, 0400,
+	"Enable hardware throttling BLT on XEHPSDV A0. (default: yes)");
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,
