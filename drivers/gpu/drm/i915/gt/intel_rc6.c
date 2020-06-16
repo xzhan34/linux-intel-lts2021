@@ -507,7 +507,7 @@ static bool rc6_supported(struct intel_rc6 *rc6)
 		return false;
 	}
 
-	return true;
+	return i915->params.enable_rc6;
 }
 
 static void rpm_get(struct intel_rc6 *rc6)
