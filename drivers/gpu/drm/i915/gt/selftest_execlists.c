@@ -3368,6 +3368,7 @@ static int live_preempt_timeout(void *arg)
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
 	int err = -ENOMEM;
+	long timeout = intel_uc_uses_guc_submission(&gt->uc) ? HZ : HZ / 10;
 
 	/*
 	 * Check that we force preemption to occur by cancelling the previous
@@ -3394,20 +3395,21 @@ static int live_preempt_timeout(void *arg)
 
 	for_each_engine(engine, gt, id) {
 		unsigned long saved_timeout;
-		struct i915_request *rq;
+		struct i915_request *rq, *spinner;
 
 		if (!intel_engine_has_preemption(engine))
 			continue;
 
-		rq = spinner_create_request(&spin_lo, ctx_lo, engine,
-					    MI_NOOP); /* preemption disabled */
-		if (IS_ERR(rq)) {
-			err = PTR_ERR(rq);
+		spinner = spinner_create_request(&spin_lo, ctx_lo, engine,
+						 MI_NOOP); /* preemption disabled */
+		if (IS_ERR(spinner)) {
+			err = PTR_ERR(spinner);
 			goto err_spin_lo;
 		}
 
-		i915_request_add(rq);
-		if (!igt_wait_for_spinner(&spin_lo, rq)) {
+		i915_request_get(spinner);
+		i915_request_add(spinner);
+		if (!igt_wait_for_spinner(&spin_lo, spinner)) {
 			intel_gt_set_wedged(gt);
 			err = -EIO;
 			goto err_spin_lo;
@@ -3416,12 +3418,14 @@ static int live_preempt_timeout(void *arg)
 		rq = igt_request_alloc(ctx_hi, engine);
 		if (IS_ERR(rq)) {
 			igt_spinner_end(&spin_lo);
+			i915_request_put(spinner);
 			err = PTR_ERR(rq);
 			goto err_spin_lo;
 		}
 
 		/* Flush the previous CS ack before changing timeouts */
-		while (READ_ONCE(engine->execlists.pending[0]))
+		while (!intel_uc_uses_guc_submission(&gt->uc) &&
+		       READ_ONCE(engine->execlists.pending[0]))
 			cpu_relax();
 
 		saved_timeout = engine->props.preempt_timeout_ms;
@@ -3433,15 +3437,24 @@ static int live_preempt_timeout(void *arg)
 		intel_engine_flush_submission(engine);
 		engine->props.preempt_timeout_ms = saved_timeout;
 
-		if (i915_request_wait(rq, 0, HZ / 10) < 0) {
+		if (i915_request_wait(rq, 0, timeout) < 0) {
 			intel_gt_set_wedged(gt);
+			i915_request_put(spinner);
 			i915_request_put(rq);
 			err = -ETIME;
 			goto err_spin_lo;
 		}
 
+		if (i915_request_wait(spinner, 0, timeout) < 0) {
+			intel_gt_set_wedged(gt);
+			i915_request_put(spinner);
+			err = -ETIME;
+			goto err_ctx_lo;
+		}
+
 		igt_spinner_end(&spin_lo);
 		i915_request_put(rq);
+		i915_request_put(spinner);
 	}
 
 	err = 0;
