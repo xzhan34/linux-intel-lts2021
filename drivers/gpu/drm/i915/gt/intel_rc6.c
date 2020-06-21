@@ -10,11 +10,14 @@
 #include "i915_reg.h"
 #include "i915_vgpu.h"
 #include "intel_engine_regs.h"
+#include "intel_gpu_commands.h"
 #include "intel_gt.h"
+#include "intel_gt_mcr.h"
 #include "intel_gt_pm.h"
 #include "intel_gt_regs.h"
 #include "intel_pcode.h"
 #include "intel_rc6.h"
+#include "gem/i915_gem_region.h"
 
 /**
  * DOC: RC6
@@ -55,6 +58,113 @@ static struct drm_i915_private *rc6_to_i915(struct intel_rc6 *rc)
 static void set(struct intel_uncore *uncore, i915_reg_t reg, u32 val)
 {
 	intel_uncore_write_fw(uncore, reg, val);
+}
+
+static void
+xehpsdv_dfd_restore_tile_addr_regs(struct intel_rc6 *rc6)
+{
+	struct intel_gt *gt = rc6_to_gt(rc6);
+	struct intel_uncore *uncore = rc6_to_uncore(rc6);
+	u32 *dfd_restore_buf;
+	u64 phys_addr;
+
+	if (rc6->dfd_restore_obj == NULL)
+		return;
+
+	dfd_restore_buf = rc6->dfd_restore_buf;
+
+	*dfd_restore_buf++ = MI_NOOP;
+	*dfd_restore_buf++ = MI_LOAD_REGISTER_IMM(4);
+
+	*dfd_restore_buf++ = i915_mmio_reg_offset(XEHP_TILE0_ADDR_RANGE);
+	*dfd_restore_buf++ = intel_gt_mcr_read_any(gt, XEHP_TILE0_ADDR_RANGE);
+
+	*dfd_restore_buf++ = i915_mmio_reg_offset(XEHP_TILE1_ADDR_RANGE);
+	*dfd_restore_buf++ = intel_gt_mcr_read_any(gt, XEHP_TILE1_ADDR_RANGE);
+
+	*dfd_restore_buf++ = i915_mmio_reg_offset(XEHP_TILE2_ADDR_RANGE);
+	*dfd_restore_buf++ = intel_gt_mcr_read_any(gt, XEHP_TILE2_ADDR_RANGE);
+
+	*dfd_restore_buf++ = i915_mmio_reg_offset(XEHP_TILE3_ADDR_RANGE);
+	*dfd_restore_buf++ = intel_gt_mcr_read_any(gt, XEHP_TILE3_ADDR_RANGE);
+
+	/*
+	 * A write of any value to 0x80FC signals the end of the DFD restore
+	 * sequence.  This write must be submitted as its own standalone LRI
+	 * command.  We'll choose "915 915" as a semi-recognizable value.
+	 */
+	*dfd_restore_buf++ = MI_NOOP;
+	*dfd_restore_buf++ = MI_LOAD_REGISTER_IMM(1);
+	*dfd_restore_buf++ = 0x80FC;
+	*dfd_restore_buf++ = 0x09150915;
+
+	*dfd_restore_buf++ = MI_NOOP;
+	*dfd_restore_buf++ = MI_BATCH_BUFFER_END;
+
+	__i915_gem_object_flush_map(rc6->dfd_restore_obj, 0,
+				    rc6->dfd_restore_obj->base.size);
+
+	phys_addr = (u64)i915_gem_object_get_dma_address(rc6->dfd_restore_obj,
+							 0);
+
+	/*
+	 * Lowest six bits of address are ignored, LSB register takes
+	 * next 30 bits, and MSB hold remaining bits.
+	 *
+	 * Note that we do not want to set the 'lock' bit in the MSB register
+	 * since we want to be able to unprogram the DFD restore buffer
+	 * during intel_rc6_fini().
+	 */
+	phys_addr >>= 6;
+	intel_uncore_write(uncore, DFD_RESTORE_CFG_LSB,
+			   REG_FIELD_PREP(DFD_RESTORE_CFG_LSB_ADDR_MASK,
+					  phys_addr & GENMASK(29, 0)) |
+			   DFD_RESTORE_CFG_LSB_ENABLE);
+	phys_addr >>= 30;
+	intel_uncore_write(uncore, DFD_RESTORE_CFG_MSB,
+			   REG_FIELD_PREP(DFD_RESTORE_CFG_MSB_ADDR_MASK, phys_addr));
+}
+
+static int
+xehpsdv_rc6_init(struct intel_rc6 *rc6)
+{
+	struct drm_i915_private *i915 = rc6_to_i915(rc6);
+	struct intel_gt *gt = rc6_to_gt(rc6);
+	struct drm_i915_gem_object *obj;
+	resource_size_t phys;
+
+	if ((i915->remote_tiles == 0) || /* 1T */
+	    (IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_B0, STEP_FOREVER)))
+		return 0;
+
+	if (drm_WARN_ON(&i915->drm, rc6->dfd_restore_obj != NULL))
+		return -EINVAL;
+
+	/* SZ_1K > 10 * (CACHELINE_BYTES == 64), i.e. at least 10CL */
+	obj = intel_gt_object_create_lmem(gt, SZ_1K, 0);
+	if (IS_ERR(obj)) {
+		drm_err(&i915->drm, "Error creating gem object: %ld\n", PTR_ERR(obj));
+		return PTR_ERR(obj);
+	}
+
+	rc6->dfd_restore_buf = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WC);
+	if (IS_ERR(rc6->dfd_restore_buf)) {
+		drm_err(&i915->drm, "Error pinning gem object to CPU VA space: %ld\n",
+			  PTR_ERR(rc6->dfd_restore_buf));
+		i915_gem_object_put(obj);
+		return PTR_ERR(rc6->dfd_restore_buf);
+	}
+
+	/*
+	 * make sure intel_gt_object_create_lmem() allocates CACHELINE_BYTES
+	 * aligned buffer.
+	 */
+	phys = i915_gem_object_get_dma_address(obj, 0);
+	GEM_BUG_ON(!IS_ALIGNED(phys, CACHELINE_BYTES));
+
+	rc6->dfd_restore_obj = obj;
+
+	return 0;
 }
 
 static void gen11_rc6_enable(struct intel_rc6 *rc6)
@@ -106,6 +216,9 @@ static void gen11_rc6_enable(struct intel_rc6 *rc6)
 	 */
 	set(uncore, GEN9_MEDIA_PG_IDLE_HYSTERESIS, 60);
 	set(uncore, GEN9_RENDER_PG_IDLE_HYSTERESIS, 60);
+
+	if (IS_XEHPSDV(rc6_to_i915(rc6)))
+		xehpsdv_dfd_restore_tile_addr_regs(rc6);
 
 	/* 3a: Enable RC6
 	 *
@@ -579,7 +692,9 @@ void intel_rc6_init(struct intel_rc6 *rc6)
 	if (!rc6_exists(rc6))
 		return;
 
-	if (IS_CHERRYVIEW(i915))
+	if (IS_XEHPSDV(i915))
+		 err = xehpsdv_rc6_init(rc6);
+	else if (IS_CHERRYVIEW(i915))
 		err = chv_rc6_init(rc6);
 	else if (IS_VALLEYVIEW(i915))
 		err = vlv_rc6_init(rc6);
@@ -701,8 +816,19 @@ void intel_rc6_disable(struct intel_rc6 *rc6)
 void intel_rc6_fini(struct intel_rc6 *rc6)
 {
 	struct drm_i915_gem_object *pctx;
+	struct intel_uncore *uncore = rc6_to_uncore(rc6);
 
 	intel_rc6_disable(rc6);
+
+	if (rc6->dfd_restore_obj) {
+		intel_uncore_write(uncore, DFD_RESTORE_CFG_LSB, 0);
+		intel_uncore_write(uncore, DFD_RESTORE_CFG_MSB, 0);
+
+		i915_gem_object_unpin_map(rc6->dfd_restore_obj);
+		i915_gem_object_put(rc6->dfd_restore_obj);
+		rc6->dfd_restore_buf = NULL;
+		rc6->dfd_restore_obj = NULL;
+	}
 
 	pctx = fetch_and_zero(&rc6->pctx);
 	if (pctx)

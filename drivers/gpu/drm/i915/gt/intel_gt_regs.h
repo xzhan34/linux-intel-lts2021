@@ -46,6 +46,12 @@
 /* RCP unit config (Gen8+) */
 #define RCP_CONFIG				_MMIO(0xd08)
 
+#define DFD_RESTORE_CFG_LSB			_MMIO(0xd34)
+#define   DFD_RESTORE_CFG_LSB_ADDR_MASK		REG_GENMASK(31, 2)
+#define   DFD_RESTORE_CFG_LSB_ENABLE		REG_BIT(0)
+#define DFD_RESTORE_CFG_MSB			_MMIO(0xd38)
+#define   DFD_RESTORE_CFG_MSB_ADDR_MASK		REG_GENMASK(10, 0)
+
 #define RC6_LOCATION				_MMIO(0xd40)
 #define   RC6_CTX_IN_DRAM			(1 << 0)
 #define RC6_CTX_BASE				_MMIO(0xd48)
