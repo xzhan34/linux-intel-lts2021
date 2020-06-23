@@ -82,7 +82,7 @@ static int __gt_unpark(struct intel_wakeref *wf)
 	i915_vma_unpark(gt);
 	intel_rc6_unpark(&gt->rc6);
 	intel_rps_unpark(&gt->rps);
-	i915_pmu_gt_unparked(i915);
+	i915_pmu_gt_unparked(gt);
 	intel_guc_busyness_unpark(gt);
 
 	intel_gt_unpark_requests(gt);
@@ -103,7 +103,7 @@ static int __gt_park(struct intel_wakeref *wf)
 	intel_gt_park_requests(gt);
 
 	intel_guc_busyness_park(gt);
-	i915_pmu_gt_parked(i915);
+	i915_pmu_gt_parked(gt);
 	intel_rps_park(&gt->rps);
 	intel_rc6_park(&gt->rc6);
 	i915_vma_park(gt);
