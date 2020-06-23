@@ -204,8 +204,10 @@ i915_param_named_unsafe(request_timeout_ms, uint, 0600,
 i915_param_named_unsafe(lmem_size, uint, 0400,
 			"Set the lmem size(in MiB) for each region. (default: 0, all memory)");
 
-i915_param_named_unsafe(enable_eviction, bool, 0600,
-	"Enable memcpy based eviction which does not rely on DMA resv refactoring)");
+i915_param_named_unsafe(enable_eviction, uint, 0600,
+	"Enable eviction which does not rely on DMA resv refactoring "
+	"0=disabled, 1=memcpy based only, 2=blt based only, "
+	"3=blt based but fallsback to memcpy based [default])");
 
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,

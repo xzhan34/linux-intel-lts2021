@@ -301,7 +301,7 @@ lmem_swapout(struct drm_i915_gem_object *obj,
 	struct i915_mm_swap_stat *stat = NULL;
 	struct drm_i915_gem_object *dst, *src;
 	ktime_t start = ktime_get();
-	int err;
+	int err = -EINVAL;
 
 	GEM_BUG_ON(obj->swapto);
 	assert_object_held(obj);
@@ -333,9 +333,18 @@ lmem_swapout(struct drm_i915_gem_object *obj,
 	__i915_gem_object_pin_pages(src);
 
 	/* copying the pages */
-	err = i915_gem_object_memcpy(dst, src);
-	if (!err)
-		stat = &i915->mm.memcpy_swap_stats.out;
+	if (i915->params.enable_eviction >= 2 &&
+	    !intel_gt_is_wedged(obj->mm.region.mem->gt)) {
+		err = i915_window_blt_copy(dst, src);
+		if (!err)
+			stat = &i915->mm.blt_swap_stats.out;
+	}
+
+	if (err && i915->params.enable_eviction != 2) {
+		err = i915_gem_object_memcpy(dst, src);
+		if (!err)
+			stat = &i915->mm.memcpy_swap_stats.out;
+	}
 
 	__i915_gem_object_unpin_pages(src);
 	__i915_gem_object_unset_pages(src);
@@ -360,7 +369,7 @@ lmem_swapin(struct drm_i915_gem_object *obj,
 	struct drm_i915_gem_object *dst, *src = obj->swapto;
 	struct i915_mm_swap_stat *stat = NULL;
 	ktime_t start = ktime_get();
-	int err;
+	int err = -EINVAL;
 
 	assert_object_held(obj);
 
@@ -385,9 +394,18 @@ lmem_swapin(struct drm_i915_gem_object *obj,
 	__i915_gem_object_pin_pages(dst);
 
 	/* copying the pages */
-	err = i915_gem_object_memcpy(dst, src);
-	if (!err)
-		stat = &i915->mm.memcpy_swap_stats.in;
+	if (i915->params.enable_eviction >= 2 &&
+	    !intel_gt_is_wedged(obj->mm.region.mem->gt)) {
+		err = i915_window_blt_copy(dst, src);
+		if (!err)
+			stat = &i915->mm.blt_swap_stats.in;
+	}
+
+	if (err && i915->params.enable_eviction != 2) {
+		err = i915_gem_object_memcpy(dst, src);
+		if (!err)
+			stat = &i915->mm.memcpy_swap_stats.in;
+	}
 
 	__i915_gem_object_unpin_pages(dst);
 	__i915_gem_object_unset_pages(dst);

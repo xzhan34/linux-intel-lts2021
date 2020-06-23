@@ -1131,7 +1131,7 @@ int i915_setup_blt_windows(struct drm_i915_private *i915)
 	struct i915_vma *vma;
 	int i;
 
-	if (intel_gt_is_wedged(to_gt(i915)))
+	if (intel_gt_is_wedged(to_gt(i915)) || i915->params.enable_eviction < 2)
 		return 0;
 
 	if (!to_gt(i915)->engine[BCS0]) {
