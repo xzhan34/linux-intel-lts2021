@@ -43,6 +43,25 @@ struct prelim_i915_user_extension {
 #define PRELIM_UAPI_MAJOR	2
 #define PRELIM_UAPI_MINOR	1
 
+/*
+ * Top 8 bits of every non-engine counter are GT id.
+ * FIXME: __PRELIM_I915_PMU_GT_SHIFT will be changed to 56
+ */
+#define __PRELIM_I915_PMU_GT_SHIFT (60)
+
+#define ___PRELIM_I915_PMU_OTHER(gt, x) \
+	(((__u64)__I915_PMU_ENGINE(0xff, 0xff, 0xf) + 1 + (x)) | \
+	((__u64)(gt) << __PRELIM_I915_PMU_GT_SHIFT))
+
+#define __I915_PMU_OTHER(x) ___PRELIM_I915_PMU_OTHER(0, x)
+
+#define __PRELIM_I915_PMU_ACTUAL_FREQUENCY(gt)		___PRELIM_I915_PMU_OTHER(gt, 0)
+#define __PRELIM_I915_PMU_REQUESTED_FREQUENCY(gt)	___PRELIM_I915_PMU_OTHER(gt, 1)
+#define __PRELIM_I915_PMU_INTERRUPTS(gt)		___PRELIM_I915_PMU_OTHER(gt, 2)
+#define __PRELIM_I915_PMU_RC6_RESIDENCY(gt)		___PRELIM_I915_PMU_OTHER(gt, 3)
+#define __PRELIM_I915_PMU_SOFTWARE_GT_AWAKE_TIME(gt)	___PRELIM_I915_PMU_OTHER(gt, 4)
+
+
 /* PRELIM ioctl's */
 
 /* PRELIM ioctl numbers go down from 0x5f */
