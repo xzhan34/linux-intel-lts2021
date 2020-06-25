@@ -380,6 +380,46 @@ static ssize_t rps_rp_mhz_show(struct device *dev,
 static const struct attribute * const gen6_rps_attrs[] = GEN6_RPS_ATTR;
 static const struct attribute * const gen6_gt_attrs[]  = GEN6_GT_ATTR;
 
+static ssize_t rapl_PL1_freq_mhz_show(struct device *dev,
+				      struct device_attribute *attr,
+				      char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	u32 rapl_pl1 = intel_rps_read_rapl_pl1_frequency(&gt->rps);
+
+	return scnprintf(buff, PAGE_SIZE, "%x\n", rapl_pl1);
+}
+
+static ssize_t swreq_freq_mhz_show(struct device *dev,
+				   struct device_attribute *attr,
+				   char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	u32 swreq = intel_rps_get_requested_frequency(&gt->rps);
+
+	return scnprintf(buff, PAGE_SIZE, "%x\n", swreq);
+}
+
+static ssize_t throttle_reason_show(struct device *dev,
+				    struct device_attribute *attr,
+				    char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	u32 reason = intel_rps_read_throttle_reason(&gt->rps);
+
+	return scnprintf(buff, PAGE_SIZE, "%x\n", reason);
+}
+
+static DEVICE_ATTR(rapl_PL1_freq_mhz, S_IRUGO, rapl_PL1_freq_mhz_show, NULL);
+static DEVICE_ATTR(swreq_freq_mhz, S_IRUGO, swreq_freq_mhz_show, NULL);
+static DEVICE_ATTR(throttle_reason, S_IRUGO, throttle_reason_show, NULL);
+
+static const struct attribute *freq_attrs[] = {
+	&dev_attr_swreq_freq_mhz.attr,
+	&dev_attr_throttle_reason.attr,
+	NULL
+};
+
 static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj,
 				const struct attribute * const *attrs)
 {
@@ -392,8 +432,20 @@ static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj,
 	if (ret)
 		return ret;
 
-	if (IS_VALLEYVIEW(gt->i915) || IS_CHERRYVIEW(gt->i915))
+	if (IS_VALLEYVIEW(gt->i915) || IS_CHERRYVIEW(gt->i915)) {
 		ret = sysfs_create_file(kobj, &dev_attr_vlv_rpe_freq_mhz.attr);
+		if (ret)
+			return ret;
+	}
+
+	if (GRAPHICS_VER(gt->i915) >= 11) {
+		ret = sysfs_create_files(kobj, freq_attrs);
+		if (ret)
+			return ret;
+	}
+
+	if (IS_DGFX(gt->i915))
+		ret = sysfs_create_file(kobj, &dev_attr_rapl_PL1_freq_mhz.attr);
 
 	return ret;
 }

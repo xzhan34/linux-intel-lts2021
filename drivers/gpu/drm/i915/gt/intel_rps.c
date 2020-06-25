@@ -2633,6 +2633,33 @@ void intel_rps_lower_unslice(struct intel_rps *rps)
 	mutex_unlock(&rps->lock);
 }
 
+static u32 __rps_read_mmio(struct intel_gt *gt, i915_reg_t reg32)
+{
+	intel_wakeref_t wakeref;
+	u32 val = 0;
+
+	with_intel_runtime_pm(gt->uncore->rpm, wakeref)
+		val = intel_uncore_read(gt->uncore, reg32);
+
+	return val;
+}
+
+u32 intel_rps_read_rapl_pl1_frequency(struct intel_rps *rps)
+{
+	struct intel_gt *gt = rps_to_gt(rps);
+	u32 rapl_pl1 = __rps_read_mmio(gt, RAPL_PL1_FREQ_LIMIT);
+
+	return rapl_pl1;
+}
+
+u32 intel_rps_read_throttle_reason(struct intel_rps *rps)
+{
+	struct intel_gt *gt = rps_to_gt(rps);
+	u32 reason = __rps_read_mmio(gt, GT0_PERF_LIMIT_REASONS);
+
+	return reason;
+}
+
 /* External interface for intel_ips.ko */
 
 static struct drm_i915_private __rcu *ips_mchdev;
