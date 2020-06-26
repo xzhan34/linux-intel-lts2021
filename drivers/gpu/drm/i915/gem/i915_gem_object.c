@@ -1043,6 +1043,63 @@ static const struct drm_gem_object_funcs i915_gem_object_funcs = {
 	.export = i915_gem_prime_export,
 };
 
+int i915_gem_object_migrate_region(struct drm_i915_gem_object *obj,
+				   struct i915_gem_ww_ctx *ww,
+				   struct intel_memory_region **regions,
+				   int size)
+{
+	struct intel_gt *gt = obj->mm.region.mem->gt;
+	struct intel_context *ce;
+	int i, ret;
+
+	ce = NULL;
+	if (gt->engine[BCS0])
+		ce = gt->engine[BCS0]->blitter_context;
+	if (!ce)
+		return -ENODEV;
+
+	ret = i915_gem_object_prepare_move(obj, ww);
+	if (ret) {
+		DRM_ERROR("Cannot set memory region, object in use(%d)\n", ret);
+	        goto err;
+	}
+
+	for (i = 0; i < size; i++) {
+		struct intel_memory_region *region = regions[i];
+
+		ret = i915_gem_object_migrate(obj, ww, ce, region->id);
+		if (!ret)
+			break;
+	}
+err:
+	return ret;
+}
+
+/**
+ * i915_gem_object_migrate_to_smem - Migrate to SMEM
+ * @obj: valid i915 gem object
+ * @check_placement: If true, verify placement
+ *
+ * Allow caller to require the placement check.
+ *
+ */
+int i915_gem_object_migrate_to_smem(struct drm_i915_gem_object *obj,
+				    struct i915_gem_ww_ctx *ww,
+				    bool check_placement)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct intel_memory_region *regions[] = {
+		i915->mm.regions[INTEL_REGION_SMEM],
+	};
+	u32 mask = obj->memory_mask;
+
+	if (check_placement && !(mask & REGION_SMEM))
+		return -EINVAL;
+
+	return i915_gem_object_migrate_region(obj, ww, regions,
+					      ARRAY_SIZE(regions));
+}
+
 #define BLT_WINDOW_SZ SZ_4M
 static int i915_alloc_vm_range(struct i915_vma *vma)
 {

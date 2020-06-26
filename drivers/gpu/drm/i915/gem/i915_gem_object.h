@@ -76,6 +76,13 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 			    enum intel_region_id id);
 int i915_gem_object_memcpy(struct drm_i915_gem_object *dst,
 			   struct drm_i915_gem_object *src);
+int i915_gem_object_migrate_region(struct drm_i915_gem_object *obj,
+				   struct i915_gem_ww_ctx *ww,
+				   struct intel_memory_region **regions,
+				   int size);
+int i915_gem_object_migrate_to_smem(struct drm_i915_gem_object *obj,
+				    struct i915_gem_ww_ctx *ww,
+				    bool check_placement);
 
 void i915_gem_flush_free_objects(struct drm_i915_private *i915);
 
