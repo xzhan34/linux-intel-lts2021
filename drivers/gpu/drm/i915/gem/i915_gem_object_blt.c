@@ -289,9 +289,16 @@ struct i915_vma *intel_emit_vma_copy_blt(struct intel_context *ce,
 
 	GEM_BUG_ON(intel_engine_is_virtual(ce->engine));
 	intel_engine_pm_get(ce->engine);
-
 	count = div_u64(round_up(dst->size, block_size), block_size);
-	size = (1 + 11 * count) * sizeof(u32);
+
+	/*
+	 * BLOCK_COPY_CMD in linear mode supports max size of 16k
+	 */
+	if (IS_XEHPSDV(i915))
+		size = (1 + 23 * count) * sizeof(u32);
+	else
+		size = (1 + 11 * count) * sizeof(u32);
+
 	size = round_up(size, PAGE_SIZE);
 	pool = intel_gt_get_buffer_pool(ce->engine->gt, size, I915_MAP_WC);
 	if (IS_ERR(pool)) {
@@ -330,8 +337,45 @@ struct i915_vma *intel_emit_vma_copy_blt(struct intel_context *ce,
 		size = min_t(u64, rem, block_size);
 		GEM_BUG_ON(size >> PAGE_SHIFT > S16_MAX);
 
-		if (GRAPHICS_VER(i915) >= 9 &&
-		    !wa_1209644611_applies(i915, size)) {
+		if (IS_XEHPSDV(i915)) {
+			u8 src_mem_type, dst_mem_type;
+			u32 mocs = 4 << 21;
+
+			/* Wa_14010828422:xehpsdv set target memory region to smem */
+			if (IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0, STEP_B0)) {
+				src_mem_type = MEM_TYPE_SYS;
+				dst_mem_type = MEM_TYPE_SYS;
+			} else {
+				src_mem_type = i915_gem_object_is_lmem(src->obj) ?
+					       MEM_TYPE_LOCAL : MEM_TYPE_SYS;
+				dst_mem_type = i915_gem_object_is_lmem(dst->obj) ?
+					       MEM_TYPE_LOCAL : MEM_TYPE_SYS;
+			}
+
+			*cmd++ = XY_BLOCK_COPY_BLT_CMD | (22 - 2);
+			*cmd++ = mocs | (size - 1);
+			*cmd++ = 0;
+			/* BG3 */
+			*cmd++ = (1 << 16) | (size);
+			*cmd++ = lower_32_bits(dst_offset);
+			*cmd++ = upper_32_bits(dst_offset);
+			/* BG6 */
+			*cmd++ = dst_mem_type << DEST_MEM_TYPE_SHIFT;
+			*cmd++ = 0;
+			/* BG8 */
+			*cmd++ = mocs | (size - 1);
+			*cmd++ = lower_32_bits(src_offset);
+			*cmd++ = upper_32_bits(src_offset);
+			 /* BG 11 */
+			*cmd++ = src_mem_type << SRC_MEM_TYPE_SHIFT;
+			cmd += 4;
+			*cmd++ = 0;
+			*cmd++ = 0;
+			*cmd++ = 0;
+			*cmd++ = 0;
+			*cmd++ = 0;
+		} else if (GRAPHICS_VER(i915) >= 9 &&
+			   !wa_1209644611_applies(i915, size)) {
 			*cmd++ = GEN9_XY_FAST_COPY_BLT_CMD | (10 - 2);
 			*cmd++ = BLT_DEPTH_32 | PAGE_SIZE;
 			*cmd++ = 0;

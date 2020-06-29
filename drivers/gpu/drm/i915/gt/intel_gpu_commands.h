@@ -245,6 +245,11 @@
 #define   DIRECT_ACCESS			1
 
 #define COLOR_BLT_CMD			(2 << 29 | 0x40 << 22 | (5 - 2))
+#define XY_BLOCK_COPY_BLT_CMD       	(2 << 29 | 0x41 << 22)
+#define   DEST_MEM_TYPE_SHIFT		(31)
+#define   SRC_MEM_TYPE_SHIFT		(31)
+#define   MEM_TYPE_SYS			1
+#define   MEM_TYPE_LOCAL		0
 #define GEN9_XY_FAST_COPY_BLT_CMD	(2 << 29 | 0x42 << 22)
 #define   XY_FAST_COPY_BLT_D0_SRC_TILING_MASK     REG_GENMASK(21, 20)
 #define   XY_FAST_COPY_BLT_D0_DST_TILING_MASK     REG_GENMASK(14, 13)
@@ -290,7 +295,6 @@
 #define   SURFTYPE_2D			(1 << 29)
 #define   SURFTYPE_3D			(2 << 29)
 #define   SURFTYPE_CUBE			(3 << 29)
-
 #define XY_COLOR_BLT_CMD		(2 << 29 | 0x50 << 22)
 #define XY_SRC_COPY_BLT_CMD		(2 << 29 | 0x53 << 22)
 #define XY_MONO_SRC_COPY_IMM_BLT	(2 << 29 | 0x71 << 22 | 5)
