@@ -33,7 +33,9 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 	intel_engine_pm_get(ce->engine);
 
 	count = div_u64(round_up(vma->size, block_size), block_size);
-	if (GRAPHICS_VER(i915) >= 12)
+	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
+		size = (1 + 17 * count) * sizeof(u32);
+	else if (GRAPHICS_VER(i915) >= 12)
 		size = (1 + 12 * count) * sizeof(u32);
 	else
 		size = (1 + 8 * count) * sizeof(u32);
@@ -76,7 +78,38 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 
 		GEM_BUG_ON(size >> PAGE_SHIFT > S16_MAX);
 
-		if (GRAPHICS_VER(i915) >= 12) {
+		if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50)) {
+			u32 mocs = FIELD_PREP(XY_FAST_COLOR_BLT_MOCS_MASK,
+					      ce->engine->gt->mocs.uc_index << 1);
+			u8 mem_type = MEM_TYPE_SYS;
+
+			/* Wa to set the target memory region as system */
+			if (!IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0, STEP_B0) &&
+			    i915_gem_object_is_lmem(vma->obj))
+				mem_type = MEM_TYPE_LOCAL;
+
+			*cmd++ = GEN9_XY_FAST_COLOR_BLT_CMD |
+				XY_FAST_COLOR_BLT_DEPTH_32 |
+				(16 - 2);
+			*cmd++ = mocs | (PAGE_SIZE - 1);
+			*cmd++ = 0;
+			*cmd++ = size >> PAGE_SHIFT << 16 | PAGE_SIZE / 4;
+			*cmd++ = lower_32_bits(offset);
+			*cmd++ = upper_32_bits(offset);
+			*cmd++ = mem_type << 31;
+			/* BG7 */
+			*cmd++ = value;
+			*cmd++ = 0;
+			*cmd++ = 0;
+			*cmd++ = 0;
+			/* BG11 */
+			*cmd++ = 0;
+			*cmd++ = 0;
+			/* BG13 */
+			*cmd++ = 0;
+			*cmd++ = 0;
+			*cmd++ = 0;
+		} else if (GRAPHICS_VER(i915) >= 12) {
 			*cmd++ = GEN9_XY_FAST_COLOR_BLT_CMD |
 				XY_FAST_COLOR_BLT_DEPTH_32 |
 				(11 - 2);
