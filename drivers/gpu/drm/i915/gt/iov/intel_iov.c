@@ -67,6 +67,21 @@ int intel_iov_init_mmio(struct intel_iov *iov)
 	return 0;
 }
 
+static int vf_tweak_guc_submission(struct intel_iov *iov)
+{
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	err = intel_guc_submission_limit_ids(iov_to_guc(iov),
+					     iov->vf.config.num_ctxs);
+	if (unlikely(err))
+		IOV_ERROR(iov, "Failed to limit %s to %u (%pe)\n",
+			  "contexts", iov->vf.config.num_ctxs, ERR_PTR(err));
+
+	return err;
+}
+
 /**
  * intel_iov_init - Initialize IOV.
  * @iov: the IOV struct
@@ -81,6 +96,9 @@ int intel_iov_init(struct intel_iov *iov)
 {
 	if (intel_iov_is_pf(iov))
 		intel_iov_provisioning_init(iov);
+
+	if (intel_iov_is_vf(iov))
+		vf_tweak_guc_submission(iov);
 
 	return 0;
 }
