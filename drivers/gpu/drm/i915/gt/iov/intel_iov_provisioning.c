@@ -1520,6 +1520,7 @@ static void pf_assign_ctxs_for_pf(struct intel_iov *iov)
 	const u16 total_ctxs_bits = ctxs_bitmap_total_bits();
 	u16 pf_ctxs_bits;
 	u16 pf_ctxs;
+	int err;
 
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
 	GEM_BUG_ON(!total_vfs);
@@ -1534,6 +1535,12 @@ static void pf_assign_ctxs_for_pf(struct intel_iov *iov)
 
 	provisioning->configs[0].begin_ctx = 0;
 	provisioning->configs[0].num_ctxs = pf_ctxs;
+
+	/* make sure to do not use context ids beyond our limit */
+	err = intel_guc_submission_limit_ids(iov_to_guc(iov), pf_ctxs);
+	if (unlikely(err))
+		IOV_ERROR(iov, "Failed to limit PF %s to %u (%pe)\n",
+			  "contexts", pf_ctxs, ERR_PTR(err));
 }
 
 /**

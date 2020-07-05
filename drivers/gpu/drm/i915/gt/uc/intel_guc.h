@@ -107,7 +107,8 @@ struct intel_guc {
 		struct ida guc_ids;
 		/**
 		 * @num_guc_ids: Number of guc_ids, selftest feature to be able
-		 * to reduce this number while testing.
+		 * to reduce this number while testing. Also used on VFs to
+		 * reduce the pool of guc_ids.
 		 */
 		int num_guc_ids;
 		/**
