@@ -112,8 +112,10 @@ static struct i915_vma *create_ring_vma(struct i915_ggtt *ggtt, int size)
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
 
-	obj = intel_gt_object_create_lmem(ggtt->vm.gt, size,
-					  I915_BO_ALLOC_VOLATILE);
+	obj = ERR_PTR(-ENODEV);
+	if (!i915_is_mem_wa_enabled(i915, I915_WA_FORCE_SMEM_OBJECT))
+		obj = intel_gt_object_create_lmem(ggtt->vm.gt, size,
+						  I915_BO_ALLOC_VOLATILE);
 	if (IS_ERR(obj) && i915_ggtt_has_aperture(ggtt) && !HAS_LLC(i915))
 		obj = i915_gem_object_create_stolen(i915, size);
 	if (IS_ERR(obj))

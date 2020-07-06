@@ -718,7 +718,7 @@ int intel_uc_fw_fetch(struct intel_uc_fw *uc_fw)
 			 INTEL_UC_FIRMWARE_URL);
 	}
 
-	if (HAS_LMEM(i915))
+	if (HAS_LMEM(i915) && !i915_is_mem_wa_enabled(i915, I915_WA_FORCE_SMEM_OBJECT))
 		obj = i915_gem_object_create_lmem_from_data(gt->lmem, fw->data, fw->size);
 	else
 		obj = i915_gem_object_create_shmem_from_data(i915, fw->data, fw->size);

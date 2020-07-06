@@ -1197,8 +1197,10 @@ __lrc_alloc_state(struct intel_context *ce, struct intel_engine_cs *engine)
 		context_size += PARENT_SCRATCH_SIZE;
 	}
 
-	obj = intel_gt_object_create_lmem(engine->gt, context_size, 0);
-	if (IS_ERR(obj))
+	if (HAS_LMEM(engine->i915) &&
+	    !i915_is_mem_wa_enabled(engine->i915, I915_WA_FORCE_SMEM_OBJECT))
+		obj = intel_gt_object_create_lmem(engine->gt, context_size, 0);
+	else
 		obj = i915_gem_object_create_shmem(engine->i915, context_size);
 	if (IS_ERR(obj))
 		return ERR_CAST(obj);

@@ -1056,7 +1056,8 @@ struct i915_vma *intel_guc_allocate_vma_with_bias(struct intel_guc *guc,
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
 
-	if (HAS_LMEM(gt->i915))
+	if (HAS_LMEM(gt->i915) &&
+	    !i915_is_mem_wa_enabled(gt->i915, I915_WA_FORCE_SMEM_OBJECT))
 		obj = intel_gt_object_create_lmem(gt, size,
 						  I915_BO_CPU_CLEAR |
 						  I915_BO_ALLOC_CONTIGUOUS);
