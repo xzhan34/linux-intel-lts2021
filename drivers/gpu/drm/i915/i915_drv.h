@@ -1430,6 +1430,7 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 	(INTEL_INFO(dev_priv)->has_oam)
 #define OAM_USES_VDBOX0_CHANNEL(dev_priv) \
 	(INTEL_INFO(dev_priv)->oam_uses_vdbox0_channel)
+#define HAS_OAC(dev_priv) (INTEL_INFO(dev_priv)->has_oac)
 
 #define HAS_GMD_ID(i915)	INTEL_INFO(i915)->has_gmd_id
 

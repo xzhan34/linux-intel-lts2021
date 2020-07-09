@@ -220,6 +220,7 @@
 #include "i915_perf_oa_regs.h"
 
 #define OA_TAKEN(tail, head)	(((tail) - (head)) & (stream->oa_buffer.vma->size - 1))
+#define OAC_ENABLED(s) (HAS_OAC(s->perf->i915) && s->engine->class == COMPUTE_CLASS)
 
 /**
  * DOC: OA Tail Pointer Race
@@ -1483,7 +1484,8 @@ exit:
 
 static bool engine_supports_mi_query(struct intel_engine_cs *engine)
 {
-	return engine->class == RENDER_CLASS;
+	return engine->class == RENDER_CLASS ||
+	       (engine->class == COMPUTE_CLASS && HAS_OAC(engine->i915));
 }
 
 /**
@@ -1649,6 +1651,9 @@ static bool engine_supports_oa(struct drm_i915_private *i915,
 		return engine->class == COMPUTE_CLASS ||
 		       engine->class == VIDEO_DECODE_CLASS ||
 		       engine->class == VIDEO_ENHANCEMENT_CLASS;
+	case INTEL_DG2:
+		return engine->class == RENDER_CLASS ||
+		       engine->class == COMPUTE_CLASS;
 	default:
 		return engine->class == RENDER_CLASS;
 	}
@@ -2815,6 +2820,12 @@ static u32 gen12_ring_context_control(struct i915_perf_stream *stream,
 			      GEN12_CTX_CTRL_OAR_CONTEXT_ENABLE :
 			      0);
 
+	ring_context_control |= HAS_OAC(stream->perf->i915) ?
+		_MASKED_FIELD(CTX_CTRL_RUN_ALONE,
+			      active ?
+			      CTX_CTRL_RUN_ALONE :
+			      0) : 0;
+
 	return ring_context_control;
 }
 
@@ -2871,12 +2882,65 @@ static int gen12_configure_oa_render_context(struct i915_perf_stream *stream,
 				    active);
 }
 
+static u32 __oa_ccs_select(struct i915_perf_stream *stream)
+{
+	struct intel_engine_cs *engine = stream->engine;
+
+	if (!OAC_ENABLED(stream))
+		return 0;
+
+	GEM_BUG_ON(engine->instance > GEN12_OAG_OACONTROL_OA_CCS_SELECT_MASK);
+
+	return engine->instance << GEN12_OAG_OACONTROL_OA_CCS_SELECT_SHIFT;
+}
+
+static int gen12_configure_oa_compute_context(struct i915_perf_stream *stream,
+					      struct i915_active *active)
+{
+	struct intel_context *ce = stream->pinned_ctx;
+	u32 format = stream->oa_buffer.format->format;
+	u32 offset = stream->perf->ctx_oactxctrl_offset[ce->engine->uabi_class];
+	u32 oacontrol = (format << GEN12_OAR_OACONTROL_COUNTER_FORMAT_SHIFT) |
+			(active ? GEN12_OAR_OACONTROL_COUNTER_ENABLE : 0);
+	struct flex regs_context[] = {
+		{
+			GEN12_OACTXCONTROL(stream->engine->mmio_base),
+			offset + 1,
+			active ? GEN8_OA_COUNTER_RESUME : 0,
+		},
+	};
+	struct flex regs_lri[] = {
+		{
+			GEN12_OAC_OACONTROL, 0,
+			oacontrol
+		},
+		{
+			RING_CONTEXT_CONTROL(ce->engine->mmio_base), 0,
+			gen12_ring_context_control(stream, active)
+		},
+	};
+
+	/* Set ccs select to enable programming of GEN12_OAC_OACONTROL */
+	intel_uncore_write(stream->uncore,
+			   __oa_regs(stream)->oa_ctrl,
+			   __oa_ccs_select(stream));
+
+	return oa_configure_context(ce,
+				    regs_context, ARRAY_SIZE(regs_context),
+				    regs_lri, ARRAY_SIZE(regs_lri),
+				    active);
+}
+
 static int gen12_configure_oa_context(struct i915_perf_stream *stream,
 				      struct i915_active *active)
 {
 	switch (stream->engine->class) {
 	case RENDER_CLASS:
 		return gen12_configure_oa_render_context(stream, active);
+	case COMPUTE_CLASS:
+		return HAS_OAC(stream->perf->i915) ?
+			gen12_configure_oa_compute_context(stream, active) :
+			0;
 	default:
 		return 0;
 	}
@@ -3329,8 +3393,12 @@ static void gen12_oa_enable(struct i915_perf_stream *stream)
 	 */
 	gen12_init_oa_buffer(stream);
 
+	/*
+	 * If OAC is being used, then ccs_select is already programmed. Instead
+	 * of a rmw, we reprogram it here with the same value.
+	 */
 	val = (report_format << regs->oa_ctrl_counter_format_shift) |
-	      GEN12_OAG_OACONTROL_OA_COUNTER_ENABLE;
+	      __oa_ccs_select(stream) | GEN12_OAG_OACONTROL_OA_COUNTER_ENABLE;
 
 	intel_uncore_write(stream->uncore, regs->oa_ctrl, val);
 }
@@ -4241,6 +4309,7 @@ i915_perf_open_ioctl_locked(struct i915_perf *perf,
 	struct i915_perf_stream *stream = NULL;
 	unsigned long f_flags = 0;
 	bool privileged_op = true;
+	bool sample_oa;
 	int stream_fd;
 	int ret;
 
@@ -4256,6 +4325,31 @@ i915_perf_open_ioctl_locked(struct i915_perf *perf,
 			ret = -ENOENT;
 			goto err;
 		}
+	}
+
+	sample_oa = !!(props->sample_flags & SAMPLE_OA_REPORT);
+
+	/*
+	 * Wa_1608137851:dg2:a0
+	 *
+	 * A gem_context passed in the perf interface serves 2 purposes:
+	 *
+	 * 1) Enables OAR/OAC functionality to supprot MI_RPC command
+	 * 2) Filters OA buffer reports for context id specific to the
+	 *    class:instance in this gem_context.
+	 *
+	 * OAC will only work on CCS0 on DG2 A0. Leave a note here when use case 1
+	 * is not supported on A0.
+	 */
+	if ((IS_DG2_GRAPHICS_STEP(perf->i915, G10, STEP_A0, STEP_B0) ||
+	     IS_DG2_GRAPHICS_STEP(perf->i915, G11, STEP_A0, STEP_B0)) &&
+	    specific_ctx && props->engine->class == COMPUTE_CLASS &&
+	    props->engine->instance != 0) {
+		DRM_NOTE("OAC is incompatible with the compute engine instance %d\n",
+			 props->engine->instance);
+
+		if (!sample_oa)
+			return -ENODEV;
 	}
 
 	/*
@@ -4279,8 +4373,7 @@ i915_perf_open_ioctl_locked(struct i915_perf *perf,
 	 */
 	if (IS_HASWELL(perf->i915) && specific_ctx)
 		privileged_op = false;
-	else if (GRAPHICS_VER(perf->i915) == 12 && specific_ctx &&
-		 (props->sample_flags & SAMPLE_OA_REPORT) == 0)
+	else if (GRAPHICS_VER(perf->i915) == 12 && specific_ctx && !sample_oa)
 		privileged_op = false;
 
 	if (props->hold_preemption) {
@@ -4361,8 +4454,7 @@ i915_perf_open_ioctl_locked(struct i915_perf *perf,
 	 * that follows this, we MUST call perf_group_remove_oa_whitelist in
 	 * the error handling path to remove the whitelisted registers.
 	 */
-	if (!i915_perf_stream_paranoid &&
-	    props->sample_flags & SAMPLE_OA_REPORT) {
+	if (!i915_perf_stream_paranoid && sample_oa) {
 		perf_group_apply_oa_whitelist(stream->engine->oa_group);
 		stream->oa_whitelisted = true;
 	}
@@ -5641,6 +5733,10 @@ static void gen12_init_info(struct drm_i915_private *i915)
 		perf->ctx_pwr_clk_state_offset[PRELIM_I915_ENGINE_CLASS_COMPUTE] =
 			XEHPSDV_CTX_CCS_PWR_CLK_STATE;
 		break;
+	case INTEL_DG2:
+		perf->ctx_pwr_clk_state_offset[PRELIM_I915_ENGINE_CLASS_COMPUTE] =
+			CTX_R_PWR_CLK_STATE;
+		break;
 	default:
 		break;
 	}
@@ -5919,8 +6015,10 @@ int i915_perf_ioctl_version(void)
 	 * 1003: Add perf record type - PRELIM_DRM_I915_PERF_RECORD_OA_MMIO_TRG_Q_FULL
 	 *
 	 * 1004: Add support for video decode and enhancement classes.
+	 *
+	 * 1005: Supports OAC and hence MI_REPORT_PERF_COUNTER for compute class.
 	 */
-	return 1004;
+	return 1005;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

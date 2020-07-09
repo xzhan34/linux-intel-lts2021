@@ -169,6 +169,7 @@ enum intel_ppgtt_type {
 	func(has_oa_buf_128m); \
 	func(has_oa_mmio_trigger); \
 	func(has_oa_slice_contrib_limits); \
+	func(has_oac); \
 	func(has_oam); \
 	func(has_one_eu_per_fuse_bit); \
 	func(has_pooled_eu); \
