@@ -446,7 +446,7 @@ struct i915_perf {
 	struct ratelimit_state tail_pointer_race;
 
 	u32 gen7_latched_oastatus1;
-	u32 ctx_oactxctrl_offset;
+	u32 ctx_oactxctrl_offset[PRELIM_I915_ENGINE_CLASS_COMPUTE + 1];
 	u32 ctx_flexeu0_offset;
 
 	/**

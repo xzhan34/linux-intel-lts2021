@@ -1412,14 +1412,15 @@ static int set_oa_ctx_ctrl_offset(struct intel_context *ce)
 {
 	i915_reg_t reg = GEN12_OACTXCONTROL(ce->engine->mmio_base);
 	struct i915_perf *perf = &ce->engine->i915->perf;
-	u32 offset = perf->ctx_oactxctrl_offset;
+	u16 idx = ce->engine->uabi_class;
+	u32 offset = perf->ctx_oactxctrl_offset[idx];
 
 	/* Do this only once. Failure is stored as offset of U32_MAX */
 	if (offset)
 		goto exit;
 
 	offset = oa_context_image_offset(ce, i915_mmio_reg_offset(reg));
-	perf->ctx_oactxctrl_offset = offset;
+	perf->ctx_oactxctrl_offset[idx] = offset;
 
 	drm_dbg(&ce->engine->i915->drm,
 		"%s oa ctx control at 0x%08x dword offset\n",
@@ -2444,7 +2445,8 @@ static void
 gen8_update_reg_state_unlocked(const struct intel_context *ce,
 			       const struct i915_perf_stream *stream)
 {
-	u32 ctx_oactxctrl = stream->perf->ctx_oactxctrl_offset;
+	u16 idx = ce->engine->uabi_class;
+	u32 ctx_oactxctrl = stream->perf->ctx_oactxctrl_offset[idx];
 	u32 ctx_flexeu0 = stream->perf->ctx_flexeu0_offset;
 	/* The MMIO offsets for Flex EU registers aren't contiguous */
 	i915_reg_t flex_regs[] = {
@@ -2608,7 +2610,7 @@ static int gen12_configure_oar_context(struct i915_perf_stream *stream,
 	int err;
 	struct intel_context *ce = stream->pinned_ctx;
 	u32 format = stream->oa_buffer.format->format;
-	u32 offset = stream->perf->ctx_oactxctrl_offset;
+	u32 offset = stream->perf->ctx_oactxctrl_offset[ce->engine->uabi_class];
 	struct flex regs_context[] = {
 		{
 			GEN8_OACTXCONTROL,
@@ -2770,7 +2772,8 @@ lrc_configure_all_contexts(struct i915_perf_stream *stream,
 			   const struct i915_oa_config *oa_config,
 			   struct i915_active *active)
 {
-	u32 ctx_oactxctrl = stream->perf->ctx_oactxctrl_offset;
+	u16 idx = stream->engine->uabi_class;
+	u32 ctx_oactxctrl = stream->perf->ctx_oactxctrl_offset[idx];
 	/* The MMIO offsets for Flex EU registers aren't contiguous */
 	const u32 ctx_flexeu0 = stream->perf->ctx_flexeu0_offset;
 #define ctx_flexeuN(N) (ctx_flexeu0 + 2 * (N) + 1)
@@ -5069,27 +5072,29 @@ static void oa_init_supported_formats(struct i915_perf *perf)
 static void i915_perf_init_info(struct drm_i915_private *i915)
 {
 	struct i915_perf *perf = &i915->perf;
+	u16 class = I915_ENGINE_CLASS_RENDER;
 
 	switch (GRAPHICS_VER(i915)) {
 	case 8:
-		perf->ctx_oactxctrl_offset = 0x120;
+		perf->ctx_oactxctrl_offset[class] = 0x120;
 		perf->ctx_flexeu0_offset = 0x2ce;
 		perf->gen8_valid_ctx_bit = BIT(25);
 		break;
 	case 9:
-		perf->ctx_oactxctrl_offset = 0x128;
+		perf->ctx_oactxctrl_offset[class] = 0x128;
 		perf->ctx_flexeu0_offset = 0x3de;
 		perf->gen8_valid_ctx_bit = BIT(16);
 		break;
 	case 11:
-		perf->ctx_oactxctrl_offset = 0x124;
+		perf->ctx_oactxctrl_offset[class] = 0x124;
 		perf->ctx_flexeu0_offset = 0x78e;
 		perf->gen8_valid_ctx_bit = BIT(16);
 		break;
 	case 12:
 		/*
 		 * Calculate offset at runtime in oa_pin_context for gen12 and
-		 * cache the value in perf->ctx_oactxctrl_offset.
+		 * cache the value in perf->ctx_oactxctrl_offset array that is
+		 * indexed using the uabi engine class.
 		 */
 		break;
 	default:

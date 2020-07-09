@@ -80,12 +80,17 @@ static void update_shadow_pdps(struct intel_vgpu_workload *workload)
  * when populating shadow ctx from guest, we should not overrride oa related
  * registers, so that they will not be overlapped by guest oa configs. Thus
  * made it possible to capture oa data from host for both host and guests.
+ *
+ * In newer platforms, ctx_oactxctrl_offset is an array indexed using the engine
+ * class. For platforms prior to gen12, this would default to render class. If
+ * GVT were enabled on gen12, this code needs to handle indexing into the right
+ * engine class.
  */
 static void sr_oa_regs(struct intel_vgpu_workload *workload,
 		u32 *reg_state, bool save)
 {
 	struct drm_i915_private *dev_priv = workload->vgpu->gvt->gt->i915;
-	u32 ctx_oactxctrl = dev_priv->perf.ctx_oactxctrl_offset;
+	u32 ctx_oactxctrl = dev_priv->perf.ctx_oactxctrl_offset[I915_ENGINE_CLASS_RENDER];
 	u32 ctx_flexeu0 = dev_priv->perf.ctx_flexeu0_offset;
 	int i = 0;
 	u32 flex_mmio[] = {
