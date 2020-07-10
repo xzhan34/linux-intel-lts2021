@@ -1678,4 +1678,34 @@ void i915_log_driver_error(struct drm_i915_private *i915,
 			   const enum i915_driver_errors error,
 			   const char *fmt, ...);
 
+/* Below are various work arounds available for the pcie deadlock issue:
+ * Each WA can be enabled by setting corresponding bit in module parameter.
+ * Note that I915_WA_IDLE_GPU_BEFORE_UPDATE & I915_WA_USE_FLAT_PPGTT_UPDATE cannot
+ * co-exist, so the only legal values for module parameter smem_access_control are
+ * 0, 1, 2, 3 and 5. But 3 and 5 are recommended values to avoid pcie deadlock.
+ *
+ * When I915_WA_FORCE_SMEM_OBJECT is enabled, certain objects like(lrc, hwsp, ringbuffer)
+ * are created in smem instead of creating in lmem to avoid access from host while GPU
+ * access smem to  * avoid the possibility of pcie deadlock.
+ *
+ * When I915_WA_IDLE_GPU_BEFORE_UPDATE is enabled, engines are stalled completely before
+ * writing to page tables which are located in lmem, to avoid the possibility of deadlock
+ * due to simultaneous traffic from host to lmem and traffice from GPU to access smem.
+ *
+ * When I915_WA_USE_FLAT_PPGTT_UPDATE, i915 makes use of blitter engine to update the
+ * page tables. Also note this mechanism of updating page tables cannot be used during
+ * driver load since resources required are not yet initialized when driver loading is
+ * started, bind_ctxt_ready is used to indicate when i915 ready to use blitter commands
+ * to update page tables.
+ */
+#define I915_WA_FORCE_SMEM_OBJECT	0
+#define I915_WA_IDLE_GPU_BEFORE_UPDATE	1
+#define I915_WA_USE_FLAT_PPGTT_UPDATE	2
+
+static inline bool
+i915_is_mem_wa_enabled(struct drm_i915_private *i915, int val)
+{
+	return i915->params.smem_access_control & BIT(val);
+}
+
 #endif

@@ -349,6 +349,9 @@ int i915_gem_idle_engines(struct drm_i915_private *i915)
 	unsigned int i;
 	int ret = 0;
 
+	if (!i915_is_mem_wa_enabled(i915, I915_WA_IDLE_GPU_BEFORE_UPDATE))
+		return 0;
+
 	/* Disable scheduling on engines */
 	for_each_gt(gt, i915, i) {
 		ret = intel_gt_idle_engines_start(gt, false);
@@ -369,6 +372,9 @@ int i915_gem_resume_engines(struct drm_i915_private *i915)
 	struct intel_gt *gt;
 	unsigned int i;
 	int ret = 0;
+
+	if (!i915_is_mem_wa_enabled(i915, I915_WA_IDLE_GPU_BEFORE_UPDATE))
+		return 0;
 
 	/* Enable scheduling on engines */
 	for_each_gt(gt, i915, i) {

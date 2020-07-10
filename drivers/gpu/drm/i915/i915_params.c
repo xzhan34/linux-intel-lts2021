@@ -274,6 +274,12 @@ i915_param_named_unsafe(force_alloc_contig, int, 0400,
 
 i915_param_named_unsafe(prelim_override_p2p_dist, bool, 0400, "Override P2P distance check (default: false)");
 
+i915_param_named_unsafe(smem_access_control, int, 0600,
+			"Bitmask to indicate WA enabled for pcie deadlock, bits 1 and 2 are mutually exclusive"
+			"bit-0 if set LRC, hwsp and guc objects in smem, "
+			"bit-1 stall gpu before ppgtt updates, "
+			"bit-2 Update ppgtt and ggtt using blitter commands");
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,
