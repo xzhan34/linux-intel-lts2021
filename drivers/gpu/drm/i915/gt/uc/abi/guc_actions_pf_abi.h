@@ -192,4 +192,134 @@
 #define PF2GUC_RELAY_TO_VF_REQUEST_MSG_n_RELAY_DATAx	GUC_HXG_REQUEST_MSG_n_DATAn
 #define PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA	60u
 
+/**
+ * DOC: GUC2PF_MMIO_RELAY_SERVICE
+ *
+ * The `GUC2PF_MMIO_RELAY_SERVICE`_ message is used by the GuC to forward data
+ * from `VF2GUC_MMIO_RELAY_SERVICE`_ request message that was sent by the VF.
+ *
+ * To reply to `VF2GUC_MMIO_RELAY_SERVICE`_ request message PF must be either
+ * `PF2GUC_MMIO_RELAY_SUCCESS`_ or `PF2GUC_MMIO_RELAY_FAILURE`_.
+ *
+ * This G2H message must be sent as `CTB HXG Message`_.
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_GUC_                                 |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_EVENT_                                   |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:16 | MBZ                                                          |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  15:0 | ACTION = _`GUC_ACTION_GUC2PF_MMIO_RELAY_SERVICE` = 0x5006    |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | **VFID** - identifier of the VF which sent this message      |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 2 | 31:28 | MBZ                                                          |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:24 | **MAGIC** - see `VF2GUC_MMIO_RELAY_SERVICE`_ request         |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 23:16 | **OPCODE** - see `VF2GUC_MMIO_RELAY_SERVICE`_ request        |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  15:0 | MBZ                                                          |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 3 |  31:0 | **DATA1** - see `VF2GUC_MMIO_RELAY_SERVICE`_ request         |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 4 |  31:0 | **DATA2** - see `VF2GUC_MMIO_RELAY_SERVICE`_ request         |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 5 |  31:0 | **DATA3** - see `VF2GUC_MMIO_RELAY_SERVICE`_ request         |
+ *  +---+-------+--------------------------------------------------------------+
+ */
+#define GUC_ACTION_GUC2PF_MMIO_RELAY_SERVICE		0x5006
+
+#define GUC2PF_MMIO_RELAY_SERVICE_EVENT_MSG_LEN		(GUC_HXG_EVENT_MSG_MIN_LEN + 5u)
+#define GUC2PF_MMIO_RELAY_SERVICE_EVENT_MSG_1_VFID	GUC_HXG_EVENT_MSG_n_DATAn
+#define GUC2PF_MMIO_RELAY_SERVICE_EVENT_MSG_2_MAGIC	(0xf << 24)
+#define GUC2PF_MMIO_RELAY_SERVICE_EVENT_MSG_2_OPCODE	(0xff << 16)
+#define GUC2PF_MMIO_RELAY_SERVICE_EVENT_MSG_n_DATAx	GUC_HXG_EVENT_MSG_n_DATAn
+#define GUC2PF_MMIO_RELAY_SERVICE_EVENT_MSG_NUM_DATA	3u
+
+/**
+ * DOC: PF2GUC_MMIO_RELAY_SUCCESS
+ *
+ * The `PF2GUC_MMIO_RELAY_SUCCESS`_ message is used by the PF to send success
+ * response data related to `VF2GUC_MMIO_RELAY_SERVICE`_ request message that
+ * was received in `GUC2PF_MMIO_RELAY_SERVICE`_.
+ *
+ * This message must be sent as `CTB HXG Message`_.
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_HOST_                                |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_FAST_REQUEST_                            |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:16 | MBZ                                                          |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  15:0 | ACTION = _`GUC_ACTION_PF2GUC_MMIO_RELAY_SUCCESS` = 0x5007    |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | **VFID** - identifier of the VF where to send this reply     |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 2 | 31:28 | MBZ                                                          |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:24 | **MAGIC** - see `VF2GUC_MMIO_RELAY_SERVICE`_ response        |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  23:0 | **DATA0** - see `VF2GUC_MMIO_RELAY_SERVICE`_ response        |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 3 |  31:0 | **DATA1** - see `VF2GUC_MMIO_RELAY_SERVICE`_ response        |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 4 |  31:0 | **DATA2** - see `VF2GUC_MMIO_RELAY_SERVICE`_ response        |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 5 |  31:0 | **DATA3** - see `VF2GUC_MMIO_RELAY_SERVICE`_ response        |
+ *  +---+-------+--------------------------------------------------------------+
+ */
+#define GUC_ACTION_PF2GUC_MMIO_RELAY_SUCCESS		0x5007
+
+#define PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_LEN	(GUC_HXG_REQUEST_MSG_MIN_LEN + 5u)
+#define PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_1_VFID	GUC_HXG_REQUEST_MSG_n_DATAn
+#define PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_2_MAGIC	(0xf << 24)
+#define PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_2_DATA0	(0xffffff << 0)
+#define PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_n_DATAx	GUC_HXG_REQUEST_MSG_n_DATAn
+#define PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_NUM_DATA	3u
+
+/**
+ * DOC: PF2GUC_MMIO_RELAY_FAILURE
+ *
+ * The `PF2GUC_MMIO_RELAY_FAILURE`_ message is used by PF to send error response
+ * data related to `VF2GUC_MMIO_RELAY_SERVICE`_ request message that
+ * was received in `GUC2PF_MMIO_RELAY_SERVICE`_.
+ *
+ * This message must be sent as `CTB HXG Message`_.
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_HOST_                                |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_FAST_REQUEST_                            |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:16 | MBZ                                                          |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  15:0 | ACTION = _`GUC_ACTION_PF2GUC_MMIO_RELAY_FAILURE` = 0x5008    |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | **VFID** - identifier of the VF where to send reply          |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 2 | 31:28 | MBZ                                                          |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:24 | **MAGIC** - see `VF2GUC_MMIO_RELAY_SERVICE`_ request         |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  23:8 | MBZ                                                          |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |   7:0 | **FAULT** - see `IOV Error Codes`_                           |
+ *  +---+-------+--------------------------------------------------------------+
+ */
+#define GUC_ACTION_PF2GUC_MMIO_RELAY_FAILURE		0x5008
+
+#define PF2GUC_MMIO_RELAY_FAILURE_REQUEST_MSG_LEN	(GUC_HXG_REQUEST_MSG_MIN_LEN + 2u)
+#define PF2GUC_MMIO_RELAY_FAILURE_REQUEST_MSG_1_VFID	GUC_HXG_REQUEST_MSG_n_DATAn
+#define PF2GUC_MMIO_RELAY_FAILURE_REQUEST_MSG_2_MAGIC	(0xf << 24)
+#define PF2GUC_MMIO_RELAY_FAILURE_REQUEST_MSG_2_FAULT	(0xff << 0)
+
 #endif /* __GUC_ACTIONS_PF_ABI_H__ */

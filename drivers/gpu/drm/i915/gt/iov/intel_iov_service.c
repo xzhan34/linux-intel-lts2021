@@ -353,3 +353,68 @@ int intel_iov_service_process_msg(struct intel_iov *iov, u32 origin,
 
 	return err;
 }
+
+static int send_mmio_relay_error(struct intel_iov *iov,
+				 u32 vfid, u32 magic, int fault)
+{
+	u32 request[PF2GUC_MMIO_RELAY_FAILURE_REQUEST_MSG_LEN] = {
+		FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, GUC_ACTION_PF2GUC_MMIO_RELAY_FAILURE),
+		FIELD_PREP(PF2GUC_MMIO_RELAY_FAILURE_REQUEST_MSG_1_VFID, vfid),
+		FIELD_PREP(PF2GUC_MMIO_RELAY_FAILURE_REQUEST_MSG_2_MAGIC, magic) |
+		FIELD_PREP(PF2GUC_MMIO_RELAY_FAILURE_REQUEST_MSG_2_FAULT, fault),
+	};
+
+	return intel_guc_send(iov_to_guc(iov), request, ARRAY_SIZE(request));
+}
+
+/**
+ * intel_iov_service_process_mmio_relay - Process MMIO Relay notification.
+ * @iov: the IOV struct
+ * @msg: mmio relay notification data
+ * @len: length of the message data (in dwords)
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_service_process_mmio_relay(struct intel_iov *iov, const u32 *msg,
+					 u32 len)
+{
+	struct drm_i915_private *i915 = iov_to_i915(iov);
+	struct intel_runtime_pm *rpm = &i915->runtime_pm;
+	intel_wakeref_t wakeref;
+	u32 vfid, magic, opcode;
+	int err = -EPROTO;
+
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_MSG_0_ORIGIN, msg[0]) != GUC_HXG_ORIGIN_GUC);
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_MSG_0_TYPE, msg[0]) != GUC_HXG_TYPE_EVENT);
+	GEM_BUG_ON(FIELD_GET(GUC_HXG_EVENT_MSG_0_ACTION, msg[0]) !=
+		   GUC_ACTION_GUC2PF_MMIO_RELAY_SERVICE);
+
+	if (unlikely(!IS_SRIOV_PF(i915)))
+		return -EPERM;
+	if (unlikely(len != GUC2PF_MMIO_RELAY_SERVICE_EVENT_MSG_LEN))
+		return -EPROTO;
+
+	vfid = FIELD_GET(GUC2PF_MMIO_RELAY_SERVICE_EVENT_MSG_1_VFID, msg[1]);
+	magic = FIELD_GET(GUC2PF_MMIO_RELAY_SERVICE_EVENT_MSG_2_MAGIC, msg[2]);
+	opcode = FIELD_GET(GUC2PF_MMIO_RELAY_SERVICE_EVENT_MSG_2_OPCODE, msg[2]);
+
+	if (unlikely(!vfid))
+		return -EPROTO;
+
+	wakeref = intel_runtime_pm_get(rpm);
+
+	switch (opcode) {
+	default:
+		IOV_DEBUG(iov, "unsupported request %#x from VF%u\n",
+				opcode, vfid);
+		err = -EOPNOTSUPP;
+	}
+
+	if (unlikely(err < 0))
+		send_mmio_relay_error(iov, vfid, magic, -err);
+
+	intel_runtime_pm_put(rpm, wakeref);
+	return err;
+}
