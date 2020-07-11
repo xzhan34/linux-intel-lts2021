@@ -4,6 +4,7 @@
  */
 
 #include <linux/bitfield.h>
+#include <linux/bsearch.h>
 
 #include "abi/iov_actions_abi.h"
 #include "abi/iov_actions_mmio_abi.h"
@@ -432,6 +433,53 @@ static int reply_mmio_relay_handshake(struct intel_iov *iov,
 	return send_mmio_relay_reply(iov, vfid, magic, data);
 }
 
+static int __i915_reg_cmp(const void *a, const void *b)
+{
+	return i915_mmio_reg_offset(*(const i915_reg_t *)a) -
+	       i915_mmio_reg_offset(*(const i915_reg_t *)b);
+}
+
+static int lookup_reg_index(struct intel_iov *iov, u32 offset)
+{
+	i915_reg_t key = _MMIO(offset);
+	i915_reg_t *found = bsearch(&key, iov->pf.service.runtime.regs,
+				    iov->pf.service.runtime.size, sizeof(key),
+				    __i915_reg_cmp);
+
+	return found ? found - iov->pf.service.runtime.regs : -ENODATA;
+}
+
+static int reply_mmio_relay_get_reg(struct intel_iov *iov,
+				    u32 vfid, u32 magic, const u32 *msg)
+{
+	u32 data[PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_NUM_DATA + 1] = { };
+	unsigned int i;
+	int found;
+
+	BUILD_BUG_ON(VF2PF_MMIO_GET_RUNTIME_REQUEST_MSG_NUM_OFFSET >
+		     GUC2PF_MMIO_RELAY_SERVICE_EVENT_MSG_NUM_DATA);
+	BUILD_BUG_ON(VF2PF_MMIO_GET_RUNTIME_REQUEST_MSG_NUM_OFFSET !=
+		     PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_NUM_DATA);
+
+	if (unlikely(!msg[0]))
+		return -EPROTO;
+	if (unlikely(!msg[1]))
+		return -EINVAL;
+
+	for (i = 0; i < VF2PF_MMIO_GET_RUNTIME_REQUEST_MSG_NUM_OFFSET; i++) {
+		u32 offset = msg[i + 1];
+
+		if (unlikely(!offset))
+			continue;
+		found = lookup_reg_index(iov, offset);
+		if (found < 0)
+			return -EACCES;
+		data[i + 1] = iov->pf.service.runtime.values[found];
+	}
+
+	return send_mmio_relay_reply(iov, vfid, magic, data);
+}
+
 /**
  * intel_iov_service_process_mmio_relay - Process MMIO Relay notification.
  * @iov: the IOV struct
@@ -471,6 +519,9 @@ int intel_iov_service_process_mmio_relay(struct intel_iov *iov, const u32 *msg,
 	switch (opcode) {
 	case IOV_OPCODE_VF2PF_MMIO_HANDSHAKE:
 		err = reply_mmio_relay_handshake(iov, vfid, magic, msg + 2);
+		break;
+	case IOV_OPCODE_VF2PF_MMIO_GET_RUNTIME:
+		err = reply_mmio_relay_get_reg(iov, vfid, magic, msg + 2);
 		break;
 	default:
 		IOV_DEBUG(iov, "unsupported request %#x from VF%u\n",
