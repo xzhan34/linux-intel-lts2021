@@ -1542,6 +1542,8 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 
 #define HAS_GT_UC(dev_priv)	(INTEL_INFO(dev_priv)->has_gt_uc)
 
+#define HAS_SRIOV(dev_priv)	(INTEL_INFO(dev_priv)->has_sriov)
+
 #define HAS_SELECTIVE_TLB_INVALIDATION(dev_priv) \
 	(INTEL_INFO(dev_priv)->has_selective_tlb_invalidation)
 
