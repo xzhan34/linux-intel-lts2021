@@ -18,6 +18,10 @@ static inline const char *i915_iov_mode_to_string(enum i915_iov_mode mode)
 		return "non virtualized";
 	case I915_IOV_MODE_GVT_VGPU:
 		return "GVT VGPU";
+	case I915_IOV_MODE_SRIOV_PF:
+		return "SR-IOV PF";
+	case I915_IOV_MODE_SRIOV_VF:
+		return "SR-IOV VF";
 	default:
 		return "<invalid>";
 	}

@@ -1402,7 +1402,7 @@ static void i915_virtualization_probe(struct drm_i915_private *i915)
 	if (intel_vgpu_active(i915))
 		i915->__mode = I915_IOV_MODE_GVT_VGPU;
 	else
-		i915->__mode = I915_IOV_MODE_NONE;
+		i915->__mode = i915_sriov_probe(i915);
 
 	GEM_BUG_ON(!i915->__mode);
 

@@ -238,6 +238,11 @@ i915-y += gt/intel_gsc.o
 # graphics spi device (DGFX) support
 i915-y += spi/intel_spi.o
 
+# Virtualization support
+iov-y += \
+	i915_sriov.o
+i915-y += $(iov-y)
+
 # graphics hardware monitoring (HWMON) support
 i915-$(CONFIG_HWMON) += i915_hwmon.o
 

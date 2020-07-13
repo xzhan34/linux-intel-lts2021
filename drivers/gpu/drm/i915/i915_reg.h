@@ -6123,6 +6123,10 @@ enum gt_vctr_registers {
 						_SLM_ECC_ERROR_CNT : \
 						_SLM_UNCORR_ECC_ERROR_CNT)
 
+/* VF_CAPABILITY_REGISTER */
+#define GEN12_VF_CAP_REG		_MMIO(0x1901f8)
+#define   GEN12_VF			REG_BIT(0)
+
 #define ILK_DISPLAY_CHICKEN2	_MMIO(0x42004)
 /* Required on all Ironlake and Sandybridge according to the B-Spec. */
 #define  ILK_ELPIN_409_SELECT	(1 << 25)

@@ -76,6 +76,7 @@
 #include "i915_perf_types.h"
 #include "i915_request.h"
 #include "i915_scheduler.h"
+#include "i915_sriov.h"
 #include "i915_utils.h"
 #include "i915_virtualization.h"
 #include "i915_vma.h"
