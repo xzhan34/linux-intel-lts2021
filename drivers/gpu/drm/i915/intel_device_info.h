@@ -175,6 +175,7 @@ enum intel_ppgtt_type {
 	func(has_remote_tiles); \
 	func(has_rps); \
 	func(has_runtime_pm); \
+	func(has_selective_tlb_invalidation); \
 	func(has_semaphore_xehpsdv); \
 	func(has_snoop); \
 	func(has_coherent_ggtt); \
