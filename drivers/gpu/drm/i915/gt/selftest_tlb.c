@@ -400,17 +400,18 @@ static int invalidate_full(void *arg)
 
 static void tlbinv_range(struct i915_address_space *vm, u64 addr, u64 length)
 {
-	if (!intel_gt_invalidate_tlb_range(vm->gt, addr, length))
+	if (!intel_gt_invalidate_tlb_range(vm->gt, vm, addr, length))
 		pr_err("range invalidate failed\n");
 }
 
 static bool has_invalidate_range(struct intel_gt *gt)
 {
+	struct i915_address_space *vm = gt->vm;
 	intel_wakeref_t wf;
 	bool result = false;
 
 	with_intel_gt_pm(gt, wf)
-		result = intel_gt_invalidate_tlb_range(gt, 0, gt->vm->total);
+		result = intel_gt_invalidate_tlb_range(gt, vm, 0, vm->total);
 
 	return result;
 }

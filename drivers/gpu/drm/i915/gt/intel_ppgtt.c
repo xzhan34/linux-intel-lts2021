@@ -234,7 +234,7 @@ void ppgtt_bind_vma(struct i915_address_space *vm,
 			if (!atomic_read(&vm->active_contexts_gt[i]))
 				continue;
 
-			intel_gt_invalidate_tlb_range(gt,
+			intel_gt_invalidate_tlb_range(gt, vm,
 						      i915_vma_offset(vma),
 						      i915_vma_size(vma));
 		}
@@ -278,7 +278,7 @@ static void vma_invalidate_tlb(struct i915_vma *vma)
 		if (!atomic_read(&vm->active_contexts_gt[id]))
 			continue;
 
-		if (!intel_gt_invalidate_tlb_range(gt,
+		if (!intel_gt_invalidate_tlb_range(gt, vm,
 						   i915_vma_offset(vma),
 						   i915_vma_size(vma)))
 			WRITE_ONCE(obj->mm.tlb[id],

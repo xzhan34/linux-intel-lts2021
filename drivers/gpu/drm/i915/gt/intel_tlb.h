@@ -11,8 +11,12 @@
 
 #include "intel_gt_types.h"
 
+struct i915_address_space;
+
 void intel_gt_invalidate_tlb_full(struct intel_gt *gt, u32 seqno);
-bool intel_gt_invalidate_tlb_range(struct intel_gt *gt, u64 start, u64 length);
+bool intel_gt_invalidate_tlb_range(struct intel_gt *gt,
+				   struct i915_address_space *vm,
+				   u64 start, u64 length);
 
 void intel_gt_init_tlb(struct intel_gt *gt);
 void intel_gt_fini_tlb(struct intel_gt *gt);

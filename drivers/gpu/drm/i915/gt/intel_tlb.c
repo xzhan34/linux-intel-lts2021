@@ -338,6 +338,7 @@ static u64 tlb_page_selective_size(u64 *addr, u64 length)
 }
 
 bool intel_gt_invalidate_tlb_range(struct intel_gt *gt,
+				   struct i915_address_space *vm,
 				   u64 start, u64 length)
 {
 	struct intel_guc *guc = &gt->uc.guc;
@@ -363,7 +364,7 @@ bool intel_gt_invalidate_tlb_range(struct intel_gt *gt,
 	with_intel_gt_pm_if_awake(gt, wakeref)
 		ret = intel_guc_invalidate_tlb_page_selective(guc,
 							      INTEL_GUC_TLB_INVAL_MODE_HEAVY,
-							      start, size, 0) == 0;
+							      start, size, vm->asid) == 0;
 
 	return ret;
 }
