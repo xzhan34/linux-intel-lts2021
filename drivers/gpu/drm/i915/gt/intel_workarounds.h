@@ -43,4 +43,11 @@ int intel_engine_show_workarounds(struct drm_printer *m,
 int intel_engine_verify_workarounds(struct intel_engine_cs *engine,
 				    const char *from);
 
+void intel_engine_allow_user_register_access(struct intel_engine_cs *engine,
+					     struct i915_whitelist_reg *reg,
+					     u32 count);
+void intel_engine_deny_user_register_access(struct intel_engine_cs *engine,
+					    struct i915_whitelist_reg *reg,
+					    u32 count);
+
 #endif

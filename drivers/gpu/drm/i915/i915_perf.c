@@ -1566,6 +1566,50 @@ free_noa_wait(struct i915_perf_stream *stream)
 	i915_vma_unpin_and_release(&stream->noa_wait, 0);
 }
 
+static struct i915_whitelist_reg gen9_oa_wl_regs[] = {
+	{ OAREPORTTRIG2, RING_FORCE_TO_NONPRIV_ACCESS_RW },
+	{ OAREPORTTRIG6, RING_FORCE_TO_NONPRIV_ACCESS_RW },
+};
+
+static struct i915_whitelist_reg gen12_oa_wl_regs[] = {
+	{ GEN12_OAG_OAREPORTTRIG2, RING_FORCE_TO_NONPRIV_ACCESS_RW },
+	{ GEN12_OAG_OAREPORTTRIG6, RING_FORCE_TO_NONPRIV_ACCESS_RW },
+};
+
+static void intel_engine_apply_oa_whitelist(struct i915_perf_stream *stream)
+{
+	struct intel_engine_cs *engine = stream->engine;
+	struct drm_i915_private *i915 = stream->perf->i915;
+
+	if (GRAPHICS_VER(i915) == 12)
+		intel_engine_allow_user_register_access(engine,
+							gen12_oa_wl_regs,
+							ARRAY_SIZE(gen12_oa_wl_regs));
+	else if (GRAPHICS_VER(i915) > 8)
+		intel_engine_allow_user_register_access(engine,
+							gen9_oa_wl_regs,
+							ARRAY_SIZE(gen9_oa_wl_regs));
+	else
+		return;
+}
+
+static void intel_engine_remove_oa_whitelist(struct i915_perf_stream *stream)
+{
+	struct intel_engine_cs *engine = stream->engine;
+	struct drm_i915_private *i915 = stream->perf->i915;
+
+	if (GRAPHICS_VER(i915) == 12)
+		intel_engine_deny_user_register_access(engine,
+						       gen12_oa_wl_regs,
+						       ARRAY_SIZE(gen12_oa_wl_regs));
+	else if (GRAPHICS_VER(i915) > 8)
+		intel_engine_deny_user_register_access(engine,
+						       gen9_oa_wl_regs,
+						       ARRAY_SIZE(gen9_oa_wl_regs));
+	else
+		return;
+}
+
 static void i915_oa_stream_destroy(struct i915_perf_stream *stream)
 {
 	struct i915_perf *perf = stream->perf;
@@ -1573,6 +1617,9 @@ static void i915_oa_stream_destroy(struct i915_perf_stream *stream)
 
 	if (WARN_ON(stream != gt->perf.exclusive_stream))
 		return;
+
+	if (stream->oa_whitelisted)
+		intel_engine_remove_oa_whitelist(stream);
 
 	/*
 	 * Unset exclusive_stream first, it will be checked while disabling
@@ -1676,7 +1723,8 @@ static void gen8_init_oa_buffer(struct i915_perf_stream *stream)
 	 *  bit."
 	 */
 	intel_uncore_write(uncore, GEN8_OABUFFER, gtt_offset |
-		   OABUFFER_SIZE_16M | GEN8_OABUFFER_MEM_SELECT_GGTT);
+			   OABUFFER_SIZE_16M | GEN8_OABUFFER_MEM_SELECT_GGTT |
+			   GEN7_OABUFFER_EDGE_TRIGGER);
 	intel_uncore_write(uncore, GEN8_OATAILPTR, gtt_offset & GEN8_OATAILPTR_MASK);
 
 	/* Mark that we need updated tail pointers to read from... */
@@ -1729,7 +1777,8 @@ static void gen12_init_oa_buffer(struct i915_perf_stream *stream)
 	 *  bit."
 	 */
 	intel_uncore_write(uncore, GEN12_OAG_OABUFFER, gtt_offset |
-			   OABUFFER_SIZE_16M | GEN8_OABUFFER_MEM_SELECT_GGTT);
+			   OABUFFER_SIZE_16M | GEN8_OABUFFER_MEM_SELECT_GGTT |
+			   GEN7_OABUFFER_EDGE_TRIGGER);
 	intel_uncore_write(uncore, GEN12_OAG_OATAILPTR,
 			   gtt_offset & GEN12_OAG_OATAILPTR_MASK);
 
@@ -3866,6 +3915,22 @@ i915_perf_open_ioctl_locked(struct i915_perf *perf,
 	if (!(param->flags & I915_PERF_FLAG_DISABLED))
 		i915_perf_enable_locked(stream);
 
+	/*
+	 * OA whitelist allows non-privileged access to some OA counters for
+	 * triggering reports into the OA buffer. This is only allowed if
+	 * perf_stream_paranoid is set to 0 by the sysadmin.
+	 *
+	 * We want to make sure this is almost the last thing we do before
+	 * returning the stream fd. If we do end up checking for errors in code
+	 * that follows this, we MUST call intel_engine_remove_oa_whitelist in
+	 * the error handling path to remove the whitelisted registers.
+	 */
+	if (!i915_perf_stream_paranoid &&
+	    props->sample_flags & SAMPLE_OA_REPORT) {
+		intel_engine_apply_oa_whitelist(stream);
+		stream->oa_whitelisted = true;
+	}
+
 	/* Take a reference on the driver that will be kept with stream_fd
 	 * until its release.
 	 */
@@ -5011,8 +5076,13 @@ int i915_perf_ioctl_version(void)
 	 *
 	 * 5: Add DRM_I915_PERF_PROP_POLL_OA_PERIOD parameter that controls the
 	 *    interval for the hrtimer used to check for OA data.
+	 *
+	 * 6: Whitelist OATRIGGER registers to allow user to trigger reports
+	 *    into the OA buffer. This applies only to gen8+. The feature can
+	 *    only be accessed if perf_stream_paranoid is set to 0 by privileged
+	 *    user.
 	 */
-	return 5;
+	return 6;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

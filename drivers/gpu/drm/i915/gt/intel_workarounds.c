@@ -55,7 +55,7 @@
  * - Public functions to init or apply the given workaround type.
  */
 
-static void wa_init_start(struct i915_wa_list *wal, const char *name, const char *engine_name)
+static void wa_init(struct i915_wa_list *wal, const char *name, const char *engine_name)
 {
 	wal->name = name;
 	wal->engine_name = engine_name;
@@ -63,35 +63,54 @@ static void wa_init_start(struct i915_wa_list *wal, const char *name, const char
 
 #define WA_LIST_CHUNK (1 << 4)
 
-static void wa_init_finish(struct i915_wa_list *wal)
+static int _wa_index(struct i915_wa_list *wal, i915_reg_t reg)
 {
-	/* Trim unused entries. */
-	if (!IS_ALIGNED(wal->count, WA_LIST_CHUNK)) {
-		struct i915_wa *list = kmemdup(wal->list,
-					       wal->count * sizeof(*list),
-					       GFP_KERNEL);
+	unsigned int addr = i915_mmio_reg_offset(reg);
+	int start = 0, end = wal->count;
 
-		if (list) {
-			kfree(wal->list);
-			wal->list = list;
-		}
+	/* addr and wal->list[].reg, both include the R/W flags */
+	while (start < end) {
+		int mid = start + (end - start) / 2;
+
+		if (i915_mmio_reg_offset(wal->list[mid].reg) < addr)
+			start = mid + 1;
+		else if (i915_mmio_reg_offset(wal->list[mid].reg) > addr)
+			end = mid;
+		else
+			return mid;
 	}
 
-	if (!wal->count)
+	return -1;
+}
+
+static void _wa_remove(struct i915_wa_list *wal, i915_reg_t reg, u32 flags)
+{
+	int index;
+	struct i915_wa *wa = wal->list;
+
+	reg.reg |= flags;
+
+	index = _wa_index(wal, reg);
+	if (index < 0)
 		return;
 
-	DRM_DEBUG_DRIVER("Initialized %u %s workarounds on %s\n",
-			 wal->wa_count, wal->name, wal->engine_name);
+	memset(wa + index, 0, sizeof(*wa));
+
+	while (index < wal->count - 1) {
+		swap(wa[index], wa[index + 1]);
+		index++;
+	}
+
+	wal->count--;
 }
 
 static void _wa_add(struct i915_wa_list *wal, const struct i915_wa *wa)
 {
-	unsigned int addr = i915_mmio_reg_offset(wa->reg);
-	unsigned int start = 0, end = wal->count;
+	int index;
 	const unsigned int grow = WA_LIST_CHUNK;
 	struct i915_wa *wa_;
 
-	GEM_BUG_ON(!is_power_of_2(grow));
+	BUILD_BUG_ON(!is_power_of_2(grow));
 
 	if (IS_ALIGNED(wal->count, grow)) { /* Either uninitialized or full. */
 		struct i915_wa *list;
@@ -111,33 +130,24 @@ static void _wa_add(struct i915_wa_list *wal, const struct i915_wa *wa)
 		wal->list = list;
 	}
 
-	while (start < end) {
-		unsigned int mid = start + (end - start) / 2;
+	index = _wa_index(wal, wa->reg);
+	if (index >= 0) {
+		wa_ = &wal->list[index];
 
-		if (i915_mmio_reg_offset(wal->list[mid].reg) < addr) {
-			start = mid + 1;
-		} else if (i915_mmio_reg_offset(wal->list[mid].reg) > addr) {
-			end = mid;
-		} else {
-			wa_ = &wal->list[mid];
+		if ((wa->clr | wa_->clr) && !(wa->clr & ~wa_->clr)) {
+			DRM_ERROR("Discarding overwritten w/a for reg %04x (clear: %08x, set: %08x)\n",
+				  i915_mmio_reg_offset(wa_->reg),
+				  wa_->clr, wa_->set);
 
-			if ((wa->clr | wa_->clr) && !(wa->clr & ~wa_->clr)) {
-				DRM_ERROR("Discarding overwritten w/a for reg %04x (clear: %08x, set: %08x)\n",
-					  i915_mmio_reg_offset(wa_->reg),
-					  wa_->clr, wa_->set);
-
-				wa_->set &= ~wa->clr;
-			}
-
-			wal->wa_count++;
-			wa_->set |= wa->set;
-			wa_->clr |= wa->clr;
-			wa_->read |= wa->read;
-			return;
+			wa_->set &= ~wa->clr;
 		}
+
+		wa_->set |= wa->set;
+		wa_->clr |= wa->clr;
+		wa_->read |= wa->read;
+		return;
 	}
 
-	wal->wa_count++;
 	wa_ = &wal->list[wal->count++];
 	*wa_ = *wa;
 
@@ -873,7 +883,7 @@ __intel_engine_init_ctx_wa(struct intel_engine_cs *engine,
 {
 	struct drm_i915_private *i915 = engine->i915;
 
-	wa_init_start(wal, name, engine->name);
+	wa_init(wal, name, engine->name);
 
 	/* Applies to all engines */
 	/*
@@ -884,7 +894,7 @@ __intel_engine_init_ctx_wa(struct intel_engine_cs *engine,
 		gen12_ctx_gt_fake_wa_init(engine, wal);
 
 	if (engine->class != RENDER_CLASS)
-		goto done;
+		return;
 
 	if (IS_METEORLAKE(i915))
 		mtl_ctx_workarounds_init(engine, wal);
@@ -922,9 +932,6 @@ __intel_engine_init_ctx_wa(struct intel_engine_cs *engine,
 		;
 	else
 		MISSING_CASE(GRAPHICS_VER(i915));
-
-done:
-	wa_init_finish(wal);
 }
 
 void intel_engine_init_ctx_wa(struct intel_engine_cs *engine)
@@ -1797,13 +1804,13 @@ void intel_gt_init_workarounds(struct intel_gt *gt)
 {
 	struct i915_wa_list *wal = &gt->wa_list;
 
-	wa_init_start(wal, "GT", "global");
+	wa_init(wal, "GT", "global");
 	gt_init_workarounds(gt, wal);
-	wa_init_finish(wal);
 }
 
 static enum forcewake_domains
-wal_get_fw_for_rmw(struct intel_uncore *uncore, const struct i915_wa_list *wal)
+wal_get_fw(struct intel_uncore *uncore, const struct i915_wa_list *wal,
+	   unsigned int op)
 {
 	enum forcewake_domains fw = 0;
 	struct i915_wa *wa;
@@ -1812,8 +1819,7 @@ wal_get_fw_for_rmw(struct intel_uncore *uncore, const struct i915_wa_list *wal)
 	for (i = 0, wa = wal->list; i < wal->count; i++, wa++)
 		fw |= intel_uncore_forcewake_for_reg(uncore,
 						     wa->reg,
-						     FW_REG_READ |
-						     FW_REG_WRITE);
+						     op);
 
 	return fw;
 }
@@ -1876,7 +1882,7 @@ wa_list_apply(struct intel_gt *gt, const struct i915_wa_list *wal)
 	if (!wal->count)
 		return;
 
-	fw = wal_get_fw_for_rmw(uncore, wal);
+	fw = wal_get_fw(uncore, wal, FW_REG_READ | FW_REG_WRITE);
 
 	intel_gt_mcr_lock(gt, &flags);
 	spin_lock(&uncore->lock);
@@ -1936,7 +1942,7 @@ static int wa_list_verify(struct intel_gt *gt,
 	if (!wal->count)
 		return 0;
 
-	fw = wal_get_fw_for_rmw(uncore, wal);
+	fw = wal_get_fw(uncore, wal, FW_REG_READ);
 
 	intel_gt_mcr_lock(gt, &flags);
 	spin_lock(&uncore->lock);
@@ -2297,9 +2303,8 @@ static void mtl_whitelist_build(struct intel_engine_cs *engine)
 void intel_engine_init_whitelist(struct intel_engine_cs *engine)
 {
 	struct drm_i915_private *i915 = engine->i915;
-	struct i915_wa_list *w = &engine->whitelist;
 
-	wa_init_start(w, "whitelist", engine->name);
+	wa_init(&engine->whitelist, "whitelist", engine->name);
 
 	if (IS_METEORLAKE(i915))
 		mtl_whitelist_build(engine);
@@ -2329,31 +2334,38 @@ void intel_engine_init_whitelist(struct intel_engine_cs *engine)
 		;
 	else
 		MISSING_CASE(GRAPHICS_VER(i915));
-
-	wa_init_finish(w);
 }
 
 void intel_engine_apply_whitelist(struct intel_engine_cs *engine)
 {
+	enum forcewake_domains fw;
 	const struct i915_wa_list *wal = &engine->whitelist;
 	struct intel_uncore *uncore = engine->uncore;
 	const u32 base = engine->mmio_base;
 	struct i915_wa *wa;
+	unsigned long flags;
 	unsigned int i;
 
-	if (!wal->count)
-		return;
+	fw = intel_uncore_forcewake_for_reg(uncore,
+					    RING_FORCE_TO_NONPRIV(base, 0),
+					    FW_REG_WRITE);
+
+	spin_lock_irqsave(&uncore->lock, flags);
+	intel_uncore_forcewake_get__locked(uncore, fw);
 
 	for (i = 0, wa = wal->list; i < wal->count; i++, wa++)
-		intel_uncore_write(uncore,
-				   RING_FORCE_TO_NONPRIV(base, i),
-				   i915_mmio_reg_offset(wa->reg));
+		intel_uncore_write_fw(uncore,
+				      RING_FORCE_TO_NONPRIV(base, i),
+				      i915_mmio_reg_offset(wa->reg));
 
 	/* And clear the rest just in case of garbage */
 	for (; i < RING_MAX_NONPRIV_SLOTS; i++)
-		intel_uncore_write(uncore,
-				   RING_FORCE_TO_NONPRIV(base, i),
-				   i915_mmio_reg_offset(RING_NOPID(base)));
+		intel_uncore_write_fw(uncore,
+				      RING_FORCE_TO_NONPRIV(base, i),
+				      i915_mmio_reg_offset(RING_NOPID(base)));
+
+	intel_uncore_forcewake_put__locked(uncore, fw);
+	spin_unlock_irqrestore(&uncore->lock, flags);
 }
 
 /*
@@ -3124,9 +3136,38 @@ void intel_engine_init_workarounds(struct intel_engine_cs *engine)
 	if (GRAPHICS_VER(engine->i915) < 4)
 		return;
 
-	wa_init_start(wal, "engine", engine->name);
+	wa_init(wal, "engine", engine->name);
 	engine_init_workarounds(engine, wal);
-	wa_init_finish(wal);
+}
+
+void intel_engine_allow_user_register_access(struct intel_engine_cs *engine,
+					     struct i915_whitelist_reg *reg,
+					     u32 count)
+{
+	if (!engine || !reg)
+		return;
+
+	while (count--) {
+		whitelist_reg_ext(&engine->whitelist, reg->reg, reg->flags);
+		reg++;
+	}
+
+	intel_engine_apply_whitelist(engine);
+}
+
+void intel_engine_deny_user_register_access(struct intel_engine_cs *engine,
+					    struct i915_whitelist_reg *reg,
+					    u32 count)
+{
+	if (!engine || !reg)
+		return;
+
+	while (count--) {
+		_wa_remove(&engine->whitelist, reg->reg, reg->flags);
+		reg++;
+	}
+
+	intel_engine_apply_whitelist(engine);
 }
 
 void intel_engine_apply_workarounds(struct intel_engine_cs *engine)

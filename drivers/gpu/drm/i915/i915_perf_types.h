@@ -317,6 +317,11 @@ struct i915_perf_stream {
 	 */
 	u64 poll_oa_period;
 
+	/**
+	 * @oa_whitelisted: Indicates that the oa registers are whitelisted.
+	 */
+	bool oa_whitelisted;
+
 
 	/**
 	 * @override_gucrc: GuC RC has been overridden for the perf stream,
