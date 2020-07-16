@@ -229,9 +229,13 @@ static void vma_invalidate_tlb(struct i915_vma *vma)
 	 * the most recent TLB invalidation seqno, and if we have not yet
 	 * flushed the TLBs upon release, perform a full invalidation.
 	 */
-	for_each_gt(gt, vm->i915, id)
-		WRITE_ONCE(obj->mm.tlb[id],
-			   intel_gt_next_invalidate_tlb_full(vm->gt));
+	for_each_gt(gt, vm->i915, id) {
+		if (!intel_gt_invalidate_tlb_range(gt,
+						   i915_vma_offset(vma),
+						   i915_vma_size(vma)))
+			WRITE_ONCE(obj->mm.tlb[id],
+				   intel_gt_next_invalidate_tlb_full(vm->gt));
+	}
 }
 
 void ppgtt_unbind_vma(struct i915_address_space *vm, struct i915_vma *vma)
