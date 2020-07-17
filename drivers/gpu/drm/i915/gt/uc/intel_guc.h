@@ -189,6 +189,9 @@ struct intel_guc {
 	/** @lrc_desc_pool_vaddr_v69: contents of the GuC LRC descriptor pool */
 	void *lrc_desc_pool_vaddr_v69;
 
+	spinlock_t sched_lock;
+	int sched_enable_ref;
+
 	struct {
 		struct drm_i915_gem_object *obj;
 		struct i915_vma *vma;
@@ -497,6 +500,8 @@ int intel_guc_engine_failure_process_msg(struct intel_guc *guc,
 int intel_guc_error_capture_process_msg(struct intel_guc *guc,
 					const u32 *msg, u32 len);
 void intel_guc_tlb_invalidation_done(struct intel_guc *guc, u32 seqno);
+int intel_guc_engine_sched_done_process_msg(struct intel_guc *guc,
+					    const u32 *msg, u32 len);
 
 struct intel_engine_cs *
 intel_guc_lookup_engine(struct intel_guc *guc, u8 guc_class, u8 instance);

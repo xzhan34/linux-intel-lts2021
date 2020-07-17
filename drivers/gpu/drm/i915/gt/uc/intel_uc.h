@@ -50,6 +50,19 @@ void intel_uc_runtime_suspend(struct intel_uc *uc);
 int intel_uc_resume(struct intel_uc *uc);
 int intel_uc_runtime_resume(struct intel_uc *uc);
 
+static inline
+int intel_uc_idle_engines_start(struct intel_uc *uc, bool enable)
+{
+	return intel_guc_modify_scheduling_start(&uc->guc, enable);
+}
+
+static inline
+int intel_uc_idle_engines_wait(struct intel_uc *uc)
+{
+
+	return intel_guc_modify_scheduling_wait(&uc->guc);
+}
+
 /*
  * We need to know as early as possible if we're going to use GuC or not to
  * take the correct setup paths. Additionally, once we've started loading the

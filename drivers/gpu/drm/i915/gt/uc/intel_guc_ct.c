@@ -1061,6 +1061,13 @@ static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 	case INTEL_GUC_ACTION_SCHED_CONTEXT_MODE_DONE:
 		ret = intel_guc_sched_done_process_msg(guc, payload, len);
 		break;
+	case INTEL_GUC_ACTION_SCHED_ENGINE_MODE_DONE:
+		ret = intel_guc_engine_sched_done_process_msg(guc, payload,
+							      len);
+		if (unlikely(ret))
+			CT_ERROR(ct, "engine schedule context failed %x %*ph\n",
+				  action, 4 * len, payload);
+		break;
 	case INTEL_GUC_ACTION_CONTEXT_RESET_NOTIFICATION:
 		ret = intel_guc_context_reset_process_msg(guc, payload, len);
 		break;
@@ -1163,6 +1170,7 @@ static int ct_handle_event(struct intel_guc_ct *ct, struct ct_incoming_msg *requ
 	 * circular dependency if the space was returned there.
 	 */
 	switch (action) {
+	case INTEL_GUC_ACTION_SCHED_ENGINE_MODE_DONE:
 	case INTEL_GUC_ACTION_SCHED_CONTEXT_MODE_DONE:
 	case INTEL_GUC_ACTION_DEREGISTER_CONTEXT_DONE:
 	case INTEL_GUC_ACTION_TLB_INVALIDATION_DONE:

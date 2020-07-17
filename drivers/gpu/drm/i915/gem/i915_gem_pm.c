@@ -342,3 +342,40 @@ err_wedged:
 			break;
 	}
 }
+
+int i915_gem_idle_engines(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int i;
+	int ret = 0;
+
+	/* Disable scheduling on engines */
+	for_each_gt(gt, i915, i) {
+		ret = intel_gt_idle_engines_start(gt, false);
+		if (ret)
+			break;
+	}
+
+	if (!ret) {
+		for_each_gt(gt, i915, i)
+			intel_gt_idle_engines_wait(gt);
+	}
+
+	return ret;
+}
+
+int i915_gem_resume_engines(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int i;
+	int ret = 0;
+
+	/* Enable scheduling on engines */
+	for_each_gt(gt, i915, i) {
+		ret = intel_gt_idle_engines_start(gt, true);
+		if (ret)
+			break;
+	}
+
+	return ret;
+}

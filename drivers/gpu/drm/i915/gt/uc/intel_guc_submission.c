@@ -1952,8 +1952,34 @@ void intel_guc_submission_cancel_requests(struct intel_guc *guc)
 	clear_context_state(guc);
 }
 
+static inline bool guc_scheduling_enabled(struct intel_guc *guc)
+{
+	return guc->sched_enable_ref > 0;
+}
+
+static void __guc_engine_sched_modify(struct intel_guc *guc,
+				      u8 class,
+				      bool enable)
+{
+	u32 action[] = {
+		INTEL_GUC_ACTION_SCHED_ENGINE_MODE_SET,
+		class,
+		0,
+		enable ? 1 : 0,
+	};
+
+	guc_submission_send_busy_loop(guc, action, ARRAY_SIZE(action),
+			   G2H_LEN_DW_SCHED_ENGINE_MODE_SET, true);
+}
+
 void intel_guc_submission_reset_finish(struct intel_guc *guc)
 {
+	struct intel_runtime_pm *runtime_pm =
+		&guc_to_gt(guc)->i915->runtime_pm;
+	intel_wakeref_t wakeref;
+	unsigned long flags;
+	u8 class;
+
 	/* Reset called during driver load */
 	if (unlikely(!guc_submission_initialized(guc)))
 		return;
@@ -1980,9 +2006,26 @@ void intel_guc_submission_reset_finish(struct intel_guc *guc)
 	while (atomic_read(&guc->outstanding_submission_g2h) > 0)
 		decr_outstanding_submission_g2h(guc, false);
 
+	with_intel_runtime_pm(runtime_pm, wakeref) {
+		spin_lock_irqsave(&guc->sched_lock, flags);
+		if (!guc_scheduling_enabled(guc)) {
+			for (class = 0; class <= GUC_LAST_ENGINE_CLASS;
+			     ++class) {
+				if (!CCS_MASK(guc_to_gt(guc)) &&
+				    class == GUC_COMPUTE_CLASS)
+					continue;
+				__guc_engine_sched_modify(guc, class, false);
+			}
+		}
+		spin_unlock_irqrestore(&guc->sched_lock, flags);
+	}
+
 	intel_guc_global_policies_update(guc);
 	enable_submission(guc);
 	intel_gt_unpark_heartbeats(guc_to_gt(guc));
+
+	if (waitqueue_active(&guc->ct.wq))
+		wake_up_all(&guc->ct.wq);
 }
 
 static void destroyed_worker_func(struct work_struct *w);
@@ -2304,6 +2347,9 @@ static int assign_guc_id(struct intel_guc *guc, struct intel_context *ce)
 		for_each_child(ce, child)
 			child->guc_id.id = ce->guc_id.id + i++;
 	}
+
+	spin_lock_init(&guc->sched_lock);
+	guc->sched_enable_ref = 1;
 
 	return 0;
 }
@@ -3319,6 +3365,42 @@ static void guc_context_close(struct intel_context *ce)
 	spin_lock_irqsave(&ce->guc_state.lock, flags);
 	set_context_close_done(ce);
 	spin_unlock_irqrestore(&ce->guc_state.lock, flags);
+}
+
+int intel_guc_modify_scheduling(struct intel_guc *guc, bool enable)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+	struct intel_runtime_pm *runtime_pm = &gt->i915->runtime_pm;
+	intel_wakeref_t wakeref;
+	unsigned long flags;
+	bool enabled;
+	u8 class;
+	int ret = 0;
+
+	/* Check if GuC submission is enabled and GuC is up and running */
+	if (unlikely(!guc_submission_initialized(guc) || !intel_guc_is_ready(guc)))
+		return ret;
+
+	with_intel_runtime_pm(runtime_pm, wakeref) {
+		spin_lock_irqsave(&guc->sched_lock, flags);
+		enabled = guc_scheduling_enabled(guc);
+		if (enable)
+			guc->sched_enable_ref++;
+		else
+			guc->sched_enable_ref--;
+		if (!submission_disabled(guc) &&
+		    enabled != guc_scheduling_enabled(guc)) {
+			for (class = 0; class <= GUC_LAST_ENGINE_CLASS;
+			     ++class) {
+				if (!CCS_MASK(gt) && class == GUC_COMPUTE_CLASS)
+					continue;
+				__guc_engine_sched_modify(guc, class, enable);
+			}
+		}
+		spin_unlock_irqrestore(&guc->sched_lock, flags);
+	}
+
+	return ret;
 }
 
 static inline void guc_lrc_desc_unpin(struct intel_context *ce)
@@ -4847,6 +4929,20 @@ int intel_guc_deregister_done_process_msg(struct intel_guc *guc,
 		intel_gt_pm_put_async_untracked(guc_to_gt(guc));
 		release_guc_id(guc, ce);
 		__guc_context_destroy(ce);
+	}
+
+	decr_outstanding_submission_g2h(guc, true);
+
+	return 0;
+}
+
+int intel_guc_engine_sched_done_process_msg(struct intel_guc *guc,
+					    const u32 *msg,
+					    u32 len)
+{
+	if (unlikely(len < 2)) {
+		drm_dbg(&guc_to_gt(guc)->i915->drm, "Invalid length %u\n", len);
+		return -EPROTO;
 	}
 
 	decr_outstanding_submission_g2h(guc, true);

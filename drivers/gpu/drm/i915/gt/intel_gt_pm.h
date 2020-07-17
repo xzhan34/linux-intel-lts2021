@@ -102,4 +102,16 @@ static inline bool is_mock_gt(const struct intel_gt *gt)
 	return I915_SELFTEST_ONLY(gt->awake == -ENODEV);
 }
 
+static inline
+int intel_gt_idle_engines_start(struct intel_gt *gt, bool enable)
+{
+	return intel_uc_idle_engines_start(&gt->uc, enable);
+}
+
+static inline
+int intel_gt_idle_engines_wait(struct intel_gt *gt)
+{
+	return intel_uc_idle_engines_wait(&gt->uc);
+}
+
 #endif /* INTEL_GT_PM_H */

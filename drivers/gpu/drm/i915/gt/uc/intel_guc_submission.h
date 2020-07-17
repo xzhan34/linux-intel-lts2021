@@ -52,4 +52,30 @@ static inline bool intel_guc_submission_is_used(const struct intel_guc *guc)
 	return intel_guc_is_used(guc) && intel_guc_submission_is_wanted(guc);
 }
 
+int intel_guc_modify_scheduling(struct intel_guc *guc, bool enable);
+
+static inline int
+intel_guc_modify_scheduling_start(struct intel_guc *guc, bool enable)
+{
+	return intel_guc_modify_scheduling(guc, enable);
+}
+
+static inline int
+intel_guc_modify_scheduling_wait(struct intel_guc *guc)
+{
+
+	/*
+	 * Even though intel_guc_wait_for_pending_msg can return non-zero, in
+	 * practice it never will. Either outstanding_submission_g2h will go to zero and
+	 * it return 0 or the heartbeat will kick in and trigger a full GPU
+	 * reset. In that case intel_guc_submission_reset_finish is called
+	 * which clears outstanding_submission_g2h and wakes this thread.
+	 */
+	return intel_guc_wait_for_pending_msg(guc,
+					      &guc->outstanding_submission_g2h,
+					      true,
+					      MAX_SCHEDULE_TIMEOUT);
+
+}
+
 #endif

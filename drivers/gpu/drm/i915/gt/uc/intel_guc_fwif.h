@@ -21,6 +21,7 @@
 #include "abi/guc_messages_abi.h"
 
 /* Payload length only i.e. don't include G2H header length */
+#define G2H_LEN_DW_SCHED_ENGINE_MODE_SET	2
 #define G2H_LEN_DW_SCHED_CONTEXT_MODE_SET	2
 #define G2H_LEN_DW_DEREGISTER_CONTEXT		1
 #define G2H_LEN_DW_INVALIDATE_TLB		1
