@@ -700,6 +700,7 @@ static int __vf_uc_init_hw(struct intel_uc *uc)
 	struct intel_gt *gt = uc_to_gt(uc);
 	struct drm_i915_private *i915 = gt->i915;
 	struct intel_guc *guc = &uc->guc;
+	struct intel_huc *huc = &uc->huc;
 	int err;
 
 	GEM_BUG_ON(!HAS_GT_UC(i915));
@@ -721,12 +722,28 @@ static int __vf_uc_init_hw(struct intel_uc *uc)
 	if (unlikely(err))
 		goto err_out;
 
+	/*
+	 * pretend that HuC is running if it is supported
+	 * for status rely on runtime reg shared by PF
+	 */
+	if (intel_uc_fw_is_supported(&huc->fw)) {
+		if (intel_huc_check_status(huc) > 0)
+			/* XXX: We don't know how to get the HuC version yet */
+			intel_uc_fw_set_preloaded(&huc->fw, 0, 0);
+		else
+			intel_uc_fw_change_status(&huc->fw, INTEL_UC_FIRMWARE_DISABLED);
+	}
+
 	intel_guc_submission_enable(guc);
 
 	dev_info(i915->drm.dev, "%s firmware %s version %u.%u %s:%s\n",
 		 intel_uc_fw_type_repr(INTEL_UC_FW_TYPE_GUC), guc->fw.file_selected.path,
 		 guc->fw.file_selected.ver.major, guc->fw.file_selected.ver.minor,
 		 "submission", i915_iov_mode_to_string(IOV_MODE(i915)));
+
+	dev_info(i915->drm.dev, "%s firmware %s\n",
+		 intel_uc_fw_type_repr(INTEL_UC_FW_TYPE_HUC),
+		 intel_uc_fw_status_repr(__intel_uc_fw_status(&huc->fw)));
 
 	return 0;
 
