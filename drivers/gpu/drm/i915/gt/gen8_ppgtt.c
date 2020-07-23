@@ -286,6 +286,16 @@ static void gen8_ppgtt_clear(struct i915_address_space *vm,
 			   start, start + length, vm->top);
 }
 
+static void gen8_ppgtt_clear_wa(struct i915_address_space *vm,
+				u64 start, u64 length)
+{
+	GEM_WARN_ON(i915_gem_idle_engines(vm->i915));
+
+	gen8_ppgtt_clear(vm, start, length);
+
+	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
+}
+
 static void __gen8_ppgtt_alloc(struct i915_address_space * const vm,
 			       struct i915_vm_pt_stash *stash,
 			       struct i915_page_directory * const pd,
@@ -416,6 +426,17 @@ static void gen8_ppgtt_foreach(struct i915_address_space *vm,
 	__gen8_ppgtt_foreach(vm, i915_vm_to_ppgtt(vm)->pd,
 			     &start, start + length, vm->top,
 			     fn, data);
+}
+
+static void gen8_ppgtt_alloc_wa(struct i915_address_space *vm,
+				struct i915_vm_pt_stash *stash,
+				u64 start, u64 length)
+{
+	GEM_WARN_ON(i915_gem_idle_engines(vm->i915));
+
+	gen8_ppgtt_alloc(vm, stash, start, length);
+
+	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
 }
 
 static void xehpsdv_ppgtt_color_adjust(const struct drm_mm_node *node,
@@ -678,6 +699,20 @@ static void gen8_ppgtt_insert(struct i915_address_space *vm,
 	gen8_ppgtt_insert_huge(vma, &iter, cache_level, flags);
 }
 
+typedef void (*insert_pte_fn)(struct i915_address_space *vm,
+			      struct i915_vm_pt_stash *stash,
+			      struct i915_vma *vma,
+			      enum i915_cache_level cache_level,
+			      u32 flags);
+
+static insert_pte_fn get_insert_pte(struct drm_i915_private *i915)
+{
+	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
+		return xehpsdv_ppgtt_insert;
+	else
+		return gen8_ppgtt_insert;
+}
+
 static void gen8_ppgtt_insert_entry(struct i915_address_space *vm,
 				    dma_addr_t addr,
 				    u64 offset,
@@ -742,6 +777,19 @@ static void xehpsdv_ppgtt_insert_entry(struct i915_address_space *vm,
 						       level, flags);
 
 	return gen8_ppgtt_insert_entry(vm, addr, offset, level, flags);
+}
+
+static void gen8_ppgtt_insert_wa(struct i915_address_space *vm,
+				 struct i915_vm_pt_stash *stash,
+			         struct i915_vma *vma,
+			         enum i915_cache_level cache_level,
+			         u32 flags)
+{
+	GEM_WARN_ON(i915_gem_idle_engines(vm->i915));
+
+	get_insert_pte(vm->i915)(vm, stash, vma, cache_level, flags);
+
+	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
 }
 
 static int gen8_init_scratch(struct i915_address_space *vm)
@@ -1039,22 +1087,25 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt)
 
 	ppgtt->vm.pte_encode = gen8_pte_encode;
 
-	ppgtt->vm.bind_async_flags = I915_VMA_LOCAL_BIND;
-	if (HAS_64K_PAGES(gt->i915))
+	if (GRAPHICS_VER_FULL(gt->i915) >= IP_VER(12, 50)) {
 		ppgtt->vm.insert_entries = xehpsdv_ppgtt_insert;
-	else
-		ppgtt->vm.insert_entries = gen8_ppgtt_insert;
-	if (HAS_64K_PAGES(gt->i915))
 		ppgtt->vm.insert_page = xehpsdv_ppgtt_insert_entry;
-	else
+		ppgtt->vm.mm.color_adjust = xehpsdv_ppgtt_color_adjust;
+	} else {
+		ppgtt->vm.insert_entries = gen8_ppgtt_insert;
 		ppgtt->vm.insert_page = gen8_ppgtt_insert_entry;
+	}
 	ppgtt->vm.allocate_va_range = gen8_ppgtt_alloc;
 	ppgtt->vm.clear_range = gen8_ppgtt_clear;
 	ppgtt->vm.foreach = gen8_ppgtt_foreach;
 	ppgtt->vm.cleanup = gen8_ppgtt_cleanup;
 
-	if (HAS_64K_PAGES(gt->i915))
-		ppgtt->vm.mm.color_adjust = xehpsdv_ppgtt_color_adjust;
+	ppgtt->vm.bind_async_flags = I915_VMA_LOCAL_BIND;
+	if (i915_is_mem_wa_enabled(gt->i915, I915_WA_IDLE_GPU_BEFORE_UPDATE)) {
+		ppgtt->vm.insert_entries = gen8_ppgtt_insert_wa;
+		ppgtt->vm.allocate_va_range = gen8_ppgtt_alloc_wa;
+		ppgtt->vm.clear_range = gen8_ppgtt_clear_wa;
+	}
 
 	err = gen8_init_scratch(&ppgtt->vm);
 	if (err)
