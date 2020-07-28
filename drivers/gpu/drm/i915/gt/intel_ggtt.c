@@ -245,6 +245,19 @@ static void gen8_ggtt_insert_page(struct i915_address_space *vm,
 	ggtt->invalidate(ggtt);
 }
 
+static void gen8_ggtt_insert_page_wa(struct i915_address_space *vm,
+				     dma_addr_t addr,
+				     u64 offset,
+				     enum i915_cache_level level,
+				     u32 flags)
+{
+	GEM_WARN_ON(i915_gem_idle_engines(vm->i915));
+
+	gen8_ggtt_insert_page(vm, addr, offset, level, flags);
+
+	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
+}
+
 static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
 				     struct i915_vm_pt_stash *stash,
 				     struct i915_vma *vma,
@@ -286,6 +299,19 @@ static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
 	ggtt->invalidate(ggtt);
 }
 
+static void gen8_ggtt_insert_entries_wa(struct i915_address_space *vm,
+					struct i915_vm_pt_stash *stash,
+					struct i915_vma *vma,
+					enum i915_cache_level level,
+					u32 flags)
+{
+	GEM_WARN_ON(i915_gem_idle_engines(vm->i915));
+
+	gen8_ggtt_insert_entries(vm, stash, vma, level, flags);
+
+	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
+
+}
 static void gen6_ggtt_insert_page(struct i915_address_space *vm,
 				  dma_addr_t addr,
 				  u64 offset,
@@ -474,9 +500,32 @@ void intel_ggtt_bind_vma(struct i915_address_space *vm,
 	vma->page_sizes.gtt = I915_GTT_PAGE_SIZE;
 }
 
+static void ggtt_bind_vma_wa(struct i915_address_space *vm,
+			     struct i915_vm_pt_stash *stash,
+			     struct i915_vma *vma,
+			     enum i915_cache_level cache_level,
+			     u32 flags)
+{
+	GEM_WARN_ON(i915_gem_idle_engines(vma->vm->i915));
+
+	intel_ggtt_bind_vma(vm, stash, vma, cache_level, flags);
+
+	GEM_WARN_ON(i915_gem_resume_engines(vma->vm->i915));
+}
+
 void intel_ggtt_unbind_vma(struct i915_address_space *vm, struct i915_vma *vma)
 {
 	vm->clear_range(vm, vma->node.start, vma->size);
+}
+
+static void ggtt_unbind_vma_wa(struct i915_address_space *vm,
+			       struct i915_vma *vma)
+{
+	GEM_WARN_ON(i915_gem_idle_engines(vma->vm->i915));
+
+	intel_ggtt_unbind_vma(vm, vma);
+
+	GEM_WARN_ON(i915_gem_resume_engines(vma->vm->i915));
 }
 
 static int ggtt_reserve_guc_top(struct i915_ggtt *ggtt)
@@ -946,6 +995,7 @@ static int gen8_gmch_probe(struct i915_ggtt *ggtt)
 {
 	struct drm_i915_private *i915 = ggtt->vm.i915;
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
+	bool enable_wa = i915_is_mem_wa_enabled(i915, I915_WA_IDLE_GPU_BEFORE_UPDATE);
 	unsigned int size;
 	u16 snb_gmch_ctl;
 
@@ -968,11 +1018,11 @@ static int gen8_gmch_probe(struct i915_ggtt *ggtt)
 
 	ggtt->vm.total = (size / sizeof(gen8_pte_t)) * I915_GTT_PAGE_SIZE;
 	ggtt->vm.cleanup = gen6_gmch_remove;
-	ggtt->vm.insert_page = gen8_ggtt_insert_page;
+	ggtt->vm.insert_page = enable_wa ? gen8_ggtt_insert_page_wa : gen8_ggtt_insert_page;
 	ggtt->vm.clear_range = nop_clear_range;
 	ggtt->vm.scratch_range = gen8_ggtt_clear_range;
 
-	ggtt->vm.insert_entries = gen8_ggtt_insert_entries;
+	ggtt->vm.insert_entries = enable_wa ? gen8_ggtt_insert_entries_wa : gen8_ggtt_insert_entries;
 
 	/*
 	 * Serialize GTT updates with aperture access on BXT if VT-d is on,
@@ -987,8 +1037,8 @@ static int gen8_gmch_probe(struct i915_ggtt *ggtt)
 
 	ggtt->invalidate = gen8_ggtt_invalidate;
 
-	ggtt->vm.vma_ops.bind_vma    = intel_ggtt_bind_vma;
-	ggtt->vm.vma_ops.unbind_vma  = intel_ggtt_unbind_vma;
+	ggtt->vm.vma_ops.bind_vma    = enable_wa ? ggtt_bind_vma_wa : intel_ggtt_bind_vma;
+	ggtt->vm.vma_ops.unbind_vma  = enable_wa ? ggtt_unbind_vma_wa : intel_ggtt_unbind_vma;
 	ggtt->vm.vma_ops.set_pages   = ggtt_set_pages;
 	ggtt->vm.vma_ops.clear_pages = clear_pages;
 
