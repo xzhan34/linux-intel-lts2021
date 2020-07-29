@@ -305,7 +305,7 @@ int intel_guc_ct_enable(struct intel_guc_ct *ct)
 	base = intel_guc_ggtt_offset(guc, ct->vma);
 
 	/* blob should start with send descriptor */
-	blob = __px_vaddr(ct->vma->obj);
+	blob = __px_vaddr(ct->vma->obj, NULL);
 	GEM_BUG_ON(blob != ct->ctbs.send.desc);
 
 	/* (re)initialize descriptors */

@@ -1768,7 +1768,7 @@ static int check_scratch_page(struct i915_gem_context *ctx,
 		return -EINVAL;
 	}
 
-	vaddr = __px_vaddr(vm->scratch[0]);
+	vaddr = __px_vaddr(vm->scratch[0], NULL);
 
 	if (vaddr[0] != vm->poison ||
 	    vaddr[i915_prandom_u32_max_state(PAGE_SIZE / sizeof(u32), prng)] != vm->poison) {

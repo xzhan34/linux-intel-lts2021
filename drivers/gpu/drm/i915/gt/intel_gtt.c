@@ -242,12 +242,19 @@ void clear_pages(struct i915_vma *vma)
 	memset(&vma->page_sizes, 0, sizeof(vma->page_sizes));
 }
 
-void *__px_vaddr(struct drm_i915_gem_object *p)
+void *__px_vaddr(struct drm_i915_gem_object *p, bool *needs_flush)
 {
 	enum i915_map_type type;
+	void *vaddr;
 
 	GEM_BUG_ON(!i915_gem_object_has_pages(p));
-	return page_unpack_bits(p->mm.mapping, &type);
+
+	vaddr = page_unpack_bits(p->mm.mapping, &type);
+
+	if (needs_flush)
+		*needs_flush = type != I915_MAP_WC;
+
+	return vaddr;
 }
 
 dma_addr_t __px_dma(struct drm_i915_gem_object *p)
@@ -265,15 +272,18 @@ struct page *__px_page(struct drm_i915_gem_object *p)
 void
 fill_page_dma(struct drm_i915_gem_object *p, const u64 val, unsigned int count)
 {
-	void *vaddr = __px_vaddr(p);
+	bool needs_flush;
+	void *vaddr;
 
+	vaddr = __px_vaddr(p, &needs_flush);
 	memset64(vaddr, val, count);
-	drm_clflush_virt_range(vaddr, PAGE_SIZE);
+	if (needs_flush)
+		drm_clflush_virt_range(vaddr, PAGE_SIZE);
 }
 
 static u32 poison_scratch_page(struct drm_i915_gem_object *scratch)
 {
-	void *vaddr = __px_vaddr(scratch);
+	void *vaddr = __px_vaddr(scratch, NULL);
 	u32 val;
 
 	val = 0;
