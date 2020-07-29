@@ -35,7 +35,8 @@ struct drm_i915_gem_object *alloc_pt_lmem(struct i915_address_space *vm, int sz)
 {
 	struct drm_i915_gem_object *obj;
 
-	obj = i915_gem_object_create_lmem(vm->i915, sz, 0);
+	obj = i915_gem_object_create_lmem(vm->i915, sz,
+					  I915_BO_ALLOC_IGNORE_MIN_PAGE_SIZE);
 	/*
 	 * Ensure all paging structures for this vm share the same dma-resv
 	 * object underneath, with the idea that one object_lock() will lock

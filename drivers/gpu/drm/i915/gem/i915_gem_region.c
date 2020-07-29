@@ -57,7 +57,10 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 		return ERR_PTR(-ENOMEM);
 	}
 
-	flags = I915_ALLOC_MIN_PAGE_SIZE;
+	flags = 0;
+	if (!(obj->flags & I915_BO_ALLOC_IGNORE_MIN_PAGE_SIZE))
+		flags |= I915_ALLOC_MIN_PAGE_SIZE;
+
 	if (obj->flags & I915_BO_ALLOC_CONTIGUOUS)
 		flags |= I915_ALLOC_CONTIGUOUS;
 
@@ -170,7 +173,8 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 	if (!mem)
 		return ERR_PTR(-ENODEV);
 
-	size = round_up(size, mem->min_page_size);
+	if (!(flags & I915_BO_ALLOC_IGNORE_MIN_PAGE_SIZE))
+		size = round_up(size, mem->min_page_size);
 
 	GEM_BUG_ON(!size);
 	GEM_BUG_ON(!IS_ALIGNED(size, I915_GTT_MIN_ALIGNMENT));
