@@ -128,6 +128,18 @@ static const struct gsc_def gsc_def_dg2[] = {
 	}
 };
 
+static const struct gsc_def gsc_def_pvc[] = {
+	{
+		/* HECI1 not enabled on the device. */
+	},
+	{
+		.name = "mei-gscfi",
+		.bar = PVC_GSC_HECI2_BASE,
+		.bar_size = GSC_BAR_LENGTH,
+		.slow_firmware = true,
+	}
+};
+
 static void gsc_release_dev(struct device *dev)
 {
 	struct auxiliary_device *aux_dev = to_auxiliary_dev(dev);
@@ -162,6 +174,7 @@ static void gsc_init_one(struct drm_i915_private *i915, struct intel_gsc *gsc,
 	struct auxiliary_device *aux_dev;
 	const struct gsc_def *def;
 	struct intel_gsc_intf *intf = &gsc->intf[intf_id];
+	bool use_polling = false;
 	int ret;
 
 	intf->irq = -1;
@@ -184,6 +197,11 @@ static void gsc_init_one(struct drm_i915_private *i915, struct intel_gsc *gsc,
 		def = &gsc_def_xehpsdv[intf_id];
 	} else if (IS_DG2(i915)) {
 		def = &gsc_def_dg2[intf_id];
+	} else if (IS_PONTEVECCHIO(i915)) {
+		def = &gsc_def_pvc[intf_id];
+		/* Use polling on PVC A-step HW bug Wa */
+		if (IS_PVC_BD_STEP(i915, STEP_A0, STEP_B0))
+			use_polling = true;
 	} else {
 		drm_warn_once(&i915->drm, "Unknown platform\n");
 		return;
@@ -195,7 +213,7 @@ static void gsc_init_one(struct drm_i915_private *i915, struct intel_gsc *gsc,
 	}
 
 	/* skip irq initialization */
-	if (def->use_polling)
+	if (def->use_polling || use_polling)
 		goto add_device;
 
 	intf->irq = irq_alloc_desc(0);
