@@ -166,6 +166,7 @@ enum intel_ppgtt_type {
 	func(has_mslice_steering); \
 	func(has_oa_bpc_reporting); \
 	func(has_oa_buf_128m); \
+	func(has_oa_mmio_trigger); \
 	func(has_oa_slice_contrib_limits); \
 	func(has_one_eu_per_fuse_bit); \
 	func(has_pooled_eu); \

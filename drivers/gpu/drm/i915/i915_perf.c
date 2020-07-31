@@ -1593,9 +1593,16 @@ static struct i915_whitelist_reg gen12_oa_wl_regs[] = {
 				       RING_FORCE_TO_NONPRIV_RANGE_16 },
 };
 
-static void intel_engine_apply_oa_whitelist(struct i915_perf_stream *stream)
+static struct i915_whitelist_reg xehpsdv_oa_wl_regs[] = {
+	{ XEHPSDV_OAG_MMIOTRIGGER, RING_FORCE_TO_NONPRIV_ACCESS_RW },
+	{ GEN12_OAG_OASTATUS, RING_FORCE_TO_NONPRIV_ACCESS_RD |
+			      RING_FORCE_TO_NONPRIV_RANGE_4 },
+	{ GEN12_OAG_PERF_COUNTER_B(0), RING_FORCE_TO_NONPRIV_ACCESS_RD |
+				       RING_FORCE_TO_NONPRIV_RANGE_16 },
+};
+
+static void intel_engine_apply_oa_whitelist(struct intel_engine_cs *engine)
 {
-	struct intel_engine_cs *engine = stream->engine;
 	struct drm_i915_private *i915 = engine->i915;
 	struct i915_whitelist_reg ctx_id = {
 		RING_EXECLIST_STATUS_HI(engine->mmio_base),
@@ -1605,7 +1612,17 @@ static void intel_engine_apply_oa_whitelist(struct i915_perf_stream *stream)
 	if (GRAPHICS_VER(i915) > 8)
 		intel_engine_allow_user_register_access(engine, &ctx_id, 1);
 
-	if (GRAPHICS_VER(i915) == 12)
+	/*
+	 * XEHPSDV_OAG_MMIOTRIGGER need not be added to the SW whitelist
+	 * for platforms with graphics version 12.60 and higher(except PVC A0)
+	 * as it is added to the built in HW whitelist. Leaving the code as
+	 * is for simplicity.
+	 */
+	if (HAS_OA_MMIO_TRIGGER(i915))
+		intel_engine_allow_user_register_access(engine,
+							xehpsdv_oa_wl_regs,
+							ARRAY_SIZE(xehpsdv_oa_wl_regs));
+	else if (GRAPHICS_VER(i915) == 12)
 		intel_engine_allow_user_register_access(engine,
 							gen12_oa_wl_regs,
 							ARRAY_SIZE(gen12_oa_wl_regs));
@@ -1617,9 +1634,20 @@ static void intel_engine_apply_oa_whitelist(struct i915_perf_stream *stream)
 		return;
 }
 
-static void intel_engine_remove_oa_whitelist(struct i915_perf_stream *stream)
+static void intel_gt_apply_oa_whitelist(struct intel_gt *gt)
 {
-	struct intel_engine_cs *engine = stream->engine;
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+
+	for_each_engine(engine, gt, id) {
+		if (engine->class == RENDER_CLASS ||
+		    engine->class == COMPUTE_CLASS)
+			intel_engine_apply_oa_whitelist(engine);
+	}
+}
+
+static void intel_engine_remove_oa_whitelist(struct intel_engine_cs *engine)
+{
 	struct drm_i915_private *i915 = engine->i915;
 	struct i915_whitelist_reg ctx_id = {
 		RING_EXECLIST_STATUS_HI(engine->mmio_base),
@@ -1629,7 +1657,11 @@ static void intel_engine_remove_oa_whitelist(struct i915_perf_stream *stream)
 	if (GRAPHICS_VER(i915) > 8)
 		intel_engine_deny_user_register_access(engine, &ctx_id, 1);
 
-	if (GRAPHICS_VER(i915) == 12)
+	if (HAS_OA_MMIO_TRIGGER(i915))
+		intel_engine_deny_user_register_access(engine,
+						       xehpsdv_oa_wl_regs,
+						       ARRAY_SIZE(xehpsdv_oa_wl_regs));
+	else if (GRAPHICS_VER(i915) == 12)
 		intel_engine_deny_user_register_access(engine,
 						       gen12_oa_wl_regs,
 						       ARRAY_SIZE(gen12_oa_wl_regs));
@@ -1641,6 +1673,18 @@ static void intel_engine_remove_oa_whitelist(struct i915_perf_stream *stream)
 		return;
 }
 
+static void intel_gt_remove_oa_whitelist(struct intel_gt *gt)
+{
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+
+	for_each_engine(engine, gt, id) {
+		if (engine->class == RENDER_CLASS ||
+		    engine->class == COMPUTE_CLASS)
+			intel_engine_remove_oa_whitelist(engine);
+	}
+}
+
 static void i915_oa_stream_destroy(struct i915_perf_stream *stream)
 {
 	struct i915_perf *perf = stream->perf;
@@ -1650,7 +1694,7 @@ static void i915_oa_stream_destroy(struct i915_perf_stream *stream)
 		return;
 
 	if (stream->oa_whitelisted)
-		intel_engine_remove_oa_whitelist(stream);
+		intel_gt_remove_oa_whitelist(to_gt(stream->perf->i915));
 
 	/*
 	 * Unset exclusive_stream first, it will be checked while disabling
@@ -2861,6 +2905,16 @@ gen8_enable_metric_set(struct i915_perf_stream *stream,
 			      active);
 }
 
+static u32 oag_configure_mmio_trigger(const struct i915_perf_stream *stream)
+{
+	if (!HAS_OA_MMIO_TRIGGER(stream->perf->i915))
+		return 0;
+
+	return _MASKED_FIELD(XEHPSDV_OAG_OA_DEBUG_DISABLE_MMIO_TRG,
+			     (stream->sample_flags & SAMPLE_OA_REPORT) ?
+			     0 : XEHPSDV_OAG_OA_DEBUG_DISABLE_MMIO_TRG);
+}
+
 static u32 oag_buffer_size_select(const struct i915_perf_stream *stream)
 {
 	return _MASKED_FIELD(XEHPSDV_OAG_OA_DEBUG_BUFFER_SIZE_SELECT,
@@ -2913,7 +2967,8 @@ gen12_enable_metric_set(struct i915_perf_stream *stream,
 			    * Need to set a special bit for OA buffer
 			    * sizes > 16Mb on XEHPSDV.
 			    */
-			   oag_buffer_size_select(stream));
+			   oag_buffer_size_select(stream) |
+			   oag_configure_mmio_trigger(stream));
 
 	intel_uncore_write(uncore, GEN12_OAG_OAGLBCTXCTRL, periodic ?
 			   (GEN12_OAG_OAGLBCTXCTRL_COUNTER_RESUME |
@@ -4100,12 +4155,12 @@ i915_perf_open_ioctl_locked(struct i915_perf *perf,
 	 *
 	 * We want to make sure this is almost the last thing we do before
 	 * returning the stream fd. If we do end up checking for errors in code
-	 * that follows this, we MUST call intel_engine_remove_oa_whitelist in
+	 * that follows this, we MUST call intel_gt_remove_oa_whitelist in
 	 * the error handling path to remove the whitelisted registers.
 	 */
 	if (!i915_perf_stream_paranoid &&
 	    props->sample_flags & SAMPLE_OA_REPORT) {
-		intel_engine_apply_oa_whitelist(stream);
+		intel_gt_apply_oa_whitelist(to_gt(stream->perf->i915));
 		stream->oa_whitelisted = true;
 	}
 
