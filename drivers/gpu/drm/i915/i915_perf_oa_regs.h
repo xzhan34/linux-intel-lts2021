@@ -71,6 +71,10 @@
 #define OAREPORTTRIG2 _MMIO(0x2744)
 #define OAREPORTTRIG6 _MMIO(0x2754)
 
+/* Performance counters registers */
+#define OA_PERF_COUNTER_A(idx)			_MMIO(0x2800 + 8 * (idx))
+#define OA_PERF_COUNTER_A_UPPER(idx)		_MMIO(0x2800 + 8 * (idx) + 4)
+
 #define GEN8_OASTATUS _MMIO(0x2b08)
 #define  GEN8_OASTATUS_TAIL_POINTER_WRAP    (1 << 17)
 #define  GEN8_OASTATUS_HEAD_POINTER_WRAP    (1 << 16)
@@ -105,6 +109,12 @@
 
 #define GEN12_OAG_OAREPORTTRIG2 _MMIO(0xd924)
 #define GEN12_OAG_OAREPORTTRIG6 _MMIO(0xd934)
+
+/* Gen12 Performance counters registers */
+#define GEN12_OAG_PERF_COUNTER_A(idx)		_MMIO(0xD980 + 8 * (idx))
+#define GEN12_OAG_PERF_COUNTER_A_UPPER(idx)	_MMIO(0xD980 + 8 * (idx) + 4)
+
+#define GEN12_OAG_PERF_COUNTER_B(idx)		_MMIO(0xda94 + 4 * (idx))
 
 /* Gen12 OAG unit */
 #define GEN12_OAG_OAHEADPTR _MMIO(0xdb00)
