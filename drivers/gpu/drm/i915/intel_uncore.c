@@ -1955,6 +1955,26 @@ __vgpu_read(16)
 __vgpu_read(32)
 __vgpu_read(64)
 
+#define __early_read(x) \
+static u##x \
+early_read##x(struct intel_uncore *uncore, i915_reg_t reg, bool trace) { \
+	return __raw_uncore_read##x(uncore, reg); \
+}
+
+#define __early_write(x) \
+static void \
+early_write##x(struct intel_uncore *uncore, i915_reg_t reg, u##x val, bool trace) { \
+	__raw_uncore_write##x(uncore, reg, val); \
+}
+
+__early_read(8)
+__early_read(16)
+__early_read(32)
+__early_read(64)
+__early_write(8)
+__early_write(16)
+__early_write(32)
+
 #define GEN2_READ_HEADER(x) \
 	u##x val = 0; \
 	assert_rpm_wakelock_held(uncore->rpm);
@@ -2504,6 +2524,9 @@ void intel_uncore_init_early(struct intel_uncore *uncore,
 	uncore->i915 = gt->i915;
 	uncore->gt = gt;
 	uncore->rpm = &gt->i915->runtime_pm;
+
+	ASSIGN_RAW_READ_MMIO_VFUNCS(uncore, early);
+	ASSIGN_RAW_WRITE_MMIO_VFUNCS(uncore, early);
 }
 
 static void uncore_raw_init(struct intel_uncore *uncore)
