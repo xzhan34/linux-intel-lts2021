@@ -165,6 +165,13 @@ struct prelim_i915_user_extension {
 
 /* getparam */
 #define PRELIM_I915_PARAM               (1 << 16)
+/*
+ * Querying I915_PARAM_EXECBUF2_MAX_ENGINE will return the number of context
+ * map engines addressable via the low bits of execbuf2 flags, or in the
+ * cases where the parameter is not supported (-EINVAL), legacy maximum of
+ * 64 engines should be assumed.
+ */
+#define PRELIM_I915_PARAM_EXECBUF2_MAX_ENGINE	(PRELIM_I915_PARAM | 1)
 
 /* VM_BIND feature availability */
 #define PRELIM_I915_PARAM_HAS_VM_BIND	(PRELIM_I915_PARAM | 6)
@@ -314,6 +321,25 @@ struct prelim_drm_i915_query_item {
 #define PRELIM_DRM_I915_QUERY_COMPUTE_SUBSLICES		(PRELIM_DRM_I915_QUERY | 8)
 #define PRELIM_DRM_I915_QUERY_ENGINE_INFO		(PRELIM_DRM_I915_QUERY | 13)
 };
+
+/*
+ * In XEHPSDV total number of engines can be more than the maximum supported
+ * engines by I915_EXEC_RING_MASK.
+ * PRELIM_I915_EXEC_ENGINE_MASK expands the total number of engines from 64 to 256.
+ *
+ * To use PRELIM_I915_EXEC_ENGINE_MASK, userspace needs to query
+ * I915_PARAM_EXECBUF2_MAX_ENGINE. On getting valid value, userspace needs
+ * to set PRELIM_I915_EXEC_ENGINE_MASK_SELECT to enable PRELIM_I915_EXEC_ENGINE_MASK.
+ *
+ * Bitfield associated with legacy I915_EXEC_CONSTANTS_MASK which was
+ * restricted previously, will be utilized by PRELIM_I915_EXEC_ENGINE_MASK.
+ *
+ * PRELIM_I915_EXEC_ENGINE_MASK only applies to contexts with engine map set up.
+ */
+#define PRELIM_I915_EXEC_ENGINE_MASK    (0xff)
+#define PRELIM_I915_EXEC_ENGINE_MASK_SELECT (1ull << 55)
+
+#define __PRELIM_I915_EXEC_UNKNOWN_FLAGS (~(GENMASK_ULL(55, 48) | ~__I915_EXEC_UNKNOWN_FLAGS))
 
 /*
  * Indicates the 2k user priority levels are statically mapped into 3 buckets as

@@ -65,19 +65,18 @@ enum {
 #define __EXEC_OBJECT_INTERNAL_FLAGS	(~0u << 26) /* all of the above + */
 #define __EXEC_OBJECT_RESERVED (__EXEC_OBJECT_HAS_PIN | __EXEC_OBJECT_HAS_FENCE)
 
-#define __EXEC_PERSIST_USERPTR_USED	BIT_ULL(33)
-#define __EXEC_HAS_RELOC		BIT_ULL(32)
-#define __EXEC_ENGINE_PINNED		BIT_ULL(31)
-#define __EXEC_USERPTR_USED		BIT_ULL(30)
-#define __EXEC_PERSIST_HAS_PIN  	BIT_ULL(29)
-#define __EXEC_INTERNAL_FLAGS		(~0ull << 29)
+#define __EXEC_PERSIST_USERPTR_USED	BIT_ULL(37)
+#define __EXEC_HAS_RELOC		BIT_ULL(36)
+#define __EXEC_ENGINE_PINNED		BIT_ULL(35)
+#define __EXEC_USERPTR_USED		BIT_ULL(34)
+#define __EXEC_PERSIST_HAS_PIN  	BIT_ULL(33)
+#define __EXEC_INTERNAL_FLAGS		GENMASK_ULL(37, 33)
 #define UPDATE				PIN_OFFSET_FIXED
 
 #define BATCH_OFFSET_BIAS (256*1024)
 
 #define __I915_EXEC_ILLEGAL_FLAGS \
-	(__I915_EXEC_UNKNOWN_FLAGS | \
-	 I915_EXEC_CONSTANTS_MASK  | \
+	(__PRELIM_I915_EXEC_UNKNOWN_FLAGS | \
 	 I915_EXEC_RESOURCE_STREAMER)
 
 /* Catch emission of unexpected errors for CI! */
@@ -2675,6 +2674,9 @@ static int i915_gem_check_execbuffer(struct drm_i915_gem_execbuffer2 *exec)
 {
 	if (exec->flags & __I915_EXEC_ILLEGAL_FLAGS)
 		return -EINVAL;
+	if (!(exec->flags & PRELIM_I915_EXEC_ENGINE_MASK_SELECT) &&
+	    exec->flags & I915_EXEC_CONSTANTS_MASK)
+		return -EINVAL;
 
 	/* Kernel clipping was a DRI1 misfeature */
 	if (!(exec->flags & (I915_EXEC_FENCE_ARRAY |
@@ -3230,9 +3232,12 @@ eb_select_engine(struct i915_execbuffer *eb)
 
 	if (i915_gem_context_user_engines(eb->gem_context))
 		ce = i915_gem_context_get_engine(eb->gem_context,
-						 eb->args->flags & I915_EXEC_RING_MASK);
-	else
+						 eb->args->flags & PRELIM_I915_EXEC_ENGINE_MASK);
+	else if (!(eb->args->flags & PRELIM_I915_EXEC_ENGINE_MASK_SELECT))
+		/* Engine mask is not compatible with legacy ring selection */
 		ce = eb_select_legacy_ring(eb);
+	else
+		ce = ERR_PTR(-EINVAL);
 	if (IS_ERR(ce))
 		return PTR_ERR(ce);
 

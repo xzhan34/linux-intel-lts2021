@@ -1290,7 +1290,8 @@ struct drm_i915_gem_execbuffer2 {
 	 * single struct i915_user_extension and num_cliprects is 0.
 	 */
 	__u64 cliprects_ptr;
-#define I915_EXEC_RING_MASK              (0x3f)
+
+#define I915_EXEC_RING_MASK              (0x3f) /* legacy for small systems */
 #define I915_EXEC_DEFAULT                (0<<0)
 #define I915_EXEC_RENDER                 (1<<0)
 #define I915_EXEC_BSD                    (2<<0)
