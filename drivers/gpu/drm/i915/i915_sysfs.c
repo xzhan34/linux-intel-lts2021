@@ -234,6 +234,22 @@ I915_DPF_ERROR_ATTR_WR(l3_parity_slice_1, (S_IRUSR | S_IWUSR), i915_sysfs_read,
 		       i915_sysfs_write, GEN7_L3LOG_SIZE, 1, i915_l3_read,
 		       i915_l3_write);
 
+static ssize_t
+lmem_total_bytes_show(struct device *kdev, struct device_attribute *attr, char *buf)
+{
+	struct drm_i915_private *i915 = kdev_minor_to_i915(kdev);
+	u64 lmem_total = to_gt(i915)->lmem->total;
+	return sysfs_emit(buf, "%llu\n", lmem_total);
+}
+
+static ssize_t
+lmem_avail_bytes_show(struct device *kdev, struct device_attribute *attr, char *buf)
+{
+	struct drm_i915_private *i915 = kdev_minor_to_i915(kdev);
+	u64 lmem_avail = to_gt(i915)->lmem->avail;
+	return sysfs_emit(buf, "%llu\n", lmem_avail);
+}
+
 #define I915_DEVICE_ATTR_RO(_name, _show) \
 	struct i915_ext_attr dev_attr_##_name = \
 	{ __ATTR(_name, 0444, i915_sysfs_show, NULL), _show, NULL}
@@ -241,6 +257,15 @@ I915_DPF_ERROR_ATTR_WR(l3_parity_slice_1, (S_IRUSR | S_IWUSR), i915_sysfs_read,
 #define I915_DEVICE_ATTR_WO(_name, _store) \
 	struct i915_ext_attr dev_attr_##_name = \
 	{ __ATTR(_name, 0200, NULL, i915_sysfs_store), NULL, _store}
+
+static I915_DEVICE_ATTR_RO(lmem_total_bytes, lmem_total_bytes_show);
+static I915_DEVICE_ATTR_RO(lmem_avail_bytes, lmem_avail_bytes_show);
+
+static const struct attribute *lmem_attrs[] = {
+	&dev_attr_lmem_total_bytes.attr.attr,
+	&dev_attr_lmem_avail_bytes.attr.attr,
+	NULL
+};
 
 #if IS_ENABLED(CONFIG_DRM_I915_CAPTURE_ERROR)
 
@@ -320,7 +345,7 @@ prelim_csc_unique_id_show(struct device *kdev, struct device_attribute *attr, ch
 	return sysfs_emit(buf, "%llx\n", RUNTIME_INFO(i915)->uid);
 }
 
-static DEVICE_ATTR_RO(prelim_csc_unique_id);
+static I915_DEVICE_ATTR_RO(prelim_csc_unique_id, prelim_csc_unique_id_show);
 
 static ssize_t
 prelim_lmem_max_bw_Mbps_show(struct device *dev, struct device_attribute *attr, char *buff)
@@ -338,7 +363,7 @@ prelim_lmem_max_bw_Mbps_show(struct device *dev, struct device_attribute *attr, 
 	return sysfs_emit(buff, "%u\n", val);
 }
 
-static DEVICE_ATTR_RO(prelim_lmem_max_bw_Mbps);
+static I915_DEVICE_ATTR_RO(prelim_lmem_max_bw_Mbps, prelim_lmem_max_bw_Mbps_show);
 
 static ssize_t i915_driver_error_show(struct device *dev,
 				    struct device_attribute *attr,
@@ -601,15 +626,21 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 		dev_err(kdev, "Failed adding prelim_uapi_version to sysfs\n");
 
 	if (INTEL_INFO(dev_priv)->has_csc_uid) {
-		ret = sysfs_create_file(&kdev->kobj, &dev_attr_prelim_csc_unique_id.attr);
+		ret = sysfs_create_file(&kdev->kobj, &dev_attr_prelim_csc_unique_id.attr.attr);
 		if (ret)
 			drm_warn(&dev_priv->drm, "UID sysfs setup failed\n");
 	}
 
 	if (HAS_LMEM_MAX_BW(dev_priv)) {
-		ret = sysfs_create_file(&kdev->kobj, &dev_attr_prelim_lmem_max_bw_Mbps.attr);
+		ret = sysfs_create_file(&kdev->kobj, &dev_attr_prelim_lmem_max_bw_Mbps.attr.attr);
 		if (ret)
 			drm_warn(&dev_priv->drm, "Failed to create maximum memory bandwidth sysfs file\n");
+	}
+
+	if (HAS_LMEM(dev_priv)) {
+		ret = sysfs_create_files(&kdev->kobj, lmem_attrs);
+		if (ret)
+			DRM_ERROR("Local memory sysfs setup failed\n");
 	}
 
 	dev_priv->clients.root =

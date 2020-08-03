@@ -202,6 +202,12 @@ struct prelim_i915_user_extension {
  */
 #define PRELIM_I915_PARAM_EXECBUF2_MAX_ENGINE	(PRELIM_I915_PARAM | 1)
 
+/* Total local memory in bytes */
+#define PRELIM_I915_PARAM_LMEM_TOTAL_BYTES	(PRELIM_I915_PARAM | 2)
+
+/* Available local memory in bytes */
+#define PRELIM_I915_PARAM_LMEM_AVAIL_BYTES	(PRELIM_I915_PARAM | 3)
+
 /*
  * Frequency of the timestamps in OA reports. This used to be the same as the CS
  * timestamp frequency, but differs on some platforms.
