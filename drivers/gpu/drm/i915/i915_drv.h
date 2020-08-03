@@ -1599,6 +1599,15 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 
 #define HAS_GT_ERROR_VECTORS(i915) (INTEL_INFO(i915)->has_gt_error_vectors)
 
+static inline bool i915_has_svm(struct drm_i915_private *dev_priv)
+{
+#ifdef CONFIG_DRM_I915_SVM
+	return HAS_RECOVERABLE_PAGE_FAULT(dev_priv);
+#else
+	return false;
+#endif
+}
+
 static inline bool
 intel_ggtt_needs_same_mem_type_within_cl_wa(struct drm_i915_private *dev_priv)
 {

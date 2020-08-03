@@ -50,6 +50,7 @@
 #include "i915_gem_tiling.h"
 #include "i915_gem_vm_bind.h"
 #include "i915_memcpy.h"
+#include "i915_svm.h"
 #include "i915_trace.h"
 
 static struct kmem_cache *slab_objects;

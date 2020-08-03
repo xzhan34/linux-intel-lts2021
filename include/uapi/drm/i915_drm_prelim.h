@@ -206,6 +206,8 @@ struct prelim_i915_user_extension {
 #define PRELIM_DRM_I915_GEM_CLOS_RESERVE	0x55
 #define PRELIM_DRM_I915_GEM_CLOS_FREE		0x54
 #define PRELIM_DRM_I915_GEM_CACHE_RESERVE	0x53
+#define PRELIM_DRM_I915_GEM_VM_GETPARAM		DRM_I915_GEM_CONTEXT_GETPARAM
+#define PRELIM_DRM_I915_GEM_VM_SETPARAM		DRM_I915_GEM_CONTEXT_SETPARAM
 
 
 #define PRELIM_DRM_IOCTL_I915_GEM_CREATE_EXT		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_CREATE, struct prelim_drm_i915_gem_create_ext)
@@ -220,6 +222,8 @@ struct prelim_i915_user_extension {
 #define PRELIM_DRM_IOCTL_I915_GEM_CLOS_RESERVE		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_CLOS_RESERVE, struct prelim_drm_i915_gem_clos_reserve)
 #define PRELIM_DRM_IOCTL_I915_GEM_CLOS_FREE		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_CLOS_FREE, struct prelim_drm_i915_gem_clos_free)
 #define PRELIM_DRM_IOCTL_I915_GEM_CACHE_RESERVE		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_CACHE_RESERVE, struct prelim_drm_i915_gem_cache_reserve)
+#define PRELIM_DRM_IOCTL_I915_GEM_VM_GETPARAM		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_GETPARAM, struct prelim_drm_i915_gem_vm_param)
+#define PRELIM_DRM_IOCTL_I915_GEM_VM_SETPARAM		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_SETPARAM, struct prelim_drm_i915_gem_vm_param)
 /* End PRELIM ioctl's */
 
 /* getparam */
@@ -237,6 +241,9 @@ struct prelim_i915_user_extension {
 
 /* Available local memory in bytes */
 #define PRELIM_I915_PARAM_LMEM_AVAIL_BYTES	(PRELIM_I915_PARAM | 3)
+
+/* Shared Virtual Memory (SVM) support capability */
+#define PRELIM_I915_PARAM_HAS_SVM		(PRELIM_I915_PARAM | 4)
 
 /*
  * Frequency of the timestamps in OA reports. This used to be the same as the CS
@@ -1418,6 +1425,17 @@ struct prelim_drm_i915_gem_vm_prefetch {
 
 	/** VA length to prefetch **/
 	__u64 length;
+};
+
+struct prelim_drm_i915_gem_vm_param {
+	__u32 vm_id;
+	__u32 rsvd;
+
+#define PRELIM_I915_VM_PARAM		(1ull << 63)
+#define PRELIM_I915_GEM_VM_PARAM_SVM	(1 << 16)
+	__u64 param;
+
+	__u64 value;
 };
 
 #endif /* __I915_DRM_PRELIM_H__ */

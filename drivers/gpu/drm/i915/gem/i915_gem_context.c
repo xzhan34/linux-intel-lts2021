@@ -87,6 +87,7 @@
 #include "i915_drm_client.h"
 #include "i915_gem_context.h"
 #include "i915_gem_ioctls.h"
+#include "i915_svm.h"
 #include "i915_trace.h"
 #include "i915_user_extensions.h"
 #include "i915_gem_ioctls.h"
@@ -1325,6 +1326,63 @@ int i915_gem_vm_destroy_ioctl(struct drm_device *dev, void *data,
 
 	i915_gem_flush_free_objects(to_i915(dev));
 	return 0;
+}
+
+static int i915_gem_vm_setparam_ioctl(struct drm_device *dev, void *data,
+				      struct drm_file *file)
+{
+	struct drm_i915_file_private *file_priv = file->driver_priv;
+	struct prelim_drm_i915_gem_vm_param *args = data;
+	struct i915_address_space *vm;
+	int err = 0;
+
+	vm = i915_address_space_lookup(file_priv, args->vm_id);
+	if (unlikely(!vm))
+		return -ENOENT;
+
+	switch (lower_32_bits(args->param)) {
+	case PRELIM_I915_GEM_VM_PARAM_SVM:
+		/* FIXME: Ensure ppgtt is empty before switching */
+		if (!i915_has_svm(file_priv->dev_priv)) {
+			err = -ENOTSUPP;
+		} else if (args->value) {
+			err = intel_memory_regions_add_svm(file_priv->dev_priv);
+			if (!err)
+				err = i915_svm_bind_mm(vm);
+		} else {
+			i915_svm_unbind_mm(vm);
+		}
+		break;
+	default:
+		err = -EINVAL;
+	}
+
+	i915_vm_put(vm);
+	return err;
+}
+
+static int i915_gem_vm_getparam_ioctl(struct drm_device *dev, void *data,
+				      struct drm_file *file)
+{
+	struct drm_i915_file_private *file_priv = file->driver_priv;
+	struct prelim_drm_i915_gem_vm_param *args = data;
+	struct i915_address_space *vm;
+	int err = 0;
+
+	vm = i915_address_space_lookup(file_priv, args->vm_id);
+	if (unlikely(!vm))
+		return -ENOENT;
+
+	switch (lower_32_bits(args->param)) {
+	case PRELIM_I915_GEM_VM_PARAM_SVM:
+		args->value = i915_vm_is_svm_enabled(vm);
+		break;
+	default:
+		err = -EINVAL;
+	}
+
+	i915_vm_put(vm);
+	return err;
 }
 
 static int get_ppgtt(struct drm_i915_file_private *file_priv,
@@ -2711,6 +2769,21 @@ int i915_gem_context_getparam_ioctl(struct drm_device *dev, void *data,
 	return ret;
 }
 
+int i915_gem_getparam_ioctl(struct drm_device *dev, void *data,
+			    struct drm_file *file)
+{
+	struct drm_i915_gem_context_param *args = data;
+	u32 class = upper_32_bits(args->param);
+
+	switch (class) {
+	case 0:
+		return i915_gem_context_getparam_ioctl(dev, data, file);
+	case upper_32_bits(PRELIM_I915_VM_PARAM):
+		return i915_gem_vm_getparam_ioctl(dev, data, file);
+	}
+	return -EINVAL;
+}
+
 int i915_gem_context_setparam_ioctl(struct drm_device *dev, void *data,
 				    struct drm_file *file)
 {
@@ -2767,6 +2840,21 @@ int i915_gem_cache_reserve_ioctl(struct drm_device *dev, void *data,
 				  cache_reserve->cache_level,
 				  cache_reserve->clos_index,
 				  &cache_reserve->num_ways);
+}
+
+int i915_gem_setparam_ioctl(struct drm_device *dev, void *data,
+			    struct drm_file *file)
+{
+	struct drm_i915_gem_context_param *args = data;
+	u32 class = upper_32_bits(args->param);
+
+	switch (class) {
+	case 0:
+		return i915_gem_context_setparam_ioctl(dev, data, file);
+	case upper_32_bits(PRELIM_I915_VM_PARAM):
+		return i915_gem_vm_setparam_ioctl(dev, data, file);
+	}
+	return -EINVAL;
 }
 
 int i915_gem_context_reset_stats_ioctl(struct drm_device *dev,

@@ -36,6 +36,7 @@
 #include "i915_gem_lmem.h"
 #include "i915_gem_vm_bind.h"
 #include "i915_suspend_fence.h"
+#include "i915_svm.h"
 #include "i915_trace.h"
 #include "i915_user_extensions.h"
 
@@ -537,6 +538,11 @@ eb_validate_vma(struct i915_execbuffer *eb,
 
 	if (unlikely(entry->alignment &&
 		     !is_power_of_2_u64(entry->alignment)))
+		return -EINVAL;
+
+	/* Only allow user PINNED addresses for SVM enabled contexts */
+	if (unlikely(i915_vm_is_svm_enabled(eb->context->vm) &&
+		     !(entry->flags & EXEC_OBJECT_PINNED)))
 		return -EINVAL;
 
 	/*

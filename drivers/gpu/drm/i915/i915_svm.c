@@ -280,6 +280,9 @@ int i915_gem_vm_bind_svm_buffer(struct i915_address_space *vm,
 	int ret = 0;
 	u64 npages;
 
+	if (unlikely(!i915_vm_is_svm_enabled(vm)))
+		return -ENOTSUPP;
+
 	svm = vm_get_svm(vm);
 	if (!svm)
 		return -EINVAL;
