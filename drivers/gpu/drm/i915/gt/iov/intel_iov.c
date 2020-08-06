@@ -284,3 +284,7 @@ int intel_iov_init_late(struct intel_iov *iov)
 
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#include "selftests/selftest_live_iov_ggtt.c"
+#endif

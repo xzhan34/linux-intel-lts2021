@@ -299,9 +299,21 @@ u64 gen8_ggtt_pte_encode(dma_addr_t addr,
 	return pte;
 }
 
-static void gen8_set_pte(void __iomem *addr, gen8_pte_t pte)
+void gen8_set_pte(void __iomem *addr, gen8_pte_t pte)
 {
 	writeq(pte, addr);
+}
+
+gen8_pte_t gen8_get_pte(void __iomem *addr)
+{
+	return readq(addr);
+}
+
+u64 ggtt_addr_to_pte_offset(u64 ggtt_addr)
+{
+	GEM_BUG_ON(!IS_ALIGNED(ggtt_addr, I915_GTT_PAGE_SIZE_4K));
+
+	return (ggtt_addr / I915_GTT_PAGE_SIZE_4K) * sizeof(gen8_pte_t);
 }
 
 static void gen8_ggtt_insert_page(struct i915_address_space *vm,

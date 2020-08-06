@@ -788,6 +788,11 @@ release_pd_entry(struct i915_page_directory * const pd,
 		 const struct drm_i915_gem_object * const scratch);
 void gen6_ggtt_invalidate(struct i915_ggtt *ggtt);
 
+void gen8_set_pte(void __iomem *addr, gen8_pte_t pte);
+gen8_pte_t gen8_get_pte(void __iomem *addr);
+
+u64 ggtt_addr_to_pte_offset(u64 ggtt_addr);
+
 int ggtt_set_pages(struct i915_vma *vma);
 int ppgtt_set_pages(struct i915_vma *vma);
 void clear_pages(struct i915_vma *vma);

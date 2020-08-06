@@ -211,6 +211,20 @@ struct intel_iov_vf_config {
 	u16 num_dbs;
 };
 
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+struct intel_iov;
+/**
+ * struct intel_iov_selftest - I/O Virtualization selftest related data
+ * @mmio_set_pte: pointer to the function that writes the PTE to the MMIO
+ * @mmio_get_pte: pointer to the function that reads the PTE from the MMIO
+ */
+struct intel_iov_selftest
+{
+	void (*mmio_set_pte)(struct intel_iov *iov, void __iomem *pte_addr, u64 pte);
+	u64 (*mmio_get_pte)(struct intel_iov *iov, void __iomem *pte_addr);
+};
+#endif
+
 /**
  * struct intel_iov - I/O Virtualization related data.
  * @pf.sysfs: sysfs data.
@@ -238,6 +252,7 @@ struct intel_iov {
 	};
 
 	struct intel_iov_relay relay;
+	I915_SELFTEST_DECLARE(struct intel_iov_selftest selftest);
 };
 
 #endif /* __INTEL_IOV_TYPES_H__ */
