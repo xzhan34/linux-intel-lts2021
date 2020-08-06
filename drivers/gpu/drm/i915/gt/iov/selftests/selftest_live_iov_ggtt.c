@@ -414,10 +414,19 @@ out:
 static int igt_pf_ggtt(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt;
+	unsigned int id;
+	int err;
 
 	GEM_BUG_ON(!IS_SRIOV_PF(i915));
 
-	return igt_pf_iov_ggtt(&to_gt(i915)->iov);
+	for_each_gt(gt, i915, id) {
+		err = igt_pf_iov_ggtt(&gt->iov);
+		if (err < 0)
+			return err;
+	}
+
+	return 0;
 }
 
 static int igt_vf_iov_own_ggtt(struct intel_iov *iov, bool sanitycheck)
@@ -461,10 +470,19 @@ static int igt_vf_iov_own_ggtt(struct intel_iov *iov, bool sanitycheck)
 static int igt_vf_own_ggtt(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt;
+	unsigned int id;
+	int err;
 
 	GEM_BUG_ON(!IS_SRIOV_VF(i915));
 
-	return igt_vf_iov_own_ggtt(&to_gt(i915)->iov, false);
+	for_each_gt(gt, i915, id) {
+		err = igt_vf_iov_own_ggtt(&gt->iov, false);
+		if (err < 0)
+			return err;
+	}
+
+	return 0;
 }
 
 static int igt_vf_iov_own_ggtt_via_pf(struct intel_iov *iov)
@@ -515,10 +533,19 @@ out:
 static int igt_vf_own_ggtt_via_pf(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt;
+	unsigned int id;
+	int err;
 
 	GEM_BUG_ON(!IS_SRIOV_VF(i915));
 
-	return igt_vf_iov_own_ggtt_via_pf(&to_gt(i915)->iov);
+	for_each_gt(gt, i915, id) {
+		err = igt_vf_iov_own_ggtt_via_pf(&gt->iov);
+		if (err < 0)
+			return err;
+	}
+
+	return 0;
 }
 
 static int
@@ -674,19 +701,37 @@ static int igt_vf_iov_other_ggtt(struct intel_iov *iov, bool check_via_pf)
 static int igt_vf_other_ggtt(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt;
+	unsigned int id;
+	int err;
 
 	GEM_BUG_ON(!IS_SRIOV_VF(i915));
 
-	return igt_vf_iov_other_ggtt(&to_gt(i915)->iov, false);
+	for_each_gt(gt, i915, id) {
+		err = igt_vf_iov_other_ggtt(&gt->iov, false);
+		if (err < 0)
+			return err;
+	}
+
+	return 0;
 }
 
 static int igt_vf_other_ggtt_via_pf(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt;
+	unsigned int id;
+	int err;
 
 	GEM_BUG_ON(!IS_SRIOV_VF(i915));
 
-	return igt_vf_iov_other_ggtt(&to_gt(i915)->iov, true);
+	for_each_gt(gt, i915, id) {
+		err = igt_vf_iov_other_ggtt(&gt->iov, true);
+		if (err < 0)
+			return err;
+	}
+
+	return 0;
 }
 
 static void init_defaults_pte_io(struct intel_iov *iov)
@@ -707,9 +752,12 @@ int intel_iov_ggtt_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_vf_other_ggtt_via_pf),
 	};
 	intel_wakeref_t wakeref;
+	struct intel_gt *gt;
+	unsigned int id;
 	int ret = 0;
 
-	init_defaults_pte_io(&to_gt(i915)->iov);
+	for_each_gt(gt, i915, id)
+		init_defaults_pte_io(&gt->iov);
 
 	wakeref = intel_runtime_pm_get(&i915->runtime_pm);
 
