@@ -162,6 +162,11 @@ static void vf_deballoon_ggtt(struct intel_iov *iov)
 	i915_ggtt_deballoon(ggtt, &iov->vf.ggtt_balloon[0]);
 }
 
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+static void init_defaults_pte_io(struct intel_iov *iov);
+static int igt_vf_iov_own_ggtt(struct intel_iov *iov, bool sanitycheck);
+#endif
+
 /**
  * intel_iov_init_ggtt - Initialize GGTT for SR-IOV.
  * @iov: the IOV struct
@@ -179,6 +184,10 @@ int intel_iov_init_ggtt(struct intel_iov *iov)
 		err = vf_balloon_ggtt(iov);
 		if (unlikely(err))
 			return err;
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+		init_defaults_pte_io(iov);
+		igt_vf_iov_own_ggtt(iov, true);
+#endif
 	}
 
 	return 0;

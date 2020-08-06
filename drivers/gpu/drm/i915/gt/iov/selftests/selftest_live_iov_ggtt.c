@@ -217,17 +217,36 @@ static bool run_test_on_pte(struct intel_iov *iov, void __iomem *pte_addr, u64 g
 
 static bool
 run_test_on_ggtt_block(struct intel_iov *iov, void __iomem *gsm, struct drm_mm_node *ggtt_block,
-		       const struct pte_testcase *tc, u16 vfid)
+		       const struct pte_testcase *tc, u16 vfid, bool sanitycheck)
 {
+	int mul = 1;
 	void __iomem *pte_addr;
 	u64 ggtt_addr;
 
 	GEM_BUG_ON(!IS_ALIGNED(ggtt_block->start, I915_GTT_PAGE_SIZE_4K));
 
-	for_each_pte(pte_addr, ggtt_addr, gsm, ggtt_block, I915_GTT_PAGE_SIZE_4K) {
+	for_each_pte(pte_addr, ggtt_addr, gsm, ggtt_block, I915_GTT_PAGE_SIZE_4K * mul) {
 		if (!run_test_on_pte(iov, pte_addr, ggtt_addr, tc, vfid))
 			return false;
 		cond_resched();
+
+		/*
+		 * Sanity check is done during driver probe, so we want to do it quickly.
+		 * Therefore, we'll check only some entries that are a multiple of 2.
+		 */
+		if (sanitycheck)
+			mul *= 2;
+	}
+
+	/*
+	 * During sanity check we want to check the last PTE in the range. To be sure,
+	 * we will perform this test explicitly outside the main checking loop.
+	 */
+	if (sanitycheck) {
+		ggtt_addr = ggtt_block->start + ggtt_block->size - I915_GTT_PAGE_SIZE_4K;
+		pte_addr = gsm + ggtt_addr_to_pte_offset(ggtt_addr);
+		if (!run_test_on_pte(iov, pte_addr, ggtt_addr, tc, vfid))
+			return false;
 	}
 
 	return true;
@@ -274,7 +293,7 @@ static int igt_pf_iov_ggtt(struct intel_iov *iov)
 		i915_ggtt_set_space_owner(ggtt, vfid, &ggtt_block);
 		for_each_pte_test(tc, pte_testcases) {
 			IOV_DEBUG(iov, "Run '%ps' check\n", tc->test);
-			if (!run_test_on_ggtt_block(iov, ggtt->gsm, &ggtt_block, tc, vfid))
+			if (!run_test_on_ggtt_block(iov, ggtt->gsm, &ggtt_block, tc, vfid, false))
 				failed++;
 		}
 
@@ -300,7 +319,7 @@ static int igt_pf_ggtt(void *arg)
 	return igt_pf_iov_ggtt(&to_gt(i915)->iov);
 }
 
-static int igt_vf_iov_own_ggtt(struct intel_iov *iov)
+static int igt_vf_iov_own_ggtt(struct intel_iov *iov, bool sanitycheck)
 {
 	gen8_pte_t __iomem *gsm = iov_to_gt(iov)->ggtt->gsm;
 	static struct pte_testcase pte_testcases[] = {
@@ -327,7 +346,7 @@ static int igt_vf_iov_own_ggtt(struct intel_iov *iov)
 
 	for_each_pte_test(tc, pte_testcases) {
 		IOV_DEBUG(iov, "Run '%ps' check\n", tc->test);
-		if (!run_test_on_ggtt_block(iov, gsm, &ggtt_block, tc, 0))
+		if (!run_test_on_ggtt_block(iov, gsm, &ggtt_block, tc, 0, sanitycheck))
 			failed++;
 	}
 
@@ -343,7 +362,7 @@ static int igt_vf_own_ggtt(void *arg)
 
 	GEM_BUG_ON(!IS_SRIOV_VF(i915));
 
-	return igt_vf_iov_own_ggtt(&to_gt(i915)->iov);
+	return igt_vf_iov_own_ggtt(&to_gt(i915)->iov, false);
 }
 
 static int igt_vf_iov_own_ggtt_via_pf(struct intel_iov *iov)
@@ -376,7 +395,7 @@ static int igt_vf_iov_own_ggtt_via_pf(struct intel_iov *iov)
 
 	for_each_pte_test(tc, pte_testcases) {
 		IOV_DEBUG(iov, "Run '%ps' check \n", tc->test);
-		if (!run_test_on_ggtt_block(iov, gsm, &ggtt_block, tc, 0))
+		if (!run_test_on_ggtt_block(iov, gsm, &ggtt_block, tc, 0, false))
 			failed++;
 	}
 
@@ -419,7 +438,7 @@ _test_other_ggtt_region(struct intel_iov *iov, gen8_pte_t __iomem *gsm,
 
 	for_each_pte_test(tc, pte_testcases) {
 		IOV_DEBUG(iov, "Run '%ps' check\n", tc->test);
-		if (!run_test_on_ggtt_block(iov, gsm, ggtt_region, tc, 0))
+		if (!run_test_on_ggtt_block(iov, gsm, ggtt_region, tc, 0, false))
 			failed++;
 	}
 
@@ -445,7 +464,7 @@ _test_other_ggtt_region_via_pf(struct intel_iov *iov, gen8_pte_t __iomem *gsm,
 
 	for_each_pte_test(tc, pte_testcases) {
 		IOV_DEBUG(iov, "Run '%ps' check\n", tc->test);
-		if (!run_test_on_ggtt_block(iov, gsm, ggtt_region, tc, 0))
+		if (!run_test_on_ggtt_block(iov, gsm, ggtt_region, tc, 0, false))
 			failed++;
 	}
 
