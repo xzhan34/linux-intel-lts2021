@@ -5,6 +5,7 @@
 
 #include "i915_utils.h"
 #include "gt/intel_gt.h"
+#include "intel_pci_config.h"
 #include "iov_selftest_actions.h"
 #include "../abi/iov_actions_selftest_abi.h"
 #include "../intel_iov_relay.h"
@@ -64,6 +65,14 @@ vf_pte_is_value_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u6
 	return val != new_val;
 }
 
+static bool pte_not_accessible(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
+			       gen8_pte_t *out)
+{
+	*out = iov->selftest.mmio_get_pte(iov, pte_addr);
+
+	return *out == 0;
+}
+
 static bool
 pte_is_value_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
 			const u64 mask, gen8_pte_t *out)
@@ -93,6 +102,13 @@ static bool
 pte_gpa_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, gen8_pte_t *out)
 {
 	return pte_is_value_modifiable(iov, pte_addr, ggtt_addr, GEN12_GGTT_PTE_ADDR_MASK, out);
+}
+
+static bool
+pte_gpa_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
+		       gen8_pte_t *out)
+{
+	return !pte_gpa_modifiable(iov, pte_addr, ggtt_addr, out);
 }
 
 static bool
@@ -356,6 +372,9 @@ static int igt_vf_iov_own_ggtt_via_pf(struct intel_iov *iov)
 
 	drm_mm_remove_node(&ggtt_block);
 
+	if (failed)
+		IOV_ERROR(iov, "%s: Count of failed test cases: %d", __func__, failed);
+
 	return failed ? -EPERM : 0;
 out:
 	return err;
@@ -368,6 +387,128 @@ static int igt_vf_own_ggtt_via_pf(void *arg)
 	GEM_BUG_ON(!IS_SRIOV_VF(i915));
 
 	return igt_vf_iov_own_ggtt_via_pf(&to_gt(i915)->iov);
+}
+
+static int
+test_other_ggtt_region(struct intel_iov *iov, gen8_pte_t __iomem *gsm,
+		       struct drm_mm_node *ggtt_region)
+{
+	static struct pte_testcase pte_testcases[] = {
+		{ .test = pte_not_accessible },
+		{ .test = pte_gpa_not_modifiable },
+		{ .test = pte_vfid_not_modifiable },
+		{ .test = pte_valid_not_modifiable },
+		{ },
+	};
+	int failed = 0;
+	struct pte_testcase *tc;
+
+	IOV_DEBUG(iov, "Subtest %s, gsm: %#llx base: %#llx size: %#llx\n",
+		  __func__, ptr_to_u64(gsm), ggtt_region->start,
+		  ggtt_region->size);
+
+	for_each_pte_test(tc, pte_testcases) {
+		IOV_DEBUG(iov, "Run '%ps' check\n", tc->test);
+		if (!run_test_on_ggtt_block(iov, gsm, ggtt_region, tc, 0))
+			failed++;
+	}
+
+	return failed ? -EPERM : 0;
+}
+
+static void *map_gsm(struct intel_gt *gt, u64 ggtt_size)
+{
+	struct pci_dev *pdev = to_pci_dev(gt->i915->drm.dev);
+	struct device *dev = gt->i915->drm.dev;
+	u64 gsm_ggtt_size = (ggtt_size / I915_GTT_PAGE_SIZE_4K) *
+			    sizeof(gen8_pte_t);
+	phys_addr_t phys_addr;
+	u32 gttaddr;
+	void *gsm;
+
+	/*
+	 * Since GEN8 GTTADDR starts at 8MB offset
+	 */
+	gttaddr = SZ_8M;
+	phys_addr =  pci_resource_start(pdev, GTTMMADR_BAR) + gttaddr;
+
+	gsm = ioremap(phys_addr, gsm_ggtt_size);
+	if (!gsm) {
+		dev_err(dev, "Failed to map the GGTT page table\n");
+		return  ERR_PTR(-ENOMEM);
+	}
+
+	return gsm;
+}
+
+static int igt_vf_iov_other_ggtt(struct intel_iov *iov)
+{
+	u64 offset_vf = iov->vf.config.ggtt_base;
+	u64 size_vf = iov->vf.config.ggtt_size;
+	int failed = 0;
+	gen8_pte_t __iomem *gsm;
+	struct drm_mm_node test_region;
+
+	GEM_BUG_ON(!IS_ALIGNED(offset_vf, I915_GTT_PAGE_SIZE_4K));
+	GEM_BUG_ON(!IS_ALIGNED(size_vf, I915_GTT_PAGE_SIZE_4K));
+
+	/*
+	 * We want to test GGTT block not assigned to current VF.
+	 * There are two regions which we can test:
+	 * - before current VF range,
+	 * - after current VF range.
+	 *
+	 *       |<---------------- Total GGTT size -------------->|
+	 *
+	 *       +-------------------------------------------------+
+	 *       | WOPCM |    available for PF and VFs   | GUC_TOP |
+	 *       +-----------------+---------------+---------------+
+	 *       |//// before /////|  current VF   |//// after ////|
+	 *       +-----------------+---------------+---------------+
+	 *
+	 *       |<-- offset_vf -->|<-- size_vf -->|
+	 *
+	 * The current implementation of driver allows test at least
+	 * one page of GGTT before and after VF's GGTT range.
+	 *
+	 *       +------------------+------------+-----------------+
+	 *       | before GGTT page | current VF | after GGTT page |
+	 *       +------------------+------------+-----------------+
+	 *
+	 *       |<--      4K    -->|            |<--     4K    -->|
+	 *
+	 * We will run two tests in which we will check these two areas before
+	 * and after VF, called as "other regions".
+	 * Before the tests, we must additionally map the GGTT in the size
+	 * corresponding to the last GGTT address used in the test.
+	 */
+	gsm = map_gsm(iov_to_gt(iov), offset_vf + size_vf +
+		      I915_GTT_PAGE_SIZE_4K);
+	if (IS_ERR(gsm))
+		return PTR_ERR(gsm);
+
+	test_region.size = I915_GTT_PAGE_SIZE_4K;
+
+	test_region.start = offset_vf - I915_GTT_PAGE_SIZE_4K;
+	if (test_other_ggtt_region(iov, gsm, &test_region) < 0)
+		failed++;
+
+	test_region.start = offset_vf + size_vf;
+	if (test_other_ggtt_region(iov, gsm, &test_region) < 0)
+		failed++;
+
+	iounmap(gsm);
+
+	return failed ? -EPERM : 0;
+}
+
+static int igt_vf_other_ggtt(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+
+	GEM_BUG_ON(!IS_SRIOV_VF(i915));
+
+	return igt_vf_iov_other_ggtt(&to_gt(i915)->iov);
 }
 
 static void init_defaults_pte_io(struct intel_iov *iov)
@@ -384,6 +525,7 @@ int intel_iov_ggtt_live_selftests(struct drm_i915_private *i915)
 	static const struct i915_subtest vf_tests[] = {
 		SUBTEST(igt_vf_own_ggtt),
 		SUBTEST(igt_vf_own_ggtt_via_pf),
+		SUBTEST(igt_vf_other_ggtt),
 	};
 	intel_wakeref_t wakeref;
 	int ret = 0;
