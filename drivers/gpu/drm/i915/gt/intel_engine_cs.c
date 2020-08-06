@@ -970,7 +970,12 @@ static void setup_logical_ids(struct intel_gt *gt, u8 *logical_ids, u8 class)
 	 * Logical to physical mapping is needed for proper support
 	 * to split-frame feature.
 	 */
-	if (MEDIA_VER(gt->i915) >= 11 && class == VIDEO_DECODE_CLASS) {
+	if (IS_PONTEVECCHIO(gt->i915) && class == VIDEO_DECODE_CLASS) {
+		const u8 map[] = { 0, 2, 1 };
+
+		populate_logical_ids(gt, logical_ids, class,
+				     map, ARRAY_SIZE(map));
+	} else if (MEDIA_VER(gt->i915) >= 11 && class == VIDEO_DECODE_CLASS) {
 		const u8 map[] = { 0, 2, 4, 6, 1, 3, 5, 7 };
 
 		populate_logical_ids(gt, logical_ids, class,
