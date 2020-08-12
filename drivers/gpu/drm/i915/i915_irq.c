@@ -2778,16 +2778,60 @@ hardware_error_type_to_str(const enum hardware_error hw_err)
 	}
 }
 
+#define log_gt_hw_err(gt, fmt, ...) \
+	drm_err_ratelimited(&(gt)->i915->drm, HW_ERR "GT%d detected " fmt, \
+			    (gt)->info.id, ##__VA_ARGS__)
+
+static void
+gen12_gt_correctable_hw_error_stats_update(struct intel_gt *gt,
+					   unsigned long errstat)
+{
+	u32 errbit, cnt;
+
+	for_each_set_bit(errbit, &errstat, GT_HW_ERROR_MAX_ERR_BITS) {
+		switch (errbit) {
+		case L3_SNG_COR_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_L3_SNG]++;
+			log_gt_hw_err(gt, "l3 single correctable error\n");
+			break;
+		case GUC_COR_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_GUC]++;
+			log_gt_hw_err(gt, "SINGLE BIT GUC SRAM CORRECTABLE error\n");
+			break;
+		case SAMPLER_COR_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_SAMPLER]++;
+			log_gt_hw_err(gt, "SINGLE BIT SAMPLER CORRECTABLE error\n");
+			break;
+		case SLM_COR_ERR:
+			cnt = intel_uncore_read(gt->uncore,
+						SLM_ECC_ERROR_CNTR(HARDWARE_ERROR_CORRECTABLE));
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_SLM] = cnt;
+			log_gt_hw_err(gt, "%u SINGLE BIT SLM CORRECTABLE error\n", cnt);
+			break;
+		case EU_IC_COR_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_EU_IC]++;
+			log_gt_hw_err(gt, "SINGLE BIT EU IC CORRECTABLE error\n");
+			break;
+		case EU_GRF_COR_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_EU_GRF]++;
+			log_gt_hw_err(gt, "SINGLE BIT EU GRF CORRECTABLE error\n");
+			break;
+		default:
+			log_gt_hw_err(gt, "UNKNOWN CORRECTABLE error\n");
+			break;
+		}
+	}
+}
+
 static void
 gen12_gt_hw_error_handler(struct intel_gt *gt,
 			  const enum hardware_error hw_err)
 {
 	void __iomem * const regs = gt->uncore->regs;
 	const char *hw_err_str = hardware_error_type_to_str(hw_err);
-	u32 other_errors = ~(EU_GRF_ERROR | EU_IC_ERROR | SLM_ERROR);
-	u32 errstat;
+	unsigned long errstat;
 
-	lockdep_assert_held(&gt->i915->irq_lock);
+	lockdep_assert_held(gt->irq_lock);
 
 	errstat = raw_reg_read(regs, ERR_STAT_GT_REG(hw_err));
 
@@ -2796,39 +2840,22 @@ gen12_gt_hw_error_handler(struct intel_gt *gt,
 		return;
 	}
 
-	/*
-	 * TODO: The GT Non Fatal Error Status Register
-	 * only has reserved bitfields defined.
-	 * Remove once there is something to service.
-	 */
-	if (hw_err == HARDWARE_ERROR_NONFATAL) {
-		DRM_ERROR("detected Non-Fatal hardware error\n");
-		raw_reg_write(regs, ERR_STAT_GT_REG(hw_err), errstat);
-		return;
+	switch (hw_err) {
+	case HARDWARE_ERROR_CORRECTABLE:
+		gen12_gt_correctable_hw_error_stats_update(gt, errstat);
+		break;
+	case HARDWARE_ERROR_NONFATAL:
+		/*
+		 * TODO: The GT Non Fatal Error Status Register
+		 * only has reserved bitfields defined.
+		 * Remove once there is something to service.
+		 */
+		drm_err_ratelimited(&gt->i915->drm,
+				    HW_ERR "detected Non-Fatal error\n");
+		break;
+	default:
+		break;
 	}
-
-	if (errstat & EU_GRF_ERROR)
-		DRM_ERROR("detected EU GRF %s hardware error\n", hw_err_str);
-
-	if (errstat & EU_IC_ERROR)
-		DRM_ERROR("detected EU IC %s hardware error\n", hw_err_str);
-
-	if (errstat & SLM_ERROR) {
-		DRM_ERROR("detected %u SLM %s hardware error(s)\n",
-			  intel_uncore_read(gt->uncore,
-					    SLM_ECC_ERROR_CNTR(hw_err)),
-			  hw_err_str);
-	}
-
-	/*
-	 * TODO: The remaining GT errors don't have a
-	 * need for targeted logging at the moment. We
-	 * still want to log detection of these errors, but
-	 * let's aggregate them until someone has a need for them.
-	 */
-	if (errstat & other_errors)
-		DRM_ERROR("detected hardware error(s) in ERR_STAT_GT_REG_%s: 0x%08x\n",
-			  hw_err_str, errstat & other_errors);
 
 	raw_reg_write(regs, ERR_STAT_GT_REG(hw_err), errstat);
 }
@@ -2841,7 +2868,7 @@ gen12_hw_error_source_handler(struct intel_gt *gt,
 	const char *hw_err_str = hardware_error_type_to_str(hw_err);
 	u32 errsrc;
 
-	spin_lock(&gt->i915->irq_lock);
+	spin_lock(gt->irq_lock);
 	errsrc = raw_reg_read(regs, DEV_ERR_STAT_REG(hw_err));
 
 	if (unlikely(!errsrc)) {
@@ -2859,7 +2886,7 @@ gen12_hw_error_source_handler(struct intel_gt *gt,
 	raw_reg_write(regs, DEV_ERR_STAT_REG(hw_err), errsrc);
 
 out_unlock:
-	spin_unlock(&gt->i915->irq_lock);
+	spin_unlock(gt->irq_lock);
 }
 
 /*

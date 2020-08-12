@@ -5871,9 +5871,14 @@ enum hardware_error {
 #define ERR_STAT_GT_REG(x)		_MMIO(_PICK_EVEN((x), \
 						_ERR_STAT_GT_COR, \
 						_ERR_STAT_GT_NONFATAL))
-#define  EU_GRF_ERROR			(1 << 15)
-#define  EU_IC_ERROR			(1 << 14)
-#define  SLM_ERROR			(1 << 13)
+#define  EU_GRF_COR_ERR			(15)
+#define  EU_IC_COR_ERR			(14)
+#define  SLM_COR_ERR			(13)
+#define  SAMPLER_COR_ERR		(12)
+#define  GUC_COR_ERR			(1)
+#define  L3_SNG_COR_ERR			(0)
+
+#define GT_HW_ERROR_MAX_ERR_BITS	16
 
 #define _SLM_ECC_ERROR_CNT		0xe7f4
 #define _SLM_UNCORR_ECC_ERROR_CNT	0xe7c0

@@ -47,6 +47,17 @@ enum intel_gt_counters { /* u64 indices into gt->counters */
 	INTEL_GT_CLEAR_BYTES,
 };
 
+/* Count of GT Correctable HW ERRORS */
+enum intel_gt_hw_errors {
+	INTEL_GT_HW_ERROR_COR_L3_SNG = 0,
+	INTEL_GT_HW_ERROR_COR_GUC,
+	INTEL_GT_HW_ERROR_COR_SAMPLER,
+	INTEL_GT_HW_ERROR_COR_SLM,
+	INTEL_GT_HW_ERROR_COR_EU_IC,
+	INTEL_GT_HW_ERROR_COR_EU_GRF,
+	INTEL_GT_HW_ERROR_COUNT
+};
+
 struct intel_mmio_range {
 	u32 start;
 	u32 end;
@@ -265,6 +276,10 @@ struct intel_gt {
 	phys_addr_t phys_addr;
 
 	struct intel_memory_region *lmem;
+
+	struct intel_hw_errors {
+		unsigned long hw[INTEL_GT_HW_ERROR_COUNT];
+	} errors;
 
 	struct intel_gt_info {
 		unsigned int id;
