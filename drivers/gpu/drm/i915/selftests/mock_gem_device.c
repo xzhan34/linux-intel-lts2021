@@ -188,6 +188,7 @@ struct drm_i915_private *mock_gem_device(void)
 	intel_memory_regions_hw_probe(i915);
 
 	spin_lock_init(&i915->gpu_error.lock);
+	init_waitqueue_head(&i915->user_fence_wq);
 
 	i915_gem_init__mm(i915);
 

@@ -875,6 +875,8 @@ struct drm_i915_private {
 	 * NOTE: This is the dri1/ums dungeon, don't add stuff here. Your patch
 	 * will be rejected. Instead look for a better place.
 	 */
+
+	struct wait_queue_head user_fence_wq;
 };
 
 static inline struct drm_i915_private *to_i915(const struct drm_device *dev)

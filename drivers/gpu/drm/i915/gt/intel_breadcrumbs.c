@@ -272,6 +272,8 @@ static void signal_irq_work(struct irq_work *work)
 		i915_request_put(rq);
 	}
 
+	wake_up_all(&b->wq);
+
 	/* Lazy irq enabling after HW submission */
 	if (!READ_ONCE(b->irq_armed) && !list_empty(&b->signalers))
 		intel_breadcrumbs_arm_irq(b);
@@ -298,6 +300,7 @@ intel_breadcrumbs_create(struct intel_engine_cs *irq_engine)
 
 	spin_lock_init(&b->irq_lock);
 	init_irq_work(&b->irq_work, signal_irq_work);
+	init_waitqueue_head(&b->wq);
 
 	b->irq_engine = irq_engine;
 	b->irq_enable = irq_enable;
@@ -337,8 +340,25 @@ void intel_breadcrumbs_unpin_irq(struct intel_breadcrumbs *b)
 	spin_unlock_irq(&b->irq_lock);
 }
 
+void intel_breadcrumbs_add_wait(struct intel_breadcrumbs *b,
+				struct wait_queue_entry *wait)
+{
+	intel_breadcrumbs_pin_irq(b);
+	add_wait_queue(&b->wq, wait);
+}
+
+void intel_breadcrumbs_remove_wait(struct intel_breadcrumbs *b,
+				   struct wait_queue_entry *wait)
+{
+	remove_wait_queue(&b->wq, wait);
+	intel_breadcrumbs_unpin_irq(b);
+}
+
 void __intel_breadcrumbs_park(struct intel_breadcrumbs *b)
 {
+	if (b->irq_enabled) /* last chance for a missed wakeup! */
+		wake_up_all(&b->wq);
+
 	if (!READ_ONCE(b->irq_armed))
 		return;
 

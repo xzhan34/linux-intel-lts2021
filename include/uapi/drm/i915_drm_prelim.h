@@ -49,11 +49,13 @@ struct prelim_i915_user_extension {
 /* 0x5e is free, please use if needed */
 #define PRELIM_DRM_I915_GEM_VM_BIND		0x5d
 #define PRELIM_DRM_I915_GEM_VM_UNBIND		0x5c
+#define PRELIM_DRM_I915_GEM_WAIT_USER_FENCE	0x5a
 
 
 #define PRELIM_DRM_IOCTL_I915_GEM_CREATE_EXT		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_CREATE, struct prelim_drm_i915_gem_create_ext)
 #define PRELIM_DRM_IOCTL_I915_GEM_VM_BIND		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_BIND, struct prelim_drm_i915_gem_vm_bind)
 #define PRELIM_DRM_IOCTL_I915_GEM_VM_UNBIND		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_UNBIND, struct prelim_drm_i915_gem_vm_bind)
+#define PRELIM_DRM_IOCTL_I915_GEM_WAIT_USER_FENCE	DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_WAIT_USER_FENCE, struct prelim_drm_i915_gem_wait_user_fence)
 /* End PRELIM ioctl's */
 
 /* getparam */
@@ -268,6 +270,44 @@ struct prelim_drm_i915_gem_vm_bind {
 	 * No current extensions defined; mbz.
 	 */
 	__u64 extensions;
+};
+
+/**
+ * struct prelim_drm_i915_gem_wait_user_fence
+ *
+ * Wait on user fence. User fence can be woken up either by,
+ *    1. GPU context indicated by 'ctx_id', or,
+ *    2. Kerrnel driver async worker upon PRELIM_I915_UFENCE_WAIT_SOFT.
+ *       'ctx_id' is ignored when this flag is set.
+ *
+ * Wakeup when below condition is true.
+ * (*addr & MASK) OP (VALUE & MASK)
+ *
+ */
+struct prelim_drm_i915_gem_wait_user_fence {
+	__u64 extensions;
+	__u64 addr;
+	__u32 ctx_id;
+	__u16 op;
+#define PRELIM_I915_UFENCE		(1 << 8)
+#define PRELIM_I915_UFENCE_WAIT_EQ	(PRELIM_I915_UFENCE | 0)
+#define PRELIM_I915_UFENCE_WAIT_NEQ	(PRELIM_I915_UFENCE | 1)
+#define PRELIM_I915_UFENCE_WAIT_GT	(PRELIM_I915_UFENCE | 2)
+#define PRELIM_I915_UFENCE_WAIT_GTE	(PRELIM_I915_UFENCE | 3)
+#define PRELIM_I915_UFENCE_WAIT_LT	(PRELIM_I915_UFENCE | 4)
+#define PRELIM_I915_UFENCE_WAIT_LTE	(PRELIM_I915_UFENCE | 5)
+#define PRELIM_I915_UFENCE_WAIT_BEFORE	(PRELIM_I915_UFENCE | 6)
+#define PRELIM_I915_UFENCE_WAIT_AFTER	(PRELIM_I915_UFENCE | 7)
+	__u16 flags;
+#define PRELIM_I915_UFENCE_WAIT_SOFT	(1 << 15)
+#define PRELIM_I915_UFENCE_WAIT_ABSTIME	(1 << 14)
+	__u64 value;
+	__u64 mask;
+#define PRELIM_I915_UFENCE_WAIT_U8     0xffu
+#define PRELIM_I915_UFENCE_WAIT_U16    0xffffu
+#define PRELIM_I915_UFENCE_WAIT_U32    0xfffffffful
+#define PRELIM_I915_UFENCE_WAIT_U64    0xffffffffffffffffull
+	__s64 timeout;
 };
 
 struct prelim_drm_i915_gem_vm_control {

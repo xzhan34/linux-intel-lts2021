@@ -1044,6 +1044,9 @@ static void cs_irq_handler(struct intel_engine_cs *engine, u16 iir)
 {
 	if (iir & GT_RENDER_USER_INTERRUPT)
 		intel_engine_signal_breadcrumbs_irq(engine);
+
+	if (iir & GT_RENDER_PIPECTL_NOTIFY_INTERRUPT)
+		wake_up_all(&engine->breadcrumbs->wq);
 }
 
 static void __guc_context_destroy(struct intel_context *ce);

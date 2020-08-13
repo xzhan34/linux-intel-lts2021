@@ -567,6 +567,7 @@ static int i915_driver_early_probe(struct drm_i915_private *dev_priv,
 	intel_init_clock_gating_hooks(dev_priv);
 
 	intel_detect_preproduction_hw(dev_priv);
+	init_waitqueue_head(&dev_priv->user_fence_wq);
 
 	spin_lock_init(&dev_priv->vm_priv_obj_lock);
 
@@ -2190,6 +2191,7 @@ static const struct drm_ioctl_desc i915_ioctls[] = {
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_CREATE_EXT, i915_gem_create_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_VM_BIND, i915_gem_vm_bind_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_VM_UNBIND, i915_gem_vm_unbind_ioctl, DRM_RENDER_ALLOW),
+	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_WAIT_USER_FENCE, i915_gem_wait_user_fence_ioctl, DRM_RENDER_ALLOW),
 };
 
 /*

@@ -248,7 +248,8 @@ void gen11_gt_irq_reset(struct intel_gt *gt)
 void gen11_gt_irq_postinstall(struct intel_gt *gt)
 {
 	struct intel_uncore *uncore = gt->uncore;
-	u32 irqs = GT_RENDER_USER_INTERRUPT;
+	u32 irqs = GT_RENDER_USER_INTERRUPT |
+		   GT_RENDER_PIPECTL_NOTIFY_INTERRUPT;
 	const u32 gsc_mask = GSC_IRQ_INTF(0) | GSC_IRQ_INTF(1);
 	u32 dmask;
 	u32 smask;

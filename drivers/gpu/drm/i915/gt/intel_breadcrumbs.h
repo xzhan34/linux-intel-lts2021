@@ -22,6 +22,11 @@ void intel_breadcrumbs_free(struct kref *kref);
 void intel_breadcrumbs_pin_irq(struct intel_breadcrumbs *b);
 void intel_breadcrumbs_unpin_irq(struct intel_breadcrumbs *b);
 
+void intel_breadcrumbs_add_wait(struct intel_breadcrumbs *b,
+				struct wait_queue_entry *wait);
+void intel_breadcrumbs_remove_wait(struct intel_breadcrumbs *b,
+				   struct wait_queue_entry *wait);
+
 void intel_breadcrumbs_reset(struct intel_breadcrumbs *b);
 void __intel_breadcrumbs_park(struct intel_breadcrumbs *b);
 

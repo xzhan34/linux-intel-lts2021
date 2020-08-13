@@ -2519,6 +2519,10 @@ static void execlists_irq_handler(struct intel_engine_cs *engine, u16 iir)
 	if (iir & GT_RENDER_USER_INTERRUPT)
 		intel_engine_signal_breadcrumbs_irq(engine);
 
+	/* XXX unmask NOTIFY_INTERRUPT in RING_IMR, and include MI_FLUSH_DW */
+	if (iir & GT_RENDER_PIPECTL_NOTIFY_INTERRUPT)
+		wake_up_all(&engine->breadcrumbs->wq);
+
 	if (tasklet)
 		tasklet_hi_schedule(&engine->sched_engine->tasklet);
 }
