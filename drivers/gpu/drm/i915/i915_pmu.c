@@ -29,6 +29,25 @@
 	 BIT(I915_SAMPLE_WAIT) | \
 	 BIT(I915_SAMPLE_SEMA))
 
+static const unsigned int i915_hw_error_map[] = {
+	[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_L3_SNG] = INTEL_GT_HW_ERROR_COR_L3_SNG,
+	[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_GUC] = INTEL_GT_HW_ERROR_COR_GUC,
+	[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_SAMPLER] = INTEL_GT_HW_ERROR_COR_SAMPLER,
+	[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_SLM] = INTEL_GT_HW_ERROR_COR_SLM,
+	[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_EU_IC] = INTEL_GT_HW_ERROR_COR_EU_IC,
+	[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_EU_GRF] = INTEL_GT_HW_ERROR_COR_EU_GRF,
+	[PRELIM_I915_PMU_GT_ERROR_FATAL_ARR_BIST] = INTEL_GT_HW_ERROR_FAT_ARR_BIST,
+	[PRELIM_I915_PMU_GT_ERROR_FATAL_L3_DOUB] = INTEL_GT_HW_ERROR_FAT_L3_DOUB,
+	[PRELIM_I915_PMU_GT_ERROR_FATAL_L3_ECC_CHK] = INTEL_GT_HW_ERROR_FAT_L3_ECC_CHK,
+	[PRELIM_I915_PMU_GT_ERROR_FATAL_GUC] = INTEL_GT_HW_ERROR_FAT_GUC,
+	[PRELIM_I915_PMU_GT_ERROR_FATAL_IDI_PAR] = INTEL_GT_HW_ERROR_FAT_IDI_PAR,
+	[PRELIM_I915_PMU_GT_ERROR_FATAL_SQIDI] = INTEL_GT_HW_ERROR_FAT_SQIDI,
+	[PRELIM_I915_PMU_GT_ERROR_FATAL_SAMPLER] = INTEL_GT_HW_ERROR_FAT_SAMPLER,
+	[PRELIM_I915_PMU_GT_ERROR_FATAL_SLM] = INTEL_GT_HW_ERROR_FAT_SLM,
+	[PRELIM_I915_PMU_GT_ERROR_FATAL_EU_IC] = INTEL_GT_HW_ERROR_FAT_EU_IC,
+	[PRELIM_I915_PMU_GT_ERROR_FATAL_EU_GRF] = INTEL_GT_HW_ERROR_FAT_EU_GRF,
+};
+
 static cpumask_t i915_pmu_cpumask;
 static unsigned int i915_pmu_target_cpu = -1;
 
@@ -545,6 +564,17 @@ engine_event_status(struct intel_engine_cs *engine,
 	return 0;
 }
 
+static bool is_hw_error_config(const u64 config)
+{
+	return config_counter(config) >= __PRELIM_I915_PMU_HW_ERROR_EVENT_ID_OFFSET;
+}
+
+static unsigned int hw_error_id(const u64 config)
+{
+	return config_counter(config) -
+	       __PRELIM_I915_PMU_HW_ERROR_EVENT_ID_OFFSET;
+}
+
 static int
 config_status(struct drm_i915_private *i915, u64 config)
 {
@@ -554,6 +584,15 @@ config_status(struct drm_i915_private *i915, u64 config)
 
 	if (gt_id > i915->remote_tiles)
 		return -ENOENT;
+
+	if (is_hw_error_config(config)) {
+		if (IS_DGFX(i915))
+			return (hw_error_id(config) >=
+				ARRAY_SIZE(i915_hw_error_map)) ? -ENOENT : 0;
+		else
+			return -ENODEV;
+
+	}
 
 	switch (config_counter(config)) {
 	case I915_PMU_ACTUAL_FREQUENCY:
@@ -664,6 +703,14 @@ static u64 __i915_pmu_event_read(struct perf_event *event)
 		} else {
 			val = engine->pmu.sample[sample].cur;
 		}
+	} else if (is_hw_error_config(event->attr.config)) {
+		const unsigned int gt_id = config_gt_id(event->attr.config);
+		unsigned int id = hw_error_id(event->attr.config);
+		struct intel_gt *gt = i915->gt[gt_id];
+
+		/* Mapping of ABI constants to internal enums. */
+		val = gt->errors.hw[i915_hw_error_map[id]];
+
 	} else {
 		const unsigned int gt_id = config_gt_id(event->attr.config);
 		const u64 config = config_counter(event->attr.config);
@@ -998,7 +1045,7 @@ static struct attribute **
 create_event_attributes(struct i915_pmu *pmu)
 {
 	struct drm_i915_private *i915 = container_of(pmu, typeof(*i915), pmu);
-	static const struct {
+	static const struct events {
 		unsigned int counter;
 		const char *name;
 		const char *unit;
@@ -1017,6 +1064,25 @@ create_event_attributes(struct i915_pmu *pmu)
 		__event(3, "rc6-residency", "ns"),
 		__event(4, "software-gt-awake-time", "ns"),
 	};
+	static const char *hw_error_events[] = {
+		[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_L3_SNG] = "correctable-l3-sng",
+		[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_GUC] = "correctable-guc",
+		[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_SAMPLER] = "correctable-sampler",
+		[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_SLM] = "correctable-slm",
+		[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_EU_IC] = "correctable-eu-ic",
+		[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_EU_GRF] = "correctable-eu-grf",
+		[PRELIM_I915_PMU_GT_ERROR_FATAL_ARR_BIST] = "fatal-array-bist",
+		[PRELIM_I915_PMU_GT_ERROR_FATAL_L3_DOUB] = "fatal-l3-double",
+		[PRELIM_I915_PMU_GT_ERROR_FATAL_L3_ECC_CHK] = "fatal-l3-ecc-checker",
+		[PRELIM_I915_PMU_GT_ERROR_FATAL_GUC] = "fatal-guc",
+		[PRELIM_I915_PMU_GT_ERROR_FATAL_IDI_PAR] = "fatal-idi-parity",
+		[PRELIM_I915_PMU_GT_ERROR_FATAL_SQIDI] = "fatal-sqidi",
+		[PRELIM_I915_PMU_GT_ERROR_FATAL_SAMPLER] = "fatal-sampler",
+		[PRELIM_I915_PMU_GT_ERROR_FATAL_SLM] = "fatal-slm",
+		[PRELIM_I915_PMU_GT_ERROR_FATAL_EU_IC] = "fatal-eu-ic",
+		[PRELIM_I915_PMU_GT_ERROR_FATAL_EU_GRF] = "fatal-eu-grf",
+	};
+
 	static const struct {
 		enum drm_i915_pmu_engine_sample sample;
 		char *name;
@@ -1033,10 +1099,20 @@ create_event_attributes(struct i915_pmu *pmu)
 	struct intel_gt *gt;
 	unsigned int i, j;
 
+	BUILD_BUG_ON(ARRAY_SIZE(hw_error_events) !=
+		     ARRAY_SIZE(i915_hw_error_map));
+
 	/* Count how many counters we will be exposing. */
 	for_each_gt(gt, i915, j) {
 		for (i = 0; i < ARRAY_SIZE(events); i++) {
 			u64 config = ___PRELIM_I915_PMU_OTHER(j, events[i].counter);
+
+			if (!config_status(i915, config))
+				count++;
+		}
+
+		for (i = 0; i < ARRAY_SIZE(hw_error_events); i++) {
+			u64 config = PRELIM_I915_PMU_HW_ERROR(j, i);
 
 			if (!config_status(i915, config))
 				count++;
@@ -1071,9 +1147,10 @@ create_event_attributes(struct i915_pmu *pmu)
 
 	/* Initialize supported non-engine counters. */
 	for_each_gt(gt, i915, j) {
+		char *str;
+
 		for (i = 0; i < ARRAY_SIZE(events); i++) {
 			u64 config = ___PRELIM_I915_PMU_OTHER(j, events[i].counter);
-			char *str;
 
 			if (config_status(i915, config))
 				continue;
@@ -1103,6 +1180,25 @@ create_event_attributes(struct i915_pmu *pmu)
 				pmu_iter = add_pmu_attr(pmu_iter, str,
 							events[i].unit);
 			}
+		}
+
+		for (i = 0; i < ARRAY_SIZE(hw_error_events); i++) {
+			u64 config = PRELIM_I915_PMU_HW_ERROR(j, i);
+
+			if (config_status(i915, config))
+				continue;
+
+			if (!i915->remote_tiles)
+				str = kasprintf(GFP_KERNEL, "error--%s",
+						hw_error_events[i]);
+			else
+				str = kasprintf(GFP_KERNEL, "error-gt%u--%s",
+						j, hw_error_events[i]);
+			if (!str)
+				goto err;
+
+			*attr_iter++ = &i915_iter->attr.attr;
+			i915_iter = add_i915_attr(i915_iter, str, config);
 		}
 	}
 
