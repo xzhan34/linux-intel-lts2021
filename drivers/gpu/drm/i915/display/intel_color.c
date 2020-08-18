@@ -24,6 +24,7 @@
 
 #include <drm/drm_plane.h>
 
+#include "intel_atomic_plane.h"
 #include "intel_color.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
@@ -1277,6 +1278,14 @@ static void chv_load_luts(const struct intel_crtc_state *crtc_state)
 
 	intel_de_write_fw(dev_priv, CGM_PIPE_MODE(crtc->pipe),
 			  crtc_state->cgm_mode);
+}
+
+void intel_color_load_plane_luts(const struct drm_plane_state *plane_state)
+{
+	struct drm_i915_private *dev_priv = to_i915(plane_state->plane->dev);
+
+	if (dev_priv->color_funcs->load_plane_luts)
+		dev_priv->color_funcs->load_plane_luts(plane_state);
 }
 
 void intel_color_load_luts(const struct intel_crtc_state *crtc_state)
