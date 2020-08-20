@@ -7,6 +7,7 @@
 
 #include "gem/i915_gem_lmem.h"
 
+#include "gen8_engine_cs.h"
 #include "gen8_ppgtt.h"
 #include "i915_scatterlist.h"
 #include "i915_trace.h"
@@ -80,6 +81,56 @@ static u32 *fill_cmd_pte(u32 *cmd, u64 start, u32 idx, u64 val)
 	*cmd++ = lower_32_bits(val);
 	*cmd++ = upper_32_bits(val);
 	return cmd;
+}
+
+static u32 *fill_page_blt(struct intel_gt *gt, u32 *cmd, u64 offset, u64 val)
+{
+	u32 mocs = 0;
+	u32 mem = 0;
+	int len;
+
+	/* XY_FAST_COLOR_BLT was added in gen12 */
+	drm_WARN_ON(&gt->i915->drm, GRAPHICS_VER(gt->i915) < 12);
+
+	len = 11;
+	if (GRAPHICS_VER_FULL(gt->i915) >= IP_VER(12, 50)) {
+		mocs = gt->mocs.uc_index << 1;
+		mocs = FIELD_PREP(XY_FAST_COLOR_BLT_MOCS_MASK, mocs);
+		len = 16;
+	}
+
+	if (IS_XEHPSDV_GRAPHICS_STEP(gt->i915, STEP_A0, STEP_B0))
+		mem = MEM_TYPE_SYS << 31;
+
+	*cmd++ = GEN9_XY_FAST_COLOR_BLT_CMD |
+		XY_FAST_COLOR_BLT_DEPTH_64 |
+		(len - 2);
+	*cmd++ = mocs | (PAGE_SIZE - 1);
+	*cmd++ = 0;
+	*cmd++ = (1 << 16) | PAGE_SIZE / 8;
+	*cmd++ = lower_32_bits(offset);
+	*cmd++ = upper_32_bits(offset);
+	*cmd++ = mem;
+	/* BG7 */
+	*cmd++ = lower_32_bits(val);
+	*cmd++ = upper_32_bits(val);
+	*cmd++ = 0;
+	*cmd++ = 0;
+	/* BG11 -- MI_NOOP on tgl/dg1 */
+	*cmd++ = 0;
+	*cmd++ = 0;
+	/* BG13 */
+	*cmd++ = 0;
+	*cmd++ = 0;
+	*cmd++ = 0;
+
+	/*
+	 * Add flush between XY_FAST_COLOR_BLT and MI_STORE to avoid the
+	 * overwriting by cached entries by XY_FAST_COLOR.
+	 */
+	return __gen8_emit_flush_dw(cmd, 0, LRC_PPHWSP_SCRATCH_ADDR,
+				    MI_FLUSH_DW_OP_STOREDW |
+				    MI_FLUSH_DW_STORE_INDEX);
 }
 
 static struct i915_request *
@@ -394,12 +445,14 @@ static void gen8_ppgtt_clear_wa(struct i915_address_space *vm,
 	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
 }
 
-static void __gen8_ppgtt_alloc(struct i915_address_space * const vm,
+static int __gen8_ppgtt_alloc(struct i915_address_space * const vm,
 			       struct i915_vm_pt_stash *stash,
 			       struct i915_page_directory * const pd,
-			       u64 * const start, const u64 end, int lvl)
+			       u64 * const start, const u64 end, int lvl,
+			       u32 **cmd, int *nptes)
 {
 	unsigned int idx, len;
+	int ret = 0;
 
 	GEM_BUG_ON(end > vm->total >> GEN8_PTE_SHIFT);
 
@@ -423,25 +476,43 @@ static void __gen8_ppgtt_alloc(struct i915_address_space * const vm,
 			pt = stash->pt[!!lvl];
 			__i915_gem_object_pin_pages(pt->base);
 
-			fill_px(pt, vm->scratch[lvl]->encode);
-
+			if (!cmd) {
+				fill_px(pt, vm->scratch[lvl]->encode);
+			} else {
+				*cmd = fill_page_blt(vm->gt, *cmd,
+						     px_dma(pt),
+						     vm->scratch[lvl]->encode);
+				*nptes += 1;
+			}
 			spin_lock(&pd->lock);
 			if (likely(!pd->entry[idx])) {
 				stash->pt[!!lvl] = pt->stash;
 				atomic_set(&pt->used, 0);
-				set_pd_entry(pd, idx, pt);
+				if (!cmd) {
+					set_pd_entry(pd, idx, pt);
+				} else {
+					pd->entry[idx] = pt;
+					atomic_inc(px_used(pd));
+					*cmd = fill_cmd_pte(*cmd, px_dma(pd), idx,
+							    gen8_pde_encode(px_dma(pt), I915_CACHE_LLC));
+					*nptes += 1;
+				}
 			} else {
 				pt = pd->entry[idx];
 			}
+		}
+
+		if (cmd && *nptes >= INTEL_FLAT_PPGTT_MAX_FILL_PTE_ENTRIES) {
+			ret = -EAGAIN;
+			break;
 		}
 
 		if (lvl) {
 			atomic_inc(&pt->used);
 			spin_unlock(&pd->lock);
 
-			__gen8_ppgtt_alloc(vm, stash,
-					   as_pd(pt), start, end, lvl);
-
+			ret = __gen8_ppgtt_alloc(vm, stash,
+					   as_pd(pt), start, end, lvl, cmd, nptes);
 			spin_lock(&pd->lock);
 			atomic_dec(&pt->used);
 			GEM_BUG_ON(!atomic_read(&pt->used));
@@ -458,8 +529,16 @@ static void __gen8_ppgtt_alloc(struct i915_address_space * const vm,
 			GEM_BUG_ON(atomic_read(&pt->used) > NALLOC * I915_PDES);
 			*start += count;
 		}
+
+		if (cmd && *nptes >= INTEL_FLAT_PPGTT_MAX_FILL_PTE_ENTRIES) {
+			/* call again with same idx & updated start */
+			ret = -EAGAIN;
+			break;
+		}
 	} while (idx++, --len);
 	spin_unlock(&pd->lock);
+
+	return ret;
 }
 
 static void gen8_ppgtt_alloc(struct i915_address_space *vm,
@@ -475,7 +554,7 @@ static void gen8_ppgtt_alloc(struct i915_address_space *vm,
 	GEM_BUG_ON(length == 0);
 
 	__gen8_ppgtt_alloc(vm, stash, i915_vm_to_ppgtt(vm)->pd,
-			   &start, start + length, vm->top);
+			   &start, start + length, vm->top, NULL, NULL);
 }
 
 static void __gen8_ppgtt_foreach(struct i915_address_space *vm,
@@ -535,6 +614,88 @@ static void gen8_ppgtt_alloc_wa(struct i915_address_space *vm,
 	gen8_ppgtt_alloc(vm, stash, start, length);
 
 	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
+}
+
+static void gen8_ppgtt_alloc_wa_bcs(struct i915_address_space *vm,
+				   struct i915_vm_pt_stash *stash,
+				   u64 start, u64 length)
+{
+	u64 from, begin, end, fstart, flength;
+	struct intel_gt *gt = vm->gt;
+	struct i915_request *f = NULL;
+	intel_wakeref_t wakeref;
+	int err;
+
+	wakeref = l4wa_pm_get(gt);
+	if (!wakeref)
+		return gen8_ppgtt_alloc(vm, stash, start, length);
+
+	fstart = start;
+	flength = length;
+	GEM_BUG_ON(!IS_ALIGNED(start, BIT_ULL(GEN8_PTE_SHIFT)));
+	GEM_BUG_ON(!IS_ALIGNED(length, BIT_ULL(GEN8_PTE_SHIFT)));
+	GEM_BUG_ON(range_overflows(start, length, vm->total));
+
+	start >>= GEN8_PTE_SHIFT;
+	length >>= GEN8_PTE_SHIFT;
+	GEM_BUG_ON(length == 0);
+	from = start;
+	begin = start;
+	end = start + length;
+
+	do {
+		struct intel_pte_bo *bo = get_next_batch(&gt->fpp);
+		struct i915_request *rq;
+		u32 *cmd = bo->cmd;
+		int count = 0;
+
+		rq = intel_flat_ppgtt_get_request(&gt->fpp);
+		if (IS_ERR(rq)) {
+			intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+			err = PTR_ERR(rq);
+			break;
+		}
+
+		err = __gen8_ppgtt_alloc(vm, stash, i915_vm_to_ppgtt(vm)->pd,
+					 &begin, end, vm->top, &cmd, &count);
+
+		/*
+		 * -EGAIN indicates the batch buffer was full with blts to update the pte,
+		 * since all the submissions for filling scratch pages for the VA range
+		 * are completed we can clear this error flag.
+		 */
+		if (err == -EAGAIN)
+			err = 0;
+		if (err || !count) {
+			intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+			if (err)
+				i915_request_set_error_once(rq, err);
+			i915_request_add(rq);
+			break;
+		}
+
+		GEM_BUG_ON(cmd >= bo->cmd + bo->vma->size / sizeof(*bo->cmd));
+		*cmd++ = MI_BATCH_BUFFER_END;
+
+		bo->wait = __flat_ppgtt_submit(bo->vma, rq);
+		if (IS_ERR(bo->wait)) {
+			intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+			err = PTR_ERR(bo->wait);
+			break;
+		}
+
+		i915_request_put(f);
+		f = i915_request_get(bo->wait);
+		intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+	} while (begin < end);
+
+	pte_sync(&f);
+	intel_gt_pm_put_async_l4(gt, wakeref);
+
+	if (unlikely(err)) {
+		drm_warn(&vm->i915->drm, "flat ppgtt pte alloc fallback\n");
+		gen8_ppgtt_alloc(vm, stash, fstart, flength);
+	}
 }
 
 static void xehpsdv_ppgtt_color_adjust(const struct drm_mm_node *node,
@@ -1313,7 +1474,7 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt)
 	ppgtt->vm.bind_async_flags = I915_VMA_LOCAL_BIND;
 	if (i915_is_mem_wa_enabled(gt->i915, I915_WA_USE_FLAT_PPGTT_UPDATE)) {
 		ppgtt->vm.insert_entries = gen8_ppgtt_insert_wa_bcs;
-		ppgtt->vm.allocate_va_range = gen8_ppgtt_alloc;
+		ppgtt->vm.allocate_va_range = gen8_ppgtt_alloc_wa_bcs;
 		ppgtt->vm.clear_range =  gen8_ppgtt_clear;
 	} else if (i915_is_mem_wa_enabled(gt->i915, I915_WA_IDLE_GPU_BEFORE_UPDATE)) {
 		ppgtt->vm.insert_entries = gen8_ppgtt_insert_wa;
