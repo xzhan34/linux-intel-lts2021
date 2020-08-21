@@ -451,6 +451,22 @@ enum prelim_drm_i915_perf_property_id {
 	 */
 	PRELIM_DRM_I915_PERF_PROP_OA_BUFFER_SIZE = (PRELIM_DRM_I915_PERF_PROP | 1),
 
+	/**
+	 * Specify the engine class defined in @enum drm_i915_gem_engine_class.
+	 * This defaults to I915_ENGINE_CLASS_RENDER or
+	 * I915_ENGINE_CLASS_COMPUTE based on the platform.
+	 *
+	 * This property is available in perf revision 1002
+	 */
+	PRELIM_DRM_I915_PERF_PROP_OA_ENGINE_CLASS = (PRELIM_DRM_I915_PERF_PROP | 2),
+
+	/**
+	 * Specify the engine instance. Defaults to 0.
+	 *
+	 * This property is available in perf revision 1002.
+	 */
+	PRELIM_DRM_I915_PERF_PROP_OA_ENGINE_INSTANCE = (PRELIM_DRM_I915_PERF_PROP | 3),
+
 	PRELIM_DRM_I915_PERF_PROP_LAST,
 
 	PRELIM_DRM_I915_PERF_PROP_MAX = DRM_I915_PERF_PROP_MAX - 1 + \

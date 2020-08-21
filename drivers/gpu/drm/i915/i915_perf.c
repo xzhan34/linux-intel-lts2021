@@ -4319,6 +4319,8 @@ static int read_properties_unlocked(struct i915_perf *perf,
 	u32 i;
 	int ret;
 	u8 class, instance;
+	bool config_sseu = false;
+	struct drm_i915_gem_context_param_sseu user_sseu;
 
 	memset(props, 0, sizeof(struct perf_open_properties));
 	props->poll_oa_period = DEFAULT_POLL_PERIOD_NS;
@@ -4427,8 +4429,6 @@ static int read_properties_unlocked(struct i915_perf *perf,
 			props->hold_preemption = !!value;
 			break;
 		case DRM_I915_PERF_PROP_GLOBAL_SSEU: {
-			struct drm_i915_gem_context_param_sseu user_sseu;
-
 			if (GRAPHICS_VER_FULL(perf->i915) >= IP_VER(12, 50)) {
 				drm_dbg(&perf->i915->drm,
 					"SSEU config not supported on gfx %x\n",
@@ -4443,14 +4443,7 @@ static int read_properties_unlocked(struct i915_perf *perf,
 					"Unable to copy global sseu parameter\n");
 				return -EFAULT;
 			}
-
-			ret = get_sseu_config(&props->sseu, props->engine, &user_sseu);
-			if (ret) {
-				drm_dbg(&perf->i915->drm,
-					"Invalid SSEU configuration\n");
-				return ret;
-			}
-			props->has_sseu = true;
+			config_sseu = true;
 			break;
 		}
 		case DRM_I915_PERF_PROP_POLL_OA_PERIOD:
@@ -4469,6 +4462,12 @@ static int read_properties_unlocked(struct i915_perf *perf,
 				return ret;
 			}
 			props->oa_buffer_size_exponent = ret;
+			break;
+		case PRELIM_DRM_I915_PERF_PROP_OA_ENGINE_CLASS:
+			class = (u8)value;
+			break;
+		case PRELIM_DRM_I915_PERF_PROP_OA_ENGINE_INSTANCE:
+			instance = (u8)value;
 			break;
 		default:
 			MISSING_CASE(id);
@@ -4496,6 +4495,15 @@ static int read_properties_unlocked(struct i915_perf *perf,
 
 	if (!engine_supports_oa(perf->i915, props->engine))
 		return -EINVAL;
+
+	if (config_sseu) {
+		ret = get_sseu_config(&props->sseu, props->engine, &user_sseu);
+		if (ret) {
+			DRM_DEBUG("Invalid SSEU configuration\n");
+			return ret;
+		}
+		props->has_sseu = true;
+	}
 
 	/* If no buffer size was requested, select the default one. */
 	if (!props->oa_buffer_size_exponent) {
@@ -5462,8 +5470,11 @@ int i915_perf_ioctl_version(void)
 	 *	 powers of 2 ranging from 128kb to maximum size supported
 	 *	 by the platforms. Max size supported is 16Mb before
 	 *	 XEHPSDV. From XEHPSDV onwards, it is 128Mb.
+	 *
+	 * 1002: Add PRELIM_DRM_I915_PERF_PROP_OA_ENGINE_CLASS and
+	 *	 PRELIM_DRM_I915_PERF_PROP_OA_ENGINE_INSTANCE
 	 */
-	return 1001;
+	return 1002;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
