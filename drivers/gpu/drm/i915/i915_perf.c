@@ -1729,6 +1729,8 @@ static bool engine_supports_oa(struct drm_i915_private *i915,
 		       engine->class == COMPUTE_CLASS ||
 		       engine->class == VIDEO_DECODE_CLASS ||
 		       engine->class == VIDEO_ENHANCEMENT_CLASS;
+	case INTEL_PONTEVECCHIO:
+		return engine->class == COMPUTE_CLASS;
 	default:
 		return engine->class == RENDER_CLASS;
 	}
@@ -5835,6 +5837,10 @@ static void gen12_init_info(struct drm_i915_private *i915)
 	case INTEL_DG2:
 		perf->ctx_pwr_clk_state_offset[PRELIM_I915_ENGINE_CLASS_COMPUTE] =
 			CTX_R_PWR_CLK_STATE;
+		break;
+	case INTEL_PONTEVECCHIO:
+		perf->ctx_pwr_clk_state_offset[PRELIM_I915_ENGINE_CLASS_COMPUTE] =
+			PVC_CTX_CCS_PWR_CLK_STATE;
 		break;
 	default:
 		break;

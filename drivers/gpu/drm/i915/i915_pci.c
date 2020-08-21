@@ -1192,6 +1192,7 @@ static const struct intel_device_info ats_m_info = {
 	.has_media_ratio_mode = 1, \
 	.has_mem_sparing = 1, \
 	.has_mslice_steering = 0, \
+	.has_oac = 1, \
 	.has_one_eu_per_fuse_bit = 1, \
 	.has_recoverable_page_fault = 1, \
 	.has_um_queues = 1, \
