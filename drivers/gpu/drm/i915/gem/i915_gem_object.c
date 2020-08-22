@@ -75,6 +75,7 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	INIT_LIST_HEAD(&obj->vma.list);
 
 	INIT_LIST_HEAD(&obj->mm.link);
+	INIT_LIST_HEAD(&obj->mm.region_link);
 
 	INIT_LIST_HEAD(&obj->lut_list);
 	spin_lock_init(&obj->lut_lock);
@@ -87,6 +88,7 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	obj->ops = ops;
 	obj->flags = flags;
 
+	obj->mm.region = NULL;
 	obj->mm.madv = I915_MADV_WILLNEED;
 	INIT_RADIX_TREE(&obj->mm.get_page.radix, GFP_KERNEL | __GFP_NOWARN);
 	mutex_init(&obj->mm.get_page.lock);
@@ -291,6 +293,7 @@ void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 	atomic_set(&obj->mm.pages_pin_count, 0);
 	__i915_gem_object_put_pages(obj);
 	GEM_BUG_ON(i915_gem_object_has_pages(obj));
+	GEM_BUG_ON(!list_empty(&obj->mm.region_link));
 	bitmap_free(obj->bit_17);
 
 	if (obj->base.import_attach)

@@ -21,6 +21,7 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	unsigned long supported = INTEL_INFO(i915)->page_sizes;
+	struct intel_memory_region *mem;
 	bool shrinkable;
 	int i;
 
@@ -91,6 +92,20 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 
 		atomic_set(&obj->mm.shrink_pin, 0);
 		spin_unlock_irqrestore(&i915->mm.obj_lock, flags);
+	}
+
+	mem = obj->mm.region;
+	if (mem) {
+		struct list_head *list;
+
+		mutex_lock(&mem->objects.lock);
+		GEM_WARN_ON(!list_empty(&obj->mm.region_link));
+		if (obj->mm.madv != I915_MADV_WILLNEED)
+			list = &mem->objects.purgeable;
+		else
+			list = &mem->objects.list;
+		list_move_tail(&obj->mm.region_link, list);
+		mutex_unlock(&mem->objects.lock);
 	}
 }
 
@@ -239,6 +254,14 @@ __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj)
 		obj->mm.madv = I915_MADV_WILLNEED;
 
 	i915_gem_object_make_unshrinkable(obj);
+
+	if (!list_empty(&obj->mm.region_link)) {
+		struct intel_memory_region *mem = obj->mm.region;
+
+		mutex_lock(&mem->objects.lock);
+		list_del_init(&obj->mm.region_link);
+		mutex_unlock(&mem->objects.lock);
+	}
 
 	if (obj->mm.mapping) {
 		unmap_object(obj, page_mask_bits(obj->mm.mapping));
