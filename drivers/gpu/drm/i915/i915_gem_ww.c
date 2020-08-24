@@ -52,11 +52,18 @@ int __must_check i915_gem_ww_ctx_backoff(struct i915_gem_ww_ctx *ww)
 	else
 		dma_resv_lock_slow(ww->contended->base.resv, &ww->ctx);
 
-	if (!ret)
-		list_add_tail(&ww->contended->obj_link, &ww->obj_list);
-	else
-		i915_gem_object_put(ww->contended);
+	if (ret)
+		goto out;
+	/*
+	 * Unlocking the contended lock again, as might not need it in
+	 * the retried transaction. This does not increase starvation,
+	 * but it's opening up for a wakeup flood if there are many
+	 * transactions relaxing on this object.
+	 */
+	dma_resv_unlock(ww->contended->base.resv);
 
+out:
+	i915_gem_object_put(ww->contended);
 	ww->contended = NULL;
 
 	return ret;
