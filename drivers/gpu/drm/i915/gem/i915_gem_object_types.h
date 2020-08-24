@@ -260,11 +260,6 @@ struct drm_i915_gem_object {
 	 */
 	struct i915_address_space *shares_resv_from;
 
-	/**
-	 * @evict_locked: Whether @obj_link sits on the eviction_list
-	 */
-	bool evict_locked;
-
 	union {
 		struct rcu_head rcu;
 		struct llist_node freed;
@@ -439,6 +434,11 @@ struct drm_i915_gem_object {
 	 *   critical, i.e userspace is free to race against itself.
 	 */
 	unsigned int cache_dirty:1;
+
+	/**
+	 * @evict_locked: Whether @obj_link sits on the eviction_list
+	 */
+	bool evict_locked:1;
 
 	/**
 	 * @read_domains: Read memory domains.

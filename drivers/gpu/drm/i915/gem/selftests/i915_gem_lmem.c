@@ -76,6 +76,7 @@ static int igt_lmem_clear(void *arg)
 			u64 offset;
 
 			err = __intel_memory_region_get_pages_buddy(gt->lmem,
+								    NULL,
 								    size,
 								    0,
 								    &blocks);

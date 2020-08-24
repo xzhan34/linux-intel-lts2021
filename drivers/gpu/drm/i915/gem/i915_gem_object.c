@@ -106,12 +106,15 @@ struct drm_i915_gem_object *i915_gem_object_alloc(void)
 		return NULL;
 	obj->base.funcs = &i915_gem_object_funcs;
 
+	INIT_LIST_HEAD(&obj->mm.region.link);
 	INIT_ACTIVE_FENCE(&obj->mm.migrate);
 	return obj;
 }
 
 void i915_gem_object_free(struct drm_i915_gem_object *obj)
 {
+	GEM_BUG_ON(obj->mm.region.mem);
+
 	return kmem_cache_free(slab_objects, obj);
 }
 
@@ -130,7 +133,6 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	INIT_LIST_HEAD(&obj->vma.list);
 
 	INIT_LIST_HEAD(&obj->mm.link);
-	INIT_LIST_HEAD(&obj->mm.region.link);
 
 	INIT_LIST_HEAD(&obj->lut_list);
 	spin_lock_init(&obj->lut_lock);
@@ -355,7 +357,6 @@ void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 	atomic_set(&obj->mm.pages_pin_count, 0);
 	__i915_gem_object_put_pages(obj);
 	GEM_BUG_ON(i915_gem_object_has_pages(obj));
-	GEM_BUG_ON(!list_empty(&obj->mm.region.link));
 	GEM_BUG_ON(!list_empty(&obj->mm.link));
 	bitmap_free(obj->bit_17);
 

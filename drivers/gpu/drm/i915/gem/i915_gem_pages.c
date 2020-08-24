@@ -106,18 +106,42 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 	}
 }
 
+static int add_to_ww_evictions(struct drm_i915_gem_object *obj)
+{
+	struct intel_memory_region *mem;
+	struct i915_gem_ww_ctx *ww;
+	int err;
+
+	ww = i915_gem_get_locking_ctx(obj);
+	if (!ww)
+		return 0;
+
+	mem = obj->mm.region.mem;
+	if (!mem)
+		return 0;
+
+	spin_lock(&mem->objects.lock);
+	err = intel_memory_region_add_to_ww_evictions(mem, ww, obj);
+	spin_unlock(&mem->objects.lock);
+
+	return err;
+}
+
 int ____i915_gem_object_get_pages(struct drm_i915_gem_object *obj)
 {
-	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	int err;
 
 	assert_object_held_shared(obj);
 
 	if (unlikely(obj->mm.madv != I915_MADV_WILLNEED)) {
-		drm_dbg(&i915->drm,
+		drm_dbg(obj->base.dev,
 			"Attempting to obtain a purgeable object\n");
 		return -EFAULT;
 	}
+
+	err = add_to_ww_evictions(obj);
+	if (err)
+		return err;
 
 	err = obj->ops->get_pages(obj);
 	GEM_BUG_ON(!err && !i915_gem_object_has_pages(obj));

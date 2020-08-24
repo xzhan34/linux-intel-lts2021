@@ -999,7 +999,7 @@ void i915_gem_init_lmem(struct intel_gt *gt)
 	if (!ce)
 		goto err_wf;
 
-	err = __intel_memory_region_get_pages_buddy(gt->lmem,
+	err = __intel_memory_region_get_pages_buddy(gt->lmem, NULL,
 						    SZ_16M, 0,
 						    &blocks);
 	if (err)

@@ -15,6 +15,7 @@
 
 #include "i915_buddy.h"
 
+struct i915_gem_ww_ctx;
 struct drm_i915_private;
 struct drm_i915_gem_object;
 struct intel_memory_region;
@@ -102,6 +103,7 @@ struct intel_memory_region {
 		spinlock_t lock; /* Protects access to objects */
 		struct list_head list;
 		struct list_head purgeable;
+		struct list_head locked;
 	} objects;
 
 	bool is_range_manager;
@@ -117,6 +119,7 @@ int intel_memory_region_init_buddy(struct intel_memory_region *mem);
 void intel_memory_region_release_buddy(struct intel_memory_region *mem);
 
 int __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
+					  struct i915_gem_ww_ctx *ww,
 					  resource_size_t size,
 					  unsigned int flags,
 					  struct list_head *blocks);
@@ -127,6 +130,10 @@ __intel_memory_region_get_block_buddy(struct intel_memory_region *mem,
 void __intel_memory_region_put_pages_buddy(struct intel_memory_region *mem,
 					   struct list_head *blocks);
 void __intel_memory_region_put_block_buddy(struct i915_buddy_block *block);
+
+int intel_memory_region_add_to_ww_evictions(struct intel_memory_region *mem,
+					    struct i915_gem_ww_ctx *ww,
+					    struct drm_i915_gem_object *obj);
 
 struct intel_memory_region *
 intel_memory_region_create(struct intel_gt *gt,

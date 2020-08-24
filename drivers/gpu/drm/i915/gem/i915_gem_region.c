@@ -27,6 +27,7 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 				unsigned int *page_sizes)
 {
 	const u64 max_segment = i915_sg_segment_size();
+	struct i915_gem_ww_ctx *ww = i915_gem_get_locking_ctx(obj);
 	struct intel_memory_region *mem = obj->mm.region.mem;
 	struct list_head *blocks = &obj->mm.blocks;
 	resource_size_t size = obj->base.size;
@@ -58,7 +59,8 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 	if (obj->flags & I915_BO_ALLOC_CONTIGUOUS)
 		flags |= I915_ALLOC_CONTIGUOUS;
 
-	ret = __intel_memory_region_get_pages_buddy(mem, size, flags, blocks);
+	ret = __intel_memory_region_get_pages_buddy(mem, ww, size, flags,
+						    blocks);
 	if (ret)
 		goto err_free_sg;
 
@@ -129,7 +131,19 @@ void i915_gem_object_init_memory_region(struct drm_i915_gem_object *obj,
 
 void i915_gem_object_release_memory_region(struct drm_i915_gem_object *obj)
 {
-	intel_memory_region_put(obj->mm.region.mem);
+	struct intel_memory_region *mem;
+
+	mem = fetch_and_zero(&obj->mm.region.mem);
+	if (!mem)
+		return;
+
+	if (!list_empty(&obj->mm.region.link)) {
+		spin_lock(&mem->objects.lock);
+		list_del_init(&obj->mm.region.link);
+		spin_unlock(&mem->objects.lock);
+	}
+
+	intel_memory_region_put(mem);
 }
 
 struct drm_i915_gem_object *
