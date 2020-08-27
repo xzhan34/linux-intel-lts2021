@@ -2766,7 +2766,7 @@ int intel_uncore_wait_for_lmem(struct intel_uncore *uncore)
 	struct drm_i915_private *i915 = uncore->i915;
 	unsigned long timeout, start;
 
-	if (!IS_DGFX(i915))
+	if (!IS_DGFX(i915) || IS_SRIOV_VF(i915))
 		return 0;
 
 	if (__lmem_is_init(uncore))
