@@ -79,14 +79,14 @@ static const struct intel_memory_region_ops mock_region_ops = {
 };
 
 struct intel_memory_region *
-mock_region_create(struct drm_i915_private *i915,
+mock_region_create(struct intel_gt *gt,
 		   resource_size_t start,
 		   resource_size_t size,
 		   resource_size_t min_page_size,
 		   resource_size_t io_start,
 		   resource_size_t io_size)
 {
-	return intel_memory_region_create(i915, start, size, min_page_size,
+	return intel_memory_region_create(gt, start, size, min_page_size,
 					  io_start, io_size,
 					  INTEL_MEMORY_MOCK, 0,
 					  &mock_region_ops);

@@ -348,7 +348,7 @@ static int intel_memory_region_memtest(struct intel_memory_region *mem,
 }
 
 struct intel_memory_region *
-intel_memory_region_create(struct drm_i915_private *i915,
+intel_memory_region_create(struct intel_gt *gt,
 			   resource_size_t start,
 			   resource_size_t size,
 			   resource_size_t min_page_size,
@@ -365,7 +365,8 @@ intel_memory_region_create(struct drm_i915_private *i915,
 	if (!mem)
 		return ERR_PTR(-ENOMEM);
 
-	mem->i915 = i915;
+	mem->gt = gt;
+	mem->i915 = gt->i915;
 	mem->region = (struct resource)DEFINE_RES_MEM(start, size);
 	mem->io_start = io_start;
 	mem->io_size = io_size;
@@ -447,6 +448,7 @@ int intel_memory_regions_hw_probe(struct drm_i915_private *i915)
 
 	for (i = 0; i < ARRAY_SIZE(i915->mm.regions); i++) {
 		struct intel_memory_region *mem = ERR_PTR(-ENODEV);
+		struct intel_gt *gt;
 		u16 type, instance;
 
 		if (!HAS_REGION(i915, BIT(i)))
@@ -454,17 +456,19 @@ int intel_memory_regions_hw_probe(struct drm_i915_private *i915)
 
 		type = intel_region_map[i].class;
 		instance = intel_region_map[i].instance;
+		gt = to_gt(i915);
+
 		switch (type) {
 		case INTEL_MEMORY_SYSTEM:
-			mem = i915_gem_shmem_setup(i915, type, instance);
+			mem = i915_gem_shmem_setup(gt, type, instance);
 			break;
 		case INTEL_MEMORY_STOLEN_LOCAL:
-			mem = i915_gem_stolen_lmem_setup(i915, type, instance);
+			mem = i915_gem_stolen_lmem_setup(gt, type, instance);
 			if (!IS_ERR(mem))
 				i915->mm.stolen_region = mem;
 			break;
 		case INTEL_MEMORY_STOLEN_SYSTEM:
-			mem = i915_gem_stolen_smem_setup(i915, type, instance);
+			mem = i915_gem_stolen_smem_setup(gt, type, instance);
 			if (!IS_ERR(mem))
 				i915->mm.stolen_region = mem;
 			break;

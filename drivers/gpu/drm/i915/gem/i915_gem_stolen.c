@@ -90,11 +90,12 @@ static bool is_dsm_invalid(struct drm_i915_private *i915, struct resource *dsm)
 	return false;
 }
 
-static int i915_adjust_stolen(struct drm_i915_private *i915,
+static int i915_adjust_stolen(struct intel_memory_region *mem,
 			      struct resource *dsm)
 {
-	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
-	struct intel_uncore *uncore = ggtt->vm.gt->uncore;
+	struct i915_ggtt *ggtt = mem->gt->ggtt;
+	struct intel_uncore *uncore = mem->gt->uncore;
+	struct drm_i915_private *i915 = mem->i915;
 	struct resource *r;
 
 	if (is_dsm_invalid(i915, dsm))
@@ -412,7 +413,7 @@ static void icl_get_stolen_reserved(struct drm_i915_private *i915,
 static int i915_gem_init_stolen(struct intel_memory_region *mem)
 {
 	struct drm_i915_private *i915 = mem->i915;
-	struct intel_uncore *uncore = &i915->uncore;
+	struct intel_uncore *uncore = mem->gt->uncore;
 	resource_size_t reserved_base, stolen_top;
 	resource_size_t reserved_total, reserved_size;
 
@@ -437,7 +438,7 @@ static int i915_gem_init_stolen(struct intel_memory_region *mem)
 
 	i915->dsm = mem->region;
 
-	if (i915_adjust_stolen(i915, &i915->dsm))
+	if (i915_adjust_stolen(mem, &i915->dsm))
 		return 0;
 
 	GEM_BUG_ON(is_dsm_invalid(i915, &i915->dsm));
@@ -833,10 +834,10 @@ static inline bool lmembar_is_igpu_stolen(struct drm_i915_private *i915)
 }
 
 struct intel_memory_region *
-i915_gem_stolen_lmem_setup(struct drm_i915_private *i915, u16 type,
-			   u16 instance)
+i915_gem_stolen_lmem_setup(struct intel_gt *gt, u16 type,  u16 instance)
 {
-	struct intel_uncore *uncore = &i915->uncore;
+	struct intel_uncore *uncore = gt->uncore;
+	struct drm_i915_private *i915 = gt->i915;
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
 	resource_size_t dsm_size, dsm_base, lmem_size;
 	struct intel_memory_region *mem;
@@ -898,7 +899,7 @@ i915_gem_stolen_lmem_setup(struct drm_i915_private *i915, u16 type,
 	min_page_size = HAS_64K_PAGES(i915) ? I915_GTT_PAGE_SIZE_64K :
 						I915_GTT_PAGE_SIZE_4K;
 
-	mem = intel_memory_region_create(i915, dsm_base, dsm_size,
+	mem = intel_memory_region_create(gt, dsm_base, dsm_size,
 					 min_page_size,
 					 io_start, io_size,
 					 type, instance,
@@ -924,12 +925,11 @@ i915_gem_stolen_lmem_setup(struct drm_i915_private *i915, u16 type,
 }
 
 struct intel_memory_region*
-i915_gem_stolen_smem_setup(struct drm_i915_private *i915, u16 type,
-			   u16 instance)
+i915_gem_stolen_smem_setup(struct intel_gt *gt, u16 type, u16 instance)
 {
 	struct intel_memory_region *mem;
 
-	mem = intel_memory_region_create(i915,
+	mem = intel_memory_region_create(gt,
 					 intel_graphics_stolen_res.start,
 					 resource_size(&intel_graphics_stolen_res),
 					 PAGE_SIZE, 0, 0, type, instance,

@@ -174,7 +174,7 @@ static int igt_mock_reserve(void *arg)
 	if (!order)
 		return 0;
 
-	mem = mock_region_create(i915, 0, SZ_2G, I915_GTT_PAGE_SIZE_4K, 0, 0);
+	mem = mock_region_create(to_gt(i915), 0, SZ_2G, I915_GTT_PAGE_SIZE_4K, 0, 0);
 	if (IS_ERR(mem)) {
 		pr_err("failed to create memory region\n");
 		err = PTR_ERR(mem);
@@ -393,7 +393,7 @@ static int igt_mock_splintered_region(void *arg)
 	 */
 
 	size = (SZ_4G - 1) & PAGE_MASK;
-	mem = mock_region_create(i915, 0, size, PAGE_SIZE, 0, 0);
+	mem = mock_region_create(to_gt(i915), 0, size, PAGE_SIZE, 0, 0);
 	if (IS_ERR(mem))
 		return PTR_ERR(mem);
 
@@ -472,7 +472,7 @@ static int igt_mock_max_segment(void *arg)
 	 */
 
 	size = SZ_8G;
-	mem = mock_region_create(i915, 0, size, PAGE_SIZE, 0, 0);
+	mem = mock_region_create(to_gt(i915), 0, size, PAGE_SIZE, 0, 0);
 	if (IS_ERR(mem))
 		return PTR_ERR(mem);
 
@@ -1363,7 +1363,7 @@ int intel_memory_region_mock_selftests(void)
 	if (!i915)
 		return -ENOMEM;
 
-	mem = mock_region_create(i915, 0, SZ_2G, I915_GTT_PAGE_SIZE_4K, 0, 0);
+	mem = mock_region_create(to_gt(i915), 0, SZ_2G, I915_GTT_PAGE_SIZE_4K, 0, 0);
 	if (IS_ERR(mem)) {
 		pr_err("failed to create memory region\n");
 		err = PTR_ERR(mem);

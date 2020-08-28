@@ -641,10 +641,10 @@ static const struct intel_memory_region_ops shmem_region_ops = {
 	.init_object = shmem_object_init,
 };
 
-struct intel_memory_region *i915_gem_shmem_setup(struct drm_i915_private *i915,
+struct intel_memory_region *i915_gem_shmem_setup(struct intel_gt *gt,
 						 u16 type, u16 instance)
 {
-	return intel_memory_region_create(i915, 0,
+	return intel_memory_region_create(gt, 0,
 					  totalram_pages() << PAGE_SHIFT,
 					  PAGE_SIZE, 0, 0,
 					  type, instance,

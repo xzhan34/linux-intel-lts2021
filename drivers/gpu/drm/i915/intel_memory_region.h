@@ -87,6 +87,7 @@ struct intel_memory_region {
 	u16 instance;
 	enum intel_region_id id;
 	char name[16];
+	struct intel_gt *gt; /* GT closest to this region. */
 	bool private; /* not for userspace */
 
 	struct list_head reserved;
@@ -122,7 +123,7 @@ void __intel_memory_region_put_pages_buddy(struct intel_memory_region *mem,
 void __intel_memory_region_put_block_buddy(struct i915_buddy_block *block);
 
 struct intel_memory_region *
-intel_memory_region_create(struct drm_i915_private *i915,
+intel_memory_region_create(struct intel_gt *gt,
 			   resource_size_t start,
 			   resource_size_t size,
 			   resource_size_t min_page_size,

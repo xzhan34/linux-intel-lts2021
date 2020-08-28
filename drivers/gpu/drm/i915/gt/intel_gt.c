@@ -93,6 +93,7 @@ static int intel_gt_probe_lmem(struct intel_gt *gt)
 
 	mem->id = id;
 	mem->instance = instance;
+	mem->gt = gt;
 
 	intel_memory_region_set_name(mem, "local%u", mem->instance);
 

@@ -132,7 +132,7 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 
 	min_page_size = HAS_64K_PAGES(i915) ? I915_GTT_PAGE_SIZE_64K :
 						I915_GTT_PAGE_SIZE_4K;
-	mem = intel_memory_region_create(i915,
+	mem = intel_memory_region_create(gt,
 					 0,
 					 lmem_size,
 					 min_page_size,

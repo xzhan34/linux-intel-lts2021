@@ -1425,7 +1425,7 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 void i915_gem_init_early(struct drm_i915_private *dev_priv);
 void i915_gem_cleanup_early(struct drm_i915_private *dev_priv);
 
-struct intel_memory_region *i915_gem_shmem_setup(struct drm_i915_private *i915,
+struct intel_memory_region *i915_gem_shmem_setup(struct intel_gt *gt,
 						 u16 type, u16 instance);
 
 static inline void i915_gem_drain_freed_objects(struct drm_i915_private *i915)
