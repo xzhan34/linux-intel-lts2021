@@ -26,6 +26,17 @@ struct prelim_i915_uevent {
  *	either engine or GPU is made.
  */
 #define PRELIM_I915_RESET_FAILED_UEVENT	"RESET_FAILED"
+
+/*
+ * PRELIM_I915_MEMORY_HEALTH_UEVENT - Generated when driver receives a memory
+ *	degradation error from the GPU FW. The event serves as notification to
+ *	an Admin to reboot the system as soon as possible, due to the fact that
+ *	device is no longer RUNTIME recoverable again. This event will always
+ *	have a value of 1, which indicates that uncorrectable error has been
+ *	detected, and that runtime memory sparing is not feasible without system
+ *	reboot - for recovery of failed BANK.
+ */
+#define PRELIM_I915_MEMORY_HEALTH_UEVENT	"MEMORY_HEALTH"
 };
 
 struct prelim_i915_user_extension {
