@@ -1343,6 +1343,7 @@ lrc_pin(struct intel_context *ce,
 
 void lrc_unpin(struct intel_context *ce)
 {
+	lrc_update_runtime(ce);
 	if (unlikely(ce->parallel.last_rq)) {
 		i915_request_put(ce->parallel.last_rq);
 		ce->parallel.last_rq = NULL;

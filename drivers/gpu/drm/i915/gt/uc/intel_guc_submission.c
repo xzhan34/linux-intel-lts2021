@@ -3625,6 +3625,7 @@ static void remove_from_context(struct i915_request *rq)
 }
 
 static const struct intel_context_ops guc_context_ops = {
+	.flags = COPS_RUNTIME_CYCLES,
 	.alloc = guc_context_alloc,
 
 	.close = guc_context_close,
@@ -3911,6 +3912,7 @@ static struct intel_context *guc_clone_virtual(struct intel_engine_cs *src)
 }
 
 static const struct intel_context_ops virtual_guc_context_ops = {
+	.flags = COPS_RUNTIME_CYCLES,
 	.alloc = guc_virtual_context_alloc,
 
 	.close = guc_context_close,
@@ -4003,6 +4005,7 @@ static void guc_child_context_destroy(struct kref *kref)
 }
 
 static const struct intel_context_ops virtual_parent_context_ops = {
+	.flags = COPS_RUNTIME_CYCLES,
 	.alloc = guc_virtual_context_alloc,
 
 	.close = guc_context_close,
@@ -4027,6 +4030,7 @@ static const struct intel_context_ops virtual_parent_context_ops = {
 };
 
 static const struct intel_context_ops virtual_child_context_ops = {
+	.flags = COPS_RUNTIME_CYCLES,
 	.alloc = guc_virtual_context_alloc,
 
 	.pre_pin = guc_context_pre_pin,
