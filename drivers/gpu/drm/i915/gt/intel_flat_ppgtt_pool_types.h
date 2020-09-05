@@ -10,6 +10,8 @@
 #include <linux/types.h>
 #include <linux/wait.h>
 
+#include "i915_selftest.h"
+
 #define INTEL_FLAT_PPGTT_MAX_PINNED_OBJS	1024
 #define INTEL_FLAT_PPGTT_BB_OBJ_SIZE		SZ_8K
 #define INTEL_FLAT_PPGTT_MAX_PTE_ENTRIES	((INTEL_FLAT_PPGTT_BB_OBJ_SIZE >> 5) - 2)
@@ -40,6 +42,9 @@ struct intel_flat_ppgtt_pool {
 	wait_queue_head_t bind_wq;
 	struct list_head prq_list;
 	spinlock_t rq_lock;
+	I915_SELFTEST_DECLARE(struct {
+		atomic_t count;
+	} st;)
 };
 
 #endif /* INTEL_FLAT_PPGTT_POOL_TYPES_H */

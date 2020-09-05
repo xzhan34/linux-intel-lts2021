@@ -178,6 +178,10 @@ struct intel_gt;
 #define for_each_sgt_daddr(__dp, __iter, __sgt) \
 	__for_each_sgt_daddr(__dp, __iter, __sgt, I915_GTT_PAGE_SIZE)
 
+/* Same as for_each_sgt_daddr but iterator is pre-initialized */
+#define for_each_daddr(__dp, __iter) \
+	__for_each_daddr(__dp, __iter, I915_GTT_PAGE_SIZE)
+
 struct i915_page_table {
 	struct drm_i915_gem_object *base;
 	union {

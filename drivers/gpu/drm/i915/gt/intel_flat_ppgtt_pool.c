@@ -80,6 +80,8 @@ intel_flat_ppgtt_get_request(struct intel_flat_ppgtt_pool *fpp)
 	struct i915_request *rq;
 	int err;
 
+	I915_SELFTEST_DECLARE(atomic_inc(&fpp->st.count));
+
 	spin_lock(&fpp->rq_lock);
 	rq = list_first_entry_or_null(&fpp->prq_list, struct i915_request, fpp.gt_link);
 	if (rq) {

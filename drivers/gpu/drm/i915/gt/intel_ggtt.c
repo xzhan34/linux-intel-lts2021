@@ -23,12 +23,25 @@
 #include "i915_scatterlist.h"
 #include "i915_utils.h"
 #include "i915_vgpu.h"
-
-#include "intel_gtt.h"
 #include "gen8_ppgtt.h"
+
+#include "intel_flat_ppgtt_pool.h"
+#include "intel_gpu_commands.h"
+#include "intel_gt.h"
+#include "intel_gtt.h"
+#include "intel_gt_pm.h"
+#include "intel_ring.h"
 
 static int
 i915_get_ggtt_vma_pages(struct i915_vma *vma);
+
+static intel_wakeref_t l4wa_pm_get(struct intel_gt *gt)
+{
+	if (!i915_is_level4_wa_active(gt))
+		return 0;
+
+	return intel_gt_pm_get_if_awake_l4(gt);
+}
 
 static void i915_ggtt_color_adjust(const struct drm_mm_node *node,
 				   unsigned long color,
@@ -258,6 +271,63 @@ static void gen8_ggtt_insert_page_wa(struct i915_address_space *vm,
 	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
 }
 
+static void gen8_ggtt_insert_page_wa_bcs(struct i915_address_space *vm,
+					 dma_addr_t addr,
+					 u64 offset,
+					 enum i915_cache_level level,
+					 u32 flags)
+{
+	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
+	struct intel_gt *gt = vm->gt;
+	u64 pte_encode = gen8_ggtt_pte_encode(addr, level, flags);
+	struct i915_request *rq;
+	intel_wakeref_t wakeref;
+	u32 *cs;
+
+	wakeref = l4wa_pm_get(gt);
+	if (!wakeref) {
+		gen8_ggtt_insert_page(vm, addr, offset, level, flags);
+		return;
+	}
+
+	/* inserts a page with addr at offset in GGTT */
+	rq = intel_flat_ppgtt_get_request(&gt->fpp);
+	if (IS_ERR(rq)) {
+		drm_info(&gt->i915->drm, "Fallback to legacy way ggtt update\n");
+		goto err;
+	}
+
+	cs = intel_ring_begin(rq, 4);
+	if (IS_ERR(cs)) {
+		drm_err(&gt->i915->drm, "Cannot reserve space on ring %ld\n", PTR_ERR(cs));
+		i915_request_set_error_once(rq, PTR_ERR(cs));
+		goto err_rq;
+	}
+
+	*cs++ = MI_UPDATE_GTT | 2;
+	*cs++ = offset;
+	*cs++ = lower_32_bits(pte_encode);
+	*cs++ = upper_32_bits(pte_encode);
+
+	intel_ring_advance(rq, cs);
+
+	i915_request_get(rq);
+	i915_request_add(rq);
+
+	__i915_request_wait(rq, 0, MAX_SCHEDULE_TIMEOUT);
+
+	i915_request_put(rq);
+	intel_gt_pm_put_async_l4(gt, wakeref);
+	ggtt->invalidate(ggtt);
+	return;
+
+err_rq:
+	i915_request_add(rq);
+err:
+	intel_gt_pm_put_async_l4(gt, wakeref);
+	gen8_ggtt_insert_page(vm, addr, offset, level, flags);
+}
+
 static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
 				     struct i915_vm_pt_stash *stash,
 				     struct i915_vma *vma,
@@ -310,8 +380,135 @@ static void gen8_ggtt_insert_entries_wa(struct i915_address_space *vm,
 	gen8_ggtt_insert_entries(vm, stash, vma, level, flags);
 
 	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
-
 }
+
+static void gen8_ggtt_insert_entries_wa_bcs(struct i915_address_space *vm,
+					    struct i915_vm_pt_stash *stash,
+					    struct i915_vma *vma,
+					    enum i915_cache_level level,
+					    u32 flags)
+{
+	const gen8_pte_t pte_encode = gen8_ggtt_pte_encode(0, level, flags);
+	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
+	struct intel_gt *gt = vm->gt;
+	unsigned int num_entries, max_entries;
+	struct i915_request *wait = NULL;
+	intel_wakeref_t wakeref;
+	unsigned int count = 0;
+	struct sgt_iter iter;
+	u64 start, guard;
+	dma_addr_t addr;
+	u32 *cs;
+
+	wakeref = l4wa_pm_get(gt);
+	if (!wakeref) {
+		gen8_ggtt_insert_entries(vm, stash, vma, level, flags);
+		return;
+	}
+
+	max_entries = vma->node.size / I915_GTT_PAGE_SIZE;
+	start = vma->node.start;
+
+	guard = start + vma->guard;
+	while (start < guard) {
+		struct i915_request *rq;
+
+		num_entries = min_t(u32, 128, guard - start);
+		max_entries -= num_entries;
+
+		rq = intel_flat_ppgtt_get_request(&gt->fpp);
+		if (IS_ERR(rq)) {
+			drm_info(&gt->i915->drm, "Fallback to legacy way to update ggtt\n");
+			goto flat_err;
+		}
+
+		cs = intel_ring_begin(rq, 2 * num_entries + 2);
+		if (IS_ERR(cs)) {
+			drm_err(&gt->i915->drm, "Cannot reserve space on ring %ld\n", PTR_ERR(cs));
+			i915_request_set_error_once(rq, PTR_ERR(cs));
+			i915_request_add(rq);
+			goto flat_err;
+		}
+		*cs++ = MI_UPDATE_GTT | (2 * num_entries);
+		*cs++ = start;
+		memset64((u64 *)cs, vm->scratch[0]->encode, num_entries);
+		cs += num_entries * 2;
+		intel_ring_advance(rq, cs);
+
+		start += I915_GTT_PAGE_SIZE * num_entries;
+
+		i915_request_put(wait);
+		wait = i915_request_get(rq);
+		i915_request_add(rq);
+	}
+
+	iter = __sgt_iter(vma->pages->sgl, true);
+	do {
+		struct i915_request *rq;
+
+		count = 0;
+		num_entries = min_t(u32, 128, max_entries);
+		/*
+		 * Note that we ignore PTE_READ_ONLY here. The caller must be careful
+		 * not to allow the user to override access to a read only page.
+		 */
+		rq = intel_flat_ppgtt_get_request(&gt->fpp);
+		if (IS_ERR(rq)) {
+			drm_info(&gt->i915->drm, "Fallback to legacy way to update ggtt\n");
+			goto flat_err;
+		}
+
+		cs = intel_ring_begin(rq, (2 * num_entries) + 2);
+		if (IS_ERR(cs)) {
+			drm_err(&gt->i915->drm, "Cannot reserve space on ring %ld\n", PTR_ERR(cs));
+			i915_request_set_error_once(rq, PTR_ERR(cs));
+			i915_request_add(rq);
+			goto flat_err;
+		}
+		*cs++ = MI_UPDATE_GTT | (2 * num_entries);
+		*cs++ = start;
+
+		for_each_daddr(addr, iter) {
+			if (count == num_entries)
+				break;
+			*cs++ = lower_32_bits(pte_encode | addr);
+			*cs++ = upper_32_bits(pte_encode | addr);
+			count++;
+		}
+
+		for (;count < num_entries; count++) {
+			*cs++ = lower_32_bits(vm->scratch[0]->encode);
+			*cs++ = upper_32_bits(vm->scratch[0]->encode);
+		}
+		intel_ring_advance(rq, cs);
+
+		i915_request_put(wait);
+		wait = i915_request_get(rq);
+		i915_request_add(rq);
+
+		max_entries -= num_entries;
+		start += (I915_GTT_PAGE_SIZE * num_entries);
+	} while (max_entries);
+
+	__i915_request_wait(wait, 0, MAX_SCHEDULE_TIMEOUT);
+	i915_request_put(wait);
+	intel_gt_pm_put_async_l4(gt, wakeref);
+	/*
+	 * We want to flush the TLBs only after we're certain all the PTE
+	 * updates have finished.
+	 */
+	ggtt->invalidate(ggtt);
+	return;
+
+flat_err:
+	if (wait) {
+		__i915_request_wait(wait, 0, MAX_SCHEDULE_TIMEOUT);
+		i915_request_put(wait);
+	}
+	intel_gt_pm_put_async_l4(gt, wakeref);
+	gen8_ggtt_insert_entries(vm, stash, vma, level, flags);
+}
+
 static void gen6_ggtt_insert_page(struct i915_address_space *vm,
 				  dma_addr_t addr,
 				  u64 offset,
@@ -995,7 +1192,6 @@ static int gen8_gmch_probe(struct i915_ggtt *ggtt)
 {
 	struct drm_i915_private *i915 = ggtt->vm.i915;
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
-	bool enable_wa = i915_is_mem_wa_enabled(i915, I915_WA_IDLE_GPU_BEFORE_UPDATE);
 	unsigned int size;
 	u16 snb_gmch_ctl;
 
@@ -1018,11 +1214,23 @@ static int gen8_gmch_probe(struct i915_ggtt *ggtt)
 
 	ggtt->vm.total = (size / sizeof(gen8_pte_t)) * I915_GTT_PAGE_SIZE;
 	ggtt->vm.cleanup = gen6_gmch_remove;
-	ggtt->vm.insert_page = enable_wa ? gen8_ggtt_insert_page_wa : gen8_ggtt_insert_page;
 	ggtt->vm.clear_range = nop_clear_range;
 	ggtt->vm.scratch_range = gen8_ggtt_clear_range;
 
-	ggtt->vm.insert_entries = enable_wa ? gen8_ggtt_insert_entries_wa : gen8_ggtt_insert_entries;
+	if (i915_is_mem_wa_enabled(i915, I915_WA_USE_FLAT_PPGTT_UPDATE)) {
+		ggtt->vm.insert_entries = gen8_ggtt_insert_entries_wa_bcs;
+		ggtt->vm.insert_page = gen8_ggtt_insert_page_wa_bcs;
+		ggtt->vm.bind_async_flags =
+			I915_VMA_GLOBAL_BIND |
+			I915_VMA_LOCAL_BIND |
+			I915_VMA_ERROR;
+	} else if (i915_is_mem_wa_enabled(i915, I915_WA_IDLE_GPU_BEFORE_UPDATE)) {
+		ggtt->vm.insert_entries = gen8_ggtt_insert_entries_wa;
+		ggtt->vm.insert_page = gen8_ggtt_insert_page_wa;
+	} else  {
+		ggtt->vm.insert_entries = gen8_ggtt_insert_entries;
+		ggtt->vm.insert_page = gen8_ggtt_insert_page;
+	}
 
 	/*
 	 * Serialize GTT updates with aperture access on BXT if VT-d is on,
@@ -1037,8 +1245,13 @@ static int gen8_gmch_probe(struct i915_ggtt *ggtt)
 
 	ggtt->invalidate = gen8_ggtt_invalidate;
 
-	ggtt->vm.vma_ops.bind_vma    = enable_wa ? ggtt_bind_vma_wa : intel_ggtt_bind_vma;
-	ggtt->vm.vma_ops.unbind_vma  = enable_wa ? ggtt_unbind_vma_wa : intel_ggtt_unbind_vma;
+	if (i915_is_mem_wa_enabled(i915, I915_WA_IDLE_GPU_BEFORE_UPDATE)) {
+		ggtt->vm.vma_ops.bind_vma = ggtt_bind_vma_wa;
+		ggtt->vm.vma_ops.unbind_vma  = ggtt_unbind_vma_wa;
+	} else {
+		ggtt->vm.vma_ops.bind_vma = intel_ggtt_bind_vma;
+		ggtt->vm.vma_ops.unbind_vma  = intel_ggtt_unbind_vma;
+	}
 	ggtt->vm.vma_ops.set_pages   = ggtt_set_pages;
 	ggtt->vm.vma_ops.clear_pages = clear_pages;
 

@@ -105,6 +105,15 @@ static inline struct scatterlist *__sg_next(struct scatterlist *sg)
 	     (__iter) = __sgt_iter(__sg_next((__iter).sgp), false), 0 : 0)
 
 /**
+ * __for_each_daddr - iterates over the device addresses with pre-initialized
+ * iterator.
+ */
+#define __for_each_daddr(__dp, __iter, __step)			\
+	for (; ((__dp) = (__iter).dma + (__iter).curr), (__iter).sgp;	\
+	     (((__iter).curr += (__step)) >= (__iter).max) ?		\
+	     (__iter) = __sgt_iter(__sg_next((__iter).sgp), true), 0 : 0)
+
+/**
  * i915_sg_dma_sizes - Record the dma segment sizes of a scatterlist
  * @sg: The scatterlist
  *
