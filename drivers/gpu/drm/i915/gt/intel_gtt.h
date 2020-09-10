@@ -303,6 +303,7 @@ struct i915_address_space {
 	struct list_head non_priv_vm_bind_list;
 	struct drm_i915_gem_object *root_obj;
 	struct list_head priv_obj_list;
+	struct i915_active_fence user_fence;
 
 	unsigned long flags;
 #define I915_VM_HAS_PERSISTENT_BINDS 0

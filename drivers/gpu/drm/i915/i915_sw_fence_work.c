@@ -8,8 +8,8 @@
 
 static void fence_complete(struct dma_fence_work *f)
 {
-	if (f->ops->release)
-		f->ops->release(f);
+	if (f->ops->complete)
+		f->ops->complete(f);
 	dma_fence_signal(&f->dma);
 }
 
@@ -69,6 +69,9 @@ static const char *get_timeline_name(struct dma_fence *fence)
 static void fence_release(struct dma_fence *fence)
 {
 	struct dma_fence_work *f = container_of(fence, typeof(*f), dma);
+
+	if (f->ops->release)
+		f->ops->release(f);
 
 	i915_sw_fence_fini(&f->chain);
 

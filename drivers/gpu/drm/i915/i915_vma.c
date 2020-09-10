@@ -355,16 +355,37 @@ static int __vma_bind(struct dma_fence_work *work)
 	return 0;
 }
 
-static void __vma_release(struct dma_fence_work *work)
+static void __vma_user_fence_signal(struct i915_vma *vma)
+{
+	struct i915_sw_fence *f;
+
+	f = fetch_and_zero(&vma->bind_fence);
+	if (f)
+		i915_sw_fence_complete(f);
+}
+
+static void __vma_complete(struct dma_fence_work *work)
 {
 	struct i915_vma_work *vw = container_of(work, typeof(*vw), base);
+	struct i915_vma *vma;
+
+	vma = vw->vma;
+	if (!vma)
+		return;
 
 	if (work->dma.error) {
 		GEM_BUG_ON(test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &work->dma.flags));
-		set_bit(I915_VMA_ERROR_BIT, __i915_vma_flags(vw->vma));
-		if (vw->vm->scratch_range)
-			vw->vm->scratch_range(vw->vm, vw->vma->node.start, vw->vma->node.size);
+		set_bit(I915_VMA_ERROR_BIT, __i915_vma_flags(vma));
+		if (vma->vm->scratch_range)
+			vma->vm->scratch_range(vma->vm, vma->node.start, vma->node.size);
 	}
+
+	__vma_user_fence_signal(vma);
+}
+
+static void __vma_release(struct dma_fence_work *work)
+{
+	struct i915_vma_work *vw = container_of(work, typeof(*vw), base);
 
 	if (vw->pinned) {
 		__i915_gem_object_unpin_pages(vw->pinned);
@@ -378,6 +399,7 @@ static void __vma_release(struct dma_fence_work *work)
 static const struct dma_fence_work_ops bind_ops = {
 	.name = "bind",
 	.work = __vma_bind,
+	.complete = __vma_complete,
 	.release = __vma_release,
 };
 
@@ -1312,6 +1334,11 @@ void i915_vma_release(struct kref *ref)
 	GEM_BUG_ON(drm_mm_node_allocated(&vma->node));
 	GEM_BUG_ON(i915_active_fence_isset(&vma->active.excl));
 	GEM_BUG_ON(!list_empty(&vma->vm_bind_link));
+
+	if (unlikely(vma->bind_fence)) {
+		i915_sw_fence_set_error_once(vma->bind_fence, -EINVAL);
+		i915_sw_fence_complete(vma->bind_fence);
+	}
 
 	i915_vm_put(vma->vm);
 

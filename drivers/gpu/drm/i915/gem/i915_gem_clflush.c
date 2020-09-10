@@ -35,7 +35,7 @@ static int clflush_work(struct dma_fence_work *base)
 	return 0;
 }
 
-static void clflush_release(struct dma_fence_work *base)
+static void clflush_complete(struct dma_fence_work *base)
 {
 	struct clflush *clflush = container_of(base, typeof(*clflush), base);
 
@@ -46,7 +46,7 @@ static void clflush_release(struct dma_fence_work *base)
 static const struct dma_fence_work_ops clflush_ops = {
 	.name = "clflush",
 	.work = clflush_work,
-	.release = clflush_release,
+	.complete = clflush_complete,
 };
 
 static struct clflush *clflush_work_create(struct drm_i915_gem_object *obj)

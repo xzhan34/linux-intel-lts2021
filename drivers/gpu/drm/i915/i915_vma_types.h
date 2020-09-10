@@ -300,6 +300,7 @@ struct i915_vma {
 	struct list_head non_priv_vm_bind_link;
 	struct list_head vm_capture_link; /* Link in captureable VMA list */
 	struct list_head vm_rebind_link; /* Link in vm_rebind_list */
+	struct i915_sw_fence *bind_fence;
 
 	/** Interval tree structures for persistent vma */
 	struct rb_node rb;

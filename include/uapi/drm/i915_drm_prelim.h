@@ -310,6 +310,22 @@ struct prelim_drm_i915_gem_wait_user_fence {
 	__s64 timeout;
 };
 
+/* Deprecated in favor of prelim_drm_i915_vm_bind_ext_user_fence */
+struct prelim_drm_i915_vm_bind_ext_sync_fence {
+#define PRELIM_I915_VM_BIND_EXT_SYNC_FENCE     (PRELIM_I915_USER_EXT | 0)
+	struct i915_user_extension base;
+	__u64 addr;
+	__u64 val;
+};
+
+struct prelim_drm_i915_vm_bind_ext_user_fence {
+#define PRELIM_I915_VM_BIND_EXT_USER_FENCE     (PRELIM_I915_USER_EXT | 3)
+	struct i915_user_extension base;
+	__u64 addr;
+	__u64 val;
+	__u64 rsvd;
+};
+
 struct prelim_drm_i915_gem_vm_control {
 #define PRELIM_I915_VM_CREATE_FLAGS_USE_VM_BIND		(1 << 18)
 #define PRELIM_I915_VM_CREATE_FLAGS_UNKNOWN		(~(GENMASK(18, 18)))

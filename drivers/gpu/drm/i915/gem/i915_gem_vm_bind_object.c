@@ -4,6 +4,7 @@
  */
 
 #include <linux/interval_tree_generic.h>
+#include <linux/sched/mm.h>
 
 #include "gt/gen8_engine_cs.h"
 
@@ -11,6 +12,18 @@
 #include "i915_gem_gtt.h"
 #include "i915_gem_userptr.h"
 #include "i915_gem_vm_bind.h"
+#include "i915_sw_fence_work.h"
+#include "i915_user_extensions.h"
+
+struct user_fence {
+	struct mm_struct *mm;
+	void __user *ptr;
+	u64 val;
+};
+
+struct vm_bind_user_ext {
+	struct user_fence bind_fence;
+};
 
 #define START(node) ((node)->start)
 #define LAST(node) ((node)->last)
@@ -20,6 +33,131 @@ INTERVAL_TREE_DEFINE(struct i915_vma, rb, u64, __subtree_last,
 
 #undef START
 #undef LAST
+
+struct vm_bind_user_fence {
+	struct dma_fence_work base;
+	struct i915_sw_dma_fence_cb cb;
+	struct user_fence user_fence;
+	struct wait_queue_head *wq;
+};
+
+static int ufence_work(struct dma_fence_work *work)
+{
+	struct vm_bind_user_fence *vb =
+		container_of(work, struct vm_bind_user_fence, base);
+	struct user_fence *ufence = &vb->user_fence;
+	struct mm_struct *mm;
+	int ret = -EFAULT;
+
+	mm = ufence->mm;
+	if (!mm)
+		return 0;
+
+	if (mmget_not_zero(mm)) {
+		kthread_use_mm(mm);
+		if (copy_to_user(ufence->ptr, &ufence->val, sizeof(ufence->val)) == 0) {
+			wake_up_all(vb->wq);
+			ret = 0;
+		}
+		kthread_unuse_mm(mm);
+		mmput(mm);
+	}
+
+	return ret;
+}
+
+static void ufence_release(struct dma_fence_work *work)
+{
+	struct user_fence *ufence =
+		&container_of(work, struct vm_bind_user_fence, base)->user_fence;
+
+	if (ufence->mm)
+		mmdrop(ufence->mm);
+}
+
+static const struct dma_fence_work_ops ufence_ops = {
+	.name = "ufence",
+	.work = ufence_work,
+	.release = ufence_release,
+};
+
+static struct i915_sw_fence *
+ufence_create(struct i915_address_space *vm, struct vm_bind_user_ext *arg)
+{
+	struct vm_bind_user_fence *vb;
+	struct dma_fence *prev;
+
+	vb = kzalloc(sizeof(*vb), GFP_KERNEL | __GFP_NOWARN);
+	if (!vb)
+		return NULL;
+
+	dma_fence_work_init(&vb->base, &ufence_ops);
+	if (arg->bind_fence.mm) {
+		vb->user_fence = arg->bind_fence;
+		mmgrab(vb->user_fence.mm);
+	}
+	vb->wq = &vm->i915->user_fence_wq;
+
+	i915_sw_fence_await(&vb->base.chain); /* signaled by vma_bind */
+
+	/* Preserve the user's write ordering of the user fence seqno */
+	rcu_read_lock();
+	prev = __i915_active_fence_set(&vm->user_fence, &vb->base.dma);
+	if (prev)
+		__i915_sw_fence_await_dma_fence(&vb->base.chain, prev, &vb->cb);
+	rcu_read_unlock();
+
+	dma_fence_work_commit(&vb->base);
+	return &vb->base.chain;
+}
+
+static int __vm_bind_fence(struct vm_bind_user_ext *arg, u64 addr, u64 val)
+{
+	u64 x, __user *ptr = u64_to_user_ptr(addr);
+
+	if (arg->bind_fence.mm)
+		return -EINVAL;
+
+	if (!access_ok(ptr, sizeof(x)))
+		return -EFAULT;
+
+	/* Natural alignment, no page crossings */
+	if (!IS_ALIGNED(addr, sizeof(val)))
+		return -EINVAL;
+
+	arg->bind_fence.ptr = ptr;
+	arg->bind_fence.val = val;
+	arg->bind_fence.mm = current->mm;
+
+	return get_user(x, ptr);
+}
+
+static int vm_bind_sync_fence(struct i915_user_extension __user *base,
+                              void *data)
+{
+	struct prelim_drm_i915_vm_bind_ext_sync_fence ext;
+
+	if (copy_from_user(&ext, base, sizeof(ext)))
+		return -EFAULT;
+
+	return __vm_bind_fence(data, ext.addr, ext.val);
+}
+
+static int vm_bind_user_fence(struct i915_user_extension __user *base,
+                              void *data)
+{
+	struct prelim_drm_i915_vm_bind_ext_user_fence ext;
+
+	if (copy_from_user(&ext, base, sizeof(ext)))
+		return -EFAULT;
+
+	return __vm_bind_fence(data, ext.addr, ext.val);
+}
+
+static const i915_user_extension_fn vm_bind_extensions[] = {
+	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_VM_BIND_EXT_SYNC_FENCE)] = vm_bind_sync_fence,
+	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_VM_BIND_EXT_USER_FENCE)] = vm_bind_user_fence,
+};
 
 struct i915_vma *
 i915_gem_vm_bind_lookup_vma(struct i915_address_space *vm, u64 va)
@@ -158,6 +296,7 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 			 struct prelim_drm_i915_gem_vm_bind *va,
 			 struct drm_file *file)
 {
+	struct vm_bind_user_ext ext = {};
 	struct drm_i915_gem_object *obj;
 	struct i915_gem_ww_ctx ww;
 	struct i915_vma *vma;
@@ -186,6 +325,13 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 			goto put_obj;
 	}
 
+	ret = i915_user_extensions(u64_to_user_ptr(va->extensions),
+				   vm_bind_extensions,
+				   ARRAY_SIZE(vm_bind_extensions),
+				   &ext);
+	if (ret)
+		goto put_obj;
+
 	ret = i915_gem_vm_bind_lock_interruptible(vm);
 	if (ret)
 		goto put_obj;
@@ -195,6 +341,21 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 		ret = PTR_ERR(vma);
 		goto unlock_vm;
 	}
+
+	if (va->flags & PRELIM_I915_GEM_VM_BIND_IMMEDIATE) {
+		vma->bind_fence = ufence_create(vm, &ext);
+		if (!vma->bind_fence) {
+			ret = -ENOMEM;
+			goto unlock_vm;
+		}
+	} else {
+		/* bind during next execbuf, user fence here is invalid */
+		if (ext.bind_fence.mm) {
+			ret = -EINVAL;
+			goto unlock_vm;
+		}
+	}
+
 	/* Hold object reference until vm_unbind */
 	i915_gem_object_get(vma->obj);
 
