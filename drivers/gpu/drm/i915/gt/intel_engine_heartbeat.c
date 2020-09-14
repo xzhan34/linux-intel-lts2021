@@ -122,6 +122,23 @@ reset_engine(struct intel_engine_cs *engine, struct i915_request *rq)
 			      engine->name);
 }
 
+static bool check_attn(struct intel_engine_cs *engine)
+{
+	if (!intel_engine_has_eu_attention(engine))
+		return false;
+
+	/* We happily accept non attention without forcewake */
+	if (!intel_engine_eu_attention_fw(engine))
+		return false;
+
+	intel_gt_handle_error(engine->gt, engine->mask,
+			      I915_ERROR_CAPTURE,
+			      "eu attention on %s",
+			      engine->name);
+
+	return true;
+}
+
 static struct i915_request *get_next_heartbeat(struct intel_timeline *tl)
 {
 	struct i915_request *rq;
@@ -202,6 +219,9 @@ static void heartbeat(struct work_struct *wrk)
 		return;
 
 	if (intel_gt_is_wedged(engine->gt))
+		goto out;
+
+	if (check_attn(engine))
 		goto out;
 
 	if (i915_sched_engine_disabled(engine->sched_engine)) {
