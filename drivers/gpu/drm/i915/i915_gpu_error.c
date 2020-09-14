@@ -500,9 +500,9 @@ static void error_print_context(struct drm_i915_error_state_buf *m,
 				const char *header,
 				const struct i915_gem_context_coredump *ctx)
 {
-	err_printf(m, "%s%s[%d] prio %d, guilty %d active %d, runtime total %lluns, avg %lluns\n",
+	err_printf(m, "%s%s[%d] prio %d, guilty %d active %d sip %s, runtime total %lluns, avg %lluns\n",
 		   header, ctx->comm, ctx->pid, ctx->sched_attr.priority,
-		   ctx->guilty, ctx->active,
+		   ctx->guilty, ctx->active, ctx->sip_installed ? "true" : "false",
 		   ctx->total_runtime, ctx->avg_runtime);
 }
 
@@ -597,6 +597,11 @@ static void error_print_engine(struct drm_i915_error_state_buf *m,
 		err_printf(m, "  ELSP[%d]:", n);
 		error_print_request(m, " ", &ee->execlist[n]);
 	}
+
+	err_printf(m, "  TD_CTL: 0x%08x\n", ee->td_ctl);
+	err_printf(m, "  TD_ATT:");
+	for (n = 0; n < ARRAY_SIZE(ee->td_att); n++)
+		err_printf(m, " 0x%08x", ee->td_att[n]);
 }
 
 void i915_error_printf(struct drm_i915_error_state_buf *e, const char *f, ...)
@@ -1335,6 +1340,16 @@ static void engine_record_registers(struct intel_engine_coredump *ee)
 			}
 		}
 	}
+
+	if (GRAPHICS_VER(engine->i915) >= 9) {
+		struct intel_gt *gt = engine->gt;
+		int i;
+
+		ee->td_ctl = intel_gt_mcr_read_any_fw(gt, TD_CTL);
+
+		for (i = 0; i < ARRAY_SIZE(ee->td_att); i++)
+			ee->td_att[i] = intel_gt_mcr_read_any_fw(gt, TD_ATT(i));
+	}
 }
 
 static void record_request(const struct i915_request *request,
@@ -1406,6 +1421,8 @@ static bool record_context(struct i915_gem_context_coredump *e,
 	e->avg_runtime = intel_context_get_avg_runtime_ns(rq->context);
 
 	simulated = i915_gem_context_no_error_capture(ctx);
+
+	e->sip_installed = i915_gem_context_has_sip(ctx);
 
 	i915_gem_context_put(ctx);
 	return simulated;

@@ -179,4 +179,6 @@ typedef struct {
 
 #define VLV_DISPLAY_BASE		0x180000
 
+#define TD_ATT_MAX				3
+
 #endif /* __I915_REG_DEFS__ */

@@ -93,6 +93,8 @@ struct intel_engine_coredump {
 	u32 ctx_sr_ctl;
 	u32 dma_faddr_hi;
 	u32 dma_faddr_lo;
+	u32 td_att[TD_ATT_MAX];
+	u32 td_ctl; /* can be in power ctx on newer gens */
 	struct intel_instdone instdone;
 
 	/* GuC matched capture-lists info */
@@ -109,6 +111,7 @@ struct intel_engine_coredump {
 		int active;
 		int guilty;
 		struct i915_sched_attr sched_attr;
+		bool sip_installed;
 	} context;
 
 	struct i915_vma_coredump *vma;
