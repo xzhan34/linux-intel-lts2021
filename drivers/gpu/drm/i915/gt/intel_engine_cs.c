@@ -523,6 +523,10 @@ static int intel_engine_setup(struct intel_gt *gt, enum intel_engine_id id,
 		engine->flags |= I915_ENGINE_HAS_RCS_REG_STATE;
 		engine->flags |= I915_ENGINE_HAS_EU_PRIORITY;
 
+		/* EU attention is not available on VFs */
+		if(!IS_SRIOV_VF(gt->i915))
+			engine->flags |= I915_ENGINE_HAS_EU_ATTENTION;
+
 		/* we only care about run alone on platforms that have a CCS */
 		if (CCS_MASK(gt))
 			engine->flags |= I915_ENGINE_HAS_RUN_ALONE_MODE;
