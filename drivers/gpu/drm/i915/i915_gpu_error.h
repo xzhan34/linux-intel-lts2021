@@ -84,6 +84,7 @@ struct intel_engine_coredump {
 	u64 bbaddr;
 	u64 acthd;
 	u32 fault_reg;
+	u32 ctxt_sr_ctl;
 	u64 faddr;
 	u32 rc_psmi; /* sleep state */
 	u32 nopid;

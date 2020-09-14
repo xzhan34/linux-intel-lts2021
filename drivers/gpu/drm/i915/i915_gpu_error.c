@@ -593,6 +593,9 @@ static void error_print_engine(struct drm_i915_error_state_buf *m,
 		}
 	}
 
+	if (GRAPHICS_VER(m->i915) >= 8)
+		err_printf(m, "  CTXT_SR_CTL: 0x%08x\n", ee->ctxt_sr_ctl);
+
 	for (n = 0; n < ee->num_ports; n++) {
 		err_printf(m, "  ELSP[%d]:", n);
 		error_print_request(m, " ", &ee->execlist[n]);
@@ -1313,6 +1316,9 @@ static void engine_record_registers(struct intel_engine_coredump *ee)
 	ee->ctl = ENGINE_READ(engine, RING_CTL);
 	if (GRAPHICS_VER(i915) > 2)
 		ee->mode = ENGINE_READ(engine, RING_MI_MODE);
+
+	if (GRAPHICS_VER(i915) >= 8)
+		ee->ctxt_sr_ctl = ENGINE_READ(engine, RING_CONTEXT_CONTROL);
 
 	if (!HWS_NEEDS_PHYSICAL(i915)) {
 		i915_reg_t mmio;
