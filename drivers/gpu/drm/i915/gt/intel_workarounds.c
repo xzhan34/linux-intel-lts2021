@@ -300,6 +300,34 @@ static void gen7_ctx_workarounds_init(struct intel_engine_cs *engine,
 	wa_masked_en(wal, INSTPM, INSTPM_FORCE_ORDERING);
 }
 
+static bool global_debug_enable_in_td_ctl(struct drm_i915_private *i915)
+{
+	return GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50);
+}
+
+/* Returns true if global was enabled and nothing more needs to be done */
+static bool gen9_debug_td_ctl_init(struct intel_engine_cs *engine,
+				   struct i915_wa_list *wal)
+{
+	bool enable;
+	u32 ctl_mask;
+
+	GEM_BUG_ON(GRAPHICS_VER(engine->i915) < 9);
+
+	enable = global_debug_enable_in_td_ctl(engine->i915);
+
+	ctl_mask = TD_CTL_BREAKPOINT_ENABLE |
+		TD_CTL_FORCE_THREAD_BREAKPOINT_ENABLE |
+		TD_CTL_FEH_AND_FEE_ENABLE;
+
+	if (enable)
+		ctl_mask |= TD_CTL_GLOBAL_DEBUG_ENABLE;
+
+	wa_mcr_add(wal, TD_CTL, 0, ctl_mask, ctl_mask, false);
+
+	return enable;
+}
+
 static void gen8_ctx_workarounds_init(struct intel_engine_cs *engine,
 				      struct i915_wa_list *wal)
 {
@@ -932,6 +960,9 @@ __intel_engine_init_ctx_wa(struct intel_engine_cs *engine,
 		;
 	else
 		MISSING_CASE(GRAPHICS_VER(i915));
+
+	if (i915_modparams.debug_eu && IS_GRAPHICS_VER(i915, 9, 11))
+		gen9_debug_td_ctl_init(engine, wal);
 }
 
 void intel_engine_init_ctx_wa(struct intel_engine_cs *engine)
@@ -2600,6 +2631,17 @@ rcs_engine_wa_init(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 				 ENABLE_SMALLPL);
 	}
 
+	if (i915_modparams.debug_eu && GRAPHICS_VER(i915) >= 11) {
+		bool enable_done = false;
+
+		if (GRAPHICS_VER(i915) >= 12)
+			enable_done = gen9_debug_td_ctl_init(engine, wal);
+
+		if (!enable_done)
+			wa_masked_en(wal, GEN9_CS_DEBUG_MODE2,
+				     GEN11_GLOBAL_DEBUG_ENABLE);
+	}
+
 	if (GRAPHICS_VER(i915) == 11) {
 		/* This is not an Wa. Enable for better image quality */
 		wa_masked_en(wal,
@@ -2766,6 +2808,10 @@ rcs_engine_wa_init(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 				     GEN8_LQSQ_NONIA_COHERENT_ATOMICS_ENABLE, 0);
 		wa_mcr_write_clr_set(wal, GEN9_SCRATCH1,
 				     EVICTION_PERF_FIX_ENABLE, 0);
+
+		if (i915_modparams.debug_eu)
+			wa_masked_en(wal, GEN9_CS_DEBUG_MODE1,
+				     GEN9_GLOBAL_DEBUG_ENABLE);
 	}
 
 	if (IS_HASWELL(i915)) {

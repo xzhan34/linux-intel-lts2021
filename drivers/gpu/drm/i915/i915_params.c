@@ -249,6 +249,9 @@ i915_param_named_unsafe(enable_eviction, uint, 0600,
 i915_param_named_unsafe(enable_non_private_objects, bool, 0400,
 			"Enable non-private objects handling in execbuff path");
 
+i915_param_named_unsafe(debug_eu, int, 0400,
+	"Enable EU debug capabilities (default: 0)");
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,
