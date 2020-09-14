@@ -90,6 +90,21 @@ static inline void i915_gem_context_clear_persistence(struct i915_gem_context *c
 	clear_bit(UCONTEXT_PERSISTENCE, &ctx->user_flags);
 }
 
+static inline bool i915_gem_context_has_sip(const struct i915_gem_context *ctx)
+{
+	return test_bit(UCONTEXT_SIP, &ctx->user_flags);
+}
+
+static inline void i915_gem_context_set_sip(struct i915_gem_context *ctx)
+{
+	set_bit(UCONTEXT_SIP, &ctx->user_flags);
+}
+
+static inline void i915_gem_context_clear_sip(struct i915_gem_context *ctx)
+{
+	clear_bit(UCONTEXT_SIP, &ctx->user_flags);
+}
+
 static inline bool
 i915_gem_context_user_engines(const struct i915_gem_context *ctx)
 {

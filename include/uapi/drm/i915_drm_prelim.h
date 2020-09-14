@@ -227,6 +227,30 @@ struct prelim_i915_context_param_engines {
 #define PRELIM_I915_CONTEXT_ENGINES_EXT_PARALLEL_SUBMIT (PRELIM_I915_USER_EXT | 2) /* see prelim_i915_context_engines_parallel_submit */
 };
 
+struct prelim_drm_i915_gem_context_param {
+/*
+ * I915_CONTEXT_PARAM_DEBUG_FLAGS
+ *
+ * Set or clear debug flags associated with this context.
+ * The flags works with 32 bit masking to enable/disable individual
+ * flags. For example to set debug flag of bit position 0, the
+ * value needs to be 0x0000000100000001, and to clear flag of
+ * bit position 0, the value needs to be 0x0000000100000000.
+ *
+ */
+#define PRELIM_I915_CONTEXT_PARAM		(1 << 16)
+#define PRELIM_I915_CONTEXT_PARAM_DEBUG_FLAGS	(PRELIM_I915_CONTEXT_PARAM | 0xfd)
+
+/*
+ * Notify driver that SIP is provided with the pipeline setup.
+ * Driver raises exception on hang resolution and waits for pipeline's
+ * sip to signal attention before capturing state of user objects
+ * associated with the context.
+ *
+ */
+#define PRELIM_I915_CONTEXT_PARAM_DEBUG_FLAG_SIP	(1ull << 0)
+};
+
 /* Downstream PRELIM properties */
 enum prelim_drm_i915_perf_property_id {
 	PRELIM_DRM_I915_PERF_PROP = (1 << 16),

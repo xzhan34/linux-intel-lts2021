@@ -364,6 +364,24 @@ intel_context_clear_nopreempt(struct intel_context *ce)
 	clear_bit(CONTEXT_NOPREEMPT, &ce->flags);
 }
 
+static inline bool
+intel_context_debug(const struct intel_context *ce)
+{
+	return test_bit(CONTEXT_DEBUG, &ce->flags);
+}
+
+static inline void
+intel_context_set_debug(struct intel_context *ce)
+{
+	set_bit(CONTEXT_DEBUG, &ce->flags);
+}
+
+static inline void
+intel_context_clear_debug(struct intel_context *ce)
+{
+	clear_bit(CONTEXT_DEBUG, &ce->flags);
+}
+
 u64 intel_context_get_total_runtime_ns(const struct intel_context *ce);
 u64 intel_context_get_avg_runtime_ns(struct intel_context *ce);
 

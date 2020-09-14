@@ -237,6 +237,9 @@ static void intel_context_set_gem(struct intel_context *ce,
 
 		intel_context_set_watchdog_us(ce, (u64)timeout_ms * 1000);
 	}
+
+	if (i915_gem_context_has_sip(ctx))
+		__set_bit(CONTEXT_DEBUG, &ce->flags);
 }
 
 static void __unpin_engines(struct i915_gem_engines *e, unsigned int count)
@@ -1736,8 +1739,8 @@ static const i915_user_extension_fn set_engines__extensions[] = {
 	[I915_CONTEXT_ENGINES_EXT_BOND] = set_engines__bond,
 	[I915_CONTEXT_ENGINES_EXT_PARALLEL_SUBMIT] =
 		set_engines__parallel_submit,
-        [PRELIM_I915_USER_EXT_MASK(PRELIM_I915_CONTEXT_ENGINES_EXT_PARALLEL2_SUBMIT)] =
-                set_engines__parallel_submit,
+	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_CONTEXT_ENGINES_EXT_PARALLEL2_SUBMIT)] =
+		set_engines__parallel_submit,
 };
 
 static int
@@ -1971,6 +1974,74 @@ static int set_priority(struct i915_gem_context *ctx,
 	return 0;
 }
 
+static void __apply_debug_flags(struct intel_context *ce, void *arg)
+{
+	struct i915_gem_context *ctx = arg;
+
+	if (i915_gem_context_has_sip(ctx))
+		intel_context_set_debug(ce);
+	else
+		intel_context_clear_debug(ce);
+}
+
+static int set_debug_flags(struct i915_gem_context *ctx,
+			   const struct drm_i915_gem_context_param *args)
+{
+	const u32 mask_allow = PRELIM_I915_CONTEXT_PARAM_DEBUG_FLAG_SIP;
+	long unsigned int mask;
+	u32 value, i;
+	int ret = -EINVAL;
+
+	if (args->size)
+		return -EINVAL;
+
+	mask = upper_32_bits(args->value);
+	value = lower_32_bits(args->value);
+
+	if (mask & ~mask_allow)
+		return -EINVAL;
+
+	if (!mask)
+		return 0;
+
+	for_each_set_bit(i, &mask, 32) {
+		const u32 flag = BIT(i);
+		const bool set = flag & value;
+
+		switch (flag) {
+		case PRELIM_I915_CONTEXT_PARAM_DEBUG_FLAG_SIP:
+			if (set)
+				i915_gem_context_set_sip(ctx);
+			else
+				i915_gem_context_clear_sip(ctx);
+			ret = 0;
+			break;
+		}
+
+		if (ret)
+			break;
+	}
+
+	context_apply_all(ctx, __apply_debug_flags, ctx);
+
+	return ret;
+}
+
+static int get_debug_flags(struct i915_gem_context *ctx,
+			   struct drm_i915_gem_context_param *args)
+{
+	const u64 allowed = PRELIM_I915_CONTEXT_PARAM_DEBUG_FLAG_SIP;
+	u64 v = 0;
+
+	if (i915_gem_context_has_sip(ctx))
+		v |= PRELIM_I915_CONTEXT_PARAM_DEBUG_FLAG_SIP;
+
+	args->size = 0;
+	args->value = allowed << 32 | v;
+
+	return 0;
+}
+
 static int ctx_setparam(struct drm_i915_file_private *fpriv,
 			struct i915_gem_context *ctx,
 			struct drm_i915_gem_context_param *args)
@@ -2034,6 +2105,10 @@ static int ctx_setparam(struct drm_i915_file_private *fpriv,
 	case I915_CONTEXT_PARAM_PROTECTED_CONTENT:
 		ret = __context_set_protected(fpriv->dev_priv, ctx,
 					      args->value);
+		break;
+
+	case PRELIM_I915_CONTEXT_PARAM_DEBUG_FLAGS:
+		ret = set_debug_flags(ctx, args);
 		break;
 
 	case I915_CONTEXT_PARAM_NO_ZEROMAP:
@@ -2277,6 +2352,10 @@ int i915_gem_context_getparam_ioctl(struct drm_device *dev, void *data,
 	case I915_CONTEXT_PARAM_PROTECTED_CONTENT:
 		args->size = 0;
 		args->value = i915_gem_context_uses_protected_content(ctx);
+		break;
+
+	case PRELIM_I915_CONTEXT_PARAM_DEBUG_FLAGS:
+		ret = get_debug_flags(ctx, args);
 		break;
 
 	case I915_CONTEXT_PARAM_NO_ZEROMAP:
