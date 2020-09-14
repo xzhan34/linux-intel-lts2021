@@ -563,6 +563,7 @@ struct intel_engine_cs {
 #define I915_ENGINE_HAS_EU_PRIORITY    BIT(11)
 #define I915_ENGINE_FIRST_RENDER_COMPUTE BIT(12)
 #define I915_ENGINE_USES_WA_HOLD_CCS_SWITCHOUT BIT(13)
+#define I915_ENGINE_HAS_EU_ATTENTION   BIT(14)
 	unsigned int flags;
 
 	/*
@@ -674,6 +675,12 @@ static inline bool
 intel_engine_uses_wa_hold_ccs_switchout(struct intel_engine_cs *engine)
 {
 	return engine->flags & I915_ENGINE_USES_WA_HOLD_CCS_SWITCHOUT;
+}
+
+static inline bool
+intel_engine_has_eu_attention(const struct intel_engine_cs *engine)
+{
+	return engine->flags & I915_ENGINE_HAS_EU_ATTENTION;
 }
 
 #endif /* __INTEL_ENGINE_TYPES_H__ */

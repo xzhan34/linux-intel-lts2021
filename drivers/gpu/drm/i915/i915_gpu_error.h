@@ -127,6 +127,14 @@ struct intel_engine_coredump {
 		};
 	} vm_info;
 
+	struct {
+		int wait_error;
+		unsigned int max_wait_us;
+		ktime_t signal;
+		ktime_t wait;
+		ktime_t attention;
+	} sip_timing;
+
 	struct intel_engine_coredump *next;
 };
 

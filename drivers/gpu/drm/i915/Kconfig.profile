@@ -117,6 +117,10 @@ config DRM_I915_STOP_TIMEOUT
 	  that the reset itself may take longer and so be more disruptive to
 	  interactive or low latency workloads.
 
+	  If context has been marked to be SIP enabled, this timeout is also
+	  maximum time driver will wait for SIP to signal that it is ready and
+	  reset can be made.
+
 	  This is adjustable via
 	  /sys/class/drm/card?/engine/*/stop_timeout_ms
 
