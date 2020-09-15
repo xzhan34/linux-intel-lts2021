@@ -5079,6 +5079,8 @@ int intel_guc_engine_failure_process_msg(struct intel_guc *guc,
 				err, guc_class, instance, engine->name);
 	}
 
+	intel_engine_reset_failed_uevent(engine);
+
 	intel_gt_handle_error(gt, engine->mask,
 			      I915_ERROR_CAPTURE,
 			      "GuC failed to reset %s (reason=0x%08x)",

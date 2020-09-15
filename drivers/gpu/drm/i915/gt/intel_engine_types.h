@@ -486,6 +486,8 @@ struct intel_engine_cs {
 		void (*cancel)(struct intel_engine_cs *engine);
 
 		void (*finish)(struct intel_engine_cs *engine);
+
+		struct work_struct notify_reset_failed;
 	} reset;
 
 	void		(*park)(struct intel_engine_cs *engine);

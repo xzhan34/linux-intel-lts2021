@@ -1093,6 +1093,31 @@ static int resume(struct intel_gt *gt)
 	return 0;
 }
 
+static void intel_gt_reset_failed_uevent_work(struct work_struct *work)
+{
+	struct intel_gt *gt =
+		container_of(work, typeof(*gt), reset.uevent_work);
+	struct kobject *kobj = &gt->i915->drm.primary->kdev->kobj;
+	char *reset_event[5];
+
+	reset_event[0] = PRELIM_I915_RESET_FAILED_UEVENT "=1";
+	reset_event[1] = kasprintf(GFP_KERNEL, "RESET_ENABLED=%d",
+				   intel_has_gpu_reset(gt) ? 1 : 0);
+	reset_event[2] = "RESET_UNIT=gt";
+	reset_event[3] = kasprintf(GFP_KERNEL, "RESET_ID=%d", gt->info.id);
+	reset_event[4] = NULL;
+	kobject_uevent_env(kobj, KOBJ_CHANGE, reset_event);
+
+	kfree(reset_event[1]);
+	kfree(reset_event[3]);
+
+}
+
+static void intel_gt_reset_failed(struct intel_gt *gt)
+{
+	schedule_work(&gt->reset.uevent_work);
+}
+
 /**
  * intel_gt_reset - reset chip after a hang
  * @gt: #intel_gt to reset
@@ -1203,6 +1228,7 @@ taint:
 	 */
 	add_taint_for_CI(gt->i915, TAINT_WARN);
 error:
+	intel_gt_reset_failed(gt);
 	__intel_gt_set_wedged(gt);
 	goto finish;
 }
@@ -1237,6 +1263,7 @@ int __intel_engine_reset_bh(struct intel_engine_cs *engine, const char *msg)
 	if (ret) {
 		/* If we fail here, we expect to fallback to a global reset */
 		ENGINE_TRACE(engine, "Failed to reset %s, err: %d\n", engine->name, ret);
+		intel_engine_reset_failed_uevent(engine);
 		goto out;
 	}
 
@@ -1528,6 +1555,7 @@ void intel_gt_init_reset(struct intel_gt *gt)
 	init_waitqueue_head(&gt->reset.queue);
 	mutex_init(&gt->reset.mutex);
 	init_srcu_struct(&gt->reset.backoff_srcu);
+	INIT_WORK(&gt->reset.uevent_work, intel_gt_reset_failed_uevent_work);
 
 	/*
 	 * While undesirable to wait inside the shrinker, complain anyway.

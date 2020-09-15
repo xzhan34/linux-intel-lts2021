@@ -46,6 +46,9 @@
 
 #define GEN8_LR_CONTEXT_OTHER_SIZE	( 2 * PAGE_SIZE)
 
+static void
+intel_engine_reset_failed_uevent_work(struct work_struct *work);
+
 #define MAX_MMIO_BASES 3
 struct engine_info {
 	u8 class;
@@ -1167,6 +1170,7 @@ static int engine_setup_common(struct intel_engine_cs *engine)
 	if (GRAPHICS_VER(engine->i915) >= 12)
 		engine->flags |= I915_ENGINE_HAS_RELATIVE_MMIO;
 
+	INIT_WORK(&engine->reset.notify_reset_failed, intel_engine_reset_failed_uevent_work);
 	return 0;
 
 err_cmd_parser:
@@ -2427,6 +2431,32 @@ void xehp_enable_ccs_engines(struct intel_engine_cs *engine)
 
 	intel_uncore_write(engine->uncore, GEN12_RCU_MODE,
 			   _MASKED_BIT_ENABLE(GEN12_RCU_MODE_CCS_ENABLE));
+}
+
+static void
+intel_engine_reset_failed_uevent_work(struct work_struct *work)
+{
+	struct intel_engine_cs *engine =
+		container_of(work, typeof(*engine), reset.notify_reset_failed);
+	struct kobject *kobj = &engine->i915->drm.primary->kdev->kobj;
+	char *reset_event[5];
+
+	reset_event[0] = PRELIM_I915_RESET_FAILED_UEVENT "=1";
+	reset_event[1] = kasprintf(GFP_KERNEL, "RESET_ENABLED=%d",
+				   intel_has_reset_engine(engine->gt) ? 1 : 0);
+	reset_event[2] = "RESET_UNIT=engine";
+	reset_event[3] = kasprintf(GFP_KERNEL, "RESET_ID=%s", engine->name);
+	reset_event[4] = NULL;
+	kobject_uevent_env(kobj, KOBJ_CHANGE, reset_event);
+
+	kfree(reset_event[1]);
+	kfree(reset_event[3]);
+}
+
+void
+intel_engine_reset_failed_uevent(struct intel_engine_cs *engine)
+{
+	schedule_work(&engine->reset.notify_reset_failed);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

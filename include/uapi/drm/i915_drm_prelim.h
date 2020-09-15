@@ -17,6 +17,17 @@
  * synchronized with values in i915_drm.h.
  */
 
+struct prelim_i915_uevent {
+/*
+ * PRELIM_I915_RESET_FAILED_UEVENT - Event is generated when engine or GPU
+ *	resets fail and also when GPU is declared wedged. The value
+ *	supplied with the event is always 1. Event is also generated when
+ *	resets are disabled by module parameter and an attempt to reset
+ *	either engine or GPU is made.
+ */
+#define PRELIM_I915_RESET_FAILED_UEVENT	"RESET_FAILED"
+};
+
 struct prelim_i915_user_extension {
 #define PRELIM_I915_USER_EXT		(1 << 16)
 #define PRELIM_I915_USER_EXT_MASK(x)	(x & 0xffff)

@@ -56,6 +56,8 @@ struct intel_reset {
 	wait_queue_head_t queue;
 
 	struct srcu_struct backoff_srcu;
+
+	struct work_struct uevent_work;
 };
 
 #endif /* _INTEL_RESET_TYPES_H_ */
