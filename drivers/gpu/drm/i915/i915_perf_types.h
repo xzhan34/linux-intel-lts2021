@@ -448,6 +448,7 @@ struct i915_perf {
 	u32 gen7_latched_oastatus1;
 	u32 ctx_oactxctrl_offset[PRELIM_I915_ENGINE_CLASS_COMPUTE + 1];
 	u32 ctx_flexeu0_offset;
+	u32 ctx_pwr_clk_state_offset[PRELIM_I915_ENGINE_CLASS_COMPUTE + 1];
 
 	/**
 	 * The RPT_ID/reason field for Gen8+ includes a bit
@@ -467,6 +468,8 @@ struct i915_perf {
 	unsigned long format_mask[FORMAT_MASK_SIZE];
 
 	atomic64_t noa_programming_delay;
+
+	struct i915_engine_class_instance default_ci;
 };
 
 #endif /* _I915_PERF_TYPES_H_ */

@@ -95,8 +95,8 @@ test_stream(struct i915_perf *perf)
 	struct i915_oa_config *oa_config = get_empty_config(perf);
 	struct perf_open_properties props = {
 		.engine = intel_engine_lookup_user(perf->i915,
-						   I915_ENGINE_CLASS_RENDER,
-						   0),
+						   perf->default_ci.engine_class,
+						   perf->default_ci.engine_instance),
 		.sample_flags = SAMPLE_OA_REPORT,
 		.oa_format = GRAPHICS_VER(perf->i915) == 12 ?
 		I915_OA_FORMAT_A32u40_A4u32_B8_C8 : I915_OA_FORMAT_C4_B8,
@@ -214,7 +214,8 @@ static int live_noa_delay(void *arg)
 
 	expected = atomic64_read(&stream->perf->noa_programming_delay);
 
-	if (stream->engine->class != RENDER_CLASS) {
+	if (stream->engine->class != RENDER_CLASS &&
+	    stream->engine->class != COMPUTE_CLASS) {
 		err = -ENODEV;
 		goto out;
 	}

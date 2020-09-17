@@ -1590,6 +1590,22 @@ free_noa_wait(struct i915_perf_stream *stream)
 	i915_vma_unpin_and_release(&stream->noa_wait, 0);
 }
 
+static bool engine_supports_oa(struct drm_i915_private *i915,
+			       const struct intel_engine_cs *engine)
+{
+	enum intel_platform platform = INTEL_INFO(i915)->platform;
+
+	if (intel_engine_is_virtual(engine))
+		return false;
+
+	switch (platform) {
+	case INTEL_XEHPSDV:
+		return engine->class == COMPUTE_CLASS;
+	default:
+		return engine->class == RENDER_CLASS;
+	}
+}
+
 static struct i915_whitelist_reg gen9_oa_wl_regs[] = {
 	{ OAREPORTTRIG2, RING_FORCE_TO_NONPRIV_ACCESS_RW },
 	{ OAREPORTTRIG6, RING_FORCE_TO_NONPRIV_ACCESS_RW },
@@ -1656,11 +1672,9 @@ static void intel_gt_apply_oa_whitelist(struct intel_gt *gt)
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
 
-	for_each_engine(engine, gt, id) {
-		if (engine->class == RENDER_CLASS ||
-		    engine->class == COMPUTE_CLASS)
+	for_each_engine(engine, gt, id)
+		if (engine_supports_oa(engine->i915, engine))
 			intel_engine_apply_oa_whitelist(engine);
-	}
 }
 
 static void intel_engine_remove_oa_whitelist(struct intel_engine_cs *engine)
@@ -1695,11 +1709,9 @@ static void intel_gt_remove_oa_whitelist(struct intel_gt *gt)
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
 
-	for_each_engine(engine, gt, id) {
-		if (engine->class == RENDER_CLASS ||
-		    engine->class == COMPUTE_CLASS)
+	for_each_engine(engine, gt, id)
+		if (engine_supports_oa(engine->i915, engine))
 			intel_engine_remove_oa_whitelist(engine);
-	}
 }
 
 static void i915_oa_stream_destroy(struct i915_perf_stream *stream)
@@ -2658,7 +2670,7 @@ static int gen8_configure_context(struct i915_gem_context *ctx,
 	for_each_gem_engine(ce, i915_gem_context_lock_engines(ctx), it) {
 		GEM_BUG_ON(ce == ce->engine->kernel_context);
 
-		if (ce->engine->class != RENDER_CLASS)
+		if (!engine_supports_oa(ce->engine->i915, ce->engine))
 			continue;
 
 		/* Otherwise OA settings will be set upon first use */
@@ -2677,54 +2689,80 @@ static int gen8_configure_context(struct i915_gem_context *ctx,
 	return err;
 }
 
-static int gen12_configure_oar_context(struct i915_perf_stream *stream,
-				       struct i915_active *active)
+static u32 gen12_ring_context_control(struct i915_perf_stream *stream,
+				      struct i915_active *active)
+{
+	u32 ring_context_control =
+		_MASKED_FIELD(GEN12_CTX_CTRL_OAR_CONTEXT_ENABLE,
+			      active ?
+			      GEN12_CTX_CTRL_OAR_CONTEXT_ENABLE :
+			      0);
+
+	return ring_context_control;
+}
+
+static int oa_configure_context(struct intel_context *ce,
+				struct flex *regs_ctx, int num_regs_ctx,
+				struct flex *regs_lri, int num_regs_lri,
+				struct i915_active *active)
 {
 	int err;
-	struct intel_context *ce = stream->pinned_ctx;
-	u32 format = stream->oa_buffer.format->format;
-	u32 offset = stream->perf->ctx_oactxctrl_offset[ce->engine->uabi_class];
-	struct flex regs_context[] = {
-		{
-			GEN8_OACTXCONTROL,
-			offset + 1,
-			active ? GEN8_OA_COUNTER_RESUME : 0,
-		},
-	};
-	/* Offsets in regs_lri are not used since this configuration is only
-	 * applied using LRI. Initialize the correct offsets for posterity.
-	 */
-#define GEN12_OAR_OACONTROL_OFFSET 0x5B0
-	struct flex regs_lri[] = {
-		{
-			GEN12_OAR_OACONTROL,
-			GEN12_OAR_OACONTROL_OFFSET + 1,
-			(format << GEN12_OAR_OACONTROL_COUNTER_FORMAT_SHIFT) |
-			(active ? GEN12_OAR_OACONTROL_COUNTER_ENABLE : 0)
-		},
-		{
-			RING_CONTEXT_CONTROL(ce->engine->mmio_base),
-			CTX_CONTEXT_CONTROL,
-			_MASKED_FIELD(GEN12_CTX_CTRL_OAR_CONTEXT_ENABLE,
-				      active ?
-				      GEN12_CTX_CTRL_OAR_CONTEXT_ENABLE :
-				      0)
-		},
-	};
 
 	/* Modify the context image of pinned context with regs_context */
 	err = intel_context_lock_pinned(ce);
 	if (err)
 		return err;
 
-	err = gen8_modify_context(ce, regs_context,
-				  ARRAY_SIZE(regs_context));
+	err = gen8_modify_context(ce, regs_ctx, num_regs_ctx);
 	intel_context_unlock_pinned(ce);
 	if (err)
 		return err;
 
 	/* Apply regs_lri using LRI with pinned context */
-	return gen8_modify_self(ce, regs_lri, ARRAY_SIZE(regs_lri), active);
+	return gen8_modify_self(ce, regs_lri, num_regs_lri, active);
+}
+
+static int gen12_configure_oa_render_context(struct i915_perf_stream *stream,
+					     struct i915_active *active)
+{
+	struct intel_context *ce = stream->pinned_ctx;
+	u32 format = stream->oa_buffer.format->format;
+	u32 offset = stream->perf->ctx_oactxctrl_offset[ce->engine->uabi_class];
+	u32 oacontrol = (format << GEN12_OAR_OACONTROL_COUNTER_FORMAT_SHIFT) |
+			(active ? GEN12_OAR_OACONTROL_COUNTER_ENABLE : 0);
+	struct flex regs_context[] = {
+		{
+			GEN12_OACTXCONTROL(stream->engine->mmio_base),
+			offset + 1,
+			active ? GEN8_OA_COUNTER_RESUME : 0,
+		},
+	};
+	struct flex regs_lri[] = {
+		{
+			GEN12_OAR_OACONTROL, 0,
+			oacontrol
+		},
+		{
+			RING_CONTEXT_CONTROL(ce->engine->mmio_base), 0,
+			gen12_ring_context_control(stream, active)
+		},
+	};
+
+	return oa_configure_context(ce,
+				    regs_context, ARRAY_SIZE(regs_context),
+				    regs_lri, ARRAY_SIZE(regs_lri),
+				    active);
+}
+
+static int gen12_configure_oa_context(struct i915_perf_stream *stream,
+				      struct i915_active *active)
+{
+	switch (stream->engine->class) {
+	case RENDER_CLASS:
+		return gen12_configure_oa_render_context(stream, active);
+	default:
+		return 0;
+	}
 }
 
 /*
@@ -2810,7 +2848,7 @@ oa_configure_all_contexts(struct i915_perf_stream *stream,
 	for_each_uabi_engine(engine, i915) {
 		struct intel_context *ce = engine->kernel_context;
 
-		if (engine->class != RENDER_CLASS)
+		if (!engine_supports_oa(ce->engine->i915, ce->engine))
 			continue;
 
 		regs[0].value = intel_sseu_make_rpcs(engine->gt, &ce->sseu);
@@ -2828,10 +2866,12 @@ gen12_configure_all_contexts(struct i915_perf_stream *stream,
 			     const struct i915_oa_config *oa_config,
 			     struct i915_active *active)
 {
+	struct intel_engine_cs *engine = stream->engine;
+	struct i915_perf *perf = stream->perf;
 	struct flex regs[] = {
 		{
-			GEN8_R_PWR_CLK_STATE(RENDER_RING_BASE),
-			CTX_R_PWR_CLK_STATE,
+			GEN8_R_PWR_CLK_STATE(engine->mmio_base),
+			perf->ctx_pwr_clk_state_offset[engine->uabi_class],
 		},
 	};
 
@@ -2845,15 +2885,17 @@ lrc_configure_all_contexts(struct i915_perf_stream *stream,
 			   const struct i915_oa_config *oa_config,
 			   struct i915_active *active)
 {
-	u16 idx = stream->engine->uabi_class;
-	u32 ctx_oactxctrl = stream->perf->ctx_oactxctrl_offset[idx];
+	struct intel_engine_cs *engine = stream->engine;
+	struct i915_perf *perf = stream->perf;
+	u16 idx = engine->uabi_class;
+	u32 ctx_oactxctrl = perf->ctx_oactxctrl_offset[idx];
 	/* The MMIO offsets for Flex EU registers aren't contiguous */
-	const u32 ctx_flexeu0 = stream->perf->ctx_flexeu0_offset;
+	const u32 ctx_flexeu0 = perf->ctx_flexeu0_offset;
 #define ctx_flexeuN(N) (ctx_flexeu0 + 2 * (N) + 1)
 	struct flex regs[] = {
 		{
 			GEN8_R_PWR_CLK_STATE(RENDER_RING_BASE),
-			CTX_R_PWR_CLK_STATE,
+			perf->ctx_pwr_clk_state_offset[engine->uabi_class],
 		},
 		{
 			GEN8_OACTXCONTROL,
@@ -3030,7 +3072,7 @@ gen12_enable_metric_set(struct i915_perf_stream *stream,
 	 * requested this.
 	 */
 	if (stream->ctx) {
-		ret = gen12_configure_oar_context(stream, active);
+		ret = gen12_configure_oa_context(stream, active);
 		if (ret)
 			return ret;
 	}
@@ -3083,7 +3125,7 @@ static void gen12_disable_metric_set(struct i915_perf_stream *stream)
 
 	/* disable the context save/restore or OAR counters */
 	if (stream->ctx)
-		gen12_configure_oar_context(stream, NULL);
+		gen12_configure_oa_context(stream, NULL);
 
 	/* Make sure we disable noa to save power. */
 	intel_uncore_rmw(uncore, RPM_CONFIG1, GEN10_GT_NOA_ENABLE, 0);
@@ -3545,7 +3587,7 @@ void i915_oa_init_reg_state(const struct intel_context *ce,
 {
 	struct i915_perf_stream *stream;
 
-	if (engine->class != RENDER_CLASS)
+	if (!engine_supports_oa(engine->i915, engine))
 		return;
 
 	/* perf.exclusive_stream serialised by i915_oa_stream_destroy() */
@@ -4276,25 +4318,10 @@ static int read_properties_unlocked(struct i915_perf *perf,
 	u64 __user *uprop = uprops;
 	u32 i;
 	int ret;
+	u8 class, instance;
 
 	memset(props, 0, sizeof(struct perf_open_properties));
 	props->poll_oa_period = DEFAULT_POLL_PERIOD_NS;
-
-	if (!n_props) {
-		drm_dbg(&perf->i915->drm,
-			"No i915 perf properties given\n");
-		return -EINVAL;
-	}
-
-	/* At the moment we only support using i915-perf on the RCS. */
-	props->engine = intel_engine_lookup_user(perf->i915,
-						 I915_ENGINE_CLASS_RENDER,
-						 0);
-	if (!props->engine) {
-		drm_dbg(&perf->i915->drm,
-			"No RENDER-capable engines\n");
-		return -EINVAL;
-	}
 
 	/* Considering that ID = 0 is reserved and assuming that we don't
 	 * (currently) expect any configurations to ever specify duplicate
@@ -4302,11 +4329,15 @@ static int read_properties_unlocked(struct i915_perf *perf,
 	 * one greater than the maximum number of properties we expect to get
 	 * from userspace.
 	 */
-	if (n_props >= PRELIM_DRM_I915_PERF_PROP_MAX) {
+	if (!n_props || n_props >= PRELIM_DRM_I915_PERF_PROP_MAX) {
 		drm_dbg(&perf->i915->drm,
-			"More i915 perf properties specified than exist\n");
+			"Invalid no. of i915 perf properties given\n");
 		return -EINVAL;
 	}
+
+	/* Defaults when class:instance is not passed */
+	class = perf->default_ci.engine_class;
+	instance = perf->default_ci.engine_instance;
 
 	for (i = 0; i < n_props; i++) {
 		u64 oa_period, oa_freq_hz;
@@ -4453,6 +4484,17 @@ static int read_properties_unlocked(struct i915_perf *perf,
 	 * -EIO return in i915_oa_wait_unlocked.
 	 */
 	if (props->oa_periodic && !(props->sample_flags & SAMPLE_OA_REPORT))
+		return -EINVAL;
+
+	props->engine = intel_engine_lookup_user(perf->i915, class, instance);
+	if (!props->engine) {
+		drm_dbg(&perf->i915->drm,
+			"OA engine class and instance invalid %d:%d\n",
+			class, instance);
+		return -EINVAL;
+	}
+
+	if (!engine_supports_oa(perf->i915, props->engine))
 		return -EINVAL;
 
 	/* If no buffer size was requested, select the default one. */
@@ -5153,10 +5195,29 @@ static void oa_init_supported_formats(struct i915_perf *perf)
 	}
 }
 
+static void gen12_init_info(struct drm_i915_private *i915)
+{
+	enum intel_platform platform = INTEL_INFO(i915)->platform;
+	struct i915_perf *perf = &i915->perf;
+
+	switch (platform) {
+	case INTEL_XEHPSDV:
+		perf->default_ci.engine_class = PRELIM_I915_ENGINE_CLASS_COMPUTE;
+		perf->ctx_pwr_clk_state_offset[PRELIM_I915_ENGINE_CLASS_COMPUTE] =
+			XEHPSDV_CTX_CCS_PWR_CLK_STATE;
+		break;
+	default:
+		break;
+	}
+}
+
 static void i915_perf_init_info(struct drm_i915_private *i915)
 {
 	struct i915_perf *perf = &i915->perf;
 	u16 class = I915_ENGINE_CLASS_RENDER;
+
+	perf->ctx_pwr_clk_state_offset[I915_ENGINE_CLASS_RENDER] =
+		CTX_R_PWR_CLK_STATE;
 
 	switch (GRAPHICS_VER(i915)) {
 	case 8:
@@ -5180,6 +5241,7 @@ static void i915_perf_init_info(struct drm_i915_private *i915)
 		 * cache the value in perf->ctx_oactxctrl_offset array that is
 		 * indexed using the uabi engine class.
 		 */
+		gen12_init_info(i915);
 		break;
 	default:
 		MISSING_CASE(GRAPHICS_VER(i915));
