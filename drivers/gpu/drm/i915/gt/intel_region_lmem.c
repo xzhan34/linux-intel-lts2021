@@ -256,6 +256,10 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 	if (IS_SRIOV_VF(i915)) {
 		lmem_size = vf_get_lmem_size(&gt->iov);
 		lmem_base = vf_get_lmem_base(&gt->iov);
+
+		/* Track actual physical memory size from the PF */
+		actual_mem = lmem_size;
+
 		goto create_region;
 	}
 
