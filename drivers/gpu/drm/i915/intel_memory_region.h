@@ -93,6 +93,9 @@ struct intel_memory_region {
 	resource_size_t avail;
 	resource_size_t evict;
 
+	/* Track actual LMEM size, without stolen memory */
+	resource_size_t actual_physical_mem;
+
 	u16 type;
 	u16 instance;
 	enum intel_region_id id;

@@ -190,6 +190,7 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 	struct intel_memory_region *mem;
 	resource_size_t min_page_size;
 	resource_size_t io_start;
+	resource_size_t actual_mem;
 	resource_size_t lmem_size, lmem_base;
 	resource_size_t root_lmembar_size;
 	bool is_degraded = false;
@@ -209,6 +210,9 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 	err = intel_get_tile_range(gt, &lmem_base, &lmem_size);
 	if (err)
 		return ERR_PTR(err);
+
+	/* Track actual physical memory */
+	actual_mem = lmem_size;
 
 	/* Leave space for per-tile WOPCM/GSM stolen memory at the LMEM roof.
 	 * Applicable only to XEHPSDV/DG2 etc.
@@ -299,7 +303,8 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 	drm_info(&i915->drm, "Local memory available: %pa\n",
 		 &lmem_size);
 
-	/* Report memory health status on the root tile */
+	/* Report actual physical memory and health status */
+	mem->actual_physical_mem = actual_mem;
 	if (to_gt(i915)->info.id == 0) {
 		if (is_degraded)
 			sparing->health_status = MEM_HEALTH_DEGRADED;
