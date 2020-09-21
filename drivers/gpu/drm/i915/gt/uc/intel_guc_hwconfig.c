@@ -5,8 +5,12 @@
 
 #include "gt/intel_gt.h"
 #include "gt/intel_hwconfig.h"
+#include "gt/intel_hwconfig_types.h"
 #include "i915_drv.h"
 #include "i915_memcpy.h"
+
+/* Auto-generated tables: */
+#include "intel_guc_hwconfig_auto.c"
 
 /*
  * GuC has a blob containing hardware configuration information (HWConfig).
@@ -164,6 +168,47 @@ static int intel_hwconf_apply_overrides(struct intel_hwconfig *hwconfig)
 	return 0;
 }
 
+static const u32 *fake_hwconfig_get_table(struct drm_i915_private *i915,
+					  u32 *size)
+{
+	if (IS_ALDERLAKE_P(i915)) {
+		*size = ARRAY_SIZE(hwinfo_adlp) * sizeof(u32);
+		return hwinfo_adlp;
+	}
+
+	return NULL;
+}
+
+static int fake_hwconfig_discover_size(struct intel_guc *guc, struct intel_hwconfig *hwconfig)
+{
+	struct drm_i915_private *i915 = guc_to_gt(guc)->i915;
+	const u32 *table;
+	u32 table_size;
+
+	table = fake_hwconfig_get_table(i915, &table_size);
+	if (!table)
+		return -ENOENT;
+
+	hwconfig->size = table_size;
+	return 0;
+}
+
+static int fake_hwconfig_fill_buffer(struct intel_guc *guc, struct intel_hwconfig *hwconfig)
+{
+	struct drm_i915_private *i915 = guc_to_gt(guc)->i915;
+	const u32 *table;
+	u32 table_size;
+
+	table = fake_hwconfig_get_table(i915, &table_size);
+	if (!table)
+		return -ENOENT;
+
+	if (hwconfig->size >= table_size)
+		memcpy(hwconfig->ptr, table, table_size);
+
+	return table_size;
+}
+
 static bool has_table(struct drm_i915_private *i915)
 {
 	if (IS_ALDERLAKE_P(i915) && !IS_ADLP_N(i915))
@@ -172,6 +217,13 @@ static bool has_table(struct drm_i915_private *i915)
 		return true;
 
 	return false;
+}
+
+static bool has_fake_table(struct drm_i915_private *i915)
+{
+	u32 size;
+
+	return fake_hwconfig_get_table(i915, &size) != NULL;
 }
 
 /**
@@ -184,12 +236,21 @@ static int guc_hwconfig_init(struct intel_gt *gt)
 {
 	struct intel_hwconfig *hwconfig = &gt->info.hwconfig;
 	struct intel_guc *guc = &gt->uc.guc;
+	bool fake_db = false;
 	int ret;
 
-	if (!has_table(gt->i915))
+	if (hwconfig->size)
 		return 0;
 
-	ret = guc_hwconfig_discover_size(guc, hwconfig);
+	if (!has_table(gt->i915) && !has_fake_table(gt->i915))
+		return 0;
+
+	if (!has_table(gt->i915)) {
+		fake_db = true;
+		ret = fake_hwconfig_discover_size(guc, hwconfig);
+	} else {
+		ret = guc_hwconfig_discover_size(guc, hwconfig);
+	}
 	if (ret)
 		return ret;
 
@@ -199,7 +260,10 @@ static int guc_hwconfig_init(struct intel_gt *gt)
 		return -ENOMEM;
 	}
 
-	ret = guc_hwconfig_fill_buffer(guc, hwconfig);
+	if (fake_db)
+		ret = fake_hwconfig_fill_buffer(guc, hwconfig);
+	else
+		ret = guc_hwconfig_fill_buffer(guc, hwconfig);
 	if (ret < 0)
 		goto err;
 
