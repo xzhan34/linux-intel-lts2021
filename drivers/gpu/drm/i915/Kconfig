@@ -145,6 +145,17 @@ config DRM_I915_PXP
 	  manage the status of the alive software session, as well as its life
 	  cycle.
 
+config DRM_I915_DEBUGGER
+       bool "Enable Debugger support in i915"
+       depends on DRM_I915
+       default y if DRM_I915_DEBUG
+       select DRM_I915_CAPTURE_ERROR
+       help
+	 Choose this option if you want to add support for debugger (gdb) to
+	 attach into processes using i915 and debug the gpu/gpgpu programs.
+	 With debugger support, i915 will provide interface for a debugger
+	 process to track, inspect and modify resources.
+
 menu "drm/i915 Debugging"
 depends on DRM_I915
 depends on EXPERT

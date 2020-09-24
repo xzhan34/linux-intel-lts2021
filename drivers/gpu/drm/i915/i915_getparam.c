@@ -180,6 +180,9 @@ int i915_getparam_ioctl(struct drm_device *dev, void *data,
 	case PRELIM_I915_PARAM_HAS_VM_BIND:
 		value = GRAPHICS_VER(i915) >= 12;
 		break;
+	case PRELIM_I915_PARAM_EU_DEBUGGER_VERSION:
+		value = IS_ENABLED(CONFIG_DRM_I915_DEBUGGER) ? PRELIM_DRM_I915_DEBUG_VERSION : 0;
+		break;
 	default:
 		DRM_DEBUG("Unknown parameter %d\n", param->param);
 		return -EINVAL;

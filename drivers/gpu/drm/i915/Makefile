@@ -81,6 +81,7 @@ i915-$(CONFIG_DEBUG_FS) += \
 	display/intel_pipe_crc.o
 
 i915-$(CONFIG_PERF_EVENTS) += i915_pmu.o
+i915-$(CONFIG_DRM_I915_DEBUGGER) += i915_debugger.o
 
 # "Graphics Technology" (aka we talk to the gpu)
 gt-y += \

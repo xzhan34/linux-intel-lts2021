@@ -53,6 +53,7 @@ struct prelim_i915_user_extension {
 #define PRELIM_DRM_I915_GEM_WAIT_USER_FENCE	0x5a
 #define PRELIM_DRM_I915_UUID_REGISTER		0x58
 #define PRELIM_DRM_I915_UUID_UNREGISTER		0x57
+#define PRELIM_DRM_I915_DEBUGGER_OPEN		0x56
 
 
 #define PRELIM_DRM_IOCTL_I915_GEM_CREATE_EXT		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_CREATE, struct prelim_drm_i915_gem_create_ext)
@@ -61,6 +62,7 @@ struct prelim_i915_user_extension {
 #define PRELIM_DRM_IOCTL_I915_GEM_WAIT_USER_FENCE	DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_WAIT_USER_FENCE, struct prelim_drm_i915_gem_wait_user_fence)
 #define PRELIM_DRM_IOCTL_I915_UUID_REGISTER		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_UUID_REGISTER, struct prelim_drm_i915_uuid_control)
 #define PRELIM_DRM_IOCTL_I915_UUID_UNREGISTER		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_UUID_UNREGISTER, struct prelim_drm_i915_uuid_control)
+#define PRELIM_DRM_IOCTL_I915_DEBUGGER_OPEN		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_DEBUGGER_OPEN, struct prelim_drm_i915_debugger_open_param)
 /* End PRELIM ioctl's */
 
 /* getparam */
@@ -68,6 +70,10 @@ struct prelim_i915_user_extension {
 
 /* VM_BIND feature availability */
 #define PRELIM_I915_PARAM_HAS_VM_BIND	(PRELIM_I915_PARAM | 6)
+
+/* EU Debugger support */
+#define PRELIM_I915_PARAM_EU_DEBUGGER_VERSION  (PRELIM_I915_PARAM | 9)
+
 /* End getparam */
 
 struct prelim_drm_i915_gem_create_ext {
@@ -335,6 +341,58 @@ struct prelim_drm_i915_vm_bind_ext_uuid {
 #define PRELIM_I915_VM_BIND_EXT_UUID	(PRELIM_I915_USER_EXT | 1)
 	struct i915_user_extension base;
 	__u32 uuid_handle; /* Handle to the registered UUID resource. */
+};
+
+/**
+ * Do a debug event read for a debugger connection.
+ *
+ * This ioctl is available in debug version 1.
+ */
+#define PRELIM_I915_DEBUG_IOCTL_READ_EVENT _IO('j', 0x0)
+
+struct prelim_drm_i915_debug_event {
+	__u32 type;
+#define PRELIM_DRM_I915_DEBUG_EVENT_NONE     0
+#define PRELIM_DRM_I915_DEBUG_EVENT_READ     1
+#define PRELIM_DRM_I915_DEBUG_EVENT_CLIENT   2
+#define PRELIM_DRM_I915_DEBUG_EVENT_CONTEXT  3
+#define PRELIM_DRM_I915_DEBUG_EVENT_MAX_EVENT PRELIM_DRM_I915_DEBUG_EVENT_CONTEXT
+
+	__u32 flags;
+#define PRELIM_DRM_I915_DEBUG_EVENT_CREATE	(1 << 31)
+#define PRELIM_DRM_I915_DEBUG_EVENT_DESTROY	(1 << 30)
+	__u64 seqno;
+	__u64 size;
+} __attribute__((packed));
+
+struct prelim_drm_i915_debug_event_client {
+	struct prelim_drm_i915_debug_event base; /* .flags = CREATE/DESTROY */
+
+	__u64 handle; /* This is unique per debug connection */
+} __attribute__((packed));
+
+struct prelim_drm_i915_debug_event_context {
+	struct prelim_drm_i915_debug_event base;
+
+	__u64 client_handle;
+	__u64 handle;
+} __attribute__((packed));
+
+/*
+ * Debugger ABI (ioctl and events) Version History:
+ * 0 - No debugger available
+ * 1 - Initial version
+ */
+#define PRELIM_DRM_I915_DEBUG_VERSION 0
+
+struct prelim_drm_i915_debugger_open_param {
+	__u64 pid; /* input: Target process ID */
+	__u32 flags;
+#define PRELIM_DRM_I915_DEBUG_FLAG_FD_NONBLOCK	(1u << 31)
+
+	__u32 version; /* output: current ABI (ioctl / events) version */
+	__u64 events;  /* input: event types to subscribe to */
+	__u64 extensions; /* MBZ */
 };
 
 enum prelim_drm_i915_gem_memory_class {

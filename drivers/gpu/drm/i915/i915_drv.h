@@ -869,6 +869,14 @@ struct drm_i915_private {
 
 	struct i915_drm_clients clients;
 
+#if IS_ENABLED(CONFIG_DRM_I915_DEBUGGER)
+	struct {
+		struct mutex mutex;
+		struct i915_debugger __rcu *debugger;
+		u64 session_count;
+	} debug;
+#endif
+
 	struct i915_hdcp_comp_master *hdcp_master;
 	bool hdcp_comp_added;
 

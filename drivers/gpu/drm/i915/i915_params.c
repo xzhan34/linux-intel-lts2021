@@ -252,6 +252,12 @@ i915_param_named_unsafe(enable_non_private_objects, bool, 0400,
 i915_param_named_unsafe(debug_eu, int, 0400,
 	"Enable EU debug capabilities (default: 0)");
 
+i915_param_named_unsafe(debugger_timeout_ms, uint, 0400,
+	"Setup debugger disconnect timeout in milliseconds (default: 3000, 0 never)");
+
+i915_param_named_unsafe(debugger_log_level, int, 0600,
+	"EU debugger log level (-1 = default, 0=none, 1=err, 2=warn, 3=info, 4=verbose)");
+
 i915_param_named_unsafe(enable_hw_throttle_blt, bool, 0400,
 	"Enable hardware throttling BLT on XEHPSDV A0. (default: yes)");
 

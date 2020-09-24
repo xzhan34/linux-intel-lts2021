@@ -18,6 +18,7 @@
 #include "i915_drv.h"
 #include "i915_gem.h"
 #include "i915_utils.h"
+#include "i915_debugger.h"
 
 struct i915_drm_client_bo {
 	struct rb_node node;
@@ -600,6 +601,9 @@ i915_drm_client_add(struct i915_drm_clients *clients, struct task_struct *task)
 	if (ret)
 		goto err_register;
 
+	i915_debugger_client_register(client);
+	i915_debugger_client_create(client);
+
 	return client;
 
 err_register:
@@ -623,6 +627,7 @@ void i915_drm_client_close(struct i915_drm_client *client)
 {
 	GEM_BUG_ON(READ_ONCE(client->closed));
 	WRITE_ONCE(client->closed, true);
+	i915_debugger_client_destroy(client);
 	i915_drm_client_put(client);
 }
 

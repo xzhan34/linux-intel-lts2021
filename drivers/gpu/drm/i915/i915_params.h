@@ -75,6 +75,8 @@ struct drm_printer;
 	param(unsigned int, reset, 3, 0600) \
 	param(int, inject_probe_failure, 0, 0) \
 	param(unsigned int, debug_eu, 0, 0400) \
+	param(unsigned int, debugger_timeout_ms, 3000, 0400) \
+	param(int, debugger_log_level, -1, 0600) \
 	param(int, fastboot, -1, 0600) \
 	param(int, enable_dpcd_backlight, -1, 0600) \
 	param(char *, force_probe, CONFIG_DRM_I915_FORCE_PROBE, 0400) \

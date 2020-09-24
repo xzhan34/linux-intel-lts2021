@@ -136,6 +136,9 @@ struct i915_gem_context {
 	/** client: struct i915_drm_client */
 	struct i915_drm_client *client;
 
+	/** id: id we passed to userspace, for debugger */
+	u32 id;
+
 	/** link: &drm_client.context_list */
 	struct list_head client_link;
 

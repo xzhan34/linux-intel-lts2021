@@ -85,6 +85,8 @@
 #include "i915_gem_context.h"
 #include "i915_trace.h"
 #include "i915_user_extensions.h"
+#include "i915_gem_ioctls.h"
+#include "i915_debugger.h"
 
 #define ALL_L3_SLICES(dev) (1 << NUM_L3_SLICES(dev)) - 1
 
@@ -608,6 +610,10 @@ static void context_close(struct i915_gem_context *ctx)
 	struct i915_address_space *vm;
 	struct i915_drm_client *client;
 
+	client = ctx->client;
+	if (client)
+		i915_debugger_context_destroy(ctx);
+
 	/* Flush any concurrent set_engines() */
 	mutex_lock(&ctx->engines_mutex);
 	unpin_engines(__context_engines_static(ctx));
@@ -635,7 +641,6 @@ static void context_close(struct i915_gem_context *ctx)
 
 	ctx->file_priv = ERR_PTR(-EBADF);
 
-	client = ctx->client;
 	if (client) {
 		spin_lock(&client->ctx_lock);
 		list_del_rcu(&ctx->client_link);
@@ -987,7 +992,13 @@ static int gem_context_register(struct i915_gem_context *ctx,
 	spin_unlock_irq(&i915->gem.contexts.lock);
 
 	/* And finally expose ourselves to userspace via the idr */
+	i915_gem_context_get(ctx);
 	ret = xa_alloc(&fpriv->context_xa, id, ctx, xa_limit_32b, GFP_KERNEL);
+	if (!ret) {
+		ctx->id = *id;
+		i915_debugger_context_create(ctx);
+	}
+	i915_gem_context_put(ctx);
 	if (!ret)
 		return 0;
 

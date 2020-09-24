@@ -98,6 +98,7 @@
 #include "i915_sysrq.h"
 #include "i915_utils.h"
 #include "i915_vgpu.h"
+#include "i915_debugger.h"
 #include "intel_dram.h"
 #include "intel_gvt.h"
 #include "intel_memory_region.h"
@@ -534,6 +535,8 @@ static int i915_driver_early_probe(struct drm_i915_private *dev_priv,
 	mutex_init(&dev_priv->pps_mutex);
 	mutex_init(&dev_priv->hdcp_comp_mutex);
 
+	i915_debugger_init(dev_priv);
+
 	i915_memcpy_init_early(dev_priv);
 	intel_runtime_pm_init_early(&dev_priv->runtime_pm);
 
@@ -594,6 +597,7 @@ static void i915_driver_late_release(struct drm_i915_private *dev_priv)
 	intel_irq_fini(dev_priv);
 	intel_power_domains_cleanup(dev_priv);
 	i915_gem_cleanup_early(dev_priv);
+	i915_debugger_fini(dev_priv);
 	intel_gt_driver_late_release_all(dev_priv);
 	i915_drm_clients_fini(&dev_priv->clients);
 	vlv_suspend_cleanup(dev_priv);
@@ -2194,6 +2198,7 @@ static const struct drm_ioctl_desc i915_ioctls[] = {
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_WAIT_USER_FENCE, i915_gem_wait_user_fence_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_UUID_REGISTER, i915_uuid_register_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_UUID_UNREGISTER, i915_uuid_unregister_ioctl, DRM_RENDER_ALLOW),
+	PRELIM_DRM_IOCTL_DEF_DRV(I915_DEBUGGER_OPEN, i915_debugger_open_ioctl, DRM_RENDER_ALLOW),
 };
 
 /*
