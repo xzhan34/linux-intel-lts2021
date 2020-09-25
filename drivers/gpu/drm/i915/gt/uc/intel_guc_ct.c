@@ -1443,7 +1443,15 @@ static noinline void ct_receive_tasklet_func(struct tasklet_struct *t)
 void intel_guc_ct_event_handler(struct intel_guc_ct *ct)
 {
 	if (unlikely(!ct->enabled)) {
-		WARN(1, "Unexpected GuC event received while CT disabled!\n");
+		/*
+		 * We are unable to mask memory based interrupt from GuC,
+		 * so there is a chance that an GuC CT event for VF will come
+		 * just as CT will be already disabled. As we are not able to
+		 * handle such an event properly, we should abandon it.
+		 * In this case, calling WARN is not recommended.
+		 */
+		WARN(!HAS_MEMORY_IRQ_STATUS(ct_to_i915(ct)),
+		     "Unexpected GuC event received while CT disabled!\n");
 		return;
 	}
 
