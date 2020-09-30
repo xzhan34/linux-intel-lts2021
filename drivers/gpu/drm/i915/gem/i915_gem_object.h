@@ -173,6 +173,32 @@ static inline void assert_object_held_shared(struct drm_i915_gem_object *obj)
 		assert_object_held(obj);
 }
 
+static inline int
+i915_gem_object_lock_to_evict(struct drm_i915_gem_object *obj,
+			      struct i915_gem_ww_ctx *ww)
+{
+	int ret;
+
+	if (ww->intr)
+		ret = dma_resv_lock_interruptible(obj->base.resv, &ww->ctx);
+	else
+		ret = dma_resv_lock(obj->base.resv, &ww->ctx);
+
+	if (!ret) {
+		list_add_tail(&obj->obj_link, &ww->eviction_list);
+		i915_gem_object_get(obj);
+		obj->evict_locked = true;
+	}
+
+	GEM_WARN_ON(ret == -EALREADY);
+	if (ret == -EDEADLK) {
+		ww->contended_evict = true;
+		ww->contended = i915_gem_object_get(obj);
+	}
+
+	return ret;
+}
+
 static inline int __i915_gem_object_lock(struct drm_i915_gem_object *obj,
 					 struct i915_gem_ww_ctx *ww,
 					 bool intr)
@@ -187,11 +213,20 @@ static inline int __i915_gem_object_lock(struct drm_i915_gem_object *obj,
 	if (!ret && ww) {
 		i915_gem_object_get(obj);
 		list_add_tail(&obj->obj_link, &ww->obj_list);
+		obj->evict_locked = false;
 	}
-	if (ret == -EALREADY)
+
+	if (ret == -EALREADY) {
 		ret = 0;
+		/* We've already evicted an object needed for this batch. */
+		if (obj->evict_locked) {
+			list_move_tail(&obj->obj_link, &ww->obj_list);
+			obj->evict_locked = false;
+		}
+	}
 
 	if (ret == -EDEADLK) {
+		ww->contended_evict = false;
 		i915_gem_object_get(obj);
 		ww->contended = obj;
 	}
@@ -651,6 +686,27 @@ bool i915_gem_object_evictable(struct drm_i915_gem_object *obj);
 bool i915_gem_object_migratable(struct drm_i915_gem_object *obj);
 
 bool i915_gem_object_validates_to_lmem(struct drm_i915_gem_object *obj);
+
+/**
+ * i915_gem_get_locking_ctx - Get the locking context of a locked object
+ * if any.
+ *
+ * @obj: The object to get the locking ctx from
+ *
+ * RETURN: The locking context if the object was locked using a context.
+ * NULL otherwise.
+ */
+static inline struct i915_gem_ww_ctx *
+i915_gem_get_locking_ctx(const struct drm_i915_gem_object *obj)
+{
+	struct ww_acquire_ctx *ctx;
+
+	ctx = obj->base.resv->lock.ctx;
+	if (!ctx)
+		return NULL;
+
+	return container_of(ctx, struct i915_gem_ww_ctx, ctx);
+}
 
 #ifdef CONFIG_MMU_NOTIFIER
 static inline bool

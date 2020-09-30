@@ -260,6 +260,11 @@ struct drm_i915_gem_object {
 	 */
 	struct i915_address_space *shares_resv_from;
 
+	/**
+	 * @evict_locked: Whether @obj_link sits on the eviction_list
+	 */
+	bool evict_locked;
+
 	union {
 		struct rcu_head rcu;
 		struct llist_node freed;
