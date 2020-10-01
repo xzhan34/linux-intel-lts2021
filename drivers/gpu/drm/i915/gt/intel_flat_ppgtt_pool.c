@@ -14,6 +14,8 @@ void intel_flat_ppgtt_pool_fini(struct intel_flat_ppgtt_pool *fpp)
 	struct intel_gt *gt = container_of(fpp, struct intel_gt, fpp);
 	struct intel_pte_bo *item, *temp;
 
+	gt->i915->bind_ctxt_ready = false;
+
 	list_for_each_entry_safe(item, temp, &fpp->free_list, link) {
 		i915_vma_unpin_and_release(&item->vma, I915_VMA_RELEASE_MAP);
 		kfree(item);
