@@ -176,6 +176,11 @@ static const u32 *fake_hwconfig_get_table(struct drm_i915_private *i915,
 		return hwinfo_adlp;
 	}
 
+	if (IS_XEHPSDV(i915)) {
+		*size = ARRAY_SIZE(hwinfo_xehpsdv) * sizeof(u32);
+		return hwinfo_xehpsdv;
+	}
+
 	return NULL;
 }
 
