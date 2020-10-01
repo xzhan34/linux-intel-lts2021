@@ -532,11 +532,22 @@ err_unpin:
 void *i915_gem_object_pin_map_unlocked(struct drm_i915_gem_object *obj,
 				       enum i915_map_type type)
 {
-	void *ret;
+	struct i915_gem_ww_ctx ww;
+	void *ret = NULL;
+	int err;
 
-	i915_gem_object_lock(obj, NULL);
-	ret = i915_gem_object_pin_map(obj, type);
-	i915_gem_object_unlock(obj);
+	for_i915_gem_ww(&ww, err, false) {
+		err = i915_gem_object_lock(obj, &ww);
+		if (err)
+			continue;
+
+		ret = i915_gem_object_pin_map(obj, type);
+		if (IS_ERR(ret))
+			err = PTR_ERR(ret);
+		/* Implicit unlock */
+	}
+	if (err)
+		return ERR_PTR(err);
 
 	return ret;
 }
