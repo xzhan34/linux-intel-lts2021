@@ -170,12 +170,6 @@ void intel_gt_init_ggtt(struct intel_gt *gt, struct i915_ggtt *ggtt)
 
 int intel_gt_init_mmio(struct intel_gt *gt)
 {
-	int ret;
-
-	ret = intel_iov_init_mmio(&gt->iov);
-	if (ret)
-		return ret;
-
 	intel_gt_init_clock_frequency(gt);
 	intel_uc_init_mmio(&gt->uc);
 
@@ -1274,6 +1268,10 @@ static int intel_gt_tile_setup(struct intel_gt *gt,
 		return ret;
 
 	gt->phys_addr = phys_addr;
+
+	ret = intel_iov_init_mmio(&gt->iov);
+	if (unlikely(ret))
+		return ret;
 
 	intel_iov_init_early(&gt->iov);
 
