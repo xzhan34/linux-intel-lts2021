@@ -298,7 +298,7 @@ void intel_iaf_init_mmio(struct drm_i915_private *i915)
 {
 	u32 iaf_info;
 
-	if (!HAS_IAF(i915) || !i915->params.enable_iaf)
+	if (!HAS_IAF(i915) || !i915->params.enable_iaf || IS_SRIOV_VF(i915))
 		return;
 
 	iaf_info = intel_uncore_read(&i915->uncore, PUNIT_MMIO_CR_POC_STRAPS);
@@ -337,7 +337,7 @@ void intel_iaf_init(struct drm_i915_private *i915)
 	u32 base;
 	int err;
 
-	if (!HAS_IAF(i915))
+	if (!HAS_IAF(i915) || IS_SRIOV_VF(i915))
 		return;
 
 	if (i915->intel_iaf.present) {
@@ -435,6 +435,8 @@ void intel_iaf_init_aux(struct drm_i915_private *i915)
 		goto fail;
 	}
 
+	WARN(IS_SRIOV_VF(i915), "Intel IAF doesn't support VF\n");
+
 	pd = init_pd(i915);
 	if (!pd)
 		goto cleanup;
@@ -501,6 +503,8 @@ void intel_iaf_init_mfd(struct drm_i915_private *i915)
 		err = i915->intel_iaf.index;
 		goto fail;
 	}
+
+	WARN(IS_SRIOV_VF(i915), "Intel IAF doesn't support VF\n");
 
 	pd = init_pd(i915);
 	if (!pd)
