@@ -614,6 +614,8 @@ config_status(struct drm_i915_private *i915, u64 config)
 		break;
 	case I915_PMU_SOFTWARE_GT_AWAKE_TIME:
 		break;
+	case PRELIM_I915_PMU_ENGINE_RESET_COUNT:
+		break;
 	default:
 		return -ENOENT;
 	}
@@ -736,6 +738,9 @@ static u64 __i915_pmu_event_read(struct perf_event *event)
 			break;
 		case I915_PMU_SOFTWARE_GT_AWAKE_TIME:
 			val = ktime_to_ns(intel_gt_get_awake_time(to_gt(i915)));
+			break;
+		case PRELIM_I915_PMU_ENGINE_RESET_COUNT:
+			val = atomic_read(&i915->gt[gt_id]->reset.engines_reset_count);
 			break;
 		}
 	}
@@ -1000,6 +1005,7 @@ static const struct attribute_group i915_pmu_cpumask_attr_group = {
 	.name = (__name), \
 	.unit = (__unit), \
 	.global = false, \
+	.error = false, \
 }
 
 #define __global_event(__counter, __name, __unit) \
@@ -1008,6 +1014,16 @@ static const struct attribute_group i915_pmu_cpumask_attr_group = {
 	.name = (__name), \
 	.unit = (__unit), \
 	.global = true, \
+	.error = false, \
+}
+
+#define __error_event(__counter, __name, __unit) \
+{ \
+	.counter = (__counter), \
+	.name = (__name), \
+	.unit = (__unit), \
+	.global = false, \
+	.error = true, \
 }
 
 #define __engine_event(__sample, __name) \
@@ -1049,7 +1065,8 @@ create_event_attributes(struct i915_pmu *pmu)
 		unsigned int counter;
 		const char *name;
 		const char *unit;
-		bool global;
+		bool global:1;
+		bool error:1;
 	} events[] = {
 		/*
 		 * #define __I915_PMU_ACTUAL_FREQUENCY(gt)    ___I915_PMU_OTHER(gt, 0)
@@ -1063,6 +1080,7 @@ create_event_attributes(struct i915_pmu *pmu)
 		__global_event(2, "interrupts", NULL),
 		__event(3, "rc6-residency", "ns"),
 		__event(4, "software-gt-awake-time", "ns"),
+		__error_event(5, "engine-reset", NULL),
 	};
 	static const char *hw_error_events[] = {
 		[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_L3_SNG] = "correctable-l3-sng",
@@ -1155,8 +1173,14 @@ create_event_attributes(struct i915_pmu *pmu)
 			if (config_status(i915, config))
 				continue;
 
-			if (events[i].global || !i915->remote_tiles)
+			if ((events[i].global || !i915->remote_tiles) && !events[i].error)
 				str = kstrdup(events[i].name, GFP_KERNEL);
+			else if (events[i].error && !i915->remote_tiles)
+				str = kasprintf(GFP_KERNEL, "error--%s",
+						events[i].name);
+			else if (events[i].error)
+				str = kasprintf(GFP_KERNEL, "error-gt%u--%s",
+						j, events[i].name);
 			else
 				str = kasprintf(GFP_KERNEL, "%s-gt%u",
 						events[i].name, j);
