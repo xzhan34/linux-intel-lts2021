@@ -30,6 +30,9 @@
 #include <linux/aer.h>
 #include <linux/acpi.h>
 #include <linux/device.h>
+#if !IS_ENABLED(CONFIG_AUXILIARY_BUS)
+#include <linux/mfd/core.h>
+#endif
 #include <linux/module.h>
 #include <linux/oom.h>
 #include <linux/pci.h>
@@ -104,6 +107,7 @@
 #include "i915_debugger.h"
 #include "intel_dram.h"
 #include "intel_gvt.h"
+#include "intel_iaf.h"
 #include "intel_memory_region.h"
 #include "intel_pci_config.h"
 #include "intel_pcode.h"
@@ -644,6 +648,8 @@ static int i915_driver_early_probe(struct drm_i915_private *dev_priv,
 	intel_init_display_hooks(dev_priv);
 	intel_init_clock_gating_hooks(dev_priv);
 
+	intel_iaf_init_early(dev_priv);
+
 	intel_detect_preproduction_hw(dev_priv);
 	init_waitqueue_head(&dev_priv->user_fence_wq);
 
@@ -889,6 +895,8 @@ static int i915_driver_mmio_probe(struct drm_i915_private *dev_priv)
 		init_fake_interrupts(gt);
 	}
 
+	intel_iaf_init_mmio(dev_priv);
+
 	/* As early as possible, scrub existing GPU state before clobbering */
 	sanitize_gpu(dev_priv);
 
@@ -1065,6 +1073,9 @@ static int i915_driver_hw_probe(struct drm_i915_private *dev_priv)
 
 	i915_perf_stall_cntr_init(dev_priv);
 
+	/* needs to be done before ggtt probe and init  */
+	intel_iaf_init(dev_priv);
+
 	ret = i915_ggtt_probe_hw(dev_priv);
 	if (ret)
 		goto err_perf;
@@ -1190,6 +1201,11 @@ void i915_driver_register(struct drm_i915_private *dev_priv)
 	unsigned int i;
 
 	i915_gem_driver_register(dev_priv);
+#if IS_ENABLED(CONFIG_AUXILIARY_BUS)
+	intel_iaf_init_aux(dev_priv);
+#else
+	intel_iaf_init_mfd(dev_priv);
+#endif
 
 	intel_vgpu_register(dev_priv);
 
@@ -1245,9 +1261,18 @@ static void i915_driver_unregister(struct drm_i915_private *dev_priv)
 	intel_runtime_pm_disable(&dev_priv->runtime_pm);
 	intel_power_domains_disable(dev_priv);
 
+#if !IS_ENABLED(CONFIG_AUXILIARY_BUS)
+	/*
+	 * mfd devices may be registered individually either by gt or display,
+	 * but they are unregistered all at once from i915
+	 */
+	mfd_remove_devices(dev_priv->drm.dev);
+#endif
 	intel_display_driver_unregister(dev_priv);
 
 	i915_hwmon_unregister(dev_priv);
+
+	intel_iaf_remove(dev_priv);
 
 	intel_spi_fini(&dev_priv->spi);
 

@@ -167,6 +167,7 @@ enum intel_ppgtt_type {
 	func(has_guc_programmable_mocs); \
 	func(has_heci_pxp); \
 	func(has_heci_gscfi); \
+	func(has_iaf); \
 	func(has_l3_ccs_read); \
 	func(has_l3_dpf); \
 	func(has_link_copy_engines); \

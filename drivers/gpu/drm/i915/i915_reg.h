@@ -5775,6 +5775,7 @@
 #define  GEN12_CORRECTABLE_ERROR_IRQ	(1 << 26)
 #define  GEN12_ERROR_IRQ(x)		(1 << (26 + (x)))
 #define  GEN11_DISPLAY_IRQ		(1 << 16)
+#define  GEN12_IAF_IRQ			BIT(8)
 #define  GEN11_GT_DW_IRQ(x)		(1 << (x))
 #define  GEN11_GT_DW1_IRQ		(1 << 1)
 #define  GEN11_GT_DW0_IRQ		(1 << 0)
@@ -8584,12 +8585,23 @@ enum skl_power_gate {
 							   _ICL_PIPE_DSS_CTL2_PB, \
 							   _ICL_PIPE_DSS_CTL2_PC)
 
+
+#define PKG_ADDR_RANGE			_MMIO(0x41B0)
+#define   PKG_ADDR_RANGE_RANGE_SHIFT	20
+#define   PKG_ADDR_RANGE_BASE_SHIFT	1
+#define   PKG_ADDR_RANGE_ENABLE		1
+
 #define XEHPSDV_MTCFG_ADDR			_MMIO(0x101800)
 #define   TILE_COUNT				REG_GENMASK(15, 8)
 #define   TILE_NUMBER				REG_GENMASK(7, 0)
 
 #define GEN12_GSMBASE			_MMIO(0x108100)
 #define GEN12_DSMBASE			_MMIO(0x1080C0)
+
+#define PKG_ADDR_BASE			_MMIO(0x108390)
+#define   PKG_ADDR_BASE_RANGE_SHIFT	20
+#define   PKG_ADDR_BASE_BASE_SHIFT	1
+#define   PKG_ADDR_BASE_ENABLE		1
 
 #define XEHP_CLOCK_GATE_DIS		_MMIO(0x101014)
 #define   SGSI_SIDECLK_DIS		REG_BIT(17)
@@ -8998,5 +9010,25 @@ enum skl_power_gate {
 #define  MTL_DCLK_MASK			REG_GENMASK(15, 0)
 #define  MTL_TRP_MASK			REG_GENMASK(23, 16)
 #define  MTL_TRCD_MASK			REG_GENMASK(31, 24)
+
+#define PUNIT_MMIO_CR_POC_STRAPS	_MMIO(0x281078)
+#define   CD_ALIVE			REG_BIT(2)
+#define   SOCKET_ID_MASK		REG_GENMASK(7, 3)
+
+/* Define the BAR and offset for the accelerator fabric CSRs */
+#define CD_BASE_OFFSET 0x291000
+#define CD_BAR_SIZE (256 * 1024)
+
+/*
+ * In general, the i915 should not touch the IAF registers.  The registers
+ * will be passed as an IO resource via the MFD interface.  However, it
+ * is necessary to put the IRQ bits in a known state, before the MFD cell
+ * is registered.
+ *
+ * So define these registers for i915 usage.
+ */
+#define CPORT_MBDB_CSRS (CD_BASE_OFFSET + 0x6000)
+#define CPORT_MBDB_CSRS_END (CPORT_MBDB_CSRS + 0x1000)
+#define CPORT_MBDB_INT_ENABLE_MASK _MMIO(CPORT_MBDB_CSRS + 0x8)
 
 #endif /* _I915_REG_H_ */

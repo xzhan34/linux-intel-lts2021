@@ -9,6 +9,7 @@
 
 #include "i915_drv.h"
 #include "i915_driver.h"
+#include "intel_iaf.h"
 #include "i915_pci.h"
 
 /**
@@ -53,6 +54,7 @@ static pci_ers_result_t i915_pci_error_detected(struct pci_dev *pdev,
 	 * read/write to the HW registers
 	 */
 	i915_pci_set_offline(pdev);
+	intel_iaf_pcie_error_notify(i915);
 
 	for_each_gt(gt, i915, i) {
 		intel_gt_set_wedged(gt);

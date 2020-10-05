@@ -29,6 +29,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/circ_buf.h>
+#include <linux/irq.h>
 #include <linux/slab.h>
 #include <linux/sysrq.h>
 
@@ -3547,6 +3548,18 @@ out_unlock:
 	spin_unlock_irqrestore(gt->irq_lock, flags);
 }
 
+/**
+ * gen12_iaf_irq_handler - handle accelerator fabric IRQs
+ *
+ * Gen12+ can have an accelerator fabric attached.  Handle the IRQs that are
+ * sourced by the device supporting the fabric.
+ */
+static void gen12_iaf_irq_handler(struct intel_gt *gt, const u32 master_ctl)
+{
+	if (master_ctl & GEN12_IAF_IRQ)
+		generic_handle_irq(gt->iaf_irq);
+}
+
 /*
  * GEN12+ adds three Error bits to the Master Interrupt
  * Register to support dgfx card error handling.
@@ -3736,6 +3749,7 @@ static irqreturn_t dg1_irq_handler(int irq, void *arg)
 		raw_reg_write(regs, GEN11_GFX_MSTR_IRQ, master_ctl);
 
 		gen11_gt_irq_handler(gt, master_ctl);
+		gen12_iaf_irq_handler(gt, master_ctl);
 		gen12_hw_error_irq_handler(gt, master_ctl);
 
 		/*

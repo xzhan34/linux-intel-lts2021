@@ -396,6 +396,8 @@ struct intel_gt {
 
 	struct intel_memory_region *lmem;
 
+	int iaf_irq;
+
 	struct intel_hw_errors {
 		unsigned long hw[INTEL_GT_HW_ERROR_COUNT];
 		unsigned long gsc_hw[INTEL_GSC_HW_ERROR_COUNT];

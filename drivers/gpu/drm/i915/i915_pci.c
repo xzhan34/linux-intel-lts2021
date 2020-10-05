@@ -1189,6 +1189,7 @@ static const struct intel_device_info ats_m_info = {
 	.has_gt_error_vectors = 1, \
 	.has_guc_deprivilege = 1, \
 	.has_guc_programmable_mocs = 1, \
+	.has_iaf = 1, \
 	.has_l3_ccs_read = 1, \
 	.has_link_copy_engines = 1, \
 	.has_media_ratio_mode = 1, \

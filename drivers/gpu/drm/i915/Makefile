@@ -50,6 +50,7 @@ i915-y += i915_driver.o \
 	  i915_utils.o \
 	  intel_device_info.o \
 	  intel_dram.o \
+	  intel_iaf.o \
 	  intel_memory_region.o \
 	  intel_pch.o \
 	  intel_pcode.o \

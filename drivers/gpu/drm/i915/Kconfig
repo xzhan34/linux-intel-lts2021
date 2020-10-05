@@ -30,6 +30,7 @@ config DRM_I915
 	select AUXILIARY_BUS
 	select MTD
 	select MTD_PARTITIONED_MASTER
+	select MFD_CORE
 	help
 	  Choose this option if you have a system that has "Intel Graphics
 	  Media Accelerator" or "HD Graphics" integrated graphics,
