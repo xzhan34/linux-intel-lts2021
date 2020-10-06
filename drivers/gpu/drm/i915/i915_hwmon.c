@@ -202,6 +202,7 @@ hwm_power1_max_interval_store(struct device *dev,
 	struct hwm_drvdata *ddat = dev_get_drvdata(dev);
 	struct i915_hwmon *hwmon = ddat->hwmon;
 	u32 x, y, rxy, x_w = 2; /* 2 bits */
+	intel_wakeref_t wakeref;
 	u64 tau4, r, max_win;
 	unsigned long val;
 	int ret;
@@ -216,11 +217,24 @@ hwm_power1_max_interval_store(struct device *dev,
 	 */
 #define PKG_MAX_WIN_DEFAULT 0x12ull
 
-	/*
-	 * val must be < max in hwmon interface units. The steps below are
-	 * explained in i915_power1_max_interval_show()
-	 */
-	r = FIELD_PREP(PKG_MAX_WIN, PKG_MAX_WIN_DEFAULT);
+	/* val must be < max in hwmon interface units */
+	if (i915_mmio_reg_valid(hwmon->rg.pkg_power_sku)) {
+		with_intel_runtime_pm(ddat->uncore->rpm, wakeref)
+			r = intel_uncore_read64(ddat->uncore, hwmon->rg.pkg_power_sku);
+		/*
+		 * FIXME
+		 * Wa_22015381490:pvc rg.pkg_power_sku value is incorrect on PVC
+		 * at least. The following seems to work:
+		 *	r <<= 8;
+		 * However for now to be safe just use the default value
+		 * below. Once issue is resolved remove the one line below.
+		 */
+		r = FIELD_PREP(PKG_MAX_WIN, PKG_MAX_WIN_DEFAULT);
+	} else {
+		r = FIELD_PREP(PKG_MAX_WIN, PKG_MAX_WIN_DEFAULT);
+	}
+
+	/* Steps below are explained in i915_power1_max_interval_show() */
 	x = REG_FIELD_GET(PKG_MAX_WIN_X, r);
 	y = REG_FIELD_GET(PKG_MAX_WIN_Y, r);
 	tau4 = ((1 << x_w) | x) << y;
@@ -695,6 +709,12 @@ hwm_get_preregistration_info(struct drm_i915_private *i915)
 		hwmon->rg.pkg_rapl_limit = GT0_PACKAGE_RAPL_LIMIT;
 		hwmon->rg.energy_status_all = GT0_PLATFORM_ENERGY_STATUS;
 		hwmon->rg.energy_status_tile = GT0_PACKAGE_ENERGY_STATUS;
+	} else if (IS_PONTEVECCHIO(i915)) {
+		hwmon->rg.pkg_power_sku_unit = PVC_GT0_PACKAGE_POWER_SKU_UNIT;
+		hwmon->rg.pkg_power_sku = PVC_GT0_PACKAGE_POWER_SKU;
+		hwmon->rg.pkg_rapl_limit = PVC_GT0_PACKAGE_RAPL_LIMIT;
+		hwmon->rg.energy_status_all = PVC_GT0_PLATFORM_ENERGY_STATUS;
+		hwmon->rg.energy_status_tile = PVC_GT0_PACKAGE_ENERGY_STATUS;
 	} else {
 		hwmon->rg.pkg_power_sku_unit = INVALID_MMIO_REG;
 		hwmon->rg.pkg_power_sku = INVALID_MMIO_REG;

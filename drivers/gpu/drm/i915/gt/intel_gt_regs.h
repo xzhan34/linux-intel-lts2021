@@ -1749,6 +1749,12 @@
 #define GT0_PACKAGE_POWER_SKU_UNIT		_MMIO(0x250068)
 #define GT0_PLATFORM_ENERGY_STATUS		_MMIO(0x25006c)
 
+#define PVC_GT0_PACKAGE_ENERGY_STATUS		_MMIO(0x281004)
+#define PVC_GT0_PACKAGE_RAPL_LIMIT		_MMIO(0x281008)
+#define PVC_GT0_PACKAGE_POWER_SKU_UNIT		_MMIO(0x281068)
+#define PVC_GT0_PLATFORM_ENERGY_STATUS		_MMIO(0x28106c)
+#define PVC_GT0_PACKAGE_POWER_SKU		_MMIO(0x281080)
+
 /*
  * Standalone Media's non-engine GT registers are located at their regular GT
  * offsets plus 0x380000.  This extra offset is stored inside the intel_uncore
