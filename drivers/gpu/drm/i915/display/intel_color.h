@@ -26,5 +26,6 @@ bool intel_color_lut_equal(struct drm_property_blob *blob1,
 			   u32 gamma_mode, u32 bit_precision);
 int intel_color_plane_init(struct drm_plane *plane);
 void intel_color_load_plane_luts(const struct drm_plane_state *plane_state);
+void intel_color_load_plane_csc_matrix(const struct drm_plane_state *plane_state);
 
 #endif /* __INTEL_COLOR_H__ */
