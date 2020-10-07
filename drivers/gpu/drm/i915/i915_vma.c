@@ -866,6 +866,11 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 		size += 2 * guard;
 
 		/*
+		 * For the non-softpin path, the kernel is allowed to
+		 * fiddle with the alignment and padding if it means
+		 * we have a better chance of utilising huge-GTT-pages
+		 * when we later bind this vma in the ppGTT.
+
 		 * We only support huge gtt pages through the 48b PPGTT,
 		 * however we also don't want to force any alignment for
 		 * objects which need to be tightly packed into the low 32bits.
@@ -875,15 +880,29 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 		 */
 		if (upper_32_bits(end - 1) &&
 		    vma->page_sizes.sg > I915_GTT_PAGE_SIZE) {
+			u64 page_alignment;
+
 			/*
-			 * We can't mix 64K and 4K PTEs in the same page-table
-			 * (2M block), and so to avoid the ugliness and
-			 * complexity of coloring we opt for just aligning 64K
-			 * objects to 2M.
+			 * If we lack PS64 support then we can't mix 64K
+			 * and 4K PTEs in the same page-table (2M block),
+			 * but on platforms which need memory coloring,
+			 * we use 2M coloring to separate 4K and 64K pages
+			 * into * different 2M blocks. In all other cases,
+			 * to avoid the ugliness and complexity of coloring
+			 * we opt for just aligning 64K objects to 2M.
+			 *
+			 * In the case of PS64, we can enable 64K pages
+			 * at the pte level, and so we can minimally align
+			 * to 64K if we think that will also give us 64K
+			 * GTT pages.
 			 */
-			u64 page_alignment =
-				rounddown_pow_of_two(vma->page_sizes.sg |
-						     I915_GTT_PAGE_SIZE_2M);
+			if (HAS_64K_PAGES(vma->vm->i915) &&
+			    vma->page_sizes.sg < I915_GTT_PAGE_SIZE_2M)
+				page_alignment = I915_GTT_PAGE_SIZE_64K;
+			else
+				page_alignment = rounddown_pow_of_two(
+						vma->page_sizes.sg |
+						I915_GTT_PAGE_SIZE_2M);
 
 			/*
 			 * Check we don't expand for the limited Global GTT
@@ -894,7 +913,20 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 
 			alignment = max(alignment, page_alignment);
 
-			if (vma->page_sizes.sg & I915_GTT_PAGE_SIZE_64K)
+			/*
+			 * On platforms which need memory coloring we already
+			 * ensure that we don't mix 64K and 4K GTT pages in
+			 * the same 2M block, and on such platforms we support
+			 * some form of PS64(even if it's only for system
+			 * memory), so opportunistically adding 2M padding to
+			 * ensure 64K GTT pages doesn't help us.
+			 *
+			 * On platforms which support PS64 for both local and
+			 * system memory, the whole idea of adding 2M padding
+			 * is completely irrelevant.
+			 */
+			if (!HAS_64K_PAGES(vma->vm->i915) &&
+			    vma->page_sizes.sg & I915_GTT_PAGE_SIZE_64K)
 				size = round_up(size, I915_GTT_PAGE_SIZE_2M);
 		}
 

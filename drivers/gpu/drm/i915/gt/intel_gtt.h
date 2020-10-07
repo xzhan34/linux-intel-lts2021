@@ -112,6 +112,7 @@ typedef u64 gen8_pte_t;
 #define ADL_GGTT_PTE_ADDR_MASK		GENMASK_ULL(38, 12)
 
 #define GEN12_PDE_64K BIT(6)
+#define GEN12_PTE_PS64 BIT(8)
 
 /*
  * Cacheability Control is a 4-bit value. The low three bits are stored in bits
