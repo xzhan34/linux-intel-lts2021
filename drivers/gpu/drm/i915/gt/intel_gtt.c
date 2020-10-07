@@ -421,7 +421,7 @@ int setup_scratch_page(struct i915_address_space *vm)
 	 * for all.
 	 */
 	size = I915_GTT_PAGE_SIZE_4K;
-	if (i915_vm_lvl(vm) >= 4 &&
+	if (i915_vm_lvl(vm) >= 4 && !HAS_FULL_PS64(vm->i915) &&
 	    HAS_PAGE_SIZES(vm->i915, I915_GTT_PAGE_SIZE_64K))
 		size = I915_GTT_PAGE_SIZE_64K;
 

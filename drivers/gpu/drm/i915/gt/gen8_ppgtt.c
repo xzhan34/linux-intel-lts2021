@@ -845,6 +845,117 @@ static void xehpsdv_ppgtt_color_adjust(const struct drm_mm_node *node,
 }
 
 static void
+pvc_ppgtt_insert_huge(struct i915_vma *vma,
+		      struct i915_vm_pt_stash *stash,
+		      struct sgt_dma *iter,
+		      enum i915_cache_level cache_level,
+		      u32 flags)
+{
+	const gen8_pte_t pte_encode = vma->vm->pte_encode(0, cache_level, flags);
+	dma_addr_t rem = min_t(u64, sg_dma_len(iter->sg), iter->rem);
+	u64 start = i915_vma_offset(vma) + (vma->size - iter->rem);
+	dma_addr_t daddr;
+
+	GEM_BUG_ON(i915_vm_lvl(vma->vm) < 4);
+
+	do {
+		struct i915_page_directory * const pdp =
+			gen8_pdp_for_page_address(vma->vm, start);
+		struct i915_page_directory * const pd =
+			i915_pd_entry(pdp, __gen8_pte_index(start, 2));
+		struct i915_page_table *pt =
+			i915_pt_entry(pd, __gen8_pte_index(start, 1));
+		gen8_pte_t encode = pte_encode;
+		unsigned int page_size;
+		gen8_pte_t *vaddr, entry;
+		u16 index, nent, i;
+		bool needs_flush;
+
+		nent = 1;
+
+		if (unlikely(vma->page_sizes.sg & I915_GTT_PAGE_SIZE_1G) &&
+				IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_1G) &&
+				rem >= I915_GTT_PAGE_SIZE_1G &&
+				!(__gen8_pte_index(start, 0) | __gen8_pte_index(start, 1))) {
+			index = __gen8_pte_index(start, 2);
+			encode |= GEN8_PDPE_PS_1G;
+			page_size = I915_GTT_PAGE_SIZE_1G;
+			vaddr = px_vaddr(pdp, &needs_flush);
+			daddr = px_dma(pdp);
+		} else if (vma->page_sizes.sg & I915_GTT_PAGE_SIZE_2M &&
+		    IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_2M) &&
+		    rem >= I915_GTT_PAGE_SIZE_2M &&
+		    !__gen8_pte_index(start, 0)) {
+			index = __gen8_pte_index(start, 1);
+			encode |= GEN8_PDE_PS_2M;
+			page_size = I915_GTT_PAGE_SIZE_2M;
+
+			vaddr = px_vaddr(pd, &needs_flush);
+		} else {
+			index = __gen8_pte_index(start, 0);
+
+			if (vma->page_sizes.sg & I915_GTT_PAGE_SIZE_64K &&
+			    IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_64K) &&
+			    rem >= I915_GTT_PAGE_SIZE_64K &&
+			    !(index % 16)) {
+				encode |= GEN12_PTE_PS64;
+				page_size = I915_GTT_PAGE_SIZE_64K;
+				nent = 16;
+			} else {
+				page_size = I915_GTT_PAGE_SIZE;
+			}
+
+			vaddr = px_vaddr(pt, &needs_flush);
+		}
+
+		do {
+			GEM_BUG_ON(rem < page_size);
+			for (i = 0; i < nent; i++) {
+				entry = encode |
+					(iter->dma + i * I915_GTT_PAGE_SIZE);
+				vaddr[index++] = entry;
+			}
+
+			start += page_size;
+			iter->dma += page_size;
+			iter->rem -= page_size;
+			if (!iter->rem)
+				break;
+
+			rem -= page_size;
+			if (iter->dma >= iter->max) {
+				iter->sg = __sg_next(iter->sg);
+				GEM_BUG_ON(!iter->sg);
+
+				rem = min_t(u64, sg_dma_len(iter->sg),
+					    iter->rem);
+				GEM_BUG_ON(!rem);
+				iter->dma = sg_dma_address(iter->sg);
+				iter->max = iter->dma + rem;
+
+				if (unlikely(!IS_ALIGNED(iter->dma, page_size)))
+					break;
+			}
+		} while (rem >= page_size && index < I915_PDES);
+
+		if (needs_flush)
+			drm_clflush_virt_range(vaddr, PAGE_SIZE);
+		vma->page_sizes.gtt |= page_size;
+	} while (iter->rem);
+}
+
+static void pvc_ppgtt_insert(struct i915_address_space *vm,
+			     struct i915_vm_pt_stash *stash,
+			     struct i915_vma *vma,
+			     enum i915_cache_level cache_level,
+			     u32 flags)
+{
+	struct sgt_dma iter = sgt_dma(vma);
+
+	pvc_ppgtt_insert_huge(vma, stash, &iter, cache_level, flags);
+}
+
+static void
 xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
 			  struct i915_vm_pt_stash *stash,
 			  struct sgt_dma *iter,
@@ -1159,7 +1270,9 @@ typedef void (*insert_pte_fn)(struct i915_address_space *vm,
 
 static insert_pte_fn get_insert_pte(struct drm_i915_private *i915)
 {
-	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
+	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 60))
+		return pvc_ppgtt_insert;
+	else if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
 		return xehpsdv_ppgtt_insert;
 	else
 		return gen8_ppgtt_insert;
@@ -1293,7 +1406,9 @@ static void gen8_ppgtt_insert_wa_bcs(struct i915_address_space *vm,
 	if (!wakeref)
 		return get_insert_pte(vm->i915)(vm, stash, vma, cache_level, flags);
 
-	if (GRAPHICS_VER_FULL(vm->i915) >= IP_VER(12, 50))
+	if (GRAPHICS_VER_FULL(vm->i915) >= IP_VER(12, 60))
+		pvc_ppgtt_insert_huge(vma, stash, &iter, cache_level, flags);
+	else if (GRAPHICS_VER_FULL(vm->i915) >= IP_VER(12, 50))
 		xehpsdv_ppgtt_insert_huge_wa_bcs(vma, stash, &iter, cache_level, flags);
 	else
 		gen8_ppgtt_insert_huge(vma, stash, &iter, cache_level, flags);
@@ -1671,7 +1786,10 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt, u32 flags)
 
 	ppgtt->vm.pte_encode = gen8_pte_encode;
 
-	if (GRAPHICS_VER_FULL(gt->i915) >= IP_VER(12, 50)) {
+	if (GRAPHICS_VER_FULL(gt->i915) >= IP_VER(12, 60)) {
+		ppgtt->vm.insert_entries = pvc_ppgtt_insert;
+		ppgtt->vm.insert_page = gen8_ppgtt_insert_entry;
+	} else if (GRAPHICS_VER_FULL(gt->i915) >= IP_VER(12, 50)) {
 		ppgtt->vm.insert_entries = xehpsdv_ppgtt_insert;
 		ppgtt->vm.insert_page = xehpsdv_ppgtt_insert_entry;
 		ppgtt->vm.mm.color_adjust = xehpsdv_ppgtt_color_adjust;

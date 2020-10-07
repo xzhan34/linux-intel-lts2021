@@ -1009,7 +1009,8 @@ static const struct intel_device_info adl_p_info = {
 #define XE_HP_PAGE_SIZES \
 	.page_sizes = I915_GTT_PAGE_SIZE_4K | \
 		      I915_GTT_PAGE_SIZE_64K | \
-		      I915_GTT_PAGE_SIZE_2M
+		      I915_GTT_PAGE_SIZE_2M | \
+		      I915_GTT_PAGE_SIZE_1G
 
 #define XE_HP_FEATURES \
 	.graphics.ver = 12, \
@@ -1138,6 +1139,7 @@ static const struct intel_device_info ats_m_info = {
 	/* FIXME: remove as soon as PVC support for LMEM 4K pages is working */ \
 	.has_64k_pages = 1, \
 	.has_asid_tlb_invalidation = 1, \
+	.has_full_ps64 = 1, \
 	.has_guc_deprivilege = 1, \
 	.has_guc_programmable_mocs = 1, \
 	.has_l3_ccs_read = 1, \
