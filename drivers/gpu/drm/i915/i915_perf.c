@@ -4231,7 +4231,7 @@ i915_perf_open_ioctl_locked(struct i915_perf *perf,
 	 */
 	if (!i915_perf_stream_paranoid &&
 	    props->sample_flags & SAMPLE_OA_REPORT) {
-		intel_gt_apply_oa_whitelist(to_gt(stream->perf->i915));
+		intel_gt_apply_oa_whitelist(stream->engine->gt);
 		stream->oa_whitelisted = true;
 	}
 
