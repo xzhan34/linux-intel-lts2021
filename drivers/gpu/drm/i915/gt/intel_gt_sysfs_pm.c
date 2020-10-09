@@ -390,7 +390,7 @@ static ssize_t rapl_PL1_freq_mhz_show(struct device *dev,
 	return scnprintf(buff, PAGE_SIZE, "%x\n", rapl_pl1);
 }
 
-static ssize_t swreq_freq_mhz_show(struct device *dev,
+static ssize_t punit_req_freq_mhz_show(struct device *dev,
 				   struct device_attribute *attr,
 				   char *buff)
 {
@@ -410,15 +410,21 @@ static ssize_t throttle_reason_show(struct device *dev,
 	return scnprintf(buff, PAGE_SIZE, "%x\n", reason);
 }
 
-static DEVICE_ATTR(rapl_PL1_freq_mhz, S_IRUGO, rapl_PL1_freq_mhz_show, NULL);
-static DEVICE_ATTR(swreq_freq_mhz, S_IRUGO, swreq_freq_mhz_show, NULL);
-static DEVICE_ATTR(throttle_reason, S_IRUGO, throttle_reason_show, NULL);
+static INTEL_GT_RPS_SYSFS_ATTR(rapl_PL1_freq_mhz, 0444, rapl_PL1_freq_mhz_show, NULL);
+static INTEL_GT_RPS_SYSFS_ATTR(punit_req_freq_mhz, 0444, punit_req_freq_mhz_show, NULL);
+static INTEL_GT_RPS_SYSFS_ATTR(throttle_reason, 0444, throttle_reason_show, NULL);
 
-static const struct attribute *freq_attrs[] = {
-	&dev_attr_swreq_freq_mhz.attr,
-	&dev_attr_throttle_reason.attr,
-	NULL
-};
+#define GEN9_FREQ_ATTR(s) { \
+	&dev_attr_##s##_punit_req_freq_mhz.attr, \
+	&dev_attr_##s##_throttle_reason.attr, \
+	NULL, \
+}
+
+#define GEN9_FREQ_RPS_ATTR GEN9_FREQ_ATTR(rps)
+#define GEN9_FREQ_GT_ATTR GEN9_FREQ_ATTR(gt)
+
+static const struct attribute * const gen9_freq_rps_attrs[] = GEN9_FREQ_RPS_ATTR;
+static const struct attribute * const gen9_freq_gt_attrs[] = GEN9_FREQ_GT_ATTR;
 
 static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj,
 				const struct attribute * const *attrs)
@@ -438,14 +444,18 @@ static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj,
 			return ret;
 	}
 
-	if (GRAPHICS_VER(gt->i915) >= 11) {
-		ret = sysfs_create_files(kobj, freq_attrs);
+	if (GRAPHICS_VER(gt->i915) >= 12) {
+		ret = is_object_gt(kobj) ?
+		      sysfs_create_files(kobj, gen9_freq_rps_attrs) :
+		      sysfs_create_files(kobj, gen9_freq_gt_attrs);
 		if (ret)
 			return ret;
 	}
 
 	if (IS_DGFX(gt->i915))
-		ret = sysfs_create_file(kobj, &dev_attr_rapl_PL1_freq_mhz.attr);
+		ret = is_object_gt(kobj) ?
+		      sysfs_create_file(kobj, &dev_attr_rps_rapl_PL1_freq_mhz.attr) :
+		      sysfs_create_file(kobj, &dev_attr_gt_rapl_PL1_freq_mhz.attr);
 
 	return ret;
 }
