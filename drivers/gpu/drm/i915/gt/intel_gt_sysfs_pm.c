@@ -397,7 +397,7 @@ static ssize_t punit_req_freq_mhz_show(struct device *dev,
 	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
 	u32 swreq = intel_rps_get_requested_frequency(&gt->rps);
 
-	return scnprintf(buff, PAGE_SIZE, "%x\n", swreq);
+	return scnprintf(buff, PAGE_SIZE, "%d\n", swreq);
 }
 
 static ssize_t throttle_reason_show(struct device *dev,
