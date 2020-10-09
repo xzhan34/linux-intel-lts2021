@@ -2141,17 +2141,23 @@ u32 intel_rps_read_actual_frequency_fw(struct intel_rps *rps)
 	return intel_gpu_freq(rps, __read_cagf(rps, false));
 }
 
-static u32 intel_rps_read_punit_req(struct intel_rps *rps)
+static u32 __rps_read_mmio(struct intel_gt *gt, i915_reg_t reg32)
 {
-	struct intel_uncore *uncore = rps_to_uncore(rps);
-	struct intel_runtime_pm *rpm = rps_to_uncore(rps)->rpm;
 	intel_wakeref_t wakeref;
-	u32 freq = 0;
+	u32 val = 0;
 
-	with_intel_runtime_pm_if_in_use(rpm, wakeref)
-		freq = intel_uncore_read(uncore, GEN6_RPNSWREQ);
+	with_intel_runtime_pm(gt->uncore->rpm, wakeref)
+		val = intel_uncore_read(gt->uncore, reg32);
 
-	return freq;
+	return val;
+}
+
+u32 intel_rps_read_punit_req(struct intel_rps *rps)
+{
+	struct intel_gt *gt = rps_to_gt(rps);
+	u32 pureq = __rps_read_mmio(gt, GEN6_RPNSWREQ);
+
+	return pureq;
 }
 
 static u32 intel_rps_get_req(u32 pureq)
@@ -2633,23 +2639,50 @@ void intel_rps_lower_unslice(struct intel_rps *rps)
 	mutex_unlock(&rps->lock);
 }
 
-static u32 __rps_read_mmio(struct intel_gt *gt, i915_reg_t reg32)
+u32 intel_rps_read_rapl_pl1(struct intel_rps *rps)
 {
-	intel_wakeref_t wakeref;
-	u32 val = 0;
+	struct drm_i915_private *i915 = rps_to_i915(rps);
+	struct intel_gt *gt = rps_to_gt(rps);
+	i915_reg_t rgadr;
+	u32 rapl_pl1;
 
-	with_intel_runtime_pm(gt->uncore->rpm, wakeref)
-		val = intel_uncore_read(gt->uncore, reg32);
+	if (IS_XEHPSDV(i915)) {
+		rgadr = XEHPSDV_RAPL_PL1_FREQ_LIMIT;
+	} else if (IS_DG1(i915)) {
+		rgadr = GEN9_RAPL_PL1_FREQ_LIMIT;
+	} else {
+		MISSING_CASE(GRAPHICS_VER(i915));
+		rgadr = INVALID_MMIO_REG;
+	}
 
-	return val;
+	if (!i915_mmio_reg_valid(rgadr))
+		rapl_pl1 = 0;
+	else
+		rapl_pl1 = __rps_read_mmio(gt, rgadr);
+
+	return rapl_pl1;
+}
+
+u32 intel_rps_get_rapl(struct intel_rps *rps, u32 rapl_pl1)
+{
+	struct drm_i915_private *i915 = rps_to_i915(rps);
+	u32 rapl = 0;
+
+	if (IS_XEHPSDV(i915))
+		rapl = rapl_pl1 & RAPL_PL1_FREQ_LIMIT_MASK;
+	else if (IS_DG1(i915))
+		rapl = le32_get_bits(rapl_pl1, GEN9_RAPL_PL1_FREQ_LIMIT_MASK);
+	else
+		MISSING_CASE(GRAPHICS_VER(i915));
+
+	return rapl;
 }
 
 u32 intel_rps_read_rapl_pl1_frequency(struct intel_rps *rps)
 {
-	struct intel_gt *gt = rps_to_gt(rps);
-	u32 rapl_pl1 = __rps_read_mmio(gt, RAPL_PL1_FREQ_LIMIT);
+	u32 rapl_freq = intel_rps_get_rapl(rps, intel_rps_read_rapl_pl1(rps));
 
-	return rapl_pl1;
+	return (rapl_freq >> 8) * GT_FREQUENCY_MULTIPLIER;
 }
 
 u32 intel_rps_read_throttle_reason(struct intel_rps *rps)
