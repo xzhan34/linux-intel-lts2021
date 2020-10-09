@@ -381,8 +381,8 @@ static const struct attribute * const gen6_rps_attrs[] = GEN6_RPS_ATTR;
 static const struct attribute * const gen6_gt_attrs[]  = GEN6_GT_ATTR;
 
 static ssize_t rapl_PL1_freq_mhz_show(struct device *dev,
-				      struct device_attribute *attr,
-				      char *buff)
+					struct device_attribute *attr,
+					char *buff)
 {
 	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
 	u32 rapl_pl1 = intel_rps_read_rapl_pl1_frequency(&gt->rps);
@@ -391,8 +391,8 @@ static ssize_t rapl_PL1_freq_mhz_show(struct device *dev,
 }
 
 static ssize_t punit_req_freq_mhz_show(struct device *dev,
-				   struct device_attribute *attr,
-				   char *buff)
+					struct device_attribute *attr,
+					char *buff)
 {
 	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
 	u32 swreq = intel_rps_get_requested_frequency(&gt->rps);
@@ -401,30 +401,120 @@ static ssize_t punit_req_freq_mhz_show(struct device *dev,
 }
 
 static ssize_t throttle_reason_show(struct device *dev,
-				    struct device_attribute *attr,
-				    char *buff)
+					struct device_attribute *attr,
+					char *buff)
 {
 	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
-	u32 reason = intel_rps_read_throttle_reason(&gt->rps);
+	bool status = !!intel_rps_read_throttle_reason_status(&gt->rps);
 
-	return scnprintf(buff, PAGE_SIZE, "%x\n", reason);
+	return scnprintf(buff, PAGE_SIZE, "%u\n", status);
 }
 
-static INTEL_GT_RPS_SYSFS_ATTR(rapl_PL1_freq_mhz, 0444, rapl_PL1_freq_mhz_show, NULL);
-static INTEL_GT_RPS_SYSFS_ATTR(punit_req_freq_mhz, 0444, punit_req_freq_mhz_show, NULL);
-static INTEL_GT_RPS_SYSFS_ATTR(throttle_reason, 0444, throttle_reason_show, NULL);
+static ssize_t throttle_reason_pl1_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	bool pl1 = !!intel_rps_read_throttle_reason_pl1(&gt->rps);
 
-#define GEN9_FREQ_ATTR(s) { \
-	&dev_attr_##s##_punit_req_freq_mhz.attr, \
-	&dev_attr_##s##_throttle_reason.attr, \
-	NULL, \
+	return scnprintf(buff, PAGE_SIZE, "%u\n", pl1);
 }
 
-#define GEN9_FREQ_RPS_ATTR GEN9_FREQ_ATTR(rps)
-#define GEN9_FREQ_GT_ATTR GEN9_FREQ_ATTR(gt)
+static ssize_t throttle_reason_pl2_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	bool pl2 = !!intel_rps_read_throttle_reason_pl2(&gt->rps);
 
-static const struct attribute * const gen9_freq_rps_attrs[] = GEN9_FREQ_RPS_ATTR;
-static const struct attribute * const gen9_freq_gt_attrs[] = GEN9_FREQ_GT_ATTR;
+	return scnprintf(buff, PAGE_SIZE, "%u\n", pl2);
+}
+
+static ssize_t throttle_reason_pl4_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	bool pl4 = !!intel_rps_read_throttle_reason_pl4(&gt->rps);
+
+	return scnprintf(buff, PAGE_SIZE, "%u\n", pl4);
+}
+
+static ssize_t throttle_reason_thermal_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	bool thermal = !!intel_rps_read_throttle_reason_thermal(&gt->rps);
+
+	return scnprintf(buff, PAGE_SIZE, "%u\n", thermal);
+}
+
+static ssize_t throttle_reason_prochot_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	bool prochot = !!intel_rps_read_throttle_reason_prochot(&gt->rps);
+
+	return scnprintf(buff, PAGE_SIZE, "%u\n", prochot);
+}
+
+static ssize_t throttle_reason_ratl_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	bool ratl = !!intel_rps_read_throttle_reason_ratl(&gt->rps);
+
+	return scnprintf(buff, PAGE_SIZE, "%u\n", ratl);
+}
+
+static ssize_t throttle_reason_vr_thermalert_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	bool thermalert = !!intel_rps_read_throttle_reason_vr_thermalert(&gt->rps);
+
+	return scnprintf(buff, PAGE_SIZE, "%u\n", thermalert);
+}
+
+static ssize_t throttle_reason_vr_tdc_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	bool tdc = !!intel_rps_read_throttle_reason_vr_tdc(&gt->rps);
+
+	return scnprintf(buff, PAGE_SIZE, "%u\n", tdc);
+}
+
+static DEVICE_ATTR(rapl_PL1_freq_mhz, 0444, rapl_PL1_freq_mhz_show, NULL);
+static DEVICE_ATTR(punit_req_freq_mhz, 0444, punit_req_freq_mhz_show, NULL);
+static DEVICE_ATTR(throttle_reason_status, 0444, throttle_reason_show, NULL);
+static DEVICE_ATTR(throttle_reason_pl1, 0444, throttle_reason_pl1_show, NULL);
+static DEVICE_ATTR(throttle_reason_pl2, 0444, throttle_reason_pl2_show, NULL);
+static DEVICE_ATTR(throttle_reason_pl4, 0444, throttle_reason_pl4_show, NULL);
+static DEVICE_ATTR(throttle_reason_thermal, 0444, throttle_reason_thermal_show, NULL);
+static DEVICE_ATTR(throttle_reason_prochot, 0444, throttle_reason_prochot_show, NULL);
+static DEVICE_ATTR(throttle_reason_ratl, 0444, throttle_reason_ratl_show, NULL);
+static DEVICE_ATTR(throttle_reason_vr_thermalert, 0444, throttle_reason_vr_thermalert_show, NULL);
+static DEVICE_ATTR(throttle_reason_vr_tdc, 0444, throttle_reason_vr_tdc_show, NULL);
+
+static const struct attribute *freq_attrs[] = {
+	&dev_attr_punit_req_freq_mhz.attr,
+	&dev_attr_throttle_reason_status.attr,
+	&dev_attr_throttle_reason_pl1.attr,
+	&dev_attr_throttle_reason_pl2.attr,
+	&dev_attr_throttle_reason_pl4.attr,
+	&dev_attr_throttle_reason_thermal.attr,
+	&dev_attr_throttle_reason_prochot.attr,
+	&dev_attr_throttle_reason_ratl.attr,
+	&dev_attr_throttle_reason_vr_thermalert.attr,
+	&dev_attr_throttle_reason_vr_tdc.attr,
+	NULL
+};
 
 static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj,
 				const struct attribute * const *attrs)
@@ -444,18 +534,14 @@ static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj,
 			return ret;
 	}
 
-	if (GRAPHICS_VER(gt->i915) >= 12) {
-		ret = is_object_gt(kobj) ?
-		      sysfs_create_files(kobj, gen9_freq_rps_attrs) :
-		      sysfs_create_files(kobj, gen9_freq_gt_attrs);
+	if ((GRAPHICS_VER(gt->i915) >= 12) && (is_object_gt(kobj))) {
+		ret = sysfs_create_files(kobj, freq_attrs);
 		if (ret)
 			return ret;
 	}
 
-	if (IS_DGFX(gt->i915))
-		ret = is_object_gt(kobj) ?
-		      sysfs_create_file(kobj, &dev_attr_rps_rapl_PL1_freq_mhz.attr) :
-		      sysfs_create_file(kobj, &dev_attr_gt_rapl_PL1_freq_mhz.attr);
+	if ((IS_DGFX(gt->i915)) && (is_object_gt(kobj)))
+		ret = sysfs_create_file(kobj, &dev_attr_rapl_PL1_freq_mhz.attr);
 
 	return ret;
 }
