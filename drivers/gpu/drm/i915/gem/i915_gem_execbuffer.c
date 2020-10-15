@@ -2991,6 +2991,15 @@ static const enum intel_engine_id user_ring_map[] = {
 	[I915_EXEC_VEBOX]	= VECS0
 };
 
+/* Make CCS0 as default engine when RCS is deprecated */
+static const enum intel_engine_id user_ring_map_wo_rcs[] = {
+	[I915_EXEC_DEFAULT]	= CCS0,
+	[I915_EXEC_RENDER]	= INVALID_ENGINE,
+	[I915_EXEC_BLT]		= BCS0,
+	[I915_EXEC_BSD]		= VCS0,
+	[I915_EXEC_VEBOX]	= VECS0
+};
+
 static struct i915_request *eb_throttle(struct intel_context *ce)
 {
 	struct intel_ring *ring = ce->ring;
@@ -3197,6 +3206,8 @@ eb_select_legacy_ring(struct i915_execbuffer *eb)
 		}
 
 		idx =  _VCS(bsd_idx);
+	} else if (!RCS_MASK(to_gt(i915))) {
+		idx = user_ring_map_wo_rcs[user_ring_id];
 	} else {
 		idx = user_ring_map[user_ring_id];
 	}

@@ -1047,7 +1047,7 @@ static const struct intel_device_info adl_p_info = {
 			  REGION_LMEM1 | REGION_LMEM2 | REGION_LMEM3
 
 #define XE_HP_SDV_ENGINES \
-	BIT(RCS0) | BIT(BCS0) | \
+	BIT(BCS0) | \
 	BIT(VECS0) | BIT(VECS1) | BIT(VECS2) | BIT(VECS3) | \
 	BIT(VCS0) | BIT(VCS1) | BIT(VCS2) | BIT(VCS3) | \
 	BIT(VCS4) | BIT(VCS5) | BIT(VCS6) | BIT(VCS7) | \
