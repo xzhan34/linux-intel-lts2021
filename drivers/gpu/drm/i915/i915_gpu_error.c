@@ -1507,7 +1507,7 @@ static void engine_record_registers(struct intel_engine_coredump *ee)
 		ee->hws = intel_uncore_read(engine->uncore, mmio);
 	}
 
-	ee->reset_count = i915_reset_engine_count(&i915->gpu_error, engine);
+	ee->reset_count = i915_reset_engine_count(engine);
 
 	if (HAS_PPGTT(i915)) {
 		int i;

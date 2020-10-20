@@ -218,10 +218,9 @@ int live_rc6_ctx_wa(void *arg)
 		int pass;
 
 		for (pass = 0; pass < 2; pass++) {
-			struct i915_gpu_error *error = &gt->i915->gpu_error;
 			struct intel_context *ce;
 			unsigned int resets =
-				i915_reset_engine_count(error, engine);
+				i915_reset_engine_count(engine);
 			const u32 *res;
 
 			/* Use a sacrifical context */
@@ -251,7 +250,7 @@ int live_rc6_ctx_wa(void *arg)
 				 engine->name, READ_ONCE(*res));
 
 			if (resets !=
-			    i915_reset_engine_count(error, engine)) {
+			    i915_reset_engine_count(engine)) {
 				pr_err("%s: GPU reset required\n",
 				       engine->name);
 				add_taint_for_CI(gt->i915, TAINT_WARN);

@@ -472,7 +472,7 @@ static int igt_reset_nop_engine(void *arg)
 		}
 
 		reset_count = i915_reset_count(global);
-		reset_engine_count = i915_reset_engine_count(global, engine);
+		reset_engine_count = i915_reset_engine_count(engine);
 		count = 0;
 
 		st_engine_heartbeat_disable(engine);
@@ -525,7 +525,7 @@ static int igt_reset_nop_engine(void *arg)
 				break;
 			}
 
-			if (i915_reset_engine_count(global, engine) !=
+			if (i915_reset_engine_count(engine) !=
 			    reset_engine_count + ++count) {
 				pr_err("%s engine reset not recorded!\n",
 				       engine->name);
@@ -736,7 +736,7 @@ static int __igt_reset_engine(struct intel_gt *gt, bool active)
 		}
 
 		reset_count = i915_reset_count(global);
-		reset_engine_count = i915_reset_engine_count(global, engine);
+		reset_engine_count = i915_reset_engine_count(engine);
 
 		st_engine_heartbeat_disable(engine);
 		set_bit(I915_RESET_ENGINE + id, &gt->reset.flags);
@@ -809,7 +809,7 @@ skip:
 
 			/* GuC based resets are not logged per engine */
 			if (!using_guc) {
-				if (i915_reset_engine_count(global, engine) !=
+				if (i915_reset_engine_count(engine) !=
 				    ++reset_engine_count) {
 					pr_err("%s engine reset not recorded!\n",
 					       engine->name);
@@ -1024,7 +1024,7 @@ static int __igt_reset_engines(struct intel_gt *gt,
 			struct task_struct *tsk;
 
 			threads[tmp].resets =
-				i915_reset_engine_count(global, other);
+				i915_reset_engine_count(other);
 
 			if (other == engine && !(flags & TEST_SELF))
 				continue;
@@ -1181,7 +1181,7 @@ restore:
 
 		/* GuC based resets are not logged per engine */
 		if (!using_guc) {
-			reported = i915_reset_engine_count(global, engine);
+			reported = i915_reset_engine_count(engine);
 			reported -= threads[engine->id].resets;
 			if (reported != count) {
 				pr_err("i915_reset_engine(%s:%s): reset %lu times, but reported %lu\n",
@@ -1211,10 +1211,10 @@ unwind:
 			if (!using_guc) {
 				if (other->uabi_class != engine->uabi_class &&
 				    threads[tmp].resets !=
-				    i915_reset_engine_count(global, other)) {
+				    i915_reset_engine_count(other)) {
 					pr_err("Innocent engine %s was reset (count=%ld)\n",
 					       other->name,
-					       i915_reset_engine_count(global, other) -
+					       i915_reset_engine_count(other) -
 					       threads[tmp].resets);
 					if (!err)
 						err = -EINVAL;

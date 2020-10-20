@@ -488,6 +488,9 @@ struct intel_engine_cs {
 		void (*finish)(struct intel_engine_cs *engine);
 
 		struct work_struct notify_reset_failed;
+
+		/* count no of engine resets attempted */
+		atomic_t count;
 	} reset;
 
 	void		(*park)(struct intel_engine_cs *engine);
