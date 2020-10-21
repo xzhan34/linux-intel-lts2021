@@ -1437,6 +1437,8 @@ struct intel_crtc {
 
 #ifdef CONFIG_DEBUG_FS
 	struct intel_pipe_crc pipe_crc;
+	u32 cpu_fifo_underrun_count;
+	u32 pch_fifo_underrun_count;
 #endif
 };
 

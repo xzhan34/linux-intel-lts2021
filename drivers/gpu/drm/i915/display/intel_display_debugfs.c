@@ -9,6 +9,7 @@
 #include <drm/drm_fourcc.h>
 
 #include "i915_debugfs.h"
+#include "intel_crtc.h"
 #include "intel_de.h"
 #include "intel_display_debugfs.h"
 #include "intel_display_power.h"
@@ -1152,6 +1153,33 @@ static int i915_lpsp_status(struct seq_file *m, void *unused)
 	return 0;
 }
 
+static int i915_fifo_underruns(struct seq_file *m, void *unused)
+{
+	struct drm_i915_private *dev_priv = node_to_i915(m->private);
+	struct intel_crtc *crtc;
+	enum pipe pipe;
+	unsigned long flags;
+	u32 cpu_fifo_underrun_count[I915_MAX_PIPES];
+	u32 pch_fifo_underrun_count[I915_MAX_PIPES];
+
+
+	spin_lock_irqsave(&dev_priv->irq_lock, flags);
+	for_each_pipe(dev_priv, pipe) {
+		crtc = intel_crtc_for_pipe(dev_priv, pipe);
+		cpu_fifo_underrun_count[pipe] = crtc->cpu_fifo_underrun_count;
+		pch_fifo_underrun_count[pipe] = crtc->pch_fifo_underrun_count;
+	}
+	spin_unlock_irqrestore(&dev_priv->irq_lock, flags);
+
+	seq_printf(m, "\t%-10s \t%10s\n", "cpu fifounderruns", "pch fifounderruns");
+	for_each_pipe(dev_priv, pipe)
+		seq_printf(m, "pipe:%c %10u %20u\n", pipe_name(pipe),
+			   cpu_fifo_underrun_count[pipe],
+			   pch_fifo_underrun_count[pipe]);
+
+	return 0;
+}
+
 static int i915_dp_mst_info(struct seq_file *m, void *unused)
 {
 	struct drm_i915_private *dev_priv = node_to_i915(m->private);
@@ -1892,6 +1920,7 @@ static const struct drm_info_list intel_display_debugfs_list[] = {
 	{"i915_ddb_info", i915_ddb_info, 0},
 	{"i915_drrs_status", i915_drrs_status, 0},
 	{"i915_lpsp_status", i915_lpsp_status, 0},
+	{"i915_fifo_underruns", i915_fifo_underruns, 0},
 };
 
 static const struct {
