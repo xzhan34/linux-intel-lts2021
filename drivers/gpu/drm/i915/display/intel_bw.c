@@ -1194,3 +1194,7 @@ int intel_bw_init(struct drm_i915_private *dev_priv)
 
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#include "selftests/selftest_bw.c"
+#endif
