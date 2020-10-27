@@ -1983,6 +1983,8 @@ static int dither_state_show(struct seq_file *m, void *data)
 	crtc_state = to_intel_crtc_state(crtc->base.state);
 	seq_printf(m, "bpc: %u\n", crtc_state->pipe_bpp / 3);
 	seq_printf(m, "Dither: %u\n", (crtc_state->dither) ? 1 : 0);
+	seq_printf(m, "Dither_CC1: %u\n",
+		(crtc_state->gamma_mode & GAMMA_MODE_DITHER_AFTER_CC1) ? 1 : 0);
 
 	drm_modeset_unlock(&crtc->base.mutex);
 
