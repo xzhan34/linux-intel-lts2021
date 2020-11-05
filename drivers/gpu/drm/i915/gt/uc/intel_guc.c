@@ -776,6 +776,14 @@ static int __vf_guc_init(struct intel_guc *guc)
 	if (err)
 		goto err_ct;
 
+	/*
+	 * Disable slpc controls for VF. This cannot be done in
+	 * __guc_slpc_selected since the VF probe is not complete
+	 * at that point.
+	 */
+	guc->slpc.supported = false;
+	guc->slpc.selected = false;
+
 	return 0;
 
 err_ct:
