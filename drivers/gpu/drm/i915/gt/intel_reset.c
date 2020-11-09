@@ -1258,6 +1258,7 @@ int __intel_engine_reset_bh(struct intel_engine_cs *engine, const char *msg)
 		drm_notice(&engine->i915->drm,
 			   "Resetting %s for %s\n", engine->name, msg);
 	atomic_inc(&engine->reset.count);
+	atomic_inc(&gt->reset.engines_reset_count);
 
 	ret = intel_gt_reset_engine(engine);
 	if (ret) {

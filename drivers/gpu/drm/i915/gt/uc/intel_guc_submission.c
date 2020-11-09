@@ -4936,6 +4936,7 @@ static void capture_error_state(struct intel_guc *guc,
 	struct intel_engine_cs *engine = __context_to_physical_engine(ce);
 	intel_wakeref_t wakeref;
 
+	atomic_inc(&gt->reset.engines_reset_count);
 	intel_engine_set_hung_context(engine, ce);
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref)
 		i915_capture_error_state(gt, engine->mask, CORE_DUMP_FLAG_IS_GUC_CAPTURE);

@@ -49,6 +49,9 @@ struct intel_reset {
 
 	struct mutex mutex; /* serialises wedging/unwedging */
 
+	/* Count the resets of all engines of a GT */
+	atomic_t engines_reset_count;
+
 	/**
 	 * Waitqueue to signal when the reset has completed. Used by clients
 	 * that wait for dev_priv->mm.wedged to settle.

@@ -191,6 +191,7 @@ struct intel_gt_coredump {
 	bool simulated;
 
 	struct intel_gt_info info;
+	u32 engines_reset_count;
 
 	/* Generic register state */
 	u32 eir;

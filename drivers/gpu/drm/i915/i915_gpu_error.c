@@ -913,6 +913,8 @@ static void err_print_gt_engines(struct drm_i915_error_state_buf *m,
 			intel_gpu_error_print_vma(m, ee->engine, vma);
 	}
 
+	err_printf(m, "GT total engines reset count: %u\n",
+		   gt->engines_reset_count);
 }
 
 static void __err_print_to_sgl(struct drm_i915_error_state_buf *m,
@@ -2406,7 +2408,10 @@ intel_gt_coredump_alloc(struct intel_gt *gt, gfp_t gfp, u32 dump_flags)
 		gt_record_global_regs(gc);
 
 	gt_record_fences(gc);
+
 	gt_record_attentions(gc);
+
+	gc->engines_reset_count = atomic_read(&gt->reset.engines_reset_count);
 
 	return gc;
 }
