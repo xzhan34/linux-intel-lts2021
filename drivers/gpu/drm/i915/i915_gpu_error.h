@@ -107,7 +107,7 @@ struct intel_engine_coredump {
 
 	bool hung;
 	bool simulated;
-	u32 reset_count;
+	int reset_count;
 
 	/* position of active request inside the ring */
 	u32 rq_head, rq_post, rq_tail, vm_poison;
@@ -307,8 +307,12 @@ static inline u32 i915_reset_count(struct i915_gpu_error *error)
 	return atomic_read(&error->reset_count);
 }
 
-static inline u32 i915_reset_engine_count(const struct intel_engine_cs *engine)
+static inline int i915_reset_engine_count(const struct intel_engine_cs *engine)
 {
+	/* the present guc interface doesn't support per engine reset counts */
+	if (intel_engine_uses_guc(engine))
+		return -1;
+
 	return atomic_read(&engine->reset.count);
 }
 

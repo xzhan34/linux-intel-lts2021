@@ -906,7 +906,7 @@ static void err_print_gt_engines(struct drm_i915_error_state_buf *m,
 			error_print_engine(m, ee);
 
 		err_printf(m, "  hung: %u\n", ee->hung);
-		err_printf(m, "  engine reset count: %u\n", ee->reset_count);
+		err_printf(m, "  engine reset count: %d\n", ee->reset_count);
 		error_print_context(m, "  Active context: ", &ee->context);
 
 		for (vma = ee->vma; vma; vma = vma->next)
