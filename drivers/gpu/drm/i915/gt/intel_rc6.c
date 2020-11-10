@@ -511,7 +511,8 @@ static bool rc6_supported(struct intel_rc6 *rc6)
 	 * Wa_1409759559:xehpsdv[a*] + Wa_14011331455:xehpsdv[a0]
 	 * Wa_16011524941:xehpsdv[a1-a(last)]
 	 */
-	if (IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0, STEP_B0) &&
+	if (!i915->params.rc6_ignore_steppings &&
+	    IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0, STEP_B0) &&
 	    i915->remote_tiles > 0)
 		return false;
 

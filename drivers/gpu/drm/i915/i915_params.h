@@ -88,6 +88,7 @@ struct drm_printer;
 	param(bool, enable_fake_int_wa, true, 0400) \
 	param(bool, enable_hw_throttle_blt, true, 0400) \
 	param(bool, enable_rc6, true, 0400) \
+	param(bool, rc6_ignore_steppings, false, 0400) \
 	param(bool, enable_hangcheck, true, 0600) \
 	param(bool, load_detect_test, false, 0600) \
 	param(bool, force_reset_modeset_test, false, 0600) \

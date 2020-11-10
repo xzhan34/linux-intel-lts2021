@@ -215,6 +215,8 @@ i915_param_named(enable_dpcd_backlight, int, 0400,
 
 i915_param_named_unsafe(enable_rc6, bool, 0400,
 	"Enable power-saving render C-state 6. (default: true)");
+i915_param_named_unsafe(rc6_ignore_steppings, bool, 0400,
+	"Allow RC6 to be enabled on steppings where it would be disabled. (default: false)");
 
 #if IS_ENABLED(CONFIG_DRM_I915_GVT)
 i915_param_named(enable_gvt, bool, 0400,
