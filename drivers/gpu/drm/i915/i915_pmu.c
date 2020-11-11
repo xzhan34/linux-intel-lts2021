@@ -615,6 +615,7 @@ config_status(struct drm_i915_private *i915, u64 config)
 	case I915_PMU_SOFTWARE_GT_AWAKE_TIME:
 		break;
 	case PRELIM_I915_PMU_ENGINE_RESET_COUNT:
+	case PRELIM_I915_PMU_EU_ATTENTION_COUNT:
 		break;
 	default:
 		return -ENOENT;
@@ -741,6 +742,9 @@ static u64 __i915_pmu_event_read(struct perf_event *event)
 			break;
 		case PRELIM_I915_PMU_ENGINE_RESET_COUNT:
 			val = atomic_read(&i915->gt[gt_id]->reset.engines_reset_count);
+			break;
+		case PRELIM_I915_PMU_EU_ATTENTION_COUNT:
+			val = atomic_read(&i915->gt[gt_id]->reset.eu_attention_count);
 			break;
 		}
 	}
@@ -1081,6 +1085,7 @@ create_event_attributes(struct i915_pmu *pmu)
 		__event(3, "rc6-residency", "ns"),
 		__event(4, "software-gt-awake-time", "ns"),
 		__error_event(5, "engine-reset", NULL),
+		__error_event(6, "eu-attention", NULL),
 	};
 	static const char *hw_error_events[] = {
 		[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_L3_SNG] = "correctable-l3-sng",

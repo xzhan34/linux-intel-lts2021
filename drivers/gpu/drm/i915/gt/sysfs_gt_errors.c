@@ -31,6 +31,15 @@ static ssize_t engine_reset_show(struct device *dev,
 	return sysfs_emit(buf, "%u\n", atomic_read(&gt->reset.engines_reset_count));
 }
 
+static ssize_t eu_attention_show(struct device *dev,
+				 struct device_attribute *attr,
+				 char *buf)
+{
+	struct intel_gt *gt = kobj_to_gt(&dev->kobj);
+
+	return sysfs_emit(buf, "%u\n", atomic_read(&gt->reset.eu_attention_count));
+}
+
 #define SYSFS_ERROR_ATTR_RO(_name,  _id) \
 	struct ext_attr dev_attr_##_name = \
 	{ __ATTR(_name, 0444, gt_error_show, NULL), (_id) }
@@ -53,6 +62,7 @@ static SYSFS_ERROR_ATTR_RO(fatal_eu_ic, INTEL_GT_HW_ERROR_FAT_EU_IC);
 static SYSFS_ERROR_ATTR_RO(fatal_eu_grf, INTEL_GT_HW_ERROR_FAT_EU_GRF);
 
 static DEVICE_ATTR_RO(engine_reset);
+static DEVICE_ATTR_RO(eu_attention);
 
 static const struct attribute *gt_error_attrs[] = {
 	&dev_attr_correctable_l3_sng.attr.attr,
@@ -72,6 +82,7 @@ static const struct attribute *gt_error_attrs[] = {
 	&dev_attr_fatal_eu_ic.attr.attr,
 	&dev_attr_fatal_eu_grf.attr.attr,
 	&dev_attr_engine_reset.attr,
+	&dev_attr_eu_attention.attr,
 	NULL
 };
 

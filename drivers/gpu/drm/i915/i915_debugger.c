@@ -3676,6 +3676,8 @@ int i915_debugger_handle_engine_attention(struct intel_engine_cs *engine)
 
 	attentions = ret;
 
+	atomic_inc(&engine->gt->reset.eu_attention_count);
+
 	/* We dont care if it fails reach this debugger at this time */
 	ret = i915_debugger_send_engine_attention(engine);
 	if (ret == -EBUSY)
