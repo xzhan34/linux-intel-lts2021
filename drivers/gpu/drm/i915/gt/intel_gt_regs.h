@@ -372,6 +372,10 @@
 #define XEHP_FLAT_CCS_BASE_ADDR			MCR_REG(0x4910)
 #define   XEHP_CCS_BASE_SHIFT			8
 
+#define GAMXB_CTRL				_MMIO(0x04918)
+#define   EN_TILE0_CHK				REG_BIT(6)
+#define   EN_WOPCM_GSM_CHK			REG_BIT(5)
+
 #define GAMTARBMODE				_MMIO(0x4a08)
 #define   ARB_MODE_BWGTLB_DISABLE		(1 << 9)
 #define   ARB_MODE_SWIZZLE_BDW			(1 << 1)

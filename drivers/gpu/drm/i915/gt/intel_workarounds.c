@@ -1568,6 +1568,19 @@ xehpsdv_gt_workarounds_init(struct intel_gt *gt, struct i915_wa_list *wal)
 
 	/* Wa_14010670810:xehpsdv */
 	wa_mcr_write_or(wal, XEHP_L3NODEARBCFG, XEHP_LNESPARE);
+
+	/*
+	 * Wa_1409451116:xehpsdv[a*][multi-tile]
+	 *
+	 * Although the formal workaround description doesn't
+	 * specifically mention that it applies only to multi-tile
+	 * configurations, the bspec documentation for register
+	 * XEHPSDV_TILE0_ADDR_RANGE clarifies that A-step only supports
+	 * these bits on multi-tile configurations.
+	 */
+	if (IS_XEHPSDV_GRAPHICS_STEP(gt->i915, STEP_A0, STEP_B0) &&
+	    gt->i915->remote_tiles > 0)
+		wa_write_or(wal, GAMXB_CTRL, EN_TILE0_CHK | EN_WOPCM_GSM_CHK);
 }
 
 static void
