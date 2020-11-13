@@ -176,6 +176,11 @@ struct i915_vma_clock {
 	struct delayed_work work;
 };
 
+struct i915_vma_metadata {
+	struct list_head vma_link;
+	struct i915_uuid_resource *uuid;
+};
+
 /**
  * DOC: Virtual Memory Address
  *
@@ -316,6 +321,9 @@ struct i915_vma {
 	struct list_head evict_link;
 
 	struct list_head closed_link;
+
+	spinlock_t metadata_lock;
+	struct list_head metadata_list;
 };
 
 #endif

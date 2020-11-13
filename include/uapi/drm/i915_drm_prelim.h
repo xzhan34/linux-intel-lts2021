@@ -326,6 +326,17 @@ struct prelim_drm_i915_uuid_control {
 	__u64 extensions; /* MBZ */
 };
 
+/*
+ * struct prelim_drm_i915_vm_bind_ext_uuid
+ *
+ * Used for registering metadata that will be attached to the vm
+ */
+struct prelim_drm_i915_vm_bind_ext_uuid {
+#define PRELIM_I915_VM_BIND_EXT_UUID	(PRELIM_I915_USER_EXT | 1)
+	struct i915_user_extension base;
+	__u32 uuid_handle; /* Handle to the registered UUID resource. */
+};
+
 enum prelim_drm_i915_gem_memory_class {
 	PRELIM_I915_MEMORY_CLASS_SYSTEM = 0,
 	PRELIM_I915_MEMORY_CLASS_DEVICE,
@@ -456,11 +467,6 @@ struct prelim_drm_i915_gem_vm_bind {
 #define PRELIM_I915_GEM_VM_BIND_READONLY	(1ull << 62)
 #define PRELIM_I915_GEM_VM_BIND_CAPTURE		(1ull << 61)
 
-	/**
-	 * Zero-terminated chain of extensions.
-	 *
-	 * No current extensions defined; mbz.
-	 */
 	__u64 extensions;
 };
 

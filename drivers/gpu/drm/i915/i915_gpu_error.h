@@ -72,6 +72,11 @@ struct i915_uuid_resource_coredump {
 	};
 };
 
+struct i915_vma_metadata_coredump {
+	char uuid[36]; /* String formatted like "%08x-%04x-%04x-%04x-%012x" */
+	struct i915_vma_metadata_coredump *next;
+};
+
 struct i915_vma_coredump {
 	struct i915_vma_coredump *next;
 
@@ -82,6 +87,7 @@ struct i915_vma_coredump {
 	u32 gtt_page_sizes;
 
 	struct i915_compressed_pages *cpages;
+	struct i915_vma_metadata_coredump *metadata;
 };
 
 struct i915_request_coredump {

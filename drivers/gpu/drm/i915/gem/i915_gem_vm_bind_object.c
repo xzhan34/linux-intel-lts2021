@@ -23,6 +23,8 @@ struct user_fence {
 
 struct vm_bind_user_ext {
 	struct user_fence bind_fence;
+	struct i915_address_space *vm;
+	struct list_head metadata_list;
 };
 
 #define START(node) ((node)->start)
@@ -154,10 +156,68 @@ static int vm_bind_user_fence(struct i915_user_extension __user *base,
 	return __vm_bind_fence(data, ext.addr, ext.val);
 }
 
+static int vm_bind_ext_uuid(struct i915_user_extension __user *base,
+			    void *data)
+{
+	struct prelim_drm_i915_vm_bind_ext_uuid __user *ext =
+		container_of_user(base, typeof(*ext), base);
+	struct vm_bind_user_ext *arg = data;
+	struct i915_drm_client *client = arg->vm->client;
+	struct i915_vma_metadata *metadata;
+	struct i915_uuid_resource *uuid;
+	u32 handle;
+
+	if (get_user(handle, &ext->uuid_handle))
+		return -EFAULT;
+
+	metadata  = kzalloc(sizeof(*metadata), GFP_KERNEL);
+	if (!metadata)
+		return -ENOMEM;
+
+	xa_lock(&client->uuids_xa);
+	uuid = xa_load(&client->uuids_xa, handle);
+	if (!uuid) {
+		xa_unlock(&client->uuids_xa);
+		kfree(metadata);
+		return -ENOENT;
+	}
+	metadata->uuid = uuid;
+	i915_uuid_get(uuid);
+	atomic_inc(&uuid->bind_count);
+	xa_unlock(&client->uuids_xa);
+
+	list_add_tail(&metadata->vma_link, &arg->metadata_list);
+	return 0;
+}
+
 static const i915_user_extension_fn vm_bind_extensions[] = {
 	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_VM_BIND_EXT_SYNC_FENCE)] = vm_bind_sync_fence,
 	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_VM_BIND_EXT_USER_FENCE)] = vm_bind_user_fence,
+	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_VM_BIND_EXT_UUID)] = vm_bind_ext_uuid,
 };
+
+static void metadata_list_free(struct list_head *list)
+{
+	struct i915_vma_metadata *metadata, *next;
+
+	list_for_each_entry_safe(metadata, next, list, vma_link) {
+		list_del_init(&metadata->vma_link);
+		atomic_dec(&metadata->uuid->bind_count);
+		i915_uuid_put(metadata->uuid);
+		kfree(metadata);
+	}
+}
+
+void i915_vma_metadata_free(struct i915_vma *vma)
+{
+	if (list_empty(&vma->metadata_list))
+		return;
+
+	spin_lock(&vma->metadata_lock);
+	metadata_list_free(&vma->metadata_list);
+	INIT_LIST_HEAD(&vma->metadata_list);
+	spin_unlock(&vma->metadata_lock);
+}
 
 struct i915_vma *
 i915_gem_vm_bind_lookup_vma(struct i915_address_space *vm, u64 va)
@@ -363,7 +423,10 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 			 struct prelim_drm_i915_gem_vm_bind *va,
 			 struct drm_file *file)
 {
-	struct vm_bind_user_ext ext = {};
+	struct vm_bind_user_ext ext = {
+		.metadata_list = LIST_HEAD_INIT(ext.metadata_list),
+		.vm = vm,
+	};
 	struct drm_i915_gem_object *obj;
 	struct i915_gem_ww_ctx ww;
 	struct i915_vma *vma;
@@ -426,6 +489,12 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	/* Hold object reference until vm_unbind */
 	i915_gem_object_get(vma->obj);
 
+	if (!list_empty(&ext.metadata_list)) {
+		spin_lock(&vma->metadata_lock);
+		list_splice_tail_init(&ext.metadata_list, &vma->metadata_list);
+		spin_unlock(&vma->metadata_lock);
+	}
+
 	i915_gem_ww_ctx_init(&ww, true);
 	set_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags);
 retry:
@@ -487,5 +556,6 @@ unlock_vm:
 	i915_gem_vm_bind_unlock(vm);
 put_obj:
 	i915_gem_object_put(obj);
+	metadata_list_free(&ext.metadata_list);
 	return ret;
 }

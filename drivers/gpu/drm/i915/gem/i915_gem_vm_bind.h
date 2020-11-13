@@ -61,4 +61,6 @@ int i915_gem_vm_unbind_obj(struct i915_address_space *vm,
 
 void i915_gem_vm_unbind_all(struct i915_address_space *vm);
 
+void i915_vma_metadata_free(struct i915_vma *vma);
+
 #endif /* __I915_GEM_VM_BIND_H */

@@ -676,6 +676,23 @@ void i915_error_printf(struct drm_i915_error_state_buf *e, const char *f, ...)
 	va_end(args);
 }
 
+static void i915_vma_metadata_coredump_print(
+	struct drm_i915_error_state_buf *m,
+	struct i915_vma_metadata_coredump *metadata_dump)
+{
+	if (!metadata_dump)
+		return;
+
+	err_puts(m, "metadata UUIDs: ");
+	while (metadata_dump) {
+		err_printf(m, "%.36s", metadata_dump->uuid);
+		if (metadata_dump->next)
+			err_puts(m, ", ");
+		metadata_dump = metadata_dump->next;
+	}
+	err_puts(m, "\n");
+}
+
 void intel_gpu_error_print_vma(struct drm_i915_error_state_buf *m,
 			       const struct intel_engine_cs *engine,
 			       const struct i915_vma_coredump *vma)
@@ -690,6 +707,8 @@ void intel_gpu_error_print_vma(struct drm_i915_error_state_buf *m,
 
 	if (vma->gtt_page_sizes > I915_GTT_PAGE_SIZE_4K)
 		err_printf(m, "gtt_page_sizes = 0x%08x\n", vma->gtt_page_sizes);
+
+	i915_vma_metadata_coredump_print(m, vma->metadata);
 	compress_print_pages(m, vma->cpages);
 }
 
@@ -1054,6 +1073,18 @@ ssize_t i915_gpu_coredump_copy_to_buffer(struct i915_gpu_coredump *error,
 	return count;
 }
 
+static void i915_vma_metadata_coredump_free(
+	struct i915_vma_metadata_coredump *metadata)
+{
+	struct i915_vma_metadata_coredump *next;
+
+	while (metadata) {
+		next = metadata->next;
+		kfree(metadata);
+		metadata = next;
+	}
+}
+
 static void i915_vma_coredump_free(struct i915_vma_coredump *vma)
 {
 	while (vma) {
@@ -1064,6 +1095,10 @@ static void i915_vma_coredump_free(struct i915_vma_coredump *vma)
 		for (page = 0; page < cpages->page_count; page++)
 			free_page((unsigned long)cpages->pages[page]);
 		kfree(cpages);
+
+		if (vma->metadata)
+			i915_vma_metadata_coredump_free(vma->metadata);
+
 		kfree(vma);
 		vma = next;
 	}
@@ -1154,6 +1189,28 @@ void __i915_gpu_coredump_free(struct kref *error_ref)
 	kfree(error);
 }
 
+static struct i915_vma_metadata_coredump *
+i915_vma_metadata_coredump_create(const struct i915_vma *vma)
+{
+	struct i915_vma_metadata *metadata;
+	struct i915_vma_metadata_coredump *dump, *head = NULL;
+
+	list_for_each_entry(metadata, &vma->metadata_list, vma_link) {
+		dump = kzalloc(sizeof(*dump), GFP_KERNEL);
+		if (!dump)
+			break;
+
+		memcpy(dump->uuid,
+		       metadata->uuid->uuid,
+		       sizeof(dump->uuid));
+
+		dump->next = head;
+		head = dump;
+	}
+
+	return head;
+}
+
 static struct i915_vma_coredump *
 i915_vma_coredump_create(const struct intel_gt *gt,
 			 const struct i915_vma *vma,
@@ -1204,6 +1261,8 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 
 	offset = (vma->ggtt_view.type == I915_GGTT_VIEW_PARTIAL) ?
 		 vma->ggtt_view.partial.offset : 0;
+
+	dst->metadata = i915_vma_metadata_coredump_create(vma);
 
 	ret = -EINVAL;
 	if (drm_mm_node_allocated(&ggtt->error_capture)) {
@@ -1279,6 +1338,8 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 			pool_free(&compress->pool,
 				  dst->cpages->pages[dst->cpages->page_count]);
 		kfree(dst->cpages);
+		if (dst->metadata)
+			i915_vma_metadata_coredump_free(dst->metadata);
 		kfree(dst);
 		dst = NULL;
 	}
