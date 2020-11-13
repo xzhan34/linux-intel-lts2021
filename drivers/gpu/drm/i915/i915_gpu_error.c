@@ -520,6 +520,30 @@ static void error_print_request(struct drm_i915_error_state_buf *m,
 		   erq->head, erq->tail);
 }
 
+static void i915_uuid_resources_dump(const struct i915_gem_context_coredump *ctx,
+				     struct drm_i915_error_state_buf *m)
+{
+	struct i915_uuid_resource_coredump *uuid_dump = ctx->uuid_dump;
+
+	while (uuid_dump) {
+		if (uuid_dump->string_class) {
+			if (!uuid_dump->str)
+				continue;
+			i915_error_printf(m, "    UUID: %.36s, Class: %.36s, Type: %s\n",
+					  uuid_dump->uuid,
+					  uuid_dump->class,
+					  uuid_dump->str);
+		} else {
+			i915_error_printf(m, "    UUID: %.36s, Class: %.36s\n",
+					  uuid_dump->uuid,
+					  uuid_dump->class);
+			if (uuid_dump->cpages)
+				compress_print_pages(m, uuid_dump->cpages);
+		}
+		uuid_dump = uuid_dump->next;
+	}
+}
+
 static void error_print_context(struct drm_i915_error_state_buf *m,
 				const char *header,
 				const struct i915_gem_context_coredump *ctx)
@@ -528,6 +552,8 @@ static void error_print_context(struct drm_i915_error_state_buf *m,
 		   header, ctx->comm, ctx->pid, ctx->sched_attr.priority,
 		   ctx->guilty, ctx->active, ctx->sip_installed ? "true" : "false",
 		   ctx->total_runtime, ctx->avg_runtime);
+
+	i915_uuid_resources_dump(ctx, m);
 }
 
 static struct i915_vma_coredump *
