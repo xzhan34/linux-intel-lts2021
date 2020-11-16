@@ -1298,6 +1298,10 @@ static void gen8_ppgtt_insert_wa(struct i915_address_space *vm,
 
 static int gen8_init_scratch(struct i915_address_space *vm)
 {
+	struct intel_gt *gt = vm->gt;
+	struct intel_pte_bo *bo;
+	intel_wakeref_t wakeref;
+	u32 *cmd = NULL;
 	u32 pte_flags;
 	int ret;
 	int i;
@@ -1331,6 +1335,12 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 		gen8_pte_encode(px_dma(vm->scratch[0]),
 				I915_CACHE_NONE, pte_flags);
 
+	wakeref = l4wa_pm_get(gt);
+	if (wakeref) {
+		bo = get_next_batch(&gt->fpp);
+		cmd = bo->cmd;
+	}
+retry:
 	for (i = 1; i <= vm->top; i++) {
 		struct drm_i915_gem_object *obj;
 
@@ -1346,10 +1356,30 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 			goto free_scratch;
 		}
 
-		fill_px(obj, vm->scratch[i - 1]->encode);
+		if (!cmd)
+			fill_px(obj, vm->scratch[i - 1]->encode);
+		else
+			cmd = fill_page_blt(vm->gt, cmd, px_dma(obj),
+					    vm->scratch[i - 1]->encode);
+
 		obj->encode = gen8_pde_encode(px_dma(obj), I915_CACHE_NONE);
 
 		vm->scratch[i] = obj;
+	}
+
+	if (cmd) {
+		GEM_BUG_ON(cmd >= bo->cmd + bo->vma->size + sizeof(*bo->cmd));
+		*cmd++ = MI_BATCH_BUFFER_END;
+
+		bo->wait = flat_ppgtt_submit(bo->vma);
+		if (IS_ERR(bo->wait))
+			cmd = NULL;
+
+		intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+		intel_gt_pm_put_async_l4(gt, wakeref);
+
+		if (!cmd)
+			goto retry;
 	}
 
 	return 0;
@@ -1358,6 +1388,12 @@ free_scratch:
 	while (i--)
 		i915_gem_object_put(vm->scratch[i]);
 	vm->scratch[0] = NULL;
+
+	if (cmd) {
+		intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+		intel_gt_pm_put_async_l4(gt, wakeref);
+	}
+
 	return ret;
 }
 
@@ -1397,7 +1433,10 @@ static struct i915_page_directory *
 gen8_alloc_top_pd(struct i915_address_space *vm)
 {
 	const unsigned int count = gen8_pd_top_count(vm);
+	struct intel_gt *gt = vm->gt;
 	struct i915_page_directory *pd;
+	intel_wakeref_t wakeref;
+	u32 *cmd = NULL;
 	int err;
 
 	GEM_BUG_ON(count > I915_PDES);
@@ -1417,7 +1456,27 @@ gen8_alloc_top_pd(struct i915_address_space *vm)
 	if (err)
 		goto err_pd;
 
-	fill_page_dma(px_base(pd), vm->scratch[vm->top]->encode, count);
+	wakeref = l4wa_pm_get(gt);
+	if (wakeref) {
+		struct intel_pte_bo *bo = get_next_batch(&gt->fpp);
+
+		cmd = fill_value_blt(vm->gt, bo->cmd, px_dma(pd), 0, count,
+				     vm->scratch[vm->top]->encode);
+
+		GEM_BUG_ON(cmd >= bo->cmd + bo->vma->size / sizeof(*bo->cmd));
+		*cmd++ = MI_BATCH_BUFFER_END;
+
+		bo->wait = flat_ppgtt_submit(bo->vma);
+		if (IS_ERR(bo->wait))
+			cmd = NULL; /* Fallback to legacy way, on err */
+
+		intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+		intel_gt_pm_put_async_l4(gt, wakeref);
+	}
+
+	if (!cmd)
+		fill_page_dma(px_base(pd), vm->scratch[vm->top]->encode, count);
+
 	atomic_inc(px_used(pd)); /* mark as pinned */
 	return pd;
 
