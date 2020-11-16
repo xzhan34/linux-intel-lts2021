@@ -353,8 +353,9 @@ struct i915_gem_mm {
 
 	struct i915_vma *lmem_window[2];
 	struct i915_vma *smem_window[2];
+	struct i915_vma *ccs_window[2];
 
-	/* To protect above two set of vmas */
+	/* To protect above sets of vmas */
 	wait_queue_head_t window_queue;
 
 	struct i915_mm_swap_stats blt_swap_stats;

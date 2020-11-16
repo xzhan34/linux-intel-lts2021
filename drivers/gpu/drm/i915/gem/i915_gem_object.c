@@ -1091,7 +1091,7 @@ static inline void i915_insert_vma_pages(struct i915_vma *vma, bool is_lmem)
 
 static struct i915_vma *
 i915_window_vma_init(struct drm_i915_private *i915,
-		     struct intel_memory_region *mem)
+		     struct intel_memory_region *mem, u64 size)
 {
 	struct intel_context *ce = to_gt(i915)->engine[BCS0]->evict_context;
 	struct i915_address_space *vm = ce->vm;
@@ -1102,8 +1102,7 @@ i915_window_vma_init(struct drm_i915_private *i915,
 	if (ret)
 		return ERR_PTR(-ENOMEM);
 
-	vma = i915_alloc_window_vma(i915, vm, BLT_WINDOW_SZ,
-				    mem->min_page_size);
+	vma = i915_alloc_window_vma(i915, vm, size, mem->min_page_size);
 	if (IS_ERR(vma)) {
 		DRM_ERROR("window vma alloc failed(%ld)\n", PTR_ERR(vma));
 		return vma;
@@ -1116,8 +1115,7 @@ i915_window_vma_init(struct drm_i915_private *i915,
 		goto err_page;
 	}
 
-	ret = sg_alloc_table(vma->pages, BLT_WINDOW_SZ / PAGE_SIZE,
-			     GFP_KERNEL);
+	ret = sg_alloc_table(vma->pages, size / PAGE_SIZE, GFP_KERNEL);
 	if (ret) {
 		DRM_ERROR("sg alloc table failed(%d)", ret);
 		goto err_sg_table;
@@ -1125,7 +1123,7 @@ i915_window_vma_init(struct drm_i915_private *i915,
 
 	mutex_lock(&vm->mutex);
 	ret = drm_mm_insert_node_in_range(&vm->mm, &vma->node,
-					  BLT_WINDOW_SZ, BLT_WINDOW_SZ,
+					  size, size,
 					  I915_COLOR_UNEVICTABLE,
 					  0, vm->total,
 					  DRM_MM_INSERT_LOW);
@@ -1174,6 +1172,7 @@ static void i915_window_vma_teardown(struct i915_vma *vma)
 int i915_setup_blt_windows(struct drm_i915_private *i915)
 {
 	struct intel_memory_region *region;
+	unsigned int size = BLT_WINDOW_SZ;
 	struct i915_vma *vma;
 	int i;
 
@@ -1191,7 +1190,7 @@ int i915_setup_blt_windows(struct drm_i915_private *i915)
 	region = intel_memory_region_by_type(i915, INTEL_MEMORY_LOCAL);
 
 	for (i = 0; i < ARRAY_SIZE(i915->mm.lmem_window); i++) {
-		vma = i915_window_vma_init(i915, region);
+		vma = i915_window_vma_init(i915, region, size);
 		GEM_BUG_ON(!vma);
 		if (IS_ERR(vma))
 			goto err;
@@ -1201,11 +1200,23 @@ int i915_setup_blt_windows(struct drm_i915_private *i915)
 	region = intel_memory_region_by_type(i915, INTEL_MEMORY_SYSTEM);
 
 	for (i = 0; i < ARRAY_SIZE(i915->mm.smem_window); i++) {
-		vma = i915_window_vma_init(i915, region);
+		vma = i915_window_vma_init(i915, region, size);
 		GEM_BUG_ON(!vma);
 		if (IS_ERR(vma))
 			goto err;
 		i915->mm.smem_window[i] = vma;
+	}
+
+	if (HAS_FLAT_CCS(i915)) {
+		size = BLT_WINDOW_SZ >> 8;
+
+		for (i = 0; i < ARRAY_SIZE(i915->mm.ccs_window); i++) {
+			vma = i915_window_vma_init(i915, region, size);
+			GEM_BUG_ON(!vma);
+			if (IS_ERR(vma))
+				goto err;
+			i915->mm.ccs_window[i] = vma;
+		}
 	}
 
 	return 0;
@@ -1213,8 +1224,10 @@ int i915_setup_blt_windows(struct drm_i915_private *i915)
 err:
 	i915_teardown_blt_windows(i915);
 
-	i915_probe_error(i915, "Failed to create VMA window %u at %s! (%ld)\n",
-			 i, region->name, PTR_ERR(vma));
+	i915_probe_error(i915,
+			 "Failed to create %u byte VMA window %u at %s! (%ld)\n",
+			 size, i, region->name, PTR_ERR(vma));
+
 	intel_gt_set_wedged(to_gt(i915));
 
 	return 0;
@@ -1229,6 +1242,9 @@ void i915_teardown_blt_windows(struct drm_i915_private *i915)
 
 	for (i = 0; i < ARRAY_SIZE(i915->mm.smem_window); i++)
 		i915_window_vma_teardown(fetch_and_zero(&i915->mm.smem_window[i]));
+
+	for (i = 0; i < ARRAY_SIZE(i915->mm.ccs_window); i++)
+		i915_window_vma_teardown(fetch_and_zero(&i915->mm.ccs_window[i]));
 }
 
 static int i915_window_blt_copy_prepare_obj(struct drm_i915_gem_object *obj)
