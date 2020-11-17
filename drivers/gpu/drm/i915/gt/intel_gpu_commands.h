@@ -251,6 +251,16 @@
 #define   SRC_MEM_TYPE_SHIFT		(31)
 #define   MEM_TYPE_SYS			1
 #define   MEM_TYPE_LOCAL		0
+#define   COMPRESSION_ENABLE		(1 << 29)
+#define   AUX_CCS_E			(5 << 18)
+#define   FULL_RESOLVE			(1 << 12)
+#define   TILE_4_FORMAT			(2 << 30)
+#define   TILE_4_WIDTH			(128)
+#define   TILE_4_WIDTH_DWORD		((128 >> 2) - 1)
+#define   TILE_4_HEIGHT			(32)
+#define   SURFACE_TYPE_2D		(1 << 29)
+#define   DEST_SURF_WIDTH_SHIFT		(14)
+#define   SRC_SURF_WIDTH_SHIFT		(14)
 #define GEN9_XY_FAST_COPY_BLT_CMD	(2 << 29 | 0x42 << 22)
 #define   XY_FAST_COPY_BLT_D0_SRC_TILING_MASK     REG_GENMASK(21, 20)
 #define   XY_FAST_COPY_BLT_D0_DST_TILING_MASK     REG_GENMASK(14, 13)

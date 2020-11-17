@@ -46,6 +46,11 @@ int i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
 				struct i915_gem_ww_ctx *ww,
 				struct intel_context *ce);
 
+int i915_gem_object_ww_compressed_copy_blt(struct drm_i915_gem_object *src,
+				struct drm_i915_gem_object *dst,
+				struct i915_gem_ww_ctx *ww,
+				struct intel_context *ce);
+
 phys_addr_t i915_calc_ctrl_surf_instr_dwords(struct drm_i915_private *i915,
 					     size_t copy_sz);
 

@@ -609,11 +609,143 @@ out_pm:
 	return ERR_PTR(err);
 }
 
-int i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
+static struct i915_vma *
+prepare_compressed_copy_cmd_buf(struct intel_context *ce,
+				struct i915_gem_ww_ctx *ww,
+				struct i915_vma *src,
+				struct i915_vma *dst)
+{
+	struct intel_gt_buffer_pool_node *pool;
+	struct i915_vma *batch;
+	u64 src_offset, dst_offset;
+	u64 count, rem, size;
+	u32 *cmd;
+	int err;
+	u8 src_mem_type, dst_mem_type;
+	u32 src_compression, dst_compression, src_mocs, dst_mocs;
+	bool dst_is_lmem = i915_gem_object_is_lmem(dst->obj);
+
+	count = (src->size + SZ_64K - 1)/SZ_64K;
+	size = (1 + (4 * 2 + 23) * count) * sizeof(u32);
+	size = round_up(size, PAGE_SIZE);
+
+	intel_engine_pm_get(ce->engine);
+
+	pool = intel_gt_get_buffer_pool(ce->engine->gt, size, I915_MAP_WC);
+	if (IS_ERR(pool)) {
+		err = PTR_ERR(pool);
+		goto out_pm;
+	}
+	err = i915_gem_object_lock(pool->obj, ww);
+	if (err)
+		goto out_put;
+
+	batch = i915_vma_instance(pool->obj, ce->vm, NULL);
+	if (IS_ERR(batch)) {
+		err = PTR_ERR(batch);
+		goto out_put;
+	}
+
+	err = i915_vma_pin_ww(batch, ww, 0, 0, PIN_USER);
+	if (unlikely(err))
+		goto out_put;
+		/* we pinned the pool, mark it as such */
+	intel_gt_buffer_pool_mark_used(pool);
+
+	cmd = i915_gem_object_pin_map(pool->obj, pool->type);
+	if (IS_ERR(cmd)) {
+		err = PTR_ERR(cmd);
+		goto out_unpin;
+	}
+	if (dst_is_lmem) {
+		src_compression = 0;
+		dst_compression =  COMPRESSION_ENABLE | AUX_CCS_E;
+		rem = dst->size;
+		dst_mocs = 4 << 21;
+		src_mocs = 4 << 21;
+	} else {
+		src_compression = COMPRESSION_ENABLE | AUX_CCS_E;
+		dst_compression = 0;
+		rem = src->size;
+		dst_mocs = 4 << 21;
+		src_mocs = 4 << 21;
+	}
+
+	src_mem_type = i915_gem_object_is_lmem(src->obj) ?
+		       MEM_TYPE_LOCAL : MEM_TYPE_SYS;
+	dst_mem_type = i915_gem_object_is_lmem(dst->obj) ?
+		       MEM_TYPE_LOCAL : MEM_TYPE_SYS;
+	src_offset = i915_vma_offset(src);
+	dst_offset = i915_vma_offset(dst);
+	do {
+		int block_size = min_t(u64, rem, SZ_64K);
+		*cmd++ = XY_BLOCK_COPY_BLT_CMD | 0x14;
+		*cmd++ = dst_compression | dst_mocs | TILE_4_FORMAT
+				| TILE_4_WIDTH_DWORD;
+		*cmd++ = 0;
+		/* BG3 */
+		*cmd++ = TILE_4_WIDTH | (block_size >> 7) << 16;
+		*cmd++ = lower_32_bits(dst_offset);
+		*cmd++ = upper_32_bits(dst_offset);
+		/* BG6 */
+		*cmd++ = dst_mem_type << DEST_MEM_TYPE_SHIFT;
+		*cmd++ = 0;
+		/* BG8 */
+		*cmd++ = src_mocs | src_compression | TILE_4_WIDTH_DWORD | TILE_4_FORMAT;
+		*cmd++ = lower_32_bits(src_offset);
+		*cmd++ = upper_32_bits(src_offset);
+		/* BG 11 */
+		*cmd++ = src_mem_type << SRC_MEM_TYPE_SHIFT;
+		*cmd++ = 0;
+		*cmd++ = 0;
+		*cmd++ = 0;
+		*cmd++ = 0;
+		/* BG 16 */
+		*cmd++ = SURFACE_TYPE_2D |
+			((TILE_4_WIDTH - 1) << DEST_SURF_WIDTH_SHIFT) |
+			(TILE_4_HEIGHT - 1);
+		*cmd++ = 0;
+		*cmd++ = 0;
+		/* BG 19 */
+		*cmd++ = SURFACE_TYPE_2D |
+			((TILE_4_WIDTH - 1) << SRC_SURF_WIDTH_SHIFT) |
+			(TILE_4_HEIGHT - 1);
+
+		*cmd++ = 0;
+		*cmd++ = 0;
+		cmd = i915_flush_dw(cmd, MI_FLUSH_DW_LLC | MI_INVALIDATE_TLB);
+		cmd = i915_flush_dw(cmd, MI_FLUSH_DW_CCS);
+		*cmd++ = MI_ARB_CHECK;
+
+		src_offset += block_size;
+		dst_offset += block_size;
+		rem -= block_size;
+
+	} while (rem);
+
+	*cmd = MI_BATCH_BUFFER_END;
+
+	i915_gem_object_flush_map(pool->obj);
+	i915_gem_object_unpin_map(pool->obj);
+	intel_gt_chipset_flush(ce->vm->gt);
+	batch->private = pool;
+	return batch;
+out_unpin:
+	i915_vma_unpin(batch);
+out_put:
+	intel_gt_buffer_pool_put(pool);
+out_pm:
+	intel_engine_pm_put(ce->engine);
+	return ERR_PTR(err);
+}
+
+static int __i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
 				struct drm_i915_gem_object *dst,
 				struct i915_gem_ww_ctx *ww,
-				struct intel_context *ce)
+				struct intel_context *ce,
+				bool compression)
 {
+	struct drm_i915_private *i915 = ce->vm->i915;
 	struct i915_address_space *vm = ce->vm;
 	struct i915_vma *vma[2], *batch;
 	struct i915_request *rq;
@@ -642,10 +774,20 @@ int i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
 	err = i915_vma_pin_ww(vma[1], ww, 0, 0, PIN_USER);
 	if (unlikely(err))
 		goto out_unpin_src;
-
-	batch = intel_emit_vma_copy_blt(ce, ww, vma[0], vma[1]);
-	if (IS_ERR(batch)) {
-		err = PTR_ERR(batch);
+	if (!compression) {
+		batch = intel_emit_vma_copy_blt(ce, ww, vma[0], vma[1]);
+		if (IS_ERR(batch)) {
+			err = PTR_ERR(batch);
+			goto out_unpin_dst;
+		}
+	} else if (HAS_FLAT_CCS(i915)) {
+		batch = prepare_compressed_copy_cmd_buf(ce, ww, vma[0], vma[1]);
+		if (IS_ERR(batch)) {
+			err = PTR_ERR(batch);
+			goto out_unpin_dst;
+		}
+	} else {
+		err = -EINVAL;
 		goto out_unpin_dst;
 	}
 
@@ -704,6 +846,22 @@ out_ctx:
 out:
 	intel_engine_pm_put(ce->engine);
 	return err;
+}
+
+int i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
+				struct drm_i915_gem_object *dst,
+				struct i915_gem_ww_ctx *ww,
+				struct intel_context *ce)
+{
+	return __i915_gem_object_ww_copy_blt(src, dst, ww, ce, false);
+}
+
+int i915_gem_object_ww_compressed_copy_blt(struct drm_i915_gem_object *src,
+				struct drm_i915_gem_object *dst,
+				struct i915_gem_ww_ctx *ww,
+				struct intel_context *ce)
+{
+	return __i915_gem_object_ww_copy_blt(src, dst, ww, ce, true);
 }
 
 int i915_gem_object_copy_blt(struct drm_i915_gem_object *src,
