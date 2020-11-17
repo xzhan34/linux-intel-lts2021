@@ -65,12 +65,13 @@ enum {
 #define __EXEC_OBJECT_INTERNAL_FLAGS	(~0u << 26) /* all of the above + */
 #define __EXEC_OBJECT_RESERVED (__EXEC_OBJECT_HAS_PIN | __EXEC_OBJECT_HAS_FENCE)
 
-#define __EXEC_HAS_RELOC	BIT(31)
-#define __EXEC_ENGINE_PINNED	BIT(30)
-#define __EXEC_USERPTR_USED	BIT(29)
-#define __EXEC_PERSIST_HAS_PIN  BIT(28)
-#define __EXEC_INTERNAL_FLAGS	(~0u << 28)
-#define UPDATE			PIN_OFFSET_FIXED
+#define __EXEC_PERSIST_USERPTR_USED	BIT_ULL(33)
+#define __EXEC_HAS_RELOC		BIT_ULL(32)
+#define __EXEC_ENGINE_PINNED		BIT_ULL(31)
+#define __EXEC_USERPTR_USED		BIT_ULL(30)
+#define __EXEC_PERSIST_HAS_PIN  	BIT_ULL(29)
+#define __EXEC_INTERNAL_FLAGS		(~0ull << 29)
+#define UPDATE				PIN_OFFSET_FIXED
 
 #define BATCH_OFFSET_BIAS (256*1024)
 
@@ -829,6 +830,9 @@ eb_check_for_persistent_vma(struct i915_execbuffer *eb,
 
 	assert_vm_bind_held(vm);
 
+	if (!test_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags))
+		return NULL;
+
 	va = gen8_noncanonical_addr(entry->offset & PIN_OFFSET_MASK);
 	vma = i915_gem_vm_bind_lookup_vma(vm, va);
 	if (!vma)
@@ -896,6 +900,38 @@ err_lut:
 err_open:
 	i915_vma_close(vma);
 	return err;
+}
+
+static int eb_lookup_persistent_userptr_vmas(struct i915_execbuffer *eb)
+{
+	struct i915_address_space *vm = eb->context->vm;
+	struct i915_vma *last_vma = NULL;
+	struct i915_vma *vma;
+	int err;
+
+	assert_vm_bind_held(vm);
+
+	if (!test_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags))
+		return 0;
+
+	/*
+	 * XXX: Instead of parsing through vm_bind_list, keep separte
+	 * list for userptr BOs.
+	 */
+	list_for_each_entry(vma, &vm->vm_bind_list, vm_bind_link) {
+		if (i915_gem_object_is_userptr(vma->obj)) {
+			err = i915_gem_object_userptr_submit_init(vma->obj);
+			if (err)
+				return err;
+
+			last_vma = vma;
+		}
+	}
+
+	if (last_vma)
+		eb->args->flags |= __EXEC_PERSIST_USERPTR_USED;
+
+	return 0;
 }
 
 static struct i915_vma *eb_lookup_vma(struct i915_execbuffer *eb, u32 handle)
@@ -1005,6 +1041,10 @@ static int eb_lookup_vmas(struct i915_execbuffer *eb)
 			eb->args->flags |= __EXEC_USERPTR_USED;
 		}
 	}
+
+	err = eb_lookup_persistent_userptr_vmas(eb);
+	if (err)
+		return err;
 
 	return 0;
 
@@ -2186,14 +2226,12 @@ static int eb_prefault_relocations(const struct i915_execbuffer *eb)
 
 static int eb_reinit_userptr(struct i915_execbuffer *eb)
 {
+	bool userptr_used = eb->args->flags & __EXEC_USERPTR_USED;
 	const unsigned int count = eb->buffer_count;
 	unsigned int i;
 	int ret;
 
-	if (likely(!(eb->args->flags & __EXEC_USERPTR_USED)))
-		return 0;
-
-	for (i = 0; i < count; i++) {
+	for (i = 0; userptr_used && i < count; i++) {
 		struct eb_vma *ev = &eb->vma[i];
 
 		if (!i915_gem_object_is_userptr(ev->vma->obj))
@@ -2206,7 +2244,7 @@ static int eb_reinit_userptr(struct i915_execbuffer *eb)
 		ev->flags |= __EXEC_OBJECT_USERPTR_INIT;
 	}
 
-	return 0;
+	return eb_lookup_persistent_userptr_vmas(eb);
 }
 
 static noinline int eb_relocate_parse_slow(struct i915_execbuffer *eb)
@@ -2545,6 +2583,26 @@ static int eb_move_to_gpu(struct i915_execbuffer *eb)
 				continue;
 
 			err = i915_gem_object_userptr_submit_done(obj);
+			if (err)
+				break;
+		}
+
+		read_unlock(&eb->i915->mm.notifier_lock);
+	}
+
+	if (!err && (eb->args->flags & __EXEC_PERSIST_USERPTR_USED)) {
+		struct i915_vma *vma;
+
+		assert_vm_bind_held(eb->context->vm);
+		assert_vm_priv_held(eb->context->vm);
+
+		read_lock(&eb->i915->mm.notifier_lock);
+		list_for_each_entry(vma, &eb->context->vm->vm_bind_list,
+				    vm_bind_link) {
+			if (!i915_gem_object_is_userptr(vma->obj))
+				continue;
+
+			err = i915_gem_object_userptr_submit_done(vma->obj);
 			if (err)
 				break;
 		}

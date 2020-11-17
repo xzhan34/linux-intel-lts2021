@@ -63,6 +63,9 @@ static bool i915_gem_userptr_invalidate(struct mmu_interval_notifier *mni,
 {
 	struct drm_i915_gem_object *obj = container_of(mni, struct drm_i915_gem_object, userptr.notifier);
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct list_head invalidate_list;
+	struct i915_address_space *vm;
+	struct i915_vma *vma;
 	long r;
 
 	if (!mmu_notifier_range_blockable(range))
@@ -90,6 +93,35 @@ static bool i915_gem_userptr_invalidate(struct mmu_interval_notifier *mni,
 				  MAX_SCHEDULE_TIMEOUT);
 	if (r <= 0)
 		drm_err(&i915->drm, "(%ld) failed to wait for idle\n", r);
+
+	/* Wait for any persistent vmas */
+	/*
+	 * XXX: i915_gem_object_unbind() temporarily moves vmas out
+	 * of the obj->vma.list. Handle it.
+	 */
+	INIT_LIST_HEAD(&invalidate_list);
+	spin_lock(&obj->vma.lock);
+	list_for_each_entry(vma, &obj->vma.list, obj_link) {
+		GEM_BUG_ON(vma->obj != obj);
+		if (!i915_vma_is_persistent(vma))
+			continue;
+
+		vm = i915_vm_get(vma->vm);
+		list_add_tail(&vm->invalidate_link, &invalidate_list);
+		/* XXX: Ensure vma is bound again */
+	}
+	spin_unlock(&obj->vma.lock);
+
+	while ((vm = list_first_entry_or_null(&invalidate_list, typeof(*vm),
+					      invalidate_link))) {
+		list_del_init(&vm->invalidate_link);
+		/* XXX: Use a timeout here */
+		r = i915_vm_sync(vm);
+		if (r)
+			drm_err(&i915->drm,
+				"(%ld) failed to wait for idle\n", r);
+		i915_vm_put(vm);
+	}
 
 	return true;
 }
@@ -603,3 +635,15 @@ int i915_gem_init_userptr(struct drm_i915_private *dev_priv)
 void i915_gem_cleanup_userptr(struct drm_i915_private *dev_priv)
 {
 }
+
+#ifdef CONFIG_MMU_NOTIFIER
+void i915_gem_userptr_lock_mmu_notifier(struct drm_i915_private *i915)
+{
+	write_lock(&i915->mm.notifier_lock);
+}
+
+void i915_gem_userptr_unlock_mmu_notifier(struct drm_i915_private *i915)
+{
+	write_unlock(&i915->mm.notifier_lock);
+}
+#endif

@@ -9,6 +9,7 @@
 
 #include "i915_drv.h"
 #include "i915_gem_gtt.h"
+#include "i915_gem_userptr.h"
 #include "i915_gem_vm_bind.h"
 
 #define START(node) ((node)->start)
@@ -175,6 +176,12 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 		goto put_obj;
 	}
 
+	if (i915_gem_object_is_userptr(obj)) {
+		ret = i915_gem_object_userptr_submit_init(obj);
+		if (ret)
+			goto put_obj;
+	}
+
 	ret = i915_gem_vm_bind_lock_interruptible(vm);
 	if (ret)
 		goto put_obj;
@@ -188,6 +195,7 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	i915_gem_object_get(vma->obj);
 
 	i915_gem_ww_ctx_init(&ww, true);
+	set_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags);
 retry:
 	if (va->flags & PRELIM_I915_GEM_VM_BIND_IMMEDIATE) {
 		u64 pin_flags = va->start | PIN_OFFSET_FIXED | PIN_USER;
@@ -203,6 +211,14 @@ retry:
 		ret = i915_gem_object_lock(vma->obj, &ww);
 		if (ret)
 			goto out_ww;
+
+		if (i915_gem_object_is_userptr(obj)) {
+			i915_gem_userptr_lock_mmu_notifier(vm->i915);
+			ret = i915_gem_object_userptr_submit_done(obj);
+			i915_gem_userptr_unlock_mmu_notifier(vm->i915);
+			if (ret)
+				goto out_ww;
+		}
 
 		ret = i915_vma_pin_ww(vma, &ww, 0, 0, pin_flags);
 		if (ret)
