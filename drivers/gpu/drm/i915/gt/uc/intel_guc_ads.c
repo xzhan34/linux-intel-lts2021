@@ -304,7 +304,23 @@ static long __must_check guc_mmio_reg_add(struct intel_gt *gt,
 		return PTR_ERR(slot);
 
 	while (slot-- > regset->registers) {
-		GEM_BUG_ON(slot[0].offset == slot[1].offset);
+		/*
+		 * XXX: this condition should be impossible given the above
+		 * bsearch, but we sometimes hit it when LMEM doesn't work
+		 * properly and the returned read value is not what we wrote.
+		 * Instead of exploding on a GEM_BUG_ON, log the value so we can
+		 * confirm if it is a LMEM bug or if a duplicated register
+		 * somehow slipped through the search.
+		 * Note that having a duplicated entry in the list is not a
+		 * problem per-se, GuC will just save the register twice and
+		 * restore it twice.
+		 */
+		if (unlikely(slot[0].offset == slot[1].offset)) {
+			DRM_ERROR("duplicated guc regset entry 0x%x [0x%x]\n",
+				  slot[0].offset, offset);
+			break;
+		}
+
 		if (slot[1].offset > slot[0].offset)
 			break;
 
