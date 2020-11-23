@@ -223,6 +223,7 @@ bool i915_gem_object_can_bypass_llc(struct drm_i915_gem_object *obj)
 bool i915_gem_object_should_migrate(struct drm_i915_gem_object *obj,
 				    enum intel_region_id dst_region_id)
 {
+	struct intel_memory_region *dst_mem;
 	u32 mask;
 
 	if (!obj->mm.n_placements || obj->mm.region.mem->id == dst_region_id)
@@ -233,8 +234,12 @@ bool i915_gem_object_should_migrate(struct drm_i915_gem_object *obj,
 	if (!(mask & BIT(dst_region_id)))
 		return false;
 
-	if (dst_region_id == INTEL_REGION_SMEM &&
-	    i915_gem_object_allows_atomic_system(obj))
+	dst_mem = to_i915(obj->base.dev)->mm.regions[dst_region_id];
+
+	if ((dst_mem->type == INTEL_MEMORY_SYSTEM &&
+	     i915_gem_object_allows_atomic_system(obj)) ||
+	    (dst_mem->type == INTEL_MEMORY_LOCAL &&
+	     i915_gem_object_allows_atomic_device(obj)))
 		return true;
 
 	return false;

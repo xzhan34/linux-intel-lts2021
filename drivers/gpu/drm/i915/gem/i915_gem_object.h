@@ -299,6 +299,14 @@ i915_gem_object_allows_atomic_system(struct drm_i915_gem_object *obj)
 }
 
 static inline bool
+i915_gem_object_allows_atomic_device(struct drm_i915_gem_object *obj)
+{
+	/* GPU atomics allowed with either ATOMIC_DEVICE or ATOMIC_SYSTEM */
+	return obj->mm.madv_atomic == I915_BO_ATOMIC_DEVICE ||
+	       obj->mm.madv_atomic == I915_BO_ATOMIC_SYSTEM;
+}
+
+static inline bool
 i915_gem_object_is_contiguous(const struct drm_i915_gem_object *obj)
 {
 	return obj->flags & I915_BO_ALLOC_CONTIGUOUS;
