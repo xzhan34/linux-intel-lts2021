@@ -220,11 +220,6 @@ static u64 gen8_pte_encode(dma_addr_t addr,
 	if (unlikely(flags & PTE_READ_ONLY))
 		pte &= ~GEN8_PAGE_RW;
 
-	if (flags & PTE_LM)
-		pte |= GEN12_PPGTT_PTE_LM | GEN12_PPGTT_PTE_NC;
-	if (flags & PTE_AE)
-		pte |= GEN12_USM_PPGTT_PTE_AE;
-
 	switch (level) {
 	case I915_CACHE_NONE:
 		pte |= PPAT_UNCACHED;
@@ -236,6 +231,51 @@ static u64 gen8_pte_encode(dma_addr_t addr,
 		pte |= PPAT_CACHED;
 		break;
 	}
+
+	return pte;
+}
+
+static u64 gen12_pte_encode(dma_addr_t addr,
+			    enum i915_cache_level level,
+			    u32 flags)
+{
+	gen8_pte_t pte = addr | GEN8_PAGE_PRESENT | GEN8_PAGE_RW;
+	u8 pat_index;
+
+	if (unlikely(flags & PTE_READ_ONLY))
+		pte &= ~GEN8_PAGE_RW;
+
+	if (flags & PTE_LM)
+		pte |= GEN12_PPGTT_PTE_LM | GEN12_PPGTT_PTE_NC;
+	if (flags & PTE_AE)
+		pte |= GEN12_USM_PPGTT_PTE_AE;
+
+	switch (level) {
+	case I915_CACHE_NONE:
+		pat_index = 0; /* PPAT_UC */
+		break;
+	case I915_CACHE_WT:
+		pat_index = 2; /* PPAT_WT */
+		break;
+	case I915_CACHE_LLC:
+		pat_index = 3; /* PPAT_WB */
+		break;
+	case I915_CACHE_L3_LLC:
+		pat_index = 3; /* PPAT_WB */
+		break;
+	default:
+		pat_index = level; /* direct mapping */
+		break;
+	}
+
+	if (pat_index & 1)
+		pte |= GEN12_PPGTT_PTE_PAT0;
+
+	if ( (pat_index >> 1) & 1 )
+		pte |= GEN12_PPGTT_PTE_PAT1;
+
+	if ( (pat_index >> 2) & 1)
+		pte |= GEN12_PPGTT_PTE_PAT2;
 
 	return pte;
 }
@@ -1128,7 +1168,7 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 				   enum i915_cache_level cache_level,
 				   u32 flags)
 {
-	const gen8_pte_t pte_encode = gen8_pte_encode(0, cache_level, flags);
+	const gen8_pte_t pte_encode = vma->vm->pte_encode(0, cache_level, flags);
 	unsigned int rem = min_t(u64, sg_dma_len(iter->sg), iter->rem);
 	u64 start = i915_vma_offset(vma);
 
@@ -1476,8 +1516,8 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 		pte_flags |= PTE_LM;
 
 	vm->scratch[0]->encode =
-		gen8_pte_encode(px_dma(vm->scratch[0]),
-				I915_CACHE_NONE, pte_flags);
+		vm->pte_encode(px_dma(vm->scratch[0]),
+			       I915_CACHE_NONE, pte_flags);
 
 	wakeref = l4wa_pm_get(gt);
 	if (wakeref) {
@@ -1817,7 +1857,10 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt, u32 flags)
 	 */
 	ppgtt->vm.alloc_scratch_dma = alloc_pt_dma;
 
-	ppgtt->vm.pte_encode = gen8_pte_encode;
+	if (GRAPHICS_VER(gt->i915) >= 12)
+		ppgtt->vm.pte_encode = gen12_pte_encode;
+	else
+		ppgtt->vm.pte_encode = gen8_pte_encode;
 
 	if (GRAPHICS_VER_FULL(gt->i915) >= IP_VER(12, 60)) {
 		ppgtt->vm.insert_entries = pvc_ppgtt_insert;

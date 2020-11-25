@@ -55,6 +55,7 @@
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_workarounds.h"
+#include "gt/intel_clos.h"
 
 #include "i915_drv.h"
 #include "i915_trace.h"
@@ -1310,6 +1311,7 @@ int i915_gem_open(struct drm_i915_private *i915, struct drm_file *file)
 	if (ret)
 		goto err_context;
 
+	init_client_clos(file_priv);
 	return 0;
 
 err_context:

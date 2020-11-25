@@ -93,6 +93,7 @@ gt-y += \
 	gt/gen8_engine_cs.o \
 	gt/gen8_ppgtt.o \
 	gt/intel_breadcrumbs.o \
+	gt/intel_clos.o \
 	gt/intel_context.o \
 	gt/intel_context_sseu.o \
 	gt/intel_context_vm.o \

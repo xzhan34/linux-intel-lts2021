@@ -89,7 +89,10 @@ typedef u64 gen8_pte_t;
 
 #define GEN12_PPGTT_PTE_LM	BIT_ULL(11)
 #define GEN12_USM_PPGTT_PTE_AE	BIT_ULL(10)
+#define GEN12_PPGTT_PTE_PAT2	BIT_ULL(7)
 #define GEN12_PPGTT_PTE_NC	BIT_ULL(5)
+#define GEN12_PPGTT_PTE_PAT1	BIT_ULL(4)
+#define GEN12_PPGTT_PTE_PAT0	BIT_ULL(3)
 
 /*
  *  DOC: GEN12 GGTT Table Entry format
@@ -152,6 +155,7 @@ typedef u64 gen8_pte_t;
 #define PPAT_DISPLAY_ELLC		_PAGE_PCD /* WT eLLC */
 
 #define CHV_PPAT_SNOOP			REG_BIT(6)
+#define GEN12_PPAT_CLOS(x)              ((x)<<2)
 #define GEN8_PPAT_AGE(x)		((x)<<4)
 #define GEN8_PPAT_LLCeLLC		(3<<2)
 #define GEN8_PPAT_LLCELLC		(2<<2)

@@ -182,6 +182,9 @@ struct prelim_i915_user_extension {
 #define PRELIM_DRM_I915_UUID_REGISTER		0x58
 #define PRELIM_DRM_I915_UUID_UNREGISTER		0x57
 #define PRELIM_DRM_I915_DEBUGGER_OPEN		0x56
+#define PRELIM_DRM_I915_GEM_CLOS_RESERVE	0x55
+#define PRELIM_DRM_I915_GEM_CLOS_FREE		0x54
+#define PRELIM_DRM_I915_GEM_CACHE_RESERVE	0x53
 
 
 #define PRELIM_DRM_IOCTL_I915_GEM_CREATE_EXT		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_CREATE, struct prelim_drm_i915_gem_create_ext)
@@ -192,6 +195,9 @@ struct prelim_i915_user_extension {
 #define PRELIM_DRM_IOCTL_I915_UUID_REGISTER		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_UUID_REGISTER, struct prelim_drm_i915_uuid_control)
 #define PRELIM_DRM_IOCTL_I915_UUID_UNREGISTER		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_UUID_UNREGISTER, struct prelim_drm_i915_uuid_control)
 #define PRELIM_DRM_IOCTL_I915_DEBUGGER_OPEN		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_DEBUGGER_OPEN, struct prelim_drm_i915_debugger_open_param)
+#define PRELIM_DRM_IOCTL_I915_GEM_CLOS_RESERVE		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_CLOS_RESERVE, struct prelim_drm_i915_gem_clos_reserve)
+#define PRELIM_DRM_IOCTL_I915_GEM_CLOS_FREE		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_CLOS_FREE, struct prelim_drm_i915_gem_clos_free)
+#define PRELIM_DRM_IOCTL_I915_GEM_CACHE_RESERVE		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_CACHE_RESERVE, struct prelim_drm_i915_gem_cache_reserve)
 /* End PRELIM ioctl's */
 
 /* getparam */
@@ -1187,6 +1193,62 @@ struct prelim_drm_i915_gem_vm_region_ext {
 	/* memory region: to find gt to create vm on */
 	struct prelim_drm_i915_gem_memory_class_instance region;
 	__u32 pad;
+};
+
+struct prelim_drm_i915_vm_bind_ext_set_pat {
+#define PRELIM_I915_VM_BIND_EXT_SET_PAT	(PRELIM_I915_USER_EXT | 2)
+       struct i915_user_extension base;
+       __u64 pat_index;
+};
+
+/**
+ * struct prelim_drm_i915_gem_clos_reserve
+ *
+ * Allows clients to request reservation of one free CLOS, to use in subsequent
+ * Cache Reservations.
+ *
+ */
+struct prelim_drm_i915_gem_clos_reserve {
+	__u16 clos_index;
+	__u16 pad16;
+};
+
+/**
+ * struct prelim_drm_i915_gem_clos_free
+ *
+ * Free off a previously reserved CLOS set. Any corresponding Cache Reservations
+ * that are active for the CLOS are automatically dropped and returned to the
+ * Shared set.
+ *
+ * The clos_index indicates the CLOS set which is being released and must
+ * correspond to a CLOS index previously reserved.
+ *
+ */
+struct prelim_drm_i915_gem_clos_free {
+	__u16 clos_index;
+	__u16 pad16;
+};
+
+/**
+ * struct prelim_drm_i915_gem_cache_reserve
+ *
+ * Allows clients to request, or release, reservation of one or more cache ways,
+ * within a previously reserved CLOS set.
+ *
+ * If num_ways = 0, i915 will drop any existing Reservation for the specified
+ * clos_index and cache_level. The requested clos_index and cache_level Waymasks
+ * will then track the Shared set once again.
+ *
+ * Otherwise, the requested number of Ways will be removed from the Shared set
+ * for the requested cache level, and assigned to the Cache and CLOS specified
+ * by cache_level/clos_index.
+ *
+ */
+struct prelim_drm_i915_gem_cache_reserve {
+	__u16 clos_index;
+	__u16 cache_level; /* e.g. 3 for L3 */
+	__u16 num_ways;
+	__u16 pad16;
 };
 
 #endif /* __I915_DRM_PRELIM_H__ */

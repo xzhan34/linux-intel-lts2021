@@ -25,6 +25,7 @@ struct vm_bind_user_ext {
 	struct user_fence bind_fence;
 	struct i915_address_space *vm;
 	struct list_head metadata_list;
+	struct drm_i915_gem_object *obj;
 };
 
 #define START(node) ((node)->start)
@@ -190,10 +191,56 @@ static int vm_bind_ext_uuid(struct i915_user_extension __user *base,
 	return 0;
 }
 
+static int vm_bind_set_pat(struct i915_user_extension __user *base,
+			   void *data)
+{
+	struct prelim_drm_i915_vm_bind_ext_set_pat ext;
+	struct vm_bind_user_ext *arg = data;
+
+	if (copy_from_user(&ext, base, sizeof(ext)))
+		return -EFAULT;
+
+	/*
+	 * FIXME: Object should be locked here. And if the ioctl fails,
+	 * we probably should revert the change made here.
+	 */
+
+	/*
+	 * Convert pat index to cache type
+	 *
+	 * Only do the conversion for the default shared pat index (0..3) so that
+	 * the existing code will not be affected.
+	 *
+	 * For other pat index, there is no need to convert.
+	 *
+	 */
+	switch (ext.pat_index){
+		case 0:
+			arg->obj->cache_level = I915_CACHE_NONE;
+			break;
+		case 1:
+			arg->obj->cache_level = I915_CACHE_L3_LLC; /*TBD: WC type*/
+			break;
+		case 2:
+			arg->obj->cache_level = I915_CACHE_WT;
+			break;
+		case 3:
+			arg->obj->cache_level = I915_CACHE_L3_LLC; /* WB */
+			break;
+		default:
+			arg->obj->cache_level = ext.pat_index;
+			break;
+	}
+	DRM_DEBUG("vm_bind_set_pat: pat_index = %lld cache = %d \n",
+			ext.pat_index,  arg->obj->cache_level);
+	return 0;
+}
+
 static const i915_user_extension_fn vm_bind_extensions[] = {
 	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_VM_BIND_EXT_SYNC_FENCE)] = vm_bind_sync_fence,
 	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_VM_BIND_EXT_USER_FENCE)] = vm_bind_user_fence,
 	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_VM_BIND_EXT_UUID)] = vm_bind_ext_uuid,
+	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_VM_BIND_EXT_SET_PAT)] = vm_bind_set_pat,
 };
 
 static void metadata_list_free(struct list_head *list)
@@ -457,6 +504,7 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 			goto put_obj;
 	}
 
+	ext.obj = obj;
 	ret = i915_user_extensions(u64_to_user_ptr(va->extensions),
 				   vm_bind_extensions,
 				   ARRAY_SIZE(vm_bind_extensions),

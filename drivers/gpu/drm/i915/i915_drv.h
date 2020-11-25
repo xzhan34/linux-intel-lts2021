@@ -210,6 +210,11 @@ struct drm_i915_file_private {
 	unsigned long hang_timestamp;
 
 	struct i915_drm_client *client;
+
+        struct clos_reservation {
+		u32 clos_mask;         // Mask of CLOS sets reserved by client
+		u8 l3_rsvd_ways;      // Number of L3 Ways reserved by client, across all CLOS
+	} clos_resv;
 };
 
 struct sdvo_device_mapping {
@@ -916,6 +921,13 @@ struct drm_i915_private {
 	struct wait_queue_head user_fence_wq;
 
 	unsigned long errors[I915_DRIVER_ERROR_COUNT];
+
+#define NUM_CLOS 4
+	struct cache_reservation {
+		u32 free_clos_mask;    // Mask of CLOS sets that have not been reserved
+		struct mutex clos_mutex;
+	        u8 ways[NUM_CLOS];
+	} cache_resv;
 };
 
 static inline struct drm_i915_private *to_i915(const struct drm_device *dev)
@@ -1526,6 +1538,8 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 
 #define HAS_ASID_TLB_INVALIDATION(i915) \
 	(INTEL_INFO(i915)->has_asid_tlb_invalidation)
+
+#define HAS_CACHE_CLOS(i915) (INTEL_INFO(i915)->has_cache_clos)
 
 #define HAS_GUC_PROGRAMMABLE_MOCS(i915) (INTEL_INFO(i915)->has_guc_programmable_mocs)
 

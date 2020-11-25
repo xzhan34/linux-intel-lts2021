@@ -148,6 +148,7 @@ enum intel_ppgtt_type {
 	func(has_64k_pages); \
 	func(has_access_counter); \
 	func(has_asid_tlb_invalidation); \
+	func(has_cache_clos); \
 	func(has_coherent_ggtt); \
 	func(has_gmd_id); \
 	func(gpu_reset_clobbers_display); \

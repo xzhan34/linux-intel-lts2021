@@ -71,6 +71,7 @@
 #include <drm/drm_syncobj.h>
 #include <drm/drm_cache.h>
 
+#include "gt/intel_clos.h"
 #include "gt/intel_context.h"
 #include "gt/intel_context_param.h"
 #include "gt/intel_engine_heartbeat.h"
@@ -85,6 +86,7 @@
 
 #include "i915_drm_client.h"
 #include "i915_gem_context.h"
+#include "i915_gem_ioctls.h"
 #include "i915_trace.h"
 #include "i915_user_extensions.h"
 #include "i915_gem_ioctls.h"
@@ -2708,6 +2710,45 @@ int i915_gem_context_setparam_ioctl(struct drm_device *dev, void *data,
 
 	i915_gem_context_put(ctx);
 	return ret;
+}
+
+int i915_gem_clos_reserve_ioctl(struct drm_device *dev, void *data,
+				struct drm_file *file)
+{
+	struct drm_i915_file_private *file_priv = file->driver_priv;
+	struct prelim_drm_i915_gem_clos_reserve *clos = data;
+
+	if (!HAS_CACHE_CLOS(to_i915(dev)))
+		return -EOPNOTSUPP;
+
+	return reserve_clos(file_priv, &clos->clos_index);
+}
+
+int i915_gem_clos_free_ioctl(struct drm_device *dev, void *data,
+			     struct drm_file *file)
+{
+	struct drm_i915_file_private *file_priv = file->driver_priv;
+	struct prelim_drm_i915_gem_clos_free *clos = data;
+
+	if (!HAS_CACHE_CLOS(to_i915(dev)))
+		return -EOPNOTSUPP;
+
+	return free_clos(file_priv, clos->clos_index);
+}
+
+int i915_gem_cache_reserve_ioctl(struct drm_device *dev, void *data,
+                               struct drm_file *file)
+{
+	struct drm_i915_file_private *file_priv = file->driver_priv;
+	struct prelim_drm_i915_gem_cache_reserve *cache_reserve = data;
+
+	if (!HAS_CACHE_CLOS(to_i915(dev)))
+		return -EOPNOTSUPP;
+
+	return reserve_cache_ways(file_priv,
+				  cache_reserve->cache_level,
+				  cache_reserve->clos_index,
+				  &cache_reserve->num_ways);
 }
 
 int i915_gem_context_reset_stats_ioctl(struct drm_device *dev,

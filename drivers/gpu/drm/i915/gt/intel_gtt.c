@@ -580,6 +580,22 @@ void gtt_write_workarounds(struct intel_gt *gt)
 	}
 }
 
+static void pvc_setup_private_ppat(struct intel_gt *gt)
+{
+        intel_gt_mcr_multicast_write(gt, XEHP_PAT_INDEX(0), GEN8_PPAT_UC);
+        intel_gt_mcr_multicast_write(gt, XEHP_PAT_INDEX(1), GEN8_PPAT_WC);
+        intel_gt_mcr_multicast_write(gt, XEHP_PAT_INDEX(2), GEN8_PPAT_WT);
+        intel_gt_mcr_multicast_write(gt, XEHP_PAT_INDEX(3), GEN8_PPAT_WB);
+        intel_gt_mcr_multicast_write(gt, XEHP_PAT_INDEX(4),
+				     GEN12_PPAT_CLOS(1) | GEN8_PPAT_WT);
+        intel_gt_mcr_multicast_write(gt, XEHP_PAT_INDEX(5),
+				     GEN12_PPAT_CLOS(1) | GEN8_PPAT_WB);
+        intel_gt_mcr_multicast_write(gt, XEHP_PAT_INDEX(6),
+				     GEN12_PPAT_CLOS(2) | GEN8_PPAT_WT);
+        intel_gt_mcr_multicast_write(gt, XEHP_PAT_INDEX(7),
+				     GEN12_PPAT_CLOS(2) | GEN8_PPAT_WB);
+}
+
 static void tgl_setup_private_ppat(struct intel_uncore *uncore)
 {
 	/* TGL doesn't support LLC or AGE settings */
@@ -715,7 +731,9 @@ void setup_private_pat(struct intel_gt *gt)
 
 	GEM_BUG_ON(GRAPHICS_VER(i915) < 8);
 
-	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
+	if (IS_PONTEVECCHIO(i915))
+		pvc_setup_private_ppat(gt);
+	else if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
 		xehp_setup_private_ppat(gt);
 	else if (GRAPHICS_VER(i915) >= 12)
 		tgl_setup_private_ppat(uncore);

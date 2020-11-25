@@ -70,6 +70,7 @@
 #include "gem/i915_gem_mman.h"
 #include "gem/i915_gem_pm.h"
 #include "gem/i915_gem_vm_bind.h"
+#include "gt/intel_clos.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_gt_regs.h"
@@ -986,6 +987,7 @@ static int i915_driver_hw_probe(struct drm_i915_private *dev_priv)
 	if (root_pdev)
 		pci_d3cold_disable(root_pdev);
 
+	init_device_clos(dev_priv);
 	return 0;
 
 err_msi:
@@ -1369,6 +1371,7 @@ void i915_driver_remove(struct drm_i915_private *i915)
 
 	if (HAS_LMEM(i915))
 		i915_teardown_blt_windows(i915);
+	uninit_device_clos(i915);
 
 	intel_gvt_driver_remove(i915);
 
@@ -1462,6 +1465,7 @@ static void i915_driver_postclose(struct drm_device *dev, struct drm_file *file)
 	i915_gem_context_close(file);
 	i915_drm_client_cleanup(file_priv->client);
 
+	uninit_client_clos(file_priv);
 	kfree_rcu(file_priv, rcu);
 
 	/* Catch up with all the deferred frees from "this" client */
@@ -2422,6 +2426,9 @@ static const struct drm_ioctl_desc i915_ioctls[] = {
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_UUID_REGISTER, i915_uuid_register_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_UUID_UNREGISTER, i915_uuid_unregister_ioctl, DRM_RENDER_ALLOW),
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_DEBUGGER_OPEN, i915_debugger_open_ioctl, DRM_RENDER_ALLOW),
+	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_CLOS_RESERVE, i915_gem_clos_reserve_ioctl, DRM_RENDER_ALLOW),
+	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_CLOS_FREE, i915_gem_clos_free_ioctl, DRM_RENDER_ALLOW),
+	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_CACHE_RESERVE, i915_gem_cache_reserve_ioctl, DRM_RENDER_ALLOW),
 };
 
 /*
