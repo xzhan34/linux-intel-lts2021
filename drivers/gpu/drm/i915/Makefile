@@ -253,6 +253,10 @@ iov-y += \
 	gt/iov/intel_iov_sysfs.o
 i915-y += $(iov-y)
 
+iov-$(CONFIG_DRM_I915_SELFTEST) += \
+	gt/iov/selftests/iov_selftest_actions.o
+i915-y += $(iov-$(CONFIG_DRM_I915_SELFTEST))
+
 # graphics hardware monitoring (HWMON) support
 i915-$(CONFIG_HWMON) += i915_hwmon.o
 

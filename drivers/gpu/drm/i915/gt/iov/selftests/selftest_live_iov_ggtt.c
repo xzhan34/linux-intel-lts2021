@@ -5,6 +5,8 @@
 
 #include "i915_utils.h"
 #include "gt/intel_gt.h"
+#include "../abi/iov_actions_selftest_abi.h"
+#include "../intel_iov_relay.h"
 
 struct pte_testcase {
 	bool (*test)(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, gen8_pte_t *out);

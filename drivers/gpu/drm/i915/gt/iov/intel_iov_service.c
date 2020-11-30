@@ -8,6 +8,7 @@
 
 #include "abi/iov_actions_abi.h"
 #include "abi/iov_actions_mmio_abi.h"
+#include "abi/iov_actions_selftest_abi.h"
 #include "abi/iov_errors_abi.h"
 #include "abi/iov_messages_abi.h"
 #include "abi/iov_version_abi.h"
@@ -18,6 +19,8 @@
 #include "intel_iov_service.h"
 #include "intel_iov_types.h"
 #include "intel_iov_utils.h"
+
+#include "selftests/iov_selftest_actions.h"
 
 static void __uncore_read_many(struct intel_uncore *uncore, unsigned int count,
 			       const i915_reg_t *regs, u32 *values)
@@ -350,6 +353,9 @@ int intel_iov_service_process_msg(struct intel_iov *iov, u32 origin,
 		break;
 	case IOV_ACTION_VF2PF_QUERY_RUNTIME:
 		err = pf_reply_runtime_query(iov, origin, relay_id, msg, len);
+		break;
+	case IOV_ACTION_VF2PF_PF_ST_ACTION:
+		err = intel_iov_service_perform_selftest_action(iov, origin, relay_id, msg, len);
 		break;
 	default:
 		break;
