@@ -761,9 +761,11 @@ static void err_print_gt_global(struct drm_i915_error_state_buf *m,
 		err_printf(m, "DONE_REG: 0x%08x\n", gt->done_reg);
 	}
 
-	if (GRAPHICS_VER(m->i915) >= 8)
+	if (GRAPHICS_VER(m->i915) >= 8) {
+		err_printf(m, "EU_GLOBAL_SIP: 0x%08x\n", gt->eu_global_sip);
 		err_printf(m, "FAULT_TLB_DATA: 0x%08x 0x%08x\n",
 			   gt->fault_data1, gt->fault_data0);
+	}
 
 	if (GRAPHICS_VER(m->i915) == 7)
 		err_printf(m, "ERR_INT: 0x%08x\n", gt->err_int);
@@ -1823,6 +1825,8 @@ static void gt_record_global_regs(struct intel_gt_coredump *gt)
 		gt->fault_data1 = intel_uncore_read(uncore,
 						    GEN12_FAULT_TLB_DATA1);
 	} else if (GRAPHICS_VER(i915) >= 8) {
+		gt->eu_global_sip = intel_gt_mcr_read_any((struct intel_gt *)gt->_gt,
+							  EU_GLOBAL_SIP);
 		gt->fault_data0 = intel_uncore_read(uncore,
 						    GEN8_FAULT_TLB_DATA0);
 		gt->fault_data1 = intel_uncore_read(uncore,

@@ -166,6 +166,7 @@ struct intel_gt_coredump {
 	u32 gam_done; /* gen12 */
 	u32 clock_frequency;
 	u32 clock_period_ns;
+	u32 eu_global_sip;
 
 	/* Display related */
 	u32 derrmr;
