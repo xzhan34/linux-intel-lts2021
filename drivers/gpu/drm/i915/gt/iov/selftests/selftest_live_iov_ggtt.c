@@ -3,6 +3,7 @@
  * Copyright(c) 2022 Intel Corporation. All rights reserved.
  */
 
+#include "i915_utils.h"
 #include "gt/intel_gt.h"
 
 struct pte_testcase {
@@ -57,9 +58,50 @@ pte_valid_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_add
 }
 
 static bool
+pte_valid_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
+			 gen8_pte_t *out)
+{
+	const u64 mask = GEN6_PTE_VALID;
+	bool ret = false;
+	gen8_pte_t original_pte;
+	gen8_pte_t read_pte;
+	gen8_pte_t write_pte;
+
+	original_pte = iov->selftest.mmio_get_pte(pte_addr);
+
+	write_pte = original_pte ^ FIELD_MAX(mask);
+	iov->selftest.mmio_set_pte(pte_addr, write_pte);
+	read_pte = iov->selftest.mmio_get_pte(pte_addr);
+
+	*out = read_pte;
+
+	if ((read_pte & mask) == (original_pte & mask))
+		ret = true;
+
+	iov->selftest.mmio_set_pte(pte_addr, original_pte);
+
+	return ret;
+}
+
+static bool
 pte_vfid_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, gen8_pte_t *out)
 {
 	return pte_is_value_modifiable(iov, pte_addr, ggtt_addr, TGL_GGTT_PTE_VFID_MASK, out);
+}
+
+static bool
+pte_vfid_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
+			gen8_pte_t *out)
+{
+	return !pte_vfid_modifiable(iov, pte_addr, ggtt_addr, out);
+}
+
+static bool
+pte_vfid_not_readable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, u64 *out)
+{
+	*out = iov->selftest.mmio_get_pte(pte_addr);
+
+	return u64_get_bits(*out, TGL_GGTT_PTE_VFID_MASK) == 0;
 }
 
 static bool run_test_on_pte(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
@@ -168,6 +210,52 @@ static int igt_pf_ggtt(void *arg)
 	return igt_pf_iov_ggtt(&to_gt(i915)->iov);
 }
 
+static int igt_vf_iov_own_ggtt(struct intel_iov *iov)
+{
+	gen8_pte_t __iomem *gsm = iov_to_gt(iov)->ggtt->gsm;
+	static struct pte_testcase pte_testcases[] = {
+		{ .test = pte_gpa_modifiable },
+		{ .test = pte_vfid_not_readable },
+		{ .test = pte_vfid_not_modifiable },
+		{ .test = pte_valid_not_modifiable },
+		{ },
+	};
+	int failed = 0;
+	struct drm_mm_node ggtt_block;
+	struct pte_testcase *tc;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	ggtt_block.start = iov->vf.config.ggtt_base;
+	ggtt_block.size = iov->vf.config.ggtt_size;
+
+	GEM_BUG_ON(!IS_ALIGNED(ggtt_block.start, I915_GTT_PAGE_SIZE_4K));
+	GEM_BUG_ON(!IS_ALIGNED(ggtt_block.size, I915_GTT_PAGE_SIZE_4K));
+
+	IOV_DEBUG(iov, "Subtest %s, gsm: %#llx base: %#llx size: %#llx\n",
+		  __func__, ptr_to_u64(gsm), ggtt_block.start, ggtt_block.size);
+
+	for_each_pte_test(tc, pte_testcases) {
+		IOV_DEBUG(iov, "Run '%ps' check\n", tc->test);
+		if (!run_test_on_ggtt_block(iov, gsm, &ggtt_block, tc, 0))
+			failed++;
+	}
+
+	if (failed)
+		IOV_ERROR(iov, "%s: Count of failed test cases: %d", __func__, failed);
+
+	return failed ? -EPERM : 0;
+}
+
+static int igt_vf_own_ggtt(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+
+	GEM_BUG_ON(!IS_SRIOV_VF(i915));
+
+	return igt_vf_iov_own_ggtt(&to_gt(i915)->iov);
+}
+
 static void init_defaults_pte_io(struct intel_iov *iov)
 {
 	iov->selftest.mmio_set_pte = iov_set_pte;
@@ -179,6 +267,9 @@ int intel_iov_ggtt_live_selftests(struct drm_i915_private *i915)
 	static const struct i915_subtest pf_tests[] = {
 		SUBTEST(igt_pf_ggtt),
 	};
+	static const struct i915_subtest vf_tests[] = {
+		SUBTEST(igt_vf_own_ggtt),
+	};
 	intel_wakeref_t wakeref;
 	int ret = 0;
 
@@ -188,6 +279,8 @@ int intel_iov_ggtt_live_selftests(struct drm_i915_private *i915)
 
 	if (IS_SRIOV_PF(i915))
 		ret = i915_subtests(pf_tests, i915);
+	else if (IS_SRIOV_VF(i915))
+		ret = i915_subtests(vf_tests, i915);
 
 	intel_runtime_pm_put(&i915->runtime_pm, wakeref);
 
