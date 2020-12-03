@@ -261,6 +261,7 @@ skip_rb_insert:
 	INIT_LIST_HEAD(&vma->vm_bind_link);
 	INIT_LIST_HEAD(&vma->non_priv_vm_bind_link);
 	INIT_LIST_HEAD(&vma->vm_capture_link);
+	INIT_LIST_HEAD(&vma->vm_rebind_link);
 	return vma;
 
 err_unlock:
@@ -1581,9 +1582,10 @@ void __i915_vma_evict(struct i915_vma *vma)
 
 int __i915_vma_unbind(struct i915_vma *vma)
 {
+	struct i915_address_space *vm = vma->vm;
 	int ret;
 
-	lockdep_assert_held(&vma->vm->mutex);
+	lockdep_assert_held(&vm->mutex);
 
 	if (!drm_mm_node_allocated(&vma->node))
 		return 0;
@@ -1606,6 +1608,22 @@ int __i915_vma_unbind(struct i915_vma *vma)
 	__i915_vma_evict(vma);
 
 	drm_mm_remove_node(&vma->node);
+	if (i915_vma_is_persistent(vma)) {
+		spin_lock(&vm->vm_rebind_lock);
+
+		/*
+		 * Confirm this vma is still alive after acquiring the spinlock
+		 * to serialize with i915_gem_vm_bind_remove(). Otherwise, we
+		 * may re-add the vma onto the rebind list /after/ the vma has
+		 * already been marked as freed.
+		 */
+		if (list_empty(&vma->vm_rebind_link))
+			list_add_tail(&vma->vm_rebind_link,
+				      &vm->vm_rebind_list);
+
+		spin_unlock(&vm->vm_rebind_lock);
+	}
+
 	return 0;
 }
 

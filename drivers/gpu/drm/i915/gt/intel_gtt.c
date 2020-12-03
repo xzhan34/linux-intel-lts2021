@@ -270,6 +270,8 @@ void i915_address_space_init(struct i915_address_space *vm, int subclass)
 	INIT_LIST_HEAD(&vm->priv_obj_list);
 	INIT_LIST_HEAD(&vm->vm_capture_list);
 	spin_lock_init(&vm->vm_capture_lock);
+	INIT_LIST_HEAD(&vm->vm_rebind_list);
+	spin_lock_init(&vm->vm_rebind_lock);
 	INIT_LIST_HEAD(&vm->invalidate_link);
 
 	i915_active_init(&vm->active, __i915_vm_active, __i915_vm_retire, 0);

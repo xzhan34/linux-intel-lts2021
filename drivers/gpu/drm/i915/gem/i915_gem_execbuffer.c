@@ -902,6 +902,19 @@ err_open:
 	return err;
 }
 
+static void eb_scoop_persistent_unbound_vmas(struct i915_address_space *vm)
+{
+	struct i915_vma *vma, *vn;
+
+	spin_lock(&vm->vm_rebind_lock);
+	list_for_each_entry_safe(vma, vn, &vm->vm_rebind_list, vm_rebind_link) {
+		list_del_init(&vma->vm_rebind_link);
+		if (!list_empty(&vma->vm_bind_link))
+			list_move_tail(&vma->vm_bind_link, &vm->vm_bind_list);
+	}
+	spin_unlock(&vm->vm_rebind_lock);
+}
+
 static int eb_lookup_persistent_userptr_vmas(struct i915_execbuffer *eb)
 {
 	struct i915_address_space *vm = eb->context->vm;
@@ -913,6 +926,13 @@ static int eb_lookup_persistent_userptr_vmas(struct i915_execbuffer *eb)
 
 	if (!test_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags))
 		return 0;
+
+	/*
+	 * XXX: Optimize; During reinit, we can skip parsing
+	 * vm_bind_list if we are not scooping persistent vmas
+	 * and __EXEC_PERSIST_USERPTR_USED is false.
+	 */
+	eb_scoop_persistent_unbound_vmas(vm);
 
 	/*
 	 * XXX: Instead of parsing through vm_bind_list, keep separte

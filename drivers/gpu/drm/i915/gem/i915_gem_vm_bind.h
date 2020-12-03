@@ -6,6 +6,7 @@
 #ifndef __I915_GEM_VM_BIND_H
 #define __I915_GEM_VM_BIND_H
 
+#include <linux/dma-resv.h>
 #include "i915_drv.h"
 
 #define assert_vm_bind_held(vm)   lockdep_assert_held(&(vm)->vm_bind_lock)

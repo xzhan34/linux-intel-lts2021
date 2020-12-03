@@ -272,7 +272,8 @@ i915_gem_userptr_put_pages(struct drm_i915_gem_object *obj,
 	i915_gem_object_userptr_drop_ref(obj);
 }
 
-static int i915_gem_object_userptr_unbind(struct drm_i915_gem_object *obj)
+static int i915_gem_object_userptr_unbind(struct drm_i915_gem_object *obj,
+					  struct i915_gem_ww_ctx *ww)
 {
 	struct sg_table *pages;
 	int err;
@@ -339,6 +340,7 @@ int i915_gem_object_userptr_submit_init(struct drm_i915_gem_object *obj)
 	struct page **pvec;
 	unsigned int gup_flags = 0;
 	unsigned long notifier_seq;
+	struct i915_gem_ww_ctx ww;
 	unsigned long pinned;
 	int ret;
 
@@ -347,17 +349,19 @@ int i915_gem_object_userptr_submit_init(struct drm_i915_gem_object *obj)
 
 	notifier_seq = mmu_interval_read_begin(&obj->userptr.notifier);
 
-	ret = i915_gem_object_lock_interruptible(obj, NULL);
-	if (ret)
-		return ret;
-
-	if (notifier_seq == obj->userptr.notifier_seq && obj->userptr.pvec) {
-		i915_gem_object_unlock(obj);
-		return 0;
+	for_i915_gem_ww(&ww, ret, true) {
+		ret = i915_gem_object_lock_interruptible(obj, &ww);
+		if (ret)
+			continue;
+		/*
+		 * If pages are stale, make sure userptr is unbound for
+		 * next attempt.
+		 */
+		if (notifier_seq != obj->userptr.notifier_seq ||
+		    !obj->userptr.pvec)
+			ret = i915_gem_object_userptr_unbind(obj, &ww);
 	}
 
-	ret = i915_gem_object_userptr_unbind(obj);
-	i915_gem_object_unlock(obj);
 	if (ret)
 		return ret;
 

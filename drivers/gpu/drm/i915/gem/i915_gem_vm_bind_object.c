@@ -62,6 +62,10 @@ static void i915_gem_vm_bind_remove(struct i915_vma *vma)
 		list_del_init(&vma->vm_capture_link);
 	spin_unlock(&vma->vm->vm_capture_lock);
 
+	spin_lock(&vma->vm->vm_rebind_lock);
+	list_del(&vma->vm_rebind_link);
+	spin_unlock(&vma->vm->vm_rebind_lock);
+
 	list_del_init(&vma->vm_bind_link);
 	list_del_init(&vma->non_priv_vm_bind_link);
 	i915_vm_bind_it_remove(vma, &vma->vm->va);
