@@ -2649,7 +2649,9 @@ u32 intel_rps_read_rapl_pl1(struct intel_rps *rps)
 	i915_reg_t rgadr;
 	u32 rapl_pl1;
 
-	if (IS_XEHPSDV(i915)) {
+	if (IS_PONTEVECCHIO(i915)) {
+		rgadr = PVC_RAPL_PL1_FREQ_LIMIT;
+	} else if (IS_XEHPSDV(i915)) {
 		rgadr = XEHPSDV_RAPL_PL1_FREQ_LIMIT;
 	} else if (IS_DG1(i915) || IS_DG2(i915)) {
 		rgadr = GEN9_RAPL_PL1_FREQ_LIMIT;
@@ -2671,7 +2673,7 @@ u32 intel_rps_get_rapl(struct intel_rps *rps, u32 rapl_pl1)
 	struct drm_i915_private *i915 = rps_to_i915(rps);
 	u32 rapl = 0;
 
-	if (IS_XEHPSDV(i915))
+	if (IS_PONTEVECCHIO(i915) || IS_XEHPSDV(i915))
 		rapl = rapl_pl1 & RAPL_PL1_FREQ_LIMIT_MASK;
 	else if (IS_DG1(i915) || IS_DG2(i915))
 		rapl = le32_get_bits(rapl_pl1, GEN9_RAPL_PL1_FREQ_LIMIT_MASK);
