@@ -340,6 +340,10 @@ struct prelim_drm_i915_query_item {
 	 * instance.
 	 */
 #define PRELIM_DRM_I915_QUERY_COMPUTE_SUBSLICES		(PRELIM_DRM_I915_QUERY | 8)
+	/**
+	 * Query Command Streamer timestamp register.
+	 */
+#define PRELIM_DRM_I915_QUERY_CS_CYCLES			(PRELIM_DRM_I915_QUERY | 9)
 #define PRELIM_DRM_I915_QUERY_ENGINE_INFO		(PRELIM_DRM_I915_QUERY | 13)
 };
 
@@ -784,6 +788,45 @@ struct prelim_drm_i915_query_distance_info {
 
 	/** Must be zero */
 	__u32 rsvd[3];
+};
+
+/**
+ * struct prelim_drm_i915_query_cs_cycles
+ *
+ * The query returns the command streamer cycles and the frequency that can be
+ * used to calculate the command streamer timestamp. In addition the query
+ * returns the cpu timestamp that indicates when the command streamer cycle
+ * count was captured.
+ */
+struct prelim_drm_i915_query_cs_cycles {
+	/** Engine for which command streamer cycles is queried. */
+	struct i915_engine_class_instance engine;
+
+	/** Must be zero. */
+	__u32 flags;
+
+	/**
+	 * Command streamer cycles as read from the command streamer
+	 * register at 0x358 offset.
+	 */
+	__u64 cs_cycles;
+
+	/** Frequency of the cs cycles in Hz. */
+	__u64 cs_frequency;
+
+	/** CPU timestamp in nanoseconds. */
+	__u64 cpu_timestamp;
+
+	/**
+	 * Reference clock id for CPU timestamp. For definition, see
+	 * clock_gettime(2) and perf_event_open(2). Supported clock ids are
+	 * CLOCK_MONOTONIC, CLOCK_MONOTONIC_RAW, CLOCK_REALTIME, CLOCK_BOOTTIME,
+	 * CLOCK_TAI.
+	 */
+	__s32 clockid;
+
+	/** Must be zero. */
+	__u32 rsvd;
 };
 
 /**

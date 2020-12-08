@@ -7,6 +7,8 @@
 #include <linux/nospec.h>
 #include <linux/bits.h>
 
+#include "gt/intel_engine_pm.h"
+#include "gt/intel_engine_regs.h"
 #include "gt/intel_engine_user.h"
 #include "i915_drv.h"
 #include "i915_perf.h"
@@ -206,6 +208,136 @@ query_distance_info(struct drm_i915_private *i915,
 	}
 
 	if (put_user(distance, &query_ptr->distance))
+		return -EFAULT;
+
+	return sizeof(query);
+}
+
+typedef u64 (*__ktime_func_t)(void);
+static __ktime_func_t __clock_id_to_func(clockid_t clk_id)
+{
+	/*
+	 * Use logic same as the perf subsystem to allow user to select the
+	 * reference clock id to be used for timestamps.
+	 */
+	switch (clk_id) {
+	case CLOCK_MONOTONIC:
+		return &ktime_get_ns;
+	case CLOCK_MONOTONIC_RAW:
+		return &ktime_get_raw_ns;
+	case CLOCK_REALTIME:
+		return &ktime_get_real_ns;
+	case CLOCK_BOOTTIME:
+		return &ktime_get_boottime_ns;
+	case CLOCK_TAI:
+		return &ktime_get_clocktai_ns;
+	default:
+		return NULL;
+	}
+}
+
+static inline int
+__read_timestamps(struct intel_uncore *uncore,
+		  i915_reg_t lower_reg,
+		  i915_reg_t upper_reg,
+		  u64 *cs_ts,
+		  u64 *cpu_ts,
+		  __ktime_func_t cpu_clock)
+{
+	u32 upper, lower, old_upper, loop = 0;
+
+	upper = intel_uncore_read_fw(uncore, upper_reg);
+	do {
+		*cpu_ts = cpu_clock();
+		lower = intel_uncore_read_fw(uncore, lower_reg);
+		old_upper = upper;
+		upper = intel_uncore_read_fw(uncore, upper_reg);
+	} while (upper != old_upper && loop++ < 2);
+
+	*cs_ts = (u64)upper << 32 | lower;
+
+	return 0;
+}
+
+static int
+__query_cs_cycles(struct intel_engine_cs *engine,
+		  u64 *cs_ts, u64 *cpu_ts,
+		  __ktime_func_t cpu_clock)
+{
+	struct intel_uncore *uncore = engine->uncore;
+	enum forcewake_domains fw_domains;
+	u32 base = engine->mmio_base;
+	intel_wakeref_t wakeref;
+	int ret;
+
+	fw_domains = intel_uncore_forcewake_for_reg(uncore,
+						    RING_TIMESTAMP(base),
+						    FW_REG_READ);
+
+	with_intel_runtime_pm(uncore->rpm, wakeref) {
+		spin_lock_irq(&uncore->lock);
+		intel_uncore_forcewake_get__locked(uncore, fw_domains);
+
+		ret = __read_timestamps(uncore,
+					RING_TIMESTAMP(base),
+					RING_TIMESTAMP_UDW(base),
+					cs_ts,
+					cpu_ts,
+					cpu_clock);
+
+		intel_uncore_forcewake_put__locked(uncore, fw_domains);
+		spin_unlock_irq(&uncore->lock);
+	}
+
+	return ret;
+}
+
+static int
+query_cs_cycles(struct drm_i915_private *i915,
+		struct drm_i915_query_item *query_item)
+{
+	struct prelim_drm_i915_query_cs_cycles __user *query_ptr;
+	struct prelim_drm_i915_query_cs_cycles query;
+	struct intel_engine_cs *engine;
+	__ktime_func_t cpu_clock;
+	int ret;
+
+	query_ptr = u64_to_user_ptr(query_item->data_ptr);
+	ret = copy_query_item(&query, sizeof(query), sizeof(query), query_item);
+	if (ret != 0)
+		return ret;
+
+	if (query.flags)
+		return -EINVAL;
+
+	if (query.rsvd)
+		return -EINVAL;
+
+	cpu_clock = __clock_id_to_func(query.clockid);
+	if (!cpu_clock)
+		return -EINVAL;
+
+	engine = intel_engine_lookup_user(i915,
+					  query.engine.engine_class,
+					  query.engine.engine_instance);
+	if (!engine)
+		return -EINVAL;
+
+	query.cs_frequency = engine->gt->clock_frequency;
+	ret = __query_cs_cycles(engine,
+				&query.cs_cycles,
+				&query.cpu_timestamp,
+				cpu_clock);
+	if (ret)
+		return ret;
+
+	if (put_user(query.cs_frequency, &query_ptr->cs_frequency))
+		return -EFAULT;
+
+	if (put_user(query.cpu_timestamp, &query_ptr->cpu_timestamp))
+		return -EFAULT;
+
+	if (put_user(query.cs_cycles, &query_ptr->cs_cycles))
 		return -EFAULT;
 
 	return sizeof(query);
@@ -843,6 +975,7 @@ static i915_query_funcs_table i915_query_funcs_prelim[] = {
 	MAKE_TABLE_IDX(HWCONFIG_TABLE) = query_hwconfig_blob,
 	MAKE_TABLE_IDX(GEOMETRY_SUBSLICES) = query_geometry_subslices,
 	MAKE_TABLE_IDX(COMPUTE_SUBSLICES) = query_compute_subslices,
+	MAKE_TABLE_IDX(CS_CYCLES) = query_cs_cycles,
 	MAKE_TABLE_IDX(ENGINE_INFO) = prelim_query_engine_info,
 
 #undef MAKE_TABLE_IDX
