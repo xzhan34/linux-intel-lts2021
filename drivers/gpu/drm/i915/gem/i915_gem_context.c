@@ -674,6 +674,10 @@ static int __context_set_persistence(struct i915_gem_context *ctx, bool state)
 		return 0;
 
 	if (state) {
+		/* Long running contexts mandates non-persistence. */
+		if (i915_gem_context_is_lr(ctx))
+			return -EINVAL;
+
 		/*
 		 * Only contexts that are short-lived [that will expire or be
 		 * reset] are allowed to survive past termination. We require
@@ -915,6 +919,11 @@ i915_gem_context_create_for_gt(struct intel_gt *gt, unsigned int flags)
 	    !HAS_EXECLISTS(i915))
 		return ERR_PTR(-EINVAL);
 
+	if ((flags & PRELIM_I915_CONTEXT_CREATE_FLAGS_LONG_RUNNING) &&
+	    (!(i915->caps.scheduler & I915_SCHEDULER_CAP_PREEMPTION) ||
+	     !intel_uc_uses_guc_submission(&gt->uc)))
+		return ERR_PTR(-ENODEV);
+
 	ctx = __create_context(gt);
 	if (IS_ERR(ctx))
 		return ctx;
@@ -948,6 +957,19 @@ i915_gem_context_create_for_gt(struct intel_gt *gt, unsigned int flags)
 		}
 	}
 
+	if (flags & PRELIM_I915_CONTEXT_CREATE_FLAGS_LONG_RUNNING) {
+		int ret;
+
+		/* Long running implies non-persistence. */
+		ret = __context_set_persistence(ctx, false);
+		if (ret) {
+			context_close(ctx);
+			return ERR_PTR(ret);
+		}
+
+		i915_gem_context_set_lr(ctx);
+	} 
+	
 	trace_i915_context_create(ctx);
 
 	return ctx;
@@ -2248,7 +2270,7 @@ int i915_gem_context_create_ioctl(struct drm_device *dev, void *data,
 	if (!DRIVER_CAPS(i915)->has_logical_contexts)
 		return -ENODEV;
 
-	if (args->flags & I915_CONTEXT_CREATE_FLAGS_UNKNOWN)
+	if (args->flags & PRELIM_I915_CONTEXT_CREATE_FLAGS_UNKNOWN)
 		return -EINVAL;
 
 	ret = intel_gt_terminally_wedged(to_gt(i915));

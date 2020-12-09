@@ -437,6 +437,14 @@ struct prelim_drm_i915_gem_context_param {
  */
 #define PRELIM_I915_CONTEXT_PARAM_PROTECTED_CONTENT (PRELIM_I915_CONTEXT_PARAM | 0xe)
 
+struct prelim_drm_i915_gem_context_create_ext {
+/* Depricated in favor of PRELIM_I915_CONTEXT_CREATE_FLAGS_LONG_RUNNING */
+#define PRELIM_I915_CONTEXT_CREATE_FLAGS_ULLS		(1u << 31)
+#define PRELIM_I915_CONTEXT_CREATE_FLAGS_LONG_RUNNING	(1u << 31)
+#define PRELIM_I915_CONTEXT_CREATE_FLAGS_UNKNOWN			\
+	(~(PRELIM_I915_CONTEXT_CREATE_FLAGS_LONG_RUNNING | ~I915_CONTEXT_CREATE_FLAGS_UNKNOWN))
+};
+
 /* Downstream PRELIM properties */
 enum prelim_drm_i915_perf_property_id {
 	PRELIM_DRM_I915_PERF_PROP = (1 << 16),

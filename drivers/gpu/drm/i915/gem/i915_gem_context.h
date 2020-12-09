@@ -105,6 +105,21 @@ static inline void i915_gem_context_clear_sip(struct i915_gem_context *ctx)
 	clear_bit(UCONTEXT_SIP, &ctx->user_flags);
 }
 
+static inline bool i915_gem_context_is_lr(const struct i915_gem_context *ctx)
+{
+	return test_bit(UCONTEXT_LR, &ctx->user_flags);
+}
+
+static inline void i915_gem_context_set_lr(struct i915_gem_context *ctx)
+{
+	set_bit(UCONTEXT_LR, &ctx->user_flags);
+}
+
+static inline void i915_gem_context_clear_lr(struct i915_gem_context *ctx)
+{
+	clear_bit(UCONTEXT_LR, &ctx->user_flags);
+}
+
 static inline bool
 i915_gem_context_user_engines(const struct i915_gem_context *ctx)
 {
