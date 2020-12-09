@@ -293,21 +293,33 @@ emit_ccs_clear(struct i915_request *rq, u64 offset, u32 length)
 	return emit_flush(rq, MI_FLUSH_DW_LLC | MI_FLUSH_DW_CCS);
 }
 
+static bool object_needs_flat_ccs(const struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+
+	return HAS_FLAT_CCS(i915) && !(obj->memory_mask & BIT(INTEL_REGION_SMEM));
+}
+
 static int
 lmem_swapout(struct drm_i915_gem_object *obj,
 	     struct sg_table *pages, unsigned int sizes)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	const bool swap_ccs = object_needs_flat_ccs(obj);
 	struct i915_mm_swap_stat *stat = NULL;
 	struct drm_i915_gem_object *dst, *src;
 	ktime_t start = ktime_get();
 	int err = -EINVAL;
+	u64 size;
 
 	GEM_BUG_ON(obj->swapto);
 	assert_object_held(obj);
 
 	/* create a shadow object on smem region */
-	dst = i915_gem_object_create_shmem(i915, obj->base.size);
+	size = obj->base.size;
+	if (swap_ccs)
+		size += size >> 8;
+	dst = i915_gem_object_create_shmem(i915, size);
 	if (IS_ERR(dst))
 		return PTR_ERR(dst);
 
@@ -335,7 +347,7 @@ lmem_swapout(struct drm_i915_gem_object *obj,
 	/* copying the pages */
 	if (i915->params.enable_eviction >= 2 &&
 	    !intel_gt_is_wedged(obj->mm.region.mem->gt)) {
-		err = i915_window_blt_copy(dst, src, false);
+		err = i915_window_blt_copy(dst, src, swap_ccs);
 		if (!err)
 			stat = &i915->mm.blt_swap_stats.out;
 	}
@@ -369,6 +381,7 @@ lmem_swapin(struct drm_i915_gem_object *obj,
 	    struct sg_table *pages, unsigned int sizes)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	const bool swap_ccs = object_needs_flat_ccs(obj);
 	struct drm_i915_gem_object *dst, *src = obj->swapto;
 	struct i915_mm_swap_stat *stat = NULL;
 	ktime_t start = ktime_get();
@@ -399,7 +412,7 @@ lmem_swapin(struct drm_i915_gem_object *obj,
 	/* copying the pages */
 	if (i915->params.enable_eviction >= 2 &&
 	    !intel_gt_is_wedged(obj->mm.region.mem->gt)) {
-		err = i915_window_blt_copy(dst, src, false);
+		err = i915_window_blt_copy(dst, src, swap_ccs);
 		if (!err)
 			stat = &i915->mm.blt_swap_stats.in;
 	}
