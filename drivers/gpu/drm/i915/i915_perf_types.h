@@ -61,10 +61,16 @@ enum {
 	TYPE_OAM,
 };
 
+enum report_header {
+	HDR_32_BIT = 0,
+	HDR_64_BIT,
+};
+
 struct i915_oa_format {
 	u32 format;
 	int size;
 	int type;
+	enum report_header header;
 };
 
 struct i915_oa_reg {

@@ -327,11 +327,11 @@ static const struct i915_oa_format oa_formats[PRELIM_I915_OA_FORMAT_MAX] = {
 	[PRELIM_I915_OAR_FORMAT_A32u40_A4u32_B8_C8]    = { 5, 256 },
 	[PRELIM_I915_OA_FORMAT_A24u40_A14u32_B8_C8]    = { 5, 256 },
 	[PRELIM_I915_OAM_FORMAT_A2u64_B8_C8]           = { 5, 128, TYPE_OAM },
-	[PRELIM_I915_OAR_FORMAT_A36u64_B8_C8]		= { 1, 384, 0 },
-	[PRELIM_I915_OAC_FORMAT_A24u64_B8_C8]		= { 1, 320, 0 },
-	[PRELIM_I915_OA_FORMAT_A38u64_R2u64_B8_C8]	= { 1, 448, 0 },
-	[PRELIM_I915_OAM_FORMAT_A2u64_R2u64_B8_C8]	= { 1, 128, TYPE_OAM },
-	[PRELIM_I915_OAC_FORMAT_A22u32_R2u32_B8_C8]	= { 2, 192, 0 },
+	[PRELIM_I915_OAR_FORMAT_A36u64_B8_C8]		= { 1, 384, 0, HDR_64_BIT },
+	[PRELIM_I915_OAC_FORMAT_A24u64_B8_C8]		= { 1, 320, 0, HDR_64_BIT },
+	[PRELIM_I915_OA_FORMAT_A38u64_R2u64_B8_C8]	= { 1, 448, 0, HDR_64_BIT },
+	[PRELIM_I915_OAM_FORMAT_A2u64_R2u64_B8_C8]	= { 1, 128, TYPE_OAM, HDR_64_BIT },
+	[PRELIM_I915_OAC_FORMAT_A22u32_R2u32_B8_C8]	= { 2, 192, 0, HDR_64_BIT },
 };
 
 static const u32 xehpsdv_oa_base[] = {
@@ -484,6 +484,75 @@ static u32 gen7_oa_hw_tail_read(struct i915_perf_stream *stream)
 	return oastatus1 & GEN7_OASTATUS1_TAIL_MASK;
 }
 
+#define oa_report_header_64bit(__s) \
+	((__s)->oa_buffer.format->header == HDR_64_BIT)
+
+static inline u64
+oa_report_id(struct i915_perf_stream *stream, void *report)
+{
+	return oa_report_header_64bit(stream) ? *(u64 *)report : *(u32 *)report;
+}
+
+static inline u64
+oa_report_reason(struct i915_perf_stream *stream, void *report)
+{
+	return (oa_report_id(stream, report) >> OAREPORT_REASON_SHIFT) &
+	       (GRAPHICS_VER(stream->perf->i915) == 12 ?
+		OAREPORT_REASON_MASK_EXTENDED :
+		OAREPORT_REASON_MASK);
+}
+
+static inline void
+oa_report_id_clear(struct i915_perf_stream *stream, u32 *report)
+{
+	if (oa_report_header_64bit(stream))
+		*(u64 *)report = 0;
+	else
+		*report = 0;
+}
+
+static inline bool
+oa_report_ctx_invalid(struct i915_perf_stream *stream, void *report)
+{
+	return !(oa_report_id(stream, report) &
+	       stream->perf->gen8_valid_ctx_bit) &&
+	       GRAPHICS_VER(stream->perf->i915) <= 11;
+}
+
+static inline u64
+oa_timestamp(struct i915_perf_stream *stream, void *report)
+{
+	return oa_report_header_64bit(stream) ?
+		*((u64 *)report + 1) :
+		*((u32 *)report + 1);
+}
+
+static inline void
+oa_timestamp_clear(struct i915_perf_stream *stream, u32 *report)
+{
+	if (oa_report_header_64bit(stream))
+		*(u64 *)&report[2] = 0;
+	else
+		report[1] = 0;
+}
+
+static inline u32
+oa_context_id(struct i915_perf_stream *stream, u32 *report)
+{
+	u32 ctx_id = oa_report_header_64bit(stream) ? report[4] : report[2];
+
+	return ctx_id & stream->specific_ctx_id_mask;
+}
+
+static inline void
+oa_context_id_squash(struct i915_perf_stream *stream, u32 *report)
+{
+	if (oa_report_header_64bit(stream))
+		report[4] = INVALID_CTX_ID;
+	else
+		report[2] = INVALID_CTX_ID;
+}
+
 /**
  * oa_buffer_check_unlocked - check for data and update tail ptr state
  * @stream: i915 stream instance
@@ -573,9 +642,10 @@ static bool oa_buffer_check_unlocked(struct i915_perf_stream *stream)
 		 * If not : (╯°□°）╯︵ ┻━┻
 		 */
 		while (_oa_taken(stream, tail, aged_tail) >= report_size) {
-			u32 *report32 = (void *)(stream->oa_buffer.vaddr + tail);
+			void *report = stream->oa_buffer.vaddr + tail;
 
-			if (report32[0] != 0 || report32[1] != 0)
+			if (oa_report_id(stream, report) ||
+			    oa_timestamp(stream, report))
 				break;
 
 			tail = _rewind_tail(stream, tail, report_size);
@@ -768,23 +838,19 @@ static int gen8_append_oa_reports(struct i915_perf_stream *stream,
 		u8 *report = oa_buf_base + head;
 		u32 *report32 = (void *)report;
 		u32 ctx_id;
-		u32 reason;
+		u64 reason;
 
 		/*
 		 * The reason field includes flags identifying what
 		 * triggered this specific report (mostly timer
 		 * triggered or e.g. due to a context switch).
 		 *
-		 * This field is never expected to be zero so we can
-		 * check that the report isn't invalid before copying
-		 * it to userspace...
+		 * In MMIO triggered reports, some platforms do not set the
+		 * reason bit in this field and it is valid to have a reason
+		 * field of zero.
 		 */
-		reason = ((report32[0] >> OAREPORT_REASON_SHIFT) &
-			  (GRAPHICS_VER(stream->perf->i915) == 12 ?
-			   OAREPORT_REASON_MASK_EXTENDED :
-			   OAREPORT_REASON_MASK));
-
-		ctx_id = report32[2] & stream->specific_ctx_id_mask;
+		reason = oa_report_reason(stream, report);
+		ctx_id = oa_context_id(stream, report32);
 
 		/*
 		 * Squash whatever is in the CTX_ID field if it's marked as
@@ -794,9 +860,10 @@ static int gen8_append_oa_reports(struct i915_perf_stream *stream,
 		 * Note: that we don't clear the valid_ctx_bit so userspace can
 		 * understand that the ID has been squashed by the kernel.
 		 */
-		if (!(report32[0] & stream->perf->gen8_valid_ctx_bit) &&
-		    GRAPHICS_VER(stream->perf->i915) <= 11)
-			ctx_id = report32[2] = INVALID_CTX_ID;
+		if (oa_report_ctx_invalid(stream, report)) {
+			ctx_id = INVALID_CTX_ID;
+			oa_context_id_squash(stream, report32);
+		}
 
 		/*
 		 * NB: For Gen 8 the OA unit no longer supports clock gating
@@ -840,7 +907,7 @@ static int gen8_append_oa_reports(struct i915_perf_stream *stream,
 			 */
 			if (stream->ctx &&
 			    stream->specific_ctx_id != ctx_id) {
-				report32[2] = INVALID_CTX_ID;
+				oa_context_id_squash(stream, report32);
 			}
 
 			ret = append_oa_sample(stream, buf, count, offset,
@@ -852,11 +919,11 @@ static int gen8_append_oa_reports(struct i915_perf_stream *stream,
 		}
 
 		/*
-		 * Clear out the first 2 dword as a mean to detect unlanded
+		 * Clear out the report id and timestamp as a means to detect unlanded
 		 * reports.
 		 */
-		report32[0] = 0;
-		report32[1] = 0;
+		oa_report_id_clear(stream, report32);
+		oa_timestamp_clear(stream, report32);
 	}
 
 	if (start_offset != *offset) {
