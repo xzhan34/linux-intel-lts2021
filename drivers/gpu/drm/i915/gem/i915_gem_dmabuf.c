@@ -436,7 +436,6 @@ struct drm_gem_object *i915_gem_prime_import(struct drm_device *dev,
 	static struct lock_class_key lock_class;
 	struct dma_buf_attachment *attach;
 	struct drm_i915_gem_object *obj;
-	int ret;
 
 	/* is this one of own objects? */
 	if (dma_buf->ops == &i915_dmabuf_ops) {
@@ -455,26 +454,17 @@ struct drm_gem_object *i915_gem_prime_import(struct drm_device *dev,
 	if (i915_gem_object_size_2big(dma_buf->size))
 		return ERR_PTR(-E2BIG);
 
-	/* need to attach */
-	attach = dma_buf_attach(dma_buf, dev->dev);
-	if (IS_ERR(attach))
-		return ERR_CAST(attach);
-
-	get_dma_buf(dma_buf);
-
 	obj = i915_gem_object_alloc();
-	if (!obj) {
-		ret = -ENOMEM;
-		goto fail_detach;
-	}
+	if (!obj)
+		return ERR_PTR(-ENOMEM);
 
 	drm_gem_private_object_init(dev, &obj->base, dma_buf->size);
 	i915_gem_object_init(obj, &i915_gem_object_dmabuf_ops, &lock_class,
 			     I915_BO_ALLOC_USER);
-	obj->base.import_attach = attach;
 	obj->base.resv = dma_buf->resv;
 
-	/* We use GTT as shorthand for a coherent domain, one that is
+	/*
+	 * We use GTT as shorthand for a coherent domain, one that is
 	 * neither in the GPU cache nor in the CPU cache, where all
 	 * writes are immediately visible in memory. (That's not strictly
 	 * true, but it's close! There are internal buffers such as the
@@ -484,13 +474,17 @@ struct drm_gem_object *i915_gem_prime_import(struct drm_device *dev,
 	obj->read_domains = I915_GEM_DOMAIN_GTT;
 	obj->write_domain = 0;
 
+	/* and attach the object */
+	attach = dma_buf_dynamic_attach(dma_buf, dev->dev, NULL, obj);
+	if (IS_ERR(attach)) {
+		i915_gem_object_put(obj);
+		return ERR_CAST(attach);
+	}
+
+	get_dma_buf(dma_buf);
+	obj->base.import_attach = attach;
+
 	return &obj->base;
-
-fail_detach:
-	dma_buf_detach(dma_buf, attach);
-	dma_buf_put(dma_buf);
-
-	return ERR_PTR(ret);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
