@@ -784,6 +784,9 @@ static int __vf_guc_init(struct intel_guc *guc)
 	guc->slpc.supported = false;
 	guc->slpc.selected = false;
 
+	/* Disable GUCRC for VF */
+	guc->rc_supported = false;
+
 	return 0;
 
 err_ct:
