@@ -15,6 +15,7 @@ static const struct i915_spi_region regions[I915_SPI_REGIONS] = {
 	[2] = { .name = "GSC", },
 	[11] = { .name = "OptionROM", },
 	[12] = { .name = "DAM", },
+	[13] = { .name = "PSC", },
 };
 
 static void i915_spi_release_dev(struct device *dev)

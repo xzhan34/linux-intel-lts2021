@@ -10,7 +10,7 @@
 
 struct drm_i915_private;
 
-#define I915_SPI_REGIONS 13
+#define I915_SPI_REGIONS 14
 struct i915_spi_region {
 	const char *name;
 };
