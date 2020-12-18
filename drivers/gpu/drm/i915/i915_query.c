@@ -11,6 +11,7 @@
 #include "i915_query.h"
 #include "gt/intel_engine_user.h"
 #include <uapi/drm/i915_drm.h>
+#include "gt/intel_engine_user.h"
 
 static int copy_query_item(void *query_hdr, size_t query_sz,
 			   u32 total_length,
@@ -712,6 +713,29 @@ static int prelim_query_memregion_info(struct drm_i915_private *dev_priv,
 	return total_length;
 }
 
+static int query_compute_subslices(struct drm_i915_private *i915,
+				struct drm_i915_query_item *query_item)
+{
+	const struct sseu_dev_info *sseu;
+	struct intel_engine_cs *engine;
+	u8 engine_class, engine_instance;
+
+	if (GRAPHICS_VER_FULL(i915) < IP_VER(12, 50))
+		return -ENODEV;
+
+	engine_class = query_item->flags & 0xFF;
+	engine_instance = (query_item->flags >> 8) & 0xFF;
+
+	engine = intel_engine_lookup_user(i915, engine_class, engine_instance);
+
+	if (!engine)
+		return -EINVAL;
+
+	sseu = &engine->gt->info.sseu;
+
+	return fill_topology_info(sseu, query_item, sseu->compute_subslice_mask);
+}
+
 typedef int (* const i915_query_funcs_table)(struct drm_i915_private *dev_priv,
 						    struct drm_i915_query_item *query_item);
 
@@ -730,6 +754,8 @@ static i915_query_funcs_table i915_query_funcs_prelim[] = {
 
 	MAKE_TABLE_IDX(MEMORY_REGIONS) = prelim_query_memregion_info,
 	MAKE_TABLE_IDX(HWCONFIG_TABLE) = query_hwconfig_blob,
+	MAKE_TABLE_IDX(GEOMETRY_SUBSLICES) = query_geometry_subslices,
+	MAKE_TABLE_IDX(COMPUTE_SUBSLICES) = query_compute_subslices,
 	MAKE_TABLE_IDX(ENGINE_INFO) = prelim_query_engine_info,
 
 #undef MAKE_TABLE_IDX

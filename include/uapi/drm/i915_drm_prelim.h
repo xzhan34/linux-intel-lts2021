@@ -183,7 +183,27 @@ struct prelim_drm_i915_query_item {
 #define PRELIM_DRM_I915_QUERY_MEMORY_REGIONS	(PRELIM_DRM_I915_QUERY | 4)
 /* Deprecated: HWConfig is now upstream, do not use the prelim version anymore */
 #define PRELIM_DRM_I915_QUERY_HWCONFIG_TABLE	(PRELIM_DRM_I915_QUERY | 6)
-#define PRELIM_DRM_I915_QUERY_ENGINE_INFO	(PRELIM_DRM_I915_QUERY | 13)
+	/**
+	 * Query Geometry Subslices: returns the items found in query_topology info
+	 * with a mask for geometry_subslice_mask applied
+	 *
+	 * @flags:
+	 *
+	 * bits 0:7 must be a valid engine class and bits 8:15 must be a valid engine
+	 * instance.
+	 */
+#define PRELIM_DRM_I915_QUERY_GEOMETRY_SUBSLICES	(PRELIM_DRM_I915_QUERY | 7)
+	/**
+	 * Query Compute Subslices: returns the items found in query_topology info
+	 * with a mask for compute_subslice_mask applied
+	 *
+	 * @flags:
+	 *
+	 * bits 0:7 must be a valid engine class and bits 8:15 must be a valid engine
+	 * instance.
+	 */
+#define PRELIM_DRM_I915_QUERY_COMPUTE_SUBSLICES		(PRELIM_DRM_I915_QUERY | 8)
+#define PRELIM_DRM_I915_QUERY_ENGINE_INFO		(PRELIM_DRM_I915_QUERY | 13)
 };
 
 /*
