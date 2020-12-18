@@ -17,6 +17,7 @@
 
 #include "intel_gt_sysfs.h"
 #include "intel_gt_sysfs_pm.h"
+#include "sysfs_gt_errors.h"
 
 struct intel_gt *intel_gt_sysfs_get_drvdata(struct device *dev,
 					    const char *name)
@@ -123,6 +124,7 @@ void intel_gt_sysfs_register(struct intel_gt *gt)
 			"failed to create sysfs %s info files\n", name);
 
 	intel_gt_sysfs_pm_init(gt, dir);
+	intel_gt_sysfs_register_errors(gt, dir);
 }
 
 void intel_gt_sysfs_unregister(struct intel_gt *gt)
