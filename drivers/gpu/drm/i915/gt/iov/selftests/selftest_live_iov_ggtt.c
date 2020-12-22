@@ -150,6 +150,19 @@ pte_valid_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt
 }
 
 static bool
+pte_lmem_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, gen8_pte_t *out)
+{
+	return pte_is_value_modifiable(iov, pte_addr, ggtt_addr, GEN12_GGTT_PTE_LM, out);
+}
+
+static bool
+pte_lmem_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
+			gen8_pte_t *out)
+{
+	return !pte_lmem_modifiable(iov, pte_addr, ggtt_addr, out);
+}
+
+static bool
 pte_vfid_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, gen8_pte_t *out)
 {
 	GEM_BUG_ON(!HAS_SRIOV(iov_to_i915(iov)));
@@ -271,6 +284,11 @@ static bool wa_1808546409(struct intel_iov *iov)
 	       !IS_XEHPSDV(iov_to_i915(iov));
 }
 
+static bool has_lmem(struct intel_iov *iov)
+{
+	return HAS_LMEM(iov_to_i915(iov));
+}
+
 static bool run_test_on_pte(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
 			    const struct pte_testcase *tc, u16 vfid)
 {
@@ -350,6 +368,7 @@ static int igt_pf_iov_ggtt(struct intel_iov *iov)
 	static struct pte_testcase pte_testcases[] = {
 		{ .test = pte_gpa_modifiable },
 		{ .test = pte_vfid_modifiable },
+		{ .test = pte_lmem_modifiable, .requires = has_lmem },
 		{ .test = pte_valid_modifiable },
 		{ },
 	};
@@ -408,6 +427,7 @@ static int igt_vf_iov_own_ggtt(struct intel_iov *iov, bool sanitycheck)
 		{ .test = pte_gpa_modifiable },
 		{ .test = pte_vfid_not_readable },
 		{ .test = pte_vfid_not_modifiable },
+		{ .test = pte_lmem_modifiable, .requires = has_lmem },
 		{ .test = pte_valid_not_modifiable },
 		{ },
 	};
@@ -509,6 +529,7 @@ _test_other_ggtt_region(struct intel_iov *iov, gen8_pte_t __iomem *gsm,
 		{ .test = pte_not_accessible },
 		{ .test = pte_gpa_not_modifiable },
 		{ .test = pte_vfid_not_modifiable },
+		{ .test = pte_lmem_not_modifiable, .requires = has_lmem },
 		{ .test = pte_valid_not_modifiable },
 		{ },
 	};
