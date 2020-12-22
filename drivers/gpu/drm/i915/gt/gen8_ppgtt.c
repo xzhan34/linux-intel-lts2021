@@ -842,6 +842,107 @@ err_pd:
 	return ERR_PTR(err);
 }
 
+int intel_flat_lmem_ppgtt_init(struct i915_address_space *vm,
+			       struct drm_mm_node *node)
+{
+	struct i915_page_directory *pd = i915_vm_to_ppgtt(vm)->pd;
+	unsigned int idx, count;
+	u64 start, end, head;
+	gen8_pte_t *vaddr;
+	gen8_pte_t encode;
+	int lvl;
+	int err;
+
+	/*
+	 * Map all of LMEM in a kernel internal vm(could be cloned?). This gives
+	 * us the useful property where the va == pa, which lets us touch any
+	 * part of LMEM, from the gpu without having to dynamically bind
+	 * anything. We map the entries as 1G GTT entries, such that we only
+	 * need one pdpe for every 1G of LMEM, i.e a single pdp can cover 512G
+	 * of LMEM.
+	 */
+	GEM_BUG_ON(!IS_ALIGNED(node->start | node->size, SZ_1G));
+	GEM_BUG_ON(node->size > SZ_1G * GEN8_PDES);
+
+	start = node->start >> GEN8_PTE_SHIFT;
+	end = start + (node->size >> GEN8_PTE_SHIFT);
+	encode = vm->pte_encode(node->start, 0, PTE_LM) | GEN8_PDPE_PS_1G;
+
+	/* The vm->mm may be hiding the first page already */
+	head = vm->mm.head_node.start + vm->mm.head_node.size;
+	if (node->start < head) {
+		GEM_BUG_ON(node->size < head - node->start);
+		node->size -= head - node->start;
+		node->start = head;
+	}
+
+	err = drm_mm_reserve_node(&vm->mm, node);
+	if (err) {
+		struct drm_printer p = drm_err_printer(__func__);
+
+		drm_printf(&p,
+			   "flat node:[%llx + %llx] already taken\n",
+			   node->start, node->size);
+		drm_mm_print(&vm->mm, &p);
+
+		return err;
+	}
+
+	lvl = vm->top;
+	while (lvl >= 3) { /* allocate everything up to and including the pdp */
+		struct i915_page_directory *pde;
+
+		/* Check we don't cross into the next page directory */
+		GEM_BUG_ON(gen8_pd_range(start, end, lvl, &idx) != 1);
+
+		idx = gen8_pd_index(start, lvl);
+		pde = pd->entry[idx];
+		if (!pde) {
+			pde = alloc_pd(vm);
+			if (IS_ERR(pde)) {
+				err = PTR_ERR(pde);
+				goto err_out;
+			}
+
+			err = map_pt_dma(vm, pde->pt.base);
+			if (err) {
+				free_pd(vm, pde);
+				goto err_out;
+			}
+
+			fill_px(pde, vm->scratch[lvl]->encode);
+		}
+
+		atomic_inc(&pde->pt.used); /* alive until vm is gone */
+		set_pd_entry(pd, idx, pde);
+		pd = pde;
+		lvl--;
+	}
+
+	vaddr = px_vaddr(pd);
+	count = gen8_pd_range(start, end, lvl, &idx);
+	do {
+		vaddr[idx++] = encode;
+		encode += SZ_1G;
+	} while (--count);
+
+	return 0;
+
+err_out:
+	drm_mm_remove_node(node);
+	return err;
+}
+
+void intel_flat_lmem_ppgtt_fini(struct i915_address_space *vm,
+				struct drm_mm_node *node)
+{
+	if (!drm_mm_node_allocated(node))
+		return;
+
+	GEM_BUG_ON(node->mm != &vm->mm);
+	drm_mm_remove_node(node);
+}
+
 /*
  * GEN8 legacy ppgtt programming is accomplished through a max 4 PDP registers
  * with a net effect resembling a 2-level page table in normal x86 terms. Each
