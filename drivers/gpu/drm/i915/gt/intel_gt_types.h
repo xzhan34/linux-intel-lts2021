@@ -68,6 +68,17 @@ enum intel_gt_hw_errors {
 	INTEL_GT_HW_ERROR_COUNT
 };
 
+enum intel_soc_num_ieh {
+	INTEL_GT_SOC_IEH0 = 0,
+	INTEL_GT_SOC_IEH1,
+	INTEL_GT_SOC_NUM_IEH
+};
+
+enum intel_soc_ieh_reg_type {
+	INTEL_SOC_REG_LOCAL = 0,
+	INTEL_SOC_REG_GLOBAL
+};
+
 struct intel_mmio_range {
 	u32 start;
 	u32 end;
@@ -289,6 +300,9 @@ struct intel_gt {
 
 	struct intel_hw_errors {
 		unsigned long hw[INTEL_GT_HW_ERROR_COUNT];
+		struct xarray soc;
+		unsigned long sgunit[HARDWARE_ERROR_MAX];
+
 	} errors;
 
 	struct intel_gt_info {
@@ -352,5 +366,16 @@ enum intel_gt_scratch_field {
 	/* 4 bytes */
 	INTEL_GT_SCRATCH_FIELD_PERF_PREDICATE_RESULT_1 = 2096,
 };
+
+#define IEH_SHIFT		(REG_GROUP_SHIFT + REG_GROUP_BITS)
+#define IEH_MASK		(0x1)
+#define REG_GROUP_SHIFT		(HW_ERR_TYPE_BITS + SOC_HW_ERR_MAX_BITS)
+#define REG_GROUP_BITS		(1)
+#define HW_ERR_TYPE_BITS	(2)
+#define SOC_ERR_INDEX(IEH, REG_GROUP, HW_ERR, ERRBIT) \
+	(((__u64)(IEH) << IEH_SHIFT) | \
+	 ((__u64)(REG_GROUP) << REG_GROUP_SHIFT) | \
+	 ((__u64)(HW_ERR) << SOC_HW_ERR_MAX_BITS) | \
+	 (__u64)ERRBIT)
 
 #endif /* __INTEL_GT_TYPES_H__ */

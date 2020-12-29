@@ -2782,6 +2782,109 @@ hardware_error_type_to_str(const enum hardware_error hw_err)
 	drm_err_ratelimited(&(gt)->i915->drm, HW_ERR "GT%d detected " fmt, \
 			    (gt)->info.id, ##__VA_ARGS__)
 
+static void update_soc_hw_error_cnt(struct intel_gt *gt, u64 index)
+{
+	unsigned long count = 1, flags;
+	void *entry;
+
+	if (BITS_PER_TYPE(unsigned long) < BITS_PER_TYPE(index)) {
+		drm_err_ratelimited(&gt->i915->drm, "losing SOC error on 32bit kernel\n");
+		return;
+	}
+
+	entry = xa_find(&gt->errors.soc, (unsigned long *)&index,
+			(unsigned long)index, XA_PRESENT);
+	if (entry)
+		count = xa_to_value(entry) + 1;
+
+	entry = xa_mk_value(count);
+
+	xa_lock_irqsave(&gt->errors.soc, flags);
+	if (xa_is_err(__xa_store(&gt->errors.soc, (unsigned long)index,
+				 entry, GFP_ATOMIC)))
+		drm_err_ratelimited(&gt->i915->drm,
+				    HW_ERR "SOC error reported by IEH%d on GT %d lost\n",
+				    (int)((index >> IEH_SHIFT) & IEH_MASK), gt->info.id);
+	xa_unlock_irqrestore(&gt->errors.soc, flags);
+}
+
+static void
+gen12_soc_hw_error_handler(struct intel_gt *gt,
+			  const enum hardware_error hw_err)
+{
+	void __iomem * const regs = gt->uncore->regs;
+	unsigned long mst_glb_errstat, slv_glb_errstat, lcl_errstat, index;
+	u32 errbit;
+	int i;
+
+	lockdep_assert_held(gt->irq_lock);
+	if (!IS_XEHPSDV(gt->i915))
+		return;
+
+	log_gt_hw_err(gt, "SOC %s error\n", hardware_error_type_to_str(hw_err));
+
+	/*
+	 * Mask error type in GSYSEVTCTL so that no new errors of the type
+	 * will be reported. Read the master global IEH error register if
+	 * BIT 1 is set then process the slave IEH first. If BIT 0 in
+	 * global error register is set then process the corresponding
+	 * Local error registers
+	 */
+	for (i = 0; i < INTEL_GT_SOC_NUM_IEH; i++)
+		raw_reg_write(regs, SOC_GSYSEVTCTL_REG(i), ~REG_BIT(hw_err));
+
+	mst_glb_errstat = raw_reg_read(regs, SOC_GLOBAL_ERR_STAT_MASTER_REG(hw_err));
+	if (mst_glb_errstat & REG_BIT(SOC_SLAVE_IEH)) {
+		slv_glb_errstat = raw_reg_read(regs, SOC_GLOBAL_ERR_STAT_SLAVE_REG(hw_err));
+
+		if (slv_glb_errstat & REG_BIT(SOC_IEH1_LOCAL_ERR_STATUS)) {
+			lcl_errstat = raw_reg_read(regs, SOC_LOCAL_ERR_STAT_SLAVE_REG(hw_err));
+
+			for_each_set_bit(errbit, &lcl_errstat,
+					 SOC_HW_ERR_MAX_BITS) {
+				/*
+				 * SOC errors have global and local error
+				 * registers for each correctable non-fatal
+				 * and fatal categories and these are per IEH
+				 * on platform. XEHPSDV and PVC have two IEHs
+				 */
+				index = SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_LOCAL, hw_err, errbit);
+				update_soc_hw_error_cnt(gt, index);
+			}
+			raw_reg_write(regs, SOC_LOCAL_ERR_STAT_SLAVE_REG(hw_err),
+				      lcl_errstat);
+		}
+
+		for_each_set_bit(errbit, &slv_glb_errstat, SOC_HW_ERR_MAX_BITS) {
+			index = SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, hw_err, errbit);
+			update_soc_hw_error_cnt(gt, index);
+		}
+		raw_reg_write(regs, SOC_GLOBAL_ERR_STAT_SLAVE_REG(hw_err),
+			      slv_glb_errstat);
+	}
+
+	if (mst_glb_errstat & REG_BIT(SOC_IEH0_LOCAL_ERR_STATUS)) {
+		lcl_errstat = raw_reg_read(regs, SOC_LOCAL_ERR_STAT_MASTER_REG(hw_err));
+		for_each_set_bit(errbit, &lcl_errstat, SOC_HW_ERR_MAX_BITS) {
+			index = SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, hw_err, errbit);
+			update_soc_hw_error_cnt(gt, index);
+		}
+		raw_reg_write(regs, SOC_LOCAL_ERR_STAT_MASTER_REG(hw_err),
+			      lcl_errstat);
+	}
+
+	for_each_set_bit(errbit, &mst_glb_errstat, SOC_HW_ERR_MAX_BITS) {
+		index = SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, hw_err, errbit);
+		update_soc_hw_error_cnt(gt, index);
+	}
+	raw_reg_write(regs, SOC_GLOBAL_ERR_STAT_MASTER_REG(hw_err),
+		      mst_glb_errstat);
+
+	for (i = 0; i < INTEL_GT_SOC_NUM_IEH; i++)
+		raw_reg_write(regs, SOC_GSYSEVTCTL_REG(i), (HARDWARE_ERROR_MAX << 1) + 1);
+
+}
+
 static void gen12_gt_fatal_hw_error_stats_update(struct intel_gt *gt,
 						 unsigned long errstat)
 {
@@ -2939,9 +3042,11 @@ gen12_hw_error_source_handler(struct intel_gt *gt,
 	if (errsrc & DEV_ERR_STAT_GT_ERROR)
 		gen12_gt_hw_error_handler(gt, hw_err);
 
-	if (errsrc & ~DEV_ERR_STAT_GT_ERROR)
-		DRM_ERROR("non-GT hardware error(s) in DEV_ERR_STAT_REG_%s: 0x%08x\n",
-			  hw_err_str, errsrc & ~DEV_ERR_STAT_GT_ERROR);
+	if (errsrc & DEV_ERR_STAT_SGUNIT_ERROR)
+		gt->errors.sgunit[hw_err]++;
+
+	if (errsrc & DEV_ERR_STAT_SOC_ERROR)
+		gen12_soc_hw_error_handler(gt, hw_err);
 
 	raw_reg_write(regs, DEV_ERR_STAT_REG(hw_err), errsrc);
 

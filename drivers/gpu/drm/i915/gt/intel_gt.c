@@ -45,6 +45,8 @@ void intel_gt_common_init_early(struct intel_gt *gt)
 	init_llist_head(&gt->watchdog.list);
 	INIT_WORK(&gt->watchdog.work, intel_gt_watchdog_work);
 
+	xa_init(&gt->errors.soc);
+
 	intel_gt_init_buffer_pool(gt);
 
 	atomic_set(&gt->next_token, 0);
@@ -883,6 +885,8 @@ void intel_gt_driver_unregister(struct intel_gt *gt)
 	/* Scrub all HW state upon release */
 	with_intel_runtime_pm(gt->uncore->rpm, wakeref)
 		__intel_gt_reset(gt, ALL_ENGINES);
+
+	xa_destroy(&gt->errors.soc);
 }
 
 void intel_gt_driver_release(struct intel_gt *gt)

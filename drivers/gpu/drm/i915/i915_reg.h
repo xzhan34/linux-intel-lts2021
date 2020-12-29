@@ -5867,7 +5867,9 @@ enum hardware_error {
 #define DEV_ERR_STAT_REG(x)		_MMIO(_PICK_EVEN((x), \
 						_DEV_ERR_STAT_CORRECTABLE, \
 						_DEV_ERR_STAT_NONFATAL))
-#define  DEV_ERR_STAT_GT_ERROR		(1 << 0)
+#define  DEV_ERR_STAT_SOC_ERROR		REG_BIT(16)
+#define  DEV_ERR_STAT_SGUNIT_ERROR	REG_BIT(12)
+#define  DEV_ERR_STAT_GT_ERROR		REG_BIT(0)
 
 #define _ERR_STAT_GT_COR		0x100160
 #define _ERR_STAT_GT_NONFATAL		0x100164
@@ -5894,6 +5896,91 @@ enum hardware_error {
 #define ARRAY_BIST_FAT_ERR		(1)
 
 #define GT_HW_ERROR_MAX_ERR_BITS	16
+
+#define _SOC_MASTER_LERRCORSTS		0x255294
+#define _SOC_SLAVE_LERRCORSTS		0x256294
+#define _SOC_MASTER_LERRUNCSTS		0x255280
+#define _SOC_SLAVE_LERRUNCSTS		0x256280
+#define SOC_LOCAL_ERR_STAT_SLAVE_REG(x)		_MMIO((x) > HARDWARE_ERROR_CORRECTABLE ? \
+							_SOC_SLAVE_LERRUNCSTS : \
+							_SOC_SLAVE_LERRCORSTS)
+#define SOC_FABRIC_SS1_3		(7)
+#define SOC_FABRIC_SS1_2		(6)
+#define SOC_FABRIC_SS1_1		(5)
+#define SOC_FABRIC_SS1_0		(4)
+
+#define SOC_LOCAL_ERR_STAT_MASTER_REG(x)	_MMIO((x) > HARDWARE_ERROR_CORRECTABLE ? \
+							_SOC_MASTER_LERRUNCSTS : \
+							_SOC_MASTER_LERRCORSTS)
+#define SOC_PSF_CSC_2			(10)
+#define SOC_PSF_CSC_1			(9)
+#define SOC_PSF_CSC_0			(8)
+#define SOC_FABRIC_SS0_3		(7)
+#define SOC_FABRIC_SS0_2		(6)
+#define SOC_FABRIC_SS0_1		(5)
+#define SOC_FABRIC_SS0_0		(4)
+
+#define _SOC_MASTER_GSYSEVTCTL		0x255264
+#define _SOC_SLAVE_GSYSEVTCTL		0x256264
+#define SOC_GSYSEVTCTL_REG(x)		_MMIO(_PICK_EVEN((x), \
+						_SOC_MASTER_GSYSEVTCTL, \
+						_SOC_SLAVE_GSYSEVTCTL))
+#define _SOC_MASTER_GCOERRSTS		0x255200
+#define _SOC_SLAVE_GCOERRSTS		0x256200
+#define _SOC_MASTER_GNFERRSTS		0x255210
+#define _SOC_SLAVE_GNFERRSTS		0x256210
+#define _SOC_MASTER_GFAERRSTS		0x255220
+#define _SOC_SLAVE_GFAERRSTS		0x256220
+#define SOC_GLOBAL_ERR_STAT_SLAVE_REG(x)	_MMIO(_PICK_EVEN((x), \
+							_SOC_SLAVE_GCOERRSTS, \
+							_SOC_SLAVE_GNFERRSTS))
+#define SOC_HBM_SS1_15			(17)
+#define SOC_HBM_SS1_14			(16)
+#define SOC_HBM_SS1_13			(15)
+#define SOC_HBM_SS1_12			(14)
+#define SOC_HBM_SS1_11			(13)
+#define SOC_HBM_SS1_10			(12)
+#define SOC_HBM_SS1_9			(11)
+#define SOC_HBM_SS1_8			(10)
+#define SOC_HBM_SS1_7			(9)
+#define SOC_HBM_SS1_6			(8)
+#define SOC_HBM_SS1_5			(7)
+#define SOC_HBM_SS1_4			(6)
+#define SOC_HBM_SS1_3			(5)
+#define SOC_HBM_SS1_2			(4)
+#define SOC_HBM_SS1_1			(3)
+#define SOC_HBM_SS1_0			(2)
+#define SOC_FABRIC_SS1_4		(1)
+#define SOC_IEH1_LOCAL_ERR_STATUS	(0)
+
+#define SOC_GLOBAL_ERR_STAT_MASTER_REG(x)	_MMIO(_PICK_EVEN((x), \
+							_SOC_MASTER_GCOERRSTS, \
+							_SOC_MASTER_GNFERRSTS))
+#define SOC_MDFI_SOUTH			(21)
+#define SOC_MDFI_WEST			(20)
+#define SOC_MDFI_EAST			(19)
+#define SOC_PUNIT			(18)
+#define SOC_HBM_SS0_15			(17)
+#define SOC_HBM_SS0_14			(16)
+#define SOC_HBM_SS0_13			(15)
+#define SOC_HBM_SS0_12			(14)
+#define SOC_HBM_SS0_11			(13)
+#define SOC_HBM_SS0_10			(12)
+#define SOC_HBM_SS0_9			(11)
+#define SOC_HBM_SS0_8			(10)
+#define SOC_HBM_SS0_7			(9)
+#define SOC_HBM_SS0_6			(8)
+#define SOC_HBM_SS0_5			(7)
+#define SOC_HBM_SS0_4			(6)
+#define SOC_HBM_SS0_3			(5)
+#define SOC_HBM_SS0_2			(4)
+#define SOC_HBM_SS0_1			(3)
+#define SOC_HBM_SS0_0			(2)
+#define SOC_SLAVE_IEH			(1)
+#define SOC_IEH0_LOCAL_ERR_STATUS	(0)
+
+
+#define SOC_HW_ERR_MAX_BITS		(32)
 
 #define _SLM_ECC_ERROR_CNT		0xe7f4
 #define _SLM_UNCORR_ECC_ERROR_CNT	0xe7c0
