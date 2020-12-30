@@ -1223,6 +1223,10 @@ static int igt_ppgtt_flat(void *arg)
 	}
 
 	val = prandom_u32_state(&prng);
+	/* sending one byte of data as per PVC_MEM_SET_CMD in PVC */
+	if (HAS_LINK_COPY_ENGINES(i915))
+		val = val & 0xff;
+
 	memset32(vaddr, val ^ 0xdeadbeaf, obj->base.size / sizeof(u32));
 
 	va = igt_random_offset(&prng,
@@ -1287,6 +1291,9 @@ out_request:
 		ret = -EIO;
 		goto out_batch;
 	}
+
+	if (HAS_LINK_COPY_ENGINES(i915))
+		val = val << 24 | val << 16 | val << 8 | val;
 
 	for (i = 0; i < obj->base.size; i += 17 * PAGE_SIZE) {
 		int j = (i + (i >> PAGE_SHIFT) % PAGE_SIZE) / sizeof(*vaddr);

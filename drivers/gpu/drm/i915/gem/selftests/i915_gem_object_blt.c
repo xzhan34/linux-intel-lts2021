@@ -263,6 +263,11 @@ static int igt_fill_blt_thread(void *arg)
 		u32 *vaddr;
 		u32 i;
 
+
+		/* sending one byte of data as per PVC_MEM_SET_CMD in PVC */
+		if (HAS_LINK_COPY_ENGINES(engine->i915))
+			val = val & 0xff;
+
 		total = min(total, max);
 		sz = i915_prandom_u32_max_state(total, prng) + 1;
 		phys_sz = sz % max_phys_size + 1;
@@ -297,6 +302,7 @@ static int igt_fill_blt_thread(void *arg)
 			obj->cache_dirty = true;
 
 		err = i915_gem_object_fill_blt(obj, ce, val);
+
 		if (err)
 			goto err_unpin;
 
@@ -308,7 +314,12 @@ static int igt_fill_blt_thread(void *arg)
 			if (!(obj->cache_coherent & I915_BO_CACHE_COHERENT_FOR_READ))
 				drm_clflush_virt_range(&vaddr[i], sizeof(vaddr[i]));
 
-			if (vaddr[i] != val) {
+			if (HAS_LINK_COPY_ENGINES(engine->i915))
+				err = (vaddr[i] != (val << 24 | val << 16 | val << 8 | val));
+			else
+				err = (vaddr[i] != val);
+
+			if (err) {
 				pr_err("vaddr[%u]=%x, expected=%x\n", i,
 				       vaddr[i], val);
 				err = -EINVAL;

@@ -1032,7 +1032,11 @@ static int __igt_lmem_write_cpu(struct intel_gt *gt, struct intel_gt *bcs_gt)
 
 	/* Put the pages into a known state -- from the gpu for added fun */
 	intel_engine_pm_get(engine);
-	err = i915_gem_object_fill_blt(obj, engine->kernel_context, 0xdeadbeaf);
+	if (HAS_LINK_COPY_ENGINES(gt->i915))
+		err = i915_gem_object_fill_blt(obj, engine->kernel_context, 0xab);
+	else
+		err = i915_gem_object_fill_blt(obj, engine->kernel_context, 0xdeadbeaf);
+
 	intel_engine_pm_put(engine);
 	if (err)
 		goto out_unpin;
@@ -1495,7 +1499,11 @@ __igt_lmem_pages_migrate(struct intel_gt *gt, struct intel_gt *bcs_gt)
 		if (err)
 			break;
 
-		err = i915_gem_object_fill_blt(obj, ce, 0xdeadbeaf);
+		if (HAS_LINK_COPY_ENGINES(gt->i915))
+			err = i915_gem_object_fill_blt(obj, ce, 0xab);
+		else
+			err = i915_gem_object_fill_blt(obj, ce, 0xdeadbeaf);
+
 		if (err)
 			break;
 	}
