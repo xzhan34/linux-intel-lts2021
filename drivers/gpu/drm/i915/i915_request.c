@@ -948,70 +948,18 @@ static void __i915_request_ctor(void *arg)
 	init_llist_head(&rq->execute_cb);
 }
 
-struct i915_request *
-__i915_request_create(struct intel_context *ce, gfp_t gfp)
+static int
+__i915_request_initialize(struct i915_request *rq,
+			  struct intel_context *ce,
+			  unsigned long flags)
 {
 	struct intel_timeline *tl = ce->timeline;
-	struct i915_request *rq;
 	u32 seqno;
 	int ret;
-
-	might_alloc(gfp);
 
 	/* Check that the caller provided an already pinned context */
 	__intel_context_pin(ce);
 
-	/*
-	 * Beware: Dragons be flying overhead.
-	 *
-	 * We use RCU to look up requests in flight. The lookups may
-	 * race with the request being allocated from the slab freelist.
-	 * That is the request we are writing to here, may be in the process
-	 * of being read by __i915_active_request_get_rcu(). As such,
-	 * we have to be very careful when overwriting the contents. During
-	 * the RCU lookup, we change chase the request->engine pointer,
-	 * read the request->global_seqno and increment the reference count.
-	 *
-	 * The reference count is incremented atomically. If it is zero,
-	 * the lookup knows the request is unallocated and complete. Otherwise,
-	 * it is either still in use, or has been reallocated and reset
-	 * with dma_fence_init(). This increment is safe for release as we
-	 * check that the request we have a reference to and matches the active
-	 * request.
-	 *
-	 * Before we increment the refcount, we chase the request->engine
-	 * pointer. We must not call kmem_cache_zalloc() or else we set
-	 * that pointer to NULL and cause a crash during the lookup. If
-	 * we see the request is completed (based on the value of the
-	 * old engine and seqno), the lookup is complete and reports NULL.
-	 * If we decide the request is not completed (new engine or seqno),
-	 * then we grab a reference and double check that it is still the
-	 * active request - which it won't be and restart the lookup.
-	 *
-	 * Do not use kmem_cache_zalloc() here!
-	 */
-	rq = kmem_cache_alloc(slab_requests,
-			      gfp | __GFP_RETRY_MAYFAIL | __GFP_NOWARN);
-	if (unlikely(!rq)) {
-		rq = request_alloc_slow(tl, &ce->engine->request_pool, gfp);
-		if (!rq) {
-			ret = -ENOMEM;
-			goto err_unreserve;
-		}
-	}
-
-	/*
-	 * Hold a reference to the intel_context over life of an i915_request.
-	 * Without this an i915_request can exist after the context has been
-	 * destroyed (e.g. request retired, context closed, but user space holds
-	 * a reference to the request from an out fence). In the case of GuC
-	 * submission + virtual engine, the engine that the request references
-	 * is also destroyed which can trigger bad pointer dref in fence ops
-	 * (e.g. i915_fence_get_driver_name). We could likely change these
-	 * functions to avoid touching the engine but let's just be safe and
-	 * hold the intel_context reference. In execlist mode the request always
-	 * eventually points to a physical engine so this isn't an issue.
-	 */
 	rq->context = intel_context_get(ce);
 	rq->engine = ce->engine;
 	rq->ring = ce->ring;
@@ -1021,7 +969,7 @@ __i915_request_create(struct intel_context *ce, gfp_t gfp)
 	RCU_INIT_POINTER(rq->timeline, tl);
 
 	kref_init(&rq->fence.refcount);
-	rq->fence.flags = 0;
+	rq->fence.flags = flags;
 	rq->fence.error = 0;
 	INIT_LIST_HEAD(&rq->fence.cb_list);
 
@@ -1082,7 +1030,7 @@ __i915_request_create(struct intel_context *ce, gfp_t gfp)
 	intel_context_mark_active(ce);
 	list_add_tail_rcu(&rq->link, &tl->requests);
 
-	return rq;
+	return 0;
 
 err_unwind:
 	ce->ring->emit = rq->head;
@@ -1092,10 +1040,81 @@ err_unwind:
 	GEM_BUG_ON(!list_empty(&rq->sched.waiters_list));
 
 err_free:
-	intel_context_put(ce);
-	kmem_cache_free(slab_requests, rq);
-err_unreserve:
 	intel_context_unpin(ce);
+	intel_context_put(ce);
+	return ret;
+}
+
+struct i915_request *
+__i915_request_create(struct intel_context *ce, gfp_t gfp)
+{
+	struct intel_timeline *tl = ce->timeline;
+	struct i915_request *rq;
+	unsigned long flags = 0;
+	int ret;
+
+	might_alloc(gfp);
+
+	if (!gfpflags_allow_blocking(gfp))
+		flags |= BIT(I915_FENCE_FLAG_NONBLOCKING);
+
+	/*
+	 * Beware: Dragons be flying overhead.
+	 *
+	 * We use RCU to look up requests in flight. The lookups may
+	 * race with the request being allocated from the slab freelist.
+	 * That is the request we are writing to here, may be in the process
+	 * of being read by __i915_active_request_get_rcu(). As such,
+	 * we have to be very careful when overwriting the contents. During
+	 * the RCU lookup, we change chase the request->engine pointer,
+	 * read the request->global_seqno and increment the reference count.
+	 *
+	 * The reference count is incremented atomically. If it is zero,
+	 * the lookup knows the request is unallocated and complete. Otherwise,
+	 * it is either still in use, or has been reallocated and reset
+	 * with dma_fence_init(). This increment is safe for release as we
+	 * check that the request we have a reference to and matches the active
+	 * request.
+	 *
+	 * Before we increment the refcount, we chase the request->engine
+	 * pointer. We must not call kmem_cache_zalloc() or else we set
+	 * that pointer to NULL and cause a crash during the lookup. If
+	 * we see the request is completed (based on the value of the
+	 * old engine and seqno), the lookup is complete and reports NULL.
+	 * If we decide the request is not completed (new engine or seqno),
+	 * then we grab a reference and double check that it is still the
+	 * active request - which it won't be and restart the lookup.
+	 *
+	 * Do not use kmem_cache_zalloc() here!
+	 */
+	rq = kmem_cache_alloc(slab_requests,
+			      gfp | __GFP_RETRY_MAYFAIL | __GFP_NOWARN);
+	if (unlikely(!rq)) {
+		rq = request_alloc_slow(tl, &ce->engine->request_pool, gfp);
+		if (!rq)
+			return ERR_PTR(-ENOMEM);
+	}
+
+	/*
+	 * Hold a reference to the intel_context over life of an i915_request.
+	 * Without this an i915_request can exist after the context has been
+	 * destroyed (e.g. request retired, context closed, but user space holds
+	 * a reference to the request from an out fence). In the case of GuC
+	 * submission + virtual engine, the engine that the request references
+	 * is also destroyed which can trigger bad pointer dref in fence ops
+	 * (e.g. i915_fence_get_driver_name). We could likely change these
+	 * functions to avoid touching the engine but let's just be safe and
+	 * hold the intel_context reference. In execlist mode the request always
+	 * eventually points to a physical engine so this isn't an issue.
+	 */
+	ret = __i915_request_initialize(rq, ce, flags);
+	if (ret)
+		goto err_free;
+
+	return rq;
+
+err_free:
+	kmem_cache_free(slab_requests, rq);
 	return ERR_PTR(ret);
 }
 
@@ -1123,20 +1142,20 @@ i915_request_create_locked(struct intel_context *ce, gfp_t gfp)
 	return rq;
 }
 
-struct i915_request *
-i915_request_create(struct intel_context *ce)
+static struct i915_request *
+_i915_request_create(struct intel_context *ce, gfp_t gfp)
 {
 	struct intel_timeline *tl;
 	struct i915_request *rq;
 
-	if (intel_context_throttle(ce))
+	if (gfpflags_allow_blocking(gfp) && intel_context_throttle(ce))
 		return ERR_PTR(-EINTR);
 
 	tl = intel_context_timeline_lock(ce);
 	if (IS_ERR(tl))
 		return ERR_CAST(tl);
 
-	rq = i915_request_create_locked(ce, GFP_KERNEL | __GFP_NOWARN);
+	rq = i915_request_create_locked(ce, gfp);
 	if (IS_ERR(rq))
 		goto err_unlock;
 
@@ -1145,6 +1164,42 @@ i915_request_create(struct intel_context *ce)
 err_unlock:
 	intel_context_timeline_unlock(tl);
 	return rq;
+}
+
+int
+i915_request_construct(struct i915_request *rq,
+		       struct intel_context *ce,
+		       unsigned long flags)
+{
+	struct intel_timeline *tl = ce->timeline;
+	int ret;
+
+	mutex_lock(&tl->mutex);
+
+	intel_context_enter(ce);
+	ret = __i915_request_initialize(rq, ce, flags);
+	intel_context_exit(ce); /* active reference transferred to request */
+	if (ret)
+		goto err_unlock;
+
+	rq->cookie = lockdep_pin_lock(&tl->mutex);
+	return 0;
+
+err_unlock:
+	mutex_unlock(&tl->mutex);
+	return ret;
+}
+
+struct i915_request *
+i915_request_create(struct intel_context *ce)
+{
+	return _i915_request_create(ce, GFP_KERNEL);
+}
+
+struct i915_request *
+i915_request_create_atomic(struct intel_context *ce)
+{
+	return _i915_request_create(ce, GFP_ATOMIC);
 }
 
 static int
@@ -2042,33 +2097,13 @@ static void request_wait_wake(struct dma_fence *fence, struct dma_fence_cb *cb)
  * May return -EINTR is called with I915_WAIT_INTERRUPTIBLE and a signal is
  * pending before the request completes.
  */
-long i915_request_wait(struct i915_request *rq,
-		       unsigned int flags,
-		       long timeout)
+long __i915_request_wait(struct i915_request *rq,
+			 unsigned int flags,
+			 long timeout)
 {
 	const int state = flags & I915_WAIT_INTERRUPTIBLE ?
 		TASK_INTERRUPTIBLE : TASK_UNINTERRUPTIBLE;
 	struct request_wait wait;
-
-	might_sleep();
-	GEM_BUG_ON(timeout < 0);
-	i915_fence_check_lr_lockdep(&rq->fence);
-
-	if (dma_fence_is_signaled(&rq->fence))
-		return timeout;
-
-	if (!timeout)
-		return -ETIME;
-
-	trace_i915_request_wait_begin(rq, flags);
-
-	/*
-	 * We must never wait on the GPU while holding a lock as we
-	 * may need to perform a GPU reset. So while we don't need to
-	 * serialise wait/reset with an explicit lock, we do want
-	 * lockdep to detect potential dependency cycles.
-	 */
-	mutex_acquire(&rq->engine->gt->reset.mutex.dep_map, 0, 0, _THIS_IP_);
 
 	/*
 	 * Optimistic spin before touching IRQs.
@@ -2159,6 +2194,52 @@ long i915_request_wait(struct i915_request *rq,
 	GEM_BUG_ON(!list_empty(&wait.cb.node));
 
 out:
+	return timeout;
+}
+
+/**
+ * i915_request_wait - wait until execution of request has finished
+ * @rq: the request to wait upon
+ * @flags: how to wait
+ * @timeout: how long to wait in jiffies
+ *
+ * i915_request_wait() waits for the request to be completed, for a
+ * maximum of @timeout jiffies (with MAX_SCHEDULE_TIMEOUT implying an
+ * unbounded wait).
+ *
+ * Returns the remaining time (in jiffies) if the request completed, which may
+ * be zero if the request is unfinished after the timeout expires.
+ * If the timeout is 0, it will return 1 if the fence is signaled.
+ *
+ * May return -EINTR is called with I915_WAIT_INTERRUPTIBLE and a signal is
+ * pending before the request completes.
+ */
+long i915_request_wait(struct i915_request *rq,
+		       unsigned int flags,
+		       long timeout)
+{
+	might_sleep();
+	GEM_BUG_ON(timeout < 0);
+	i915_fence_check_lr_lockdep(&rq->fence);
+
+	if (dma_fence_is_signaled(&rq->fence))
+		return timeout;
+
+	if (!timeout)
+		return -ETIME;
+
+	trace_i915_request_wait_begin(rq, flags);
+
+	/*
+	 * We must never wait on the GPU while holding a lock as we
+	 * may need to perform a GPU reset. So while we don't need to
+	 * serialise wait/reset with an explicit lock, we do want
+	 * lockdep to detect potential dependency cycles.
+	 */
+	mutex_acquire(&rq->engine->gt->reset.mutex.dep_map, 0, 0, _THIS_IP_);
+
+	timeout = __i915_request_wait(rq, flags, timeout);
+
 	mutex_release(&rq->engine->gt->reset.mutex.dep_map, _THIS_IP_);
 	trace_i915_request_wait_end(rq);
 	return timeout;
@@ -2303,6 +2384,22 @@ enum i915_request_state i915_test_request_state(struct i915_request *rq)
 		return I915_REQUEST_ACTIVE;
 
 	return I915_REQUEST_QUEUED;
+}
+
+struct i915_request *
+i915_request_alloc(gfp_t gfp)
+{
+	struct i915_request *rq;
+
+	rq = kmem_cache_alloc(slab_requests,
+			      gfp | __GFP_RETRY_MAYFAIL | __GFP_NOWARN);
+	return rq;
+}
+
+void
+i915_request_free(struct i915_request *rq)
+{
+	kmem_cache_free(slab_requests, rq);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

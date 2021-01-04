@@ -316,6 +316,7 @@ struct i915_vma {
 	struct list_head obj_link; /* Link in the object's VMA list */
 	struct rb_node obj_node;
 	struct hlist_node obj_hash;
+	struct intel_flat_ppgtt_request_pool *pool;
 
 	/** This vma's place in the eviction list */
 	struct list_head evict_link;

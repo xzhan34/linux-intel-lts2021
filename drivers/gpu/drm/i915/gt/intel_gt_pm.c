@@ -10,6 +10,7 @@
 #include "i915_params.h"
 #include "intel_context.h"
 #include "intel_engine_pm.h"
+#include "intel_flat_ppgtt_pool.h"
 #include "intel_gt.h"
 #include "intel_gt_clock_utils.h"
 #include "intel_gt_pm.h"
@@ -101,6 +102,7 @@ static int __gt_park(struct intel_wakeref *wf)
 
 	runtime_end(gt);
 	intel_gt_park_requests(gt);
+	intel_flat_ppgtt_pool_park(&gt->fpp);
 
 	intel_guc_busyness_park(gt);
 	i915_pmu_gt_parked(gt);

@@ -83,6 +83,18 @@ static inline int intel_gt_pm_wait_for_idle(struct intel_gt *gt)
 	return intel_wakeref_wait_for_idle(&gt->wakeref);
 }
 
+static inline intel_wakeref_t
+intel_gt_pm_get_if_awake_l4(struct intel_gt *gt)
+{
+	return intel_gt_pm_get_if_awake(gt);
+}
+
+static inline void
+intel_gt_pm_put_async_l4(struct intel_gt *gt, intel_wakeref_t wakeref)
+{
+	intel_gt_pm_put_async(gt, wakeref);
+}
+
 void intel_gt_pm_init_early(struct intel_gt *gt);
 void intel_gt_pm_init(struct intel_gt *gt);
 void intel_gt_pm_fini(struct intel_gt *gt);

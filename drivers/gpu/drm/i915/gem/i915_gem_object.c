@@ -30,6 +30,7 @@
 #include <drm/drm_print.h>
 
 #include "display/intel_frontbuffer.h"
+#include "gt/intel_flat_ppgtt_pool.h"
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_requests.h"
@@ -1061,12 +1062,14 @@ static int i915_alloc_vm_range(struct i915_vma *vma)
 		if (err)
 			continue;
 
+		intel_flat_ppgtt_allocate_requests(vma, false);
 		vma->vm->allocate_va_range(vma->vm, &stash,
 					   i915_vma_offset(vma),
 					   vma->size);
 
 		set_bit(I915_VMA_ALLOC_BIT, __i915_vma_flags(vma));
 		/* Implicit unlock */
+		intel_flat_ppgtt_request_pool_clean(vma);
 	}
 
 	i915_vm_free_pt_stash(vma->vm, &stash);
@@ -1078,8 +1081,11 @@ static inline void i915_insert_vma_pages(struct i915_vma *vma, bool is_lmem)
 {
 	enum i915_cache_level cache_level = I915_CACHE_NONE;
 
+	intel_flat_ppgtt_allocate_requests(vma, false);
 	vma->vm->insert_entries(vma->vm, NULL, vma, cache_level,
 				is_lmem ? PTE_LM : 0);
+	intel_flat_ppgtt_request_pool_clean(vma);
+
 	wmb();
 }
 

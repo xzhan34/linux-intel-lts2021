@@ -12,8 +12,106 @@
 #include "i915_trace.h"
 #include "i915_pvinfo.h"
 #include "i915_vgpu.h"
+#include "intel_engine_pm.h"
+#include "intel_flat_ppgtt_pool.h"
+#include "intel_gpu_commands.h"
 #include "intel_gt.h"
 #include "intel_gtt.h"
+#include "intel_gt_pm.h"
+#include "intel_lrc.h"
+
+static intel_wakeref_t l4wa_pm_get(struct intel_gt *gt)
+{
+	if (!i915_is_level4_wa_active(gt))
+		return 0;
+
+	return intel_gt_pm_get_if_awake_l4(gt);
+}
+
+static void pte_sync(struct i915_request **fp)
+{
+	struct i915_request *f = fetch_and_zero(fp);
+
+	if (!IS_ERR_OR_NULL(f)) {
+		__i915_request_wait(f, 0, MAX_SCHEDULE_TIMEOUT);
+		i915_request_put(f);
+	}
+}
+
+static struct intel_pte_bo *get_next_batch(struct intel_flat_ppgtt_pool *fpp)
+{
+	struct intel_pte_bo *bo = intel_flat_ppgtt_get_pte_bo(fpp);
+
+	/*
+	 * In current implementation of level-4 wa we need two i915 resources
+	 * to update ptes 1) i915 request 2) i915 vma (a.k.a batch buffer).
+	 *
+	 * While we estimate how many i915 requests are needed ahead and allocate them
+	 * but batch buffer is still a limited resource, since we have predetermined
+	 * number of them available, statically pinned on flat ppgtt during driver load
+	 * by directly writing ptes through lmem bar.
+	 *
+	 * Since we allocate only 1 vma to bind/unbind operation we have to reuse
+	 * if we need more, hence the wait here to ensure we are done with previous
+	 * operation before we reuse. Here we should to use dma_fence_wait(), but
+	 * that is not allowed since we are already holding vm->mutex and dep_map
+	 * requirements for gt->reset.mutex.dep_map. so we will be in a tight loop
+	 * to check if fence is signaled that will guarantee batch buffer is available
+	 * before we reuse.
+	 *
+	 * This limited number of batch buffer resource should be converted into more
+	 * dynamic resource and that we have unlimited supply of them based on demand,
+	 * this part is left for future work. At that point below wait will not be needed
+	 * and rather we wait only on the last request submitted, so we know bind/unbind
+	 * operation is completed and wait should be outside of vm->mutex.
+	 */
+	pte_sync(&bo->wait);
+
+	return bo;
+}
+
+static u32 *fill_cmd_pte(u32 *cmd, u64 start, u32 idx, u64 val)
+{
+	u64 offset = start + idx * sizeof(gen8_pte_t);
+
+	*cmd++ = MI_STORE_QWORD_IMM_GEN8;
+	*cmd++ = lower_32_bits(offset);
+	*cmd++ = upper_32_bits(offset);
+	*cmd++ = lower_32_bits(val);
+	*cmd++ = upper_32_bits(val);
+	return cmd;
+}
+
+static struct i915_request *
+__flat_ppgtt_submit(struct i915_vma *batch, struct i915_request *rq)
+{
+	int err;
+
+	i915_gem_object_flush_map(batch->obj);
+
+	err = rq->engine->emit_bb_start(rq,
+					i915_vma_offset(batch),
+					i915_vma_size(batch),
+					0);
+	if (!err)
+		i915_request_get(rq);
+	else
+		i915_request_set_error_once(rq, err);
+	i915_request_add(rq);
+
+	return err ? ERR_PTR(err) : rq;
+}
+
+static struct i915_request *flat_ppgtt_submit(struct i915_vma *batch)
+{
+	struct i915_request *rq;
+
+	rq = intel_flat_ppgtt_get_request(&batch->vm->gt->fpp);
+	if (IS_ERR(rq))
+		return rq;
+
+	return __flat_ppgtt_submit(batch, rq);
+}
 
 static u64 gen8_pde_encode(const dma_addr_t addr,
 			   const enum i915_cache_level level)
@@ -454,13 +552,15 @@ static void xehpsdv_ppgtt_color_adjust(const struct drm_mm_node *node,
 
 static void
 xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
+			  struct i915_vm_pt_stash *stash,
 			  struct sgt_dma *iter,
 			  enum i915_cache_level cache_level,
-			  u32 flags)
+			  u32 flags, u32 **cmd, int *nptes)
 {
 	const gen8_pte_t pte_encode = vma->vm->pte_encode(0, cache_level, flags);
-	unsigned int rem = sg_dma_len(iter->sg);
-	u64 start = vma->node.start;
+	unsigned int rem = min_t(u64, (u64)(iter->max - iter->dma), iter->rem);
+	u64 start = i915_vma_offset(vma) + (vma->size - iter->rem);
+	dma_addr_t daddr;
 
 	GEM_BUG_ON(!i915_vm_is_4lvl(vma->vm));
 
@@ -489,6 +589,7 @@ xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
 			page_size = I915_GTT_PAGE_SIZE_2M;
 
 			vaddr = px_vaddr(pd, &needs_flush);
+			daddr = px_dma(pd);
 		} else {
 			if (encode & GEN12_PPGTT_PTE_LM) {
 				GEM_BUG_ON(__gen8_pte_index(start, 0) % 16);
@@ -504,8 +605,18 @@ xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
 				if (!pt->is_compact) {
 					pt->is_compact = true;
 					vaddr = px_vaddr(pd, &needs_flush);
-					vaddr[__gen8_pte_index(start, 1)] |=
-								GEN12_PDE_64K;
+					if (!cmd) {
+						vaddr[__gen8_pte_index(start, 1)] |= GEN12_PDE_64K;
+					} else {
+						u64 pde_encode = vma->vm->pte_encode(px_dma(pt), 0, 0) | GEN12_PDE_64K;
+
+						*cmd = fill_cmd_pte(*cmd, px_dma(pd), __gen8_pte_index(start, 1),
+								    pde_encode);
+						*nptes = *nptes + 1;
+
+						if (*nptes >= INTEL_FLAT_PPGTT_MAX_PTE_ENTRIES)
+							break;
+					}
 				}
 			} else {
 				GEM_BUG_ON(pt->is_compact);
@@ -524,14 +635,26 @@ xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
 			}
 
 			vaddr = px_vaddr(pt, &needs_flush);
+			daddr = px_dma(pt);
 		}
 
+		vma->page_sizes.gtt |= page_size;
 		do {
 			GEM_BUG_ON(rem < page_size);
+
+			if (cmd && *nptes > INTEL_FLAT_PPGTT_MAX_PTE_ENTRIES - nent)
+				return;
+
 			for (i = 0; i < nent; i++) {
 				entry = encode |
 					(iter->dma + i * I915_GTT_PAGE_SIZE);
-				vaddr[index++] = entry;
+				if (!cmd) {
+					vaddr[index++] = entry;
+				} else {
+					*cmd = fill_cmd_pte(*cmd, daddr, index++,
+							    entry);
+					*nptes = *nptes + 1;
+				}
 			}
 
 			start += page_size;
@@ -559,8 +682,6 @@ xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
 
 		if (needs_flush)
 			drm_clflush_virt_range(vaddr, PAGE_SIZE);
-
-		vma->page_sizes.gtt |= page_size;
 	} while (iter->rem);
 }
 
@@ -572,10 +693,12 @@ static void xehpsdv_ppgtt_insert(struct i915_address_space *vm,
 {
 	struct sgt_dma iter = sgt_dma(vma);
 
-	xehpsdv_ppgtt_insert_huge(vma, &iter, cache_level, flags);
+	xehpsdv_ppgtt_insert_huge(vma, stash, &iter, cache_level, flags,
+				  NULL, NULL);
 }
 
 static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
+				   struct i915_vm_pt_stash *stash,
 				   struct sgt_dma *iter,
 				   enum i915_cache_level cache_level,
 				   u32 flags)
@@ -713,7 +836,7 @@ static void gen8_ppgtt_insert(struct i915_address_space *vm,
 {
 	struct sgt_dma iter = sgt_dma(vma);
 
-	gen8_ppgtt_insert_huge(vma, &iter, cache_level, flags);
+	gen8_ppgtt_insert_huge(vma, stash, &iter, cache_level, flags);
 }
 
 typedef void (*insert_pte_fn)(struct i915_address_space *vm,
@@ -796,11 +919,81 @@ static void xehpsdv_ppgtt_insert_entry(struct i915_address_space *vm,
 	return gen8_ppgtt_insert_entry(vm, addr, offset, level, flags);
 }
 
+static void xehpsdv_ppgtt_insert_huge_wa_bcs(struct i915_vma *vma,
+					     struct i915_vm_pt_stash *stash,
+					     struct sgt_dma *iter,
+					     enum i915_cache_level cache_level,
+					     u32 flags)
+{
+	struct intel_gt *gt = vma->vm->gt;
+	struct sgt_dma iterb = sgt_dma(vma);
+	struct i915_request *f = NULL;
+
+	do {
+		struct intel_pte_bo *bo = get_next_batch(&gt->fpp);
+		u32 *cmd = bo->cmd;
+		int count = 0;
+
+		xehpsdv_ppgtt_insert_huge(vma, stash, iter, cache_level, flags,
+					  &cmd, &count);
+
+		if (!count && iter->rem) {
+			drm_err(&gt->i915->drm, "flat ppgtt error no pte to update\n");
+			break;
+		}
+
+		GEM_BUG_ON(cmd >= bo->cmd + bo->vma->size / sizeof(*bo->cmd));
+		*cmd++ = MI_BATCH_BUFFER_END;
+
+		bo->wait = flat_ppgtt_submit(bo->vma);
+		if (IS_ERR(bo->wait)) {
+			drm_info(&gt->i915->drm,
+				 "flat ppgtt huge pte update fallback\n");
+			intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+			pte_sync(&f);
+			goto fallback;
+		}
+
+		i915_request_put(f);
+		f = i915_request_get(bo->wait);
+		intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+	} while (iter->rem);
+
+	pte_sync(&f);
+	return;
+
+fallback:
+	xehpsdv_ppgtt_insert_huge(vma, stash, &iterb, cache_level, flags,
+				  NULL, NULL);
+}
+
+static void gen8_ppgtt_insert_wa_bcs(struct i915_address_space *vm,
+				     struct i915_vm_pt_stash *stash,
+				     struct i915_vma *vma,
+				     enum i915_cache_level cache_level,
+				     u32 flags)
+{
+	struct sgt_dma iter = sgt_dma(vma);
+	struct intel_gt *gt = vm->gt;
+	intel_wakeref_t wakeref;
+
+	wakeref = l4wa_pm_get(gt);
+	if (!wakeref)
+		return get_insert_pte(vm->i915)(vm, stash, vma, cache_level, flags);
+
+	if (GRAPHICS_VER_FULL(vm->i915) >= IP_VER(12, 50))
+		xehpsdv_ppgtt_insert_huge_wa_bcs(vma, stash, &iter, cache_level, flags);
+	else
+		gen8_ppgtt_insert_huge(vma, stash, &iter, cache_level, flags);
+
+	intel_gt_pm_put_async_l4(gt, wakeref);
+}
+
 static void gen8_ppgtt_insert_wa(struct i915_address_space *vm,
 				 struct i915_vm_pt_stash *stash,
 			         struct i915_vma *vma,
 			         enum i915_cache_level cache_level,
-			         u32 flags)
+				 u32 flags)
 {
 	GEM_WARN_ON(i915_gem_idle_engines(vm->i915));
 
@@ -1118,7 +1311,11 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt)
 	ppgtt->vm.cleanup = gen8_ppgtt_cleanup;
 
 	ppgtt->vm.bind_async_flags = I915_VMA_LOCAL_BIND;
-	if (i915_is_mem_wa_enabled(gt->i915, I915_WA_IDLE_GPU_BEFORE_UPDATE)) {
+	if (i915_is_mem_wa_enabled(gt->i915, I915_WA_USE_FLAT_PPGTT_UPDATE)) {
+		ppgtt->vm.insert_entries = gen8_ppgtt_insert_wa_bcs;
+		ppgtt->vm.allocate_va_range = gen8_ppgtt_alloc;
+		ppgtt->vm.clear_range =  gen8_ppgtt_clear;
+	} else if (i915_is_mem_wa_enabled(gt->i915, I915_WA_IDLE_GPU_BEFORE_UPDATE)) {
 		ppgtt->vm.insert_entries = gen8_ppgtt_insert_wa;
 		ppgtt->vm.allocate_va_range = gen8_ppgtt_alloc_wa;
 		ppgtt->vm.clear_range = gen8_ppgtt_clear_wa;

@@ -131,6 +131,8 @@ enum {
 	 */
 	I915_FENCE_FLAG_SENTINEL,
 
+	I915_FENCE_FLAG_NONBLOCKING,
+
 	/*
 	 * I915_FENCE_FLAG_BOOST - upclock the gpu for this request
 	 *
@@ -247,6 +249,11 @@ struct i915_request {
 			struct dma_fence_cb cb;
 			ktime_t emitted;
 		} duration;
+		struct {
+			/* Keep track of requests allocated for flat ppgtt. */
+			struct list_head gt_link;
+			struct list_head vma_link;
+		} fpp;
 	};
 	struct llist_head execute_cb;
 	struct i915_sw_fence semaphore;
@@ -375,6 +382,11 @@ struct i915_request * __must_check
 i915_request_create_locked(struct intel_context *ce, gfp_t gfp);
 struct i915_request * __must_check
 i915_request_create(struct intel_context *ce);
+struct i915_request * __must_check
+i915_request_create_atomic(struct intel_context *ce);
+int i915_request_construct(struct i915_request *rq,
+			   struct intel_context *ce,
+			   unsigned long flags);
 
 void __i915_request_skip(struct i915_request *rq);
 bool i915_request_set_error_once(struct i915_request *rq, int error);
@@ -426,6 +438,8 @@ int i915_request_await_execution(struct i915_request *rq,
 
 void i915_request_add(struct i915_request *rq);
 
+struct i915_request *i915_request_alloc(gfp_t gfp);
+void i915_request_free(struct i915_request *rq);
 bool __i915_request_submit(struct i915_request *request);
 void i915_request_submit(struct i915_request *request);
 
@@ -434,6 +448,9 @@ void i915_request_unsubmit(struct i915_request *request);
 
 void i915_request_cancel(struct i915_request *rq, int error);
 
+long __i915_request_wait(struct i915_request *rq,
+			 unsigned int flags,
+			 long timeout);
 long i915_request_wait(struct i915_request *rq,
 		       unsigned int flags,
 		       long timeout)
@@ -467,6 +484,11 @@ static inline bool
 i915_request_has_initial_breadcrumb(const struct i915_request *rq)
 {
 	return test_bit(I915_FENCE_FLAG_INITIAL_BREADCRUMB, &rq->fence.flags);
+}
+
+static inline bool i915_request_is_nonblocking(const struct i915_request *rq)
+{
+	return test_bit(I915_FENCE_FLAG_NONBLOCKING, &rq->fence.flags);
 }
 
 /**

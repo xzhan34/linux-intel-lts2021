@@ -1331,7 +1331,8 @@ create_bind_context(struct intel_engine_cs *engine)
 {
 	static struct lock_class_key bind;
 
-	return intel_engine_create_pinned_context(engine, engine->gt->vm, SZ_4K,
+	return intel_engine_create_pinned_context(engine,
+						  engine->gt->vm, SZ_256K,
 						  I915_GEM_HWS_BIND_ADDR,
 						  &bind, "bind_context");
 }

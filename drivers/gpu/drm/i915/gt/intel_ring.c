@@ -190,9 +190,10 @@ void intel_ring_free(struct kref *ref)
 
 static noinline int
 wait_for_space(struct intel_ring *ring,
-	       struct intel_timeline *tl,
+	       struct i915_request *rq,
 	       unsigned int bytes)
 {
+	struct intel_timeline *tl = i915_request_timeline(rq);
 	struct i915_request *target;
 	long timeout;
 
@@ -213,11 +214,16 @@ wait_for_space(struct intel_ring *ring,
 	if (GEM_WARN_ON(&target->link == &tl->requests))
 		return -ENOSPC;
 
-	timeout = i915_request_wait(target,
-				    I915_WAIT_INTERRUPTIBLE,
-				    MAX_SCHEDULE_TIMEOUT);
-	if (timeout < 0)
-		return timeout;
+	if (!__i915_request_is_complete(target)) {
+		if (i915_request_is_nonblocking(rq))
+			return -EAGAIN;
+
+		timeout = i915_request_wait(target,
+					    I915_WAIT_INTERRUPTIBLE,
+					    MAX_SCHEDULE_TIMEOUT);
+		if (timeout < 0)
+			return timeout;
+	}
 
 	i915_request_retire_upto(target);
 
@@ -277,9 +283,7 @@ u32 *intel_ring_begin(struct i915_request *rq, unsigned int num_dwords)
 		 */
 		GEM_BUG_ON(!rq->reserved_space);
 
-		ret = wait_for_space(ring,
-				     i915_request_timeline(rq),
-				     total_bytes);
+		ret = wait_for_space(ring, rq, total_bytes);
 		if (unlikely(ret))
 			return ERR_PTR(ret);
 	}

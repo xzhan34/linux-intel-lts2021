@@ -31,6 +31,7 @@
 #include "gem/i915_gem_vm_bind.h"
 #include "gt/intel_engine.h"
 #include "gt/intel_engine_heartbeat.h"
+#include "gt/intel_flat_ppgtt_pool.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_requests.h"
 #include "gt/intel_gt_pm.h"
@@ -170,6 +171,7 @@ vma_create(struct drm_i915_gem_object *obj,
 	}
 
 	INIT_LIST_HEAD(&vma->closed_link);
+	vma->pool = NULL;
 
 	if (view && view->type != I915_GGTT_VIEW_NORMAL) {
 		vma->ggtt_view = *view;
@@ -356,6 +358,7 @@ static int __vma_bind(struct dma_fence_work *work)
 
 	vma->ops->bind_vma(vw->vm, &vw->stash,
 			   vma, vw->cache_level, vw->flags);
+
 	return 0;
 }
 
@@ -385,6 +388,7 @@ static void __vma_complete(struct dma_fence_work *work)
 	}
 
 	__vma_user_fence_signal(vma);
+	intel_flat_ppgtt_request_pool_clean(vma);
 }
 
 static void __vma_release(struct dma_fence_work *work)
@@ -1130,6 +1134,8 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	if (flags & PIN_GLOBAL)
 		wakeref = intel_runtime_pm_get(&vma->vm->i915->runtime_pm);
 
+	intel_flat_ppgtt_allocate_requests(vma, false);
+
 	work = i915_vma_work();
 	if (!work) {
 		err = -ENOMEM;
@@ -1253,6 +1259,7 @@ err_rpm:
 	if (wakeref)
 		intel_runtime_pm_put(&vma->vm->i915->runtime_pm, wakeref);
 	vma_put_pages(vma);
+
 	return err;
 }
 
@@ -1409,6 +1416,7 @@ void i915_vma_release(struct kref *ref)
 		i915_sw_fence_complete(vma->bind_fence);
 	}
 
+	intel_flat_ppgtt_request_pool_clean(vma);
 	i915_vm_put(vma->vm);
 
 	i915_active_fini(&vma->active);
@@ -1749,6 +1757,7 @@ int i915_vma_unbind(struct i915_vma *vma)
 		/* XXX not always required: nop_clear_range */
 		wakeref = intel_runtime_pm_get(&vm->i915->runtime_pm);
 
+	intel_flat_ppgtt_allocate_requests(vma, true);
 	err = mutex_lock_interruptible_nested(&vma->vm->mutex, !wakeref);
 	if (err)
 		goto out_rpm;
@@ -1759,6 +1768,8 @@ int i915_vma_unbind(struct i915_vma *vma)
 out_rpm:
 	if (wakeref)
 		intel_runtime_pm_put(&vm->i915->runtime_pm, wakeref);
+
+	intel_flat_ppgtt_request_pool_clean(vma);
 	return err;
 }
 

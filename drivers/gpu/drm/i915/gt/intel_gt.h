@@ -9,6 +9,7 @@
 #include "intel_engine_types.h"
 #include "intel_gt_types.h"
 #include "intel_reset.h"
+#include "i915_drv.h"
 
 struct drm_i915_private;
 struct drm_printer;
@@ -84,6 +85,17 @@ static inline bool intel_gt_is_wedged(const struct intel_gt *gt)
 		   !test_bit(I915_WEDGED, &gt->reset.flags));
 
 	return unlikely(test_bit(I915_WEDGED, &gt->reset.flags));
+}
+
+static inline bool
+i915_is_level4_wa_active(struct intel_gt *gt)
+{
+	struct drm_i915_private *i915 = gt->i915;
+	bool guc_ready = (!intel_guc_submission_is_wanted(&gt->uc.guc) ||
+			  intel_guc_is_ready(&gt->uc.guc));
+
+	return i915_is_mem_wa_enabled(i915, I915_WA_USE_FLAT_PPGTT_UPDATE) &&
+		i915->bind_ctxt_ready && guc_ready;
 }
 
 int intel_gt_probe_all(struct drm_i915_private *i915);
