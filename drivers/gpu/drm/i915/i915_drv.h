@@ -1557,6 +1557,8 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 
 #define HAS_EU_STALL_SAMPLING(i915) (INTEL_INFO(i915)->has_eu_stall_sampling)
 
+#define HAS_GT_ERROR_VECTORS(i915) (INTEL_INFO(i915)->has_gt_error_vectors)
+
 static inline bool
 intel_ggtt_needs_same_mem_type_within_cl_wa(struct drm_i915_private *dev_priv)
 {

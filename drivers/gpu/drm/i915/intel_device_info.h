@@ -161,6 +161,7 @@ enum intel_ppgtt_type {
 	func(has_flat_ccs); \
 	func(has_full_ps64); \
 	func(has_global_mocs); \
+	func(has_gt_error_vectors); \
 	func(has_gt_uc); \
 	func(has_guc_deprivilege); \
 	func(has_guc_programmable_mocs); \

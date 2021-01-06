@@ -161,6 +161,13 @@ static GT_SYSFS_ERROR_ATTR_RO(fatal_sampler, INTEL_GT_HW_ERROR_FAT_SAMPLER);
 static GT_SYSFS_ERROR_ATTR_RO(fatal_slm, INTEL_GT_HW_ERROR_FAT_SLM);
 static GT_SYSFS_ERROR_ATTR_RO(fatal_eu_ic, INTEL_GT_HW_ERROR_FAT_EU_IC);
 static GT_SYSFS_ERROR_ATTR_RO(fatal_eu_grf, INTEL_GT_HW_ERROR_FAT_EU_GRF);
+static GT_SYSFS_ERROR_ATTR_RO(fatal_fpu, INTEL_GT_HW_ERROR_FAT_FPU);
+static GT_SYSFS_ERROR_ATTR_RO(correctable_subslice, INTEL_GT_HW_ERROR_COR_SUBSLICE);
+static GT_SYSFS_ERROR_ATTR_RO(correctable_l3bank, INTEL_GT_HW_ERROR_COR_L3BANK);
+static GT_SYSFS_ERROR_ATTR_RO(fatal_subslice, INTEL_GT_HW_ERROR_FAT_SUBSLICE);
+static GT_SYSFS_ERROR_ATTR_RO(fatal_l3bank, INTEL_GT_HW_ERROR_FAT_L3BANK);
+static GT_SYSFS_ERROR_ATTR_RO(fatal_tlb, INTEL_GT_HW_ERROR_FAT_TLB);
+static GT_SYSFS_ERROR_ATTR_RO(fatal_l3_fabric, INTEL_GT_HW_ERROR_FAT_L3_FABRIC);
 static SGUNIT_SYSFS_ERROR_ATTR_RO(sgunit_correctable, HARDWARE_ERROR_CORRECTABLE);
 static SGUNIT_SYSFS_ERROR_ATTR_RO(sgunit_nonfatal, HARDWARE_ERROR_NONFATAL);
 static SGUNIT_SYSFS_ERROR_ATTR_RO(sgunit_fatal, HARDWARE_ERROR_FATAL);
@@ -270,6 +277,28 @@ static const struct attribute *gsc_error_attrs[] = {
 	NULL
 };
 
+static const struct attribute *gt_error_vctr_attrs[] = {
+	&dev_attr_correctable_subslice.attr.attr,
+	&dev_attr_correctable_l3bank.attr.attr,
+	&dev_attr_fatal_subslice.attr.attr,
+	&dev_attr_fatal_l3bank.attr.attr,
+	&dev_attr_fatal_tlb.attr.attr,
+	&dev_attr_fatal_l3_fabric.attr.attr,
+	NULL
+};
+
+static const struct attribute *pvc_gt_error_attrs[] = {
+	&dev_attr_correctable_guc.attr.attr,
+	&dev_attr_correctable_slm.attr.attr,
+	&dev_attr_correctable_eu_ic.attr.attr,
+	&dev_attr_correctable_eu_grf.attr.attr,
+	&dev_attr_fatal_fpu.attr.attr,
+	&dev_attr_fatal_guc.attr.attr,
+	&dev_attr_fatal_slm.attr.attr,
+	&dev_attr_fatal_eu_grf.attr.attr,
+	NULL
+};
+
 static const struct attribute *soc_error_attrs[] = {
 	&dev_attr_soc_fatal_psf_csc_0.attr.attr,
 	&dev_attr_soc_fatal_psf_csc_1.attr.attr,
@@ -333,8 +362,12 @@ void intel_gt_sysfs_register_errors(struct intel_gt *gt, struct kobject *parent)
 	if (!dir)
 		goto err;
 
-	if (sysfs_create_files(dir, gt_error_attrs))
+	if (!IS_PONTEVECCHIO(gt->i915) && sysfs_create_files(dir, gt_error_attrs))
 		drm_warn(&gt->i915->drm, "Failed to create gt%u gt_error sysfs\n", gt->info.id);
+
+	if (HAS_GT_ERROR_VECTORS(gt->i915) && sysfs_create_files(dir, gt_error_vctr_attrs))
+		drm_warn(&gt->i915->drm, "Failed to create gt%u gt_error_vector sysfs\n",
+			 gt->info.id);
 
 	/* Report GSC errors on root gt only */
 	if ((HAS_MEM_SPARING_SUPPORT(gt->i915) && gt->info.id == 0) &&
@@ -344,6 +377,9 @@ void intel_gt_sysfs_register_errors(struct intel_gt *gt, struct kobject *parent)
 	if (IS_XEHPSDV(gt->i915) &&
 	    sysfs_create_files(dir, soc_error_attrs))
 		drm_warn(&gt->i915->drm, "Failed to create gt%u soc_error sysfs\n", gt->info.id);
+
+	if (IS_PONTEVECCHIO(gt->i915) && sysfs_create_files(dir, pvc_gt_error_attrs))
+		drm_warn(&gt->i915->drm, "Failed to create gt%u gt_error sysfs\n", gt->info.id);
 
 	return;
 
