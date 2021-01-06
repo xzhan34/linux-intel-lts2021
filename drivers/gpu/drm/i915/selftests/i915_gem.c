@@ -248,6 +248,17 @@ int i915_gem_live_selftests(struct drm_i915_private *i915)
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_gem_suspend),
 		SUBTEST(igt_gem_hibernate),
+	};
+
+	if (intel_gt_is_wedged(to_gt(i915)))
+		return 0;
+
+	return i915_live_subtests(tests, i915);
+}
+
+int i915_gem_obj_lock_live_selftests(struct drm_i915_private *i915)
+{
+	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_gem_ww_ctx),
 	};
 
