@@ -46,4 +46,12 @@ int i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
 				struct i915_gem_ww_ctx *ww,
 				struct intel_context *ce);
 
+phys_addr_t i915_calc_ctrl_surf_instr_dwords(struct drm_i915_private *i915,
+					     size_t copy_sz);
+
+u32 *xehp_emit_ccs_copy(u32 *cmd, struct intel_gt *gt,
+			u64 src_addr, int src_mem_access,
+			u64 dst_addr, int dst_mem_access,
+			size_t size);
+
 #endif

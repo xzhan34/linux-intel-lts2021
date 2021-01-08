@@ -643,7 +643,7 @@ static int __igt_obj_window_blt_copy(struct drm_i915_private *i915,
 		dst->cache_dirty = true;
 
 	t0 = ktime_get();
-	err = i915_window_blt_copy(dst, src);
+	err = i915_window_blt_copy(dst, src, false);
 	if (err)
 		goto err_unpin_dst;
 

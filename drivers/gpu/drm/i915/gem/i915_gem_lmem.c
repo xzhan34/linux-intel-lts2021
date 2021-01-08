@@ -335,7 +335,7 @@ lmem_swapout(struct drm_i915_gem_object *obj,
 	/* copying the pages */
 	if (i915->params.enable_eviction >= 2 &&
 	    !intel_gt_is_wedged(obj->mm.region.mem->gt)) {
-		err = i915_window_blt_copy(dst, src);
+		err = i915_window_blt_copy(dst, src, false);
 		if (!err)
 			stat = &i915->mm.blt_swap_stats.out;
 	}
@@ -399,7 +399,7 @@ lmem_swapin(struct drm_i915_gem_object *obj,
 	/* copying the pages */
 	if (i915->params.enable_eviction >= 2 &&
 	    !intel_gt_is_wedged(obj->mm.region.mem->gt)) {
-		err = i915_window_blt_copy(dst, src);
+		err = i915_window_blt_copy(dst, src, false);
 		if (!err)
 			stat = &i915->mm.blt_swap_stats.in;
 	}

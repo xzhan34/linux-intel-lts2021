@@ -34,6 +34,7 @@
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_requests.h"
+#include "gt/intel_migrate.h"
 #include "gt/intel_ring.h"
 #include "pxp/intel_pxp.h"
 
@@ -1320,16 +1321,64 @@ static void prepare_vma(struct i915_vma *vma,
 	sg_unmark_end(sgl);
 }
 
+static int
+i915_ccs_batch_prepare(struct i915_request *rq,
+		       struct i915_vma *lmem,
+		       struct i915_vma *ccs, size_t size, bool src_is_lmem)
+{
+	u32 *cmd;
+	int cmdsize = i915_calc_ctrl_surf_instr_dwords(rq->engine->i915, size);
+	int src_mem_access, dst_mem_access;
+	struct i915_vma *src, *dst;
+
+	GEM_BUG_ON(size > BLT_WINDOW_SZ);
+
+	cmd = intel_ring_begin(rq, cmdsize);
+	if (IS_ERR(cmd))
+		return PTR_ERR(cmd);
+
+	if (src_is_lmem) {
+		src_mem_access = INDIRECT_ACCESS;
+		dst_mem_access = DIRECT_ACCESS;
+		src = lmem;
+		dst = ccs;
+	} else {
+		src_mem_access = DIRECT_ACCESS;
+		dst_mem_access = INDIRECT_ACCESS;
+		src = ccs;
+		dst = lmem;
+	}
+
+	cmd = xehp_emit_ccs_copy(cmd, rq->engine->gt,
+				 i915_vma_offset(src), src_mem_access,
+				 i915_vma_offset(dst), dst_mem_access,
+				 size);
+
+	intel_ring_advance(rq, cmd);
+
+	return 0;
+}
+
 int i915_window_blt_copy(struct drm_i915_gem_object *dst,
-			 struct drm_i915_gem_object *src)
+			 struct drm_i915_gem_object *src, bool compressed)
 {
 	struct drm_i915_private *i915 = to_i915(src->base.dev);
 	struct intel_context *ce = to_gt(i915)->engine[BCS0]->evict_context;
 	bool src_is_lmem = i915_gem_object_is_lmem(src);
 	bool dst_is_lmem = i915_gem_object_is_lmem(dst);
-	u64 remain = src->base.size, offset = 0;
-	struct i915_vma *src_vma, *dst_vma, **ps, **pd;
+	bool ccs_handling;
+	u64 ccs_offset, offset = 0;
+	u64 remain = min(src->base.size, dst->base.size);
+	struct i915_vma *src_vma, *dst_vma, *ccs_vma, **ps, **pd, **pccs;
 	int err;
+
+	/*
+	 * We will handle CCS data only if source
+	 * and destination memory region are different
+	 */
+	ccs_handling = compressed && HAS_FLAT_CCS(i915);
+	if (ccs_handling)
+		GEM_BUG_ON(src_is_lmem == dst_is_lmem);
 
 	err = i915_window_blt_copy_prepare_obj(src);
 	if (err)
@@ -1340,15 +1389,31 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 		i915_gem_object_unpin_pages(src);
 		return err;
 	}
+	ccs_offset = remain >> PAGE_SHIFT;
 
 	ps = src_is_lmem ? &i915->mm.lmem_window[0] :
 			   &i915->mm.smem_window[0];
 	pd = dst_is_lmem ? &i915->mm.lmem_window[1] :
 			   &i915->mm.smem_window[1];
+	if (ccs_handling) {
+		if (src_is_lmem) {
+			GEM_BUG_ON(dst->base.size <
+				(src->base.size + (src->base.size >> 8)));
+			pccs = &i915->mm.ccs_window[1];
+		} else {
+			GEM_BUG_ON(src->base.size <
+				(dst->base.size + (dst->base.size >> 8)));
+			pccs = &i915->mm.ccs_window[0];
+		}
+	}
 
 	spin_lock(&i915->mm.window_queue.lock);
 
-	err = wait_event_interruptible_locked(i915->mm.window_queue,
+	if (ccs_handling)
+		err = wait_event_interruptible_locked(i915->mm.window_queue,
+						*ps && *pd && *pccs);
+	else
+		err = wait_event_interruptible_locked(i915->mm.window_queue,
 					      *ps && *pd);
 	if (err) {
 		spin_unlock(&i915->mm.window_queue.lock);
@@ -1365,6 +1430,11 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 
 	*ps = NULL;
 	*pd = NULL;
+	if (ccs_handling) {
+		ccs_vma = *pccs;
+		ccs_vma->obj = src_is_lmem ? dst : src;
+		*pccs = NULL;
+	}
 
 	spin_unlock(&i915->mm.window_queue.lock);
 
@@ -1379,6 +1449,9 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 
 		prepare_vma(src_vma, src, offset, chunk, src_is_lmem);
 		prepare_vma(dst_vma, dst, offset, chunk, dst_is_lmem);
+		if (ccs_handling)
+			prepare_vma(ccs_vma, src_is_lmem ? dst : src, ccs_offset,
+				chunk >> 8, false);
 
 		rq = i915_request_create(ce);
 		if (IS_ERR(rq)) {
@@ -1400,7 +1473,18 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 		if (err) {
 			DRM_ERROR("Batch preparation failed. %d\n", err);
 			i915_request_set_error_once(rq, -EIO);
+			goto request;
 		}
+
+		if (ccs_handling) {
+			err = i915_ccs_batch_prepare(rq, (src_is_lmem) ? src_vma : dst_vma,
+						     ccs_vma, chunk, src_is_lmem);
+			if (err) {
+				DRM_ERROR("CCS Batch preparation failed. %d\n", err);
+				i915_request_set_error_once(rq, -EIO);
+			}
+		}
+request:
 
 		i915_request_get(rq);
 		i915_request_add(rq);
@@ -1418,6 +1502,7 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 
 		remain -= chunk;
 		offset += chunk >> PAGE_SHIFT;
+		ccs_offset += (chunk >> 8) >> PAGE_SHIFT;
 
 		flush_work(&ce->engine->retire_work);
 	} while (remain);
@@ -1431,6 +1516,12 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 	dst_vma->obj = NULL;
 	*ps = src_vma;
 	*pd = dst_vma;
+	if (ccs_handling) {
+		ccs_vma->size = BLT_WINDOW_SZ >> 8;
+		ccs_vma->obj = NULL;
+		*pccs = ccs_vma;
+	}
+
 	wake_up_locked(&i915->mm.window_queue);
 	spin_unlock(&i915->mm.window_queue.lock);
 
