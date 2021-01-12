@@ -1591,7 +1591,14 @@ static struct i915_whitelist_reg gen12_oa_wl_regs[] = {
 static void intel_engine_apply_oa_whitelist(struct i915_perf_stream *stream)
 {
 	struct intel_engine_cs *engine = stream->engine;
-	struct drm_i915_private *i915 = stream->perf->i915;
+	struct drm_i915_private *i915 = engine->i915;
+	struct i915_whitelist_reg ctx_id = {
+		RING_EXECLIST_STATUS_HI(engine->mmio_base),
+		RING_FORCE_TO_NONPRIV_ACCESS_RD
+	};
+
+	if (GRAPHICS_VER(i915) > 8)
+		intel_engine_allow_user_register_access(engine, &ctx_id, 1);
 
 	if (GRAPHICS_VER(i915) == 12)
 		intel_engine_allow_user_register_access(engine,
@@ -1608,7 +1615,14 @@ static void intel_engine_apply_oa_whitelist(struct i915_perf_stream *stream)
 static void intel_engine_remove_oa_whitelist(struct i915_perf_stream *stream)
 {
 	struct intel_engine_cs *engine = stream->engine;
-	struct drm_i915_private *i915 = stream->perf->i915;
+	struct drm_i915_private *i915 = engine->i915;
+	struct i915_whitelist_reg ctx_id = {
+		RING_EXECLIST_STATUS_HI(engine->mmio_base),
+		RING_FORCE_TO_NONPRIV_ACCESS_RD
+	};
+
+	if (GRAPHICS_VER(i915) > 8)
+		intel_engine_deny_user_register_access(engine, &ctx_id, 1);
 
 	if (GRAPHICS_VER(i915) == 12)
 		intel_engine_deny_user_register_access(engine,
