@@ -1704,6 +1704,12 @@ void i915_log_driver_error(struct drm_i915_private *i915,
 #define I915_WA_IDLE_GPU_BEFORE_UPDATE	1
 #define I915_WA_USE_FLAT_PPGTT_UPDATE	2
 
+/*
+ * Default WA is Level-4 which set with during driver load if the
+ * module parameter value is DEFAULT value (256).
+ */
+#define I915_SMEM_ACCESS_CONTROL_DEFAULT	256
+
 static inline bool
 i915_is_mem_wa_enabled(struct drm_i915_private *i915, int val)
 {

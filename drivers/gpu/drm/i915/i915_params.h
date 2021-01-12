@@ -84,10 +84,10 @@ struct drm_printer;
 	param(unsigned int, lmem_size, 0, 0400) \
 	param(unsigned int, enable_eviction, 3, 0600) \
 	param(int, force_alloc_contig, 0, 0400) \
-	param(int, smem_access_control, 0, 0600) \
+	param(int, smem_access_control, I915_SMEM_ACCESS_CONTROL_DEFAULT, 0600) \
 	/* leave bools at the end to not create holes */ \
 	param(bool, enable_fake_int_wa, true, 0400) \
-	param(bool, enable_hw_throttle_blt, true, 0400) \
+	param(bool, enable_hw_throttle_blt, false, 0400) \
 	param(bool, enable_rc6, true, 0400) \
 	param(bool, rc6_ignore_steppings, false, 0400) \
 	param(bool, enable_hangcheck, true, 0600) \
