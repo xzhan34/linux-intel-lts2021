@@ -783,6 +783,33 @@ static int clear_lmem_show(struct seq_file *m, void *unused)
 	return 0;
 }
 
+static int i915_l4wa_open(struct inode *inode, struct file *file)
+{
+	struct drm_i915_private *i915 = inode->i_private;
+
+	atomic_inc(&i915->level4_wa_disabled);
+
+	drm_info(&i915->drm, "Disabling level-4 wa\n");
+	return 0;
+}
+
+static int i915_l4wa_release(struct inode *inode, struct file *file)
+{
+	struct drm_i915_private *i915 = inode->i_private;
+
+	atomic_dec(&i915->level4_wa_disabled);
+
+	if (!atomic_read(&i915->level4_wa_disabled))
+			drm_info(&i915->drm, "Enabling level-4 wa\n");
+	return 0;
+}
+
+static const struct file_operations i915_l4wa_fops = {
+	.owner = THIS_MODULE,
+	.open = i915_l4wa_open,
+	.release = i915_l4wa_release,
+};
+
 static int i915_wedged_get(void *data, u64 *val)
 {
 	struct drm_i915_private *i915 = data;
@@ -1101,4 +1128,8 @@ void i915_debugfs_register(struct drm_i915_private *dev_priv)
 	drm_debugfs_create_files(i915_debugfs_list,
 				 I915_DEBUGFS_ENTRIES,
 				 minor->debugfs_root, minor);
+
+	if (i915_is_mem_wa_enabled(dev_priv, I915_WA_USE_FLAT_PPGTT_UPDATE))
+		debugfs_create_file("i915_l4wa_disable", S_IWUSR | S_IRUGO, minor->debugfs_root,
+				    to_i915(minor->dev), &i915_l4wa_fops);
 }

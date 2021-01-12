@@ -95,7 +95,8 @@ i915_is_level4_wa_active(struct intel_gt *gt)
 			  intel_guc_is_ready(&gt->uc.guc));
 
 	return i915_is_mem_wa_enabled(i915, I915_WA_USE_FLAT_PPGTT_UPDATE) &&
-		i915->bind_ctxt_ready && guc_ready;
+		i915->bind_ctxt_ready && guc_ready &&
+		!atomic_read(&i915->level4_wa_disabled);
 }
 
 int intel_gt_probe_all(struct drm_i915_private *i915);

@@ -895,6 +895,8 @@ struct drm_i915_private {
 
 	bool bind_ctxt_ready;
 
+	atomic_t level4_wa_disabled;
+
 	I915_SELFTEST_DECLARE(struct i915_selftest_stash selftest;)
 
 	/*

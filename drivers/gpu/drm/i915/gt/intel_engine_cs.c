@@ -1356,6 +1356,7 @@ setup_flat_ppgtt(struct intel_engine_cs *engine)
 		goto err;
 
 	engine->bind_context = ce;
+	atomic_set(&engine->i915->level4_wa_disabled, 0);
 	return 0;
 
 err:
