@@ -146,6 +146,7 @@ enum intel_ppgtt_type {
 	/* Keep has_* in alphabetical order */ \
 	func(has_64bit_reloc); \
 	func(has_64k_pages); \
+	func(has_gmd_id); \
 	func(gpu_reset_clobbers_display); \
 	func(has_reset_engine); \
 	func(has_3d_pipeline); \
@@ -203,6 +204,7 @@ enum intel_ppgtt_type {
 struct ip_version {
 	u8 ver;
 	u8 rel;
+	u8 step;
 };
 
 struct intel_device_info {
@@ -275,6 +277,18 @@ struct intel_runtime_info {
 	 * BUILD_BUG_ON is hit.
 	 */
 	u32 platform_mask[2];
+
+	/*
+	 * On modern platforms, the architecture major.minor version numbers
+	 * and stepping are read directly from the hardware rather than derived
+	 * from the PCI device and revision ID's.
+	 *
+	 * Note that the hardware gives us a single "graphics" number that
+	 * should represent render, compute, and copy behavior.
+	 */
+	struct ip_version graphics;
+	struct ip_version media;
+	struct ip_version display;
 
 	u16 device_id;
 

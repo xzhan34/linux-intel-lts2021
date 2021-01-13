@@ -91,22 +91,6 @@ const char *intel_platform_name(enum intel_platform platform)
 void intel_device_info_print_static(const struct intel_device_info *info,
 				    struct drm_printer *p)
 {
-	if (info->graphics.rel)
-		drm_printf(p, "graphics version: %u.%02u\n", info->graphics.ver,
-			   info->graphics.rel);
-	else
-		drm_printf(p, "graphics version: %u\n", info->graphics.ver);
-
-	if (info->media.rel)
-		drm_printf(p, "media version: %u.%02u\n", info->media.ver, info->media.rel);
-	else
-		drm_printf(p, "media version: %u\n", info->media.ver);
-
-	if (info->display.rel)
-		drm_printf(p, "display version: %u.%02u\n", info->display.ver, info->display.rel);
-	else
-		drm_printf(p, "display version: %u\n", info->display.ver);
-
 	drm_printf(p, "gt: %d\n", info->gt);
 	drm_printf(p, "memory-regions: %x\n", info->memory_regions);
 	drm_printf(p, "page-sizes: %x\n", info->page_sizes);
@@ -127,6 +111,22 @@ void intel_device_info_print_static(const struct intel_device_info *info,
 void intel_device_info_print_runtime(const struct intel_runtime_info *info,
 				     struct drm_printer *p)
 {
+	if (info->graphics.rel)
+		drm_printf(p, "graphics version: %u.%02u\n", info->graphics.ver,
+			   info->graphics.rel);
+	else
+		drm_printf(p, "graphics version: %u\n", info->graphics.ver);
+
+	if (info->media.rel)
+		drm_printf(p, "media version: %u.%02u\n", info->media.ver, info->media.rel);
+	else
+		drm_printf(p, "media version: %u\n", info->media.ver);
+
+	if (info->display.rel)
+		drm_printf(p, "display version: %u.%02u\n", info->display.ver, info->display.rel);
+	else
+		drm_printf(p, "display version: %u\n", info->display.ver);
+
 	drm_printf(p, "rawclk rate: %u kHz\n", info->rawclk_freq);
 }
 
