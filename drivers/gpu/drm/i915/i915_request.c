@@ -57,6 +57,48 @@ struct execute_cb {
 static struct kmem_cache *slab_requests;
 static struct kmem_cache *slab_execute_cbs;
 
+#ifdef CONFIG_LOCKDEP
+static struct lockdep_map lr_lockdep_map = {
+	.name = "lr_map"
+};
+
+void i915_fence_check_lr_lockdep(struct dma_fence *fence)
+{
+	if (unlikely(test_bit(I915_FENCE_FLAG_LR, &fence->flags))) {
+		lock_map_acquire(&lr_lockdep_map);
+		lock_map_release(&lr_lockdep_map);
+	}
+}
+
+static void __init request_lr_lockdep(void)
+{
+	struct ww_acquire_ctx ctx;
+	struct dma_resv obj;
+	int ret;
+
+	/*
+	 * No waiting for long running requests with object lock held
+	 * or within reclaim.
+	 */
+
+	dma_resv_init(&obj);
+	lock_map_acquire(&lr_lockdep_map);
+	ww_acquire_init(&ctx, &reservation_ww_class);
+	ret = dma_resv_lock(&obj, &ctx);
+	if (ret == -EDEADLK)
+		dma_resv_lock_slow(&obj, &ctx);
+	dma_resv_unlock(&obj);
+	ww_acquire_fini(&ctx);
+	lock_map_release(&lr_lockdep_map);
+	dma_resv_fini(&obj);
+}
+
+#else
+
+#define request_lr_lockdep() do {} while (0)
+
+#endif
+
 static const char *i915_fence_get_driver_name(struct dma_fence *fence)
 {
 	struct i915_request *rq = to_request(fence);
@@ -1579,6 +1621,9 @@ i915_request_await_dma_fence(struct i915_request *rq, struct dma_fence *fence)
 		if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))
 			continue;
 
+		if (dma_fence_is_lr(fence))
+			return -EBUSY;
+
 		/*
 		 * Requests on the same timeline are explicitly ordered, along
 		 * with their dependencies, by i915_request_add() which ensures
@@ -2006,6 +2051,7 @@ long i915_request_wait(struct i915_request *rq,
 
 	might_sleep();
 	GEM_BUG_ON(timeout < 0);
+	i915_fence_check_lr_lockdep(&rq->fence);
 
 	if (dma_fence_is_signaled(&rq->fence))
 		return timeout;
@@ -2271,6 +2317,8 @@ void i915_request_module_exit(void)
 
 int __init i915_request_module_init(void)
 {
+	request_lr_lockdep();
+
 	slab_requests =
 		kmem_cache_create("i915_request",
 				  sizeof(struct i915_request),

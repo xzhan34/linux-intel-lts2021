@@ -163,6 +163,14 @@ enum {
 	 * fence (dma_fence_array) and i915 generated for parallel submission.
 	 */
 	I915_FENCE_FLAG_COMPOSITE,
+
+	/*
+	 * I915_FENCE_FLAG_LR - This fence represents a request on long running
+	 * (LR) context. Can't wait on this under a reservation object, and
+	 * can't wait in reclaim. This fence doesn't signal until the LR request
+	 * is done, and is thus different from a preempt fence.
+	 */
+	I915_FENCE_FLAG_LR,
 };
 
 /**
@@ -349,6 +357,12 @@ extern const struct dma_fence_ops i915_fence_ops;
 static inline bool dma_fence_is_i915(const struct dma_fence *fence)
 {
 	return fence->ops == &i915_fence_ops;
+}
+
+static inline bool dma_fence_is_lr(const struct dma_fence *fence)
+{
+	return dma_fence_is_i915(fence) &&
+		test_bit(I915_FENCE_FLAG_LR, &fence->flags);
 }
 
 struct kmem_cache *i915_request_slab_cache(void);
@@ -735,5 +749,11 @@ enum i915_request_state i915_test_request_state(struct i915_request *rq);
 
 void i915_request_module_exit(void);
 int i915_request_module_init(void);
+
+#ifdef CONFIG_LOCKDEP
+void i915_fence_check_lr_lockdep(struct dma_fence *fence);
+#else
+static inline void i915_fence_check_lr_lockdep(struct dma_fence *fence) { }
+#endif
 
 #endif /* I915_REQUEST_H */

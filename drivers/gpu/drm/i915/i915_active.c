@@ -541,6 +541,7 @@ static void enable_signaling(struct i915_active_fence *active)
 	if (!fence)
 		return;
 
+	i915_fence_check_lr_lockdep(fence);
 	dma_fence_enable_sw_signaling(fence);
 	dma_fence_put(fence);
 }
@@ -607,9 +608,13 @@ static int __await_active(struct i915_active_fence *active,
 
 	fence = i915_active_fence_get(active);
 	if (fence) {
-		int err;
+		int err = 0;
 
-		err = fn(arg, fence);
+		if (dma_fence_is_lr(fence))
+			err = -EBUSY;
+
+		if (!err)
+			err = fn(arg, fence);
 		dma_fence_put(fence);
 		if (err < 0)
 			return err;

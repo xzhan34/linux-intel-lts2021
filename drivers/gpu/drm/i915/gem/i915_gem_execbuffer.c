@@ -957,6 +957,11 @@ static struct i915_vma *eb_lookup_vma(struct i915_execbuffer *eb, u32 handle)
 {
 	struct i915_address_space *vm = eb->context->vm;
 
+	if (i915_gem_context_is_lr(eb->gem_context)) {
+		drm_dbg(&eb->i915->drm, "Long Running Ctx: Non VM_BIND vma.\n");
+		return ERR_PTR(-EINVAL);
+	}
+
 	do {
 		struct drm_i915_gem_object *obj;
 		struct i915_vma *vma;
@@ -2886,6 +2891,10 @@ static int eb_request_submit(struct i915_execbuffer *eb,
 {
 	int err;
 
+	/* Consider moving this to after request creation if needed. */
+	if (i915_gem_context_is_lr(eb->gem_context))
+		set_bit(I915_FENCE_FLAG_LR, &rq->fence.flags);
+
 	if (intel_context_nopreempt(rq->context))
 		__set_bit(I915_FENCE_FLAG_NOPREEMPT, &rq->fence.flags);
 
@@ -3627,6 +3636,13 @@ static int eb_request_add(struct i915_execbuffer *eb, struct i915_request *rq,
 
 	trace_i915_request_add(rq);
 
+	/*
+	 * An error might mean we want to retry the submission after
+	 * the failed request. (EINTR, EAGAIN)
+	 */
+	if (err)
+		clear_bit(I915_FENCE_FLAG_LR, &rq->fence.flags);
+
 	prev = __i915_request_commit(rq);
 
 	/* Check that the context wasn't destroyed before submission */
@@ -3946,6 +3962,7 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 	struct sync_file *out_fence = NULL;
 	int out_fence_fd = -1;
 	int err;
+	bool is_long_running;
 
 	BUILD_BUG_ON(__EXEC_INTERNAL_FLAGS & ~__I915_EXEC_ILLEGAL_FLAGS);
 	BUILD_BUG_ON(__EXEC_OBJECT_INTERNAL_FLAGS &
@@ -4032,6 +4049,14 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 	err = eb_select_context(&eb);
 	if (unlikely(err))
 		goto err_destroy;
+
+	is_long_running = i915_gem_context_is_lr(eb.gem_context);
+	if (unlikely(is_long_running && args->flags & I915_EXEC_FENCE_OUT)) {
+		drm_dbg(&i915->drm,
+			"Long Running Ctx: execbuf with out_fence.\n");
+		err = -EINVAL;
+		goto err_context;
+	}
 
 	err = eb_select_engine(&eb);
 	if (unlikely(err))

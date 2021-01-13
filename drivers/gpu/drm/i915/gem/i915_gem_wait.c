@@ -21,6 +21,9 @@ i915_gem_object_wait_fence(struct dma_fence *fence,
 {
 	BUILD_BUG_ON(I915_WAIT_INTERRUPTIBLE != 0x1);
 
+	if (dma_fence_is_lr(fence))
+		return -EINVAL;
+
 	if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))
 		return timeout;
 
