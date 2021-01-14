@@ -174,6 +174,37 @@ object_free:
 	return ret;
 }
 
+struct create_ext {
+	struct drm_i915_private *i915;
+	struct drm_i915_gem_object *vanilla_object;
+	unsigned long flags;
+};
+
+static int __create_setparam(struct prelim_drm_i915_gem_object_param *args,
+			     struct create_ext *ext_data)
+{
+	if (!(args->param & PRELIM_I915_OBJECT_PARAM)) {
+		DRM_DEBUG("Missing I915_OBJECT_PARAM namespace\n");
+		return -EINVAL;
+	}
+
+	return -EINVAL;
+}
+
+static int create_setparam(struct i915_user_extension __user *base, void *data)
+{
+	struct prelim_drm_i915_gem_create_ext_setparam ext;
+
+	if (copy_from_user(&ext, base, sizeof(ext)))
+		return -EFAULT;
+
+	return __create_setparam(&ext.param, data);
+}
+
+static const i915_user_extension_fn prelim_create_extensions[] = {
+	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_GEM_CREATE_EXT_SETPARAM)] = create_setparam,
+};
+
 /**
  * Creates a new mm object and returns a handle to it.
  * @dev: drm device pointer
@@ -185,7 +216,8 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 		      struct drm_file *file)
 {
 	struct drm_i915_private *i915 = to_i915(dev);
-	struct drm_i915_gem_create *args = data;
+	struct prelim_drm_i915_gem_create_ext *args = data;
+	struct create_ext ext_data = { .i915 = i915 };
 	struct drm_i915_gem_object *obj;
 	int ret;
 
@@ -194,6 +226,14 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 	obj = i915_gem_object_alloc();
 	if (!obj)
 		return -ENOMEM;
+
+	ext_data.vanilla_object = obj;
+	ret = i915_user_extensions(u64_to_user_ptr(args->extensions),
+				   prelim_create_extensions,
+				   ARRAY_SIZE(prelim_create_extensions),
+				   &ext_data);
+	if (ret)
+		goto object_free;
 
 	ret = i915_gem_setup(obj, args->size);
 	if (ret)
@@ -205,12 +245,6 @@ object_free:
 	i915_gem_object_free(obj);
 	return ret;
 }
-
-struct create_ext {
-	struct drm_i915_private *i915;
-	struct drm_i915_gem_object *vanilla_object;
-	unsigned long flags;
-};
 
 static void repr_placements(char *buf, size_t size,
 			    struct intel_memory_region **placements,

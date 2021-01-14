@@ -45,6 +45,7 @@
 #include "gem/i915_gem_clflush.h"
 #include "gem/i915_gem_context.h"
 #include "gem/i915_gem_ioctls.h"
+#include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_mman.h"
 #include "gem/i915_gem_pm.h"
 #include "gem/i915_gem_region.h"

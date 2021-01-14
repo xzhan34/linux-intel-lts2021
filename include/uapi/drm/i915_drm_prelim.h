@@ -42,6 +42,61 @@ struct prelim_i915_user_extension {
 #define PRELIM_UAPI_MAJOR	2
 #define PRELIM_UAPI_MINOR	1
 
+/* PRELIM ioctl's */
+/* PRELIM ioctl numbers go down from 0x5f */
+#define PRELIM_DRM_I915_RESERVED_FOR_VERSION	0x5f
+/* 0x5e is free, please use if needed */
+
+
+#define PRELIM_DRM_IOCTL_I915_GEM_CREATE_EXT		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_CREATE, struct prelim_drm_i915_gem_create_ext)
+/* End PRELIM ioctl's */
+
+struct prelim_drm_i915_gem_create_ext {
+
+	/**
+	 * Requested size for the object.
+	 *
+	 * The (page-aligned) allocated size for the object will be returned.
+	 */
+	__u64 size;
+	/**
+	 * Returned handle for the object.
+	 *
+	 * Object handles are nonzero.
+	 */
+	__u32 handle;
+	__u32 pad;
+#define PRELIM_I915_GEM_CREATE_EXT_SETPARAM	(PRELIM_I915_USER_EXT | 1)
+#define PRELIM_I915_GEM_CREATE_EXT_FLAGS_UNKNOWN \
+	(~PRELIM_I915_GEM_CREATE_EXT_SETPARAM)
+	__u64 extensions;
+};
+
+struct prelim_drm_i915_gem_object_param {
+	/* Object handle (0 for I915_GEM_CREATE_EXT_SETPARAM) */
+	__u32 handle;
+
+	/* Data pointer size */
+	__u32 size;
+
+/*
+ * PRELIM_I915_OBJECT_PARAM:
+ *
+ * Select object namespace for the param.
+ */
+#define PRELIM_I915_OBJECT_PARAM  (1ull << 48)
+
+	__u64 param;
+
+	/* Data value or pointer */
+	__u64 data;
+};
+
+struct prelim_drm_i915_gem_create_ext_setparam {
+	struct i915_user_extension base;
+	struct prelim_drm_i915_gem_object_param param;
+};
+
 #define PRELIM_PERF_VERSION	(1000)
 
 /**
