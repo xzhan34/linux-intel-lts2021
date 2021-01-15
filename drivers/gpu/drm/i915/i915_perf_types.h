@@ -17,6 +17,7 @@
 #include <linux/wait.h>
 #include <uapi/drm/i915_drm.h>
 
+#include "gt/intel_engine_types.h"
 #include "gt/intel_sseu.h"
 #include "i915_reg_defs.h"
 #include "intel_wakeref.h"
@@ -29,6 +30,18 @@ struct i915_perf;
 struct i915_vma;
 struct intel_context;
 struct intel_engine_cs;
+
+enum {
+	PERF_GROUP_OAG = 0,
+
+	PERF_GROUP_OAM_0 = 1,
+	PERF_GROUP_OAM_1 = 2,
+	PERF_GROUP_OAM_2 = 3,
+	PERF_GROUP_OAM_3 = 4,
+
+	PERF_GROUP_MAX,
+	PERF_GROUP_INVALID = U32_MAX,
+};
 
 struct i915_oa_format {
 	u32 format;
@@ -396,6 +409,35 @@ struct i915_oa_ops {
 	u32 (*oa_hw_tail_read)(struct i915_perf_stream *stream);
 };
 
+struct i915_perf_group {
+	/*
+	 * @type: Identifier for the OA unit.
+	 */
+	u32 oa_unit_id;
+
+	/*
+	 * @gt: gt that this group belongs to
+	 */
+	struct intel_gt *gt;
+
+	/*
+	 * @exclusive_stream: The stream currently using the OA unit. This is
+	 * sometimes accessed outside a syscall associated to its file
+	 * descriptor.
+	 */
+	struct i915_perf_stream *exclusive_stream;
+
+	/*
+	 * @num_engines: The number of engines using this OA buffer.
+	 */
+	u32 num_engines;
+
+	/*
+	 * @engine_mask: A mask of engines using a single OA buffer.
+	 */
+	intel_engine_mask_t engine_mask;
+};
+
 struct i915_perf_gt {
 	/*
 	 * Lock associated with anything below within this structure.
@@ -408,12 +450,15 @@ struct i915_perf_gt {
 	 */
 	struct intel_sseu sseu;
 
-	/*
-	 * @exclusive_stream: The stream currently using the OA unit. This is
-	 * sometimes accessed outside a syscall associated to its file
-	 * descriptor.
+	/**
+	 * @num_perf_groups: number of perf groups per gt.
 	 */
-	struct i915_perf_stream *exclusive_stream;
+	u32 num_perf_groups;
+
+	/*
+	 * @group: list of OA groups - one for each OA buffer.
+	 */
+	struct i915_perf_group *group;
 };
 
 struct i915_perf {
@@ -470,6 +515,9 @@ struct i915_perf {
 	atomic64_t noa_programming_delay;
 
 	struct i915_engine_class_instance default_ci;
+
+	/* oa unit ids */
+	u32 oa_unit_ids;
 };
 
 #endif /* _I915_PERF_TYPES_H_ */

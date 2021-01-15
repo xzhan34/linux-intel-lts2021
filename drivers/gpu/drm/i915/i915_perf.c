@@ -1678,14 +1678,13 @@ static void intel_engine_apply_oa_whitelist(struct intel_engine_cs *engine)
 		return;
 }
 
-static void intel_gt_apply_oa_whitelist(struct intel_gt *gt)
+static void perf_group_apply_oa_whitelist(struct i915_perf_group *g)
 {
 	struct intel_engine_cs *engine;
-	enum intel_engine_id id;
+	intel_engine_mask_t tmp;
 
-	for_each_engine(engine, gt, id)
-		if (engine_supports_oa(engine->i915, engine))
-			intel_engine_apply_oa_whitelist(engine);
+	for_each_engine_masked(engine, g->gt, g->engine_mask, tmp)
+		intel_engine_apply_oa_whitelist(engine);
 }
 
 static void intel_engine_remove_oa_whitelist(struct intel_engine_cs *engine)
@@ -1715,26 +1714,26 @@ static void intel_engine_remove_oa_whitelist(struct intel_engine_cs *engine)
 		return;
 }
 
-static void intel_gt_remove_oa_whitelist(struct intel_gt *gt)
+static void perf_group_remove_oa_whitelist(struct i915_perf_group *g)
 {
 	struct intel_engine_cs *engine;
-	enum intel_engine_id id;
+	intel_engine_mask_t tmp;
 
-	for_each_engine(engine, gt, id)
-		if (engine_supports_oa(engine->i915, engine))
-			intel_engine_remove_oa_whitelist(engine);
+	for_each_engine_masked(engine, g->gt, g->engine_mask, tmp)
+		intel_engine_remove_oa_whitelist(engine);
 }
 
 static void i915_oa_stream_destroy(struct i915_perf_stream *stream)
 {
 	struct i915_perf *perf = stream->perf;
 	struct intel_gt *gt = stream->engine->gt;
+	struct i915_perf_group *g = stream->engine->oa_group;
 
-	if (WARN_ON(stream != gt->perf.exclusive_stream))
+	if (WARN_ON(stream != g->exclusive_stream))
 		return;
 
 	if (stream->oa_whitelisted)
-		intel_gt_remove_oa_whitelist(to_gt(stream->perf->i915));
+		perf_group_remove_oa_whitelist(g);
 
 	/*
 	 * Unset exclusive_stream first, it will be checked while disabling
@@ -1742,7 +1741,7 @@ static void i915_oa_stream_destroy(struct i915_perf_stream *stream)
 	 *
 	 * See i915_oa_init_reg_state() and lrc_configure_all_contexts()
 	 */
-	WRITE_ONCE(gt->perf.exclusive_stream, NULL);
+	WRITE_ONCE(g->exclusive_stream, NULL);
 	synchronize_rcu(); /* Serialise with i915_oa_init_reg_state */
 	perf->ops.disable_metric_set(stream);
 
@@ -3411,6 +3410,7 @@ static int i915_oa_stream_init(struct i915_perf_stream *stream,
 {
 	struct drm_i915_private *i915 = stream->perf->i915;
 	struct i915_perf *perf = stream->perf;
+	struct i915_perf_group *g;
 	struct intel_gt *gt;
 	int ret;
 
@@ -3420,6 +3420,12 @@ static int i915_oa_stream_init(struct i915_perf_stream *stream,
 		return -EINVAL;
 	}
 	gt = props->engine->gt;
+
+	g = props->engine->oa_group;
+	if (!g) {
+		DRM_DEBUG("Perf group invalid\n");
+		return -EINVAL;
+	}
 
 	/*
 	 * If the sysfs metrics/ directory wasn't registered for some
@@ -3450,7 +3456,7 @@ static int i915_oa_stream_init(struct i915_perf_stream *stream,
 	 * counter reports and marshal to the appropriate client
 	 * we currently only allow exclusive access
 	 */
-	if (gt->perf.exclusive_stream) {
+	if (g->exclusive_stream) {
 		drm_dbg(&stream->perf->i915->drm,
 			"OA unit already in use\n");
 		return -EBUSY;
@@ -3545,7 +3551,7 @@ static int i915_oa_stream_init(struct i915_perf_stream *stream,
 	stream->ops = &i915_oa_stream_ops;
 
 	stream->engine->gt->perf.sseu = props->sseu;
-	WRITE_ONCE(gt->perf.exclusive_stream, stream);
+	WRITE_ONCE(g->exclusive_stream, stream);
 
 	ret = i915_perf_stream_enable_sync(stream);
 	if (ret) {
@@ -3568,7 +3574,7 @@ static int i915_oa_stream_init(struct i915_perf_stream *stream,
 	return 0;
 
 err_enable:
-	WRITE_ONCE(gt->perf.exclusive_stream, NULL);
+	WRITE_ONCE(g->exclusive_stream, NULL);
 	perf->ops.disable_metric_set(stream);
 
 	free_oa_buffer(stream);
@@ -3597,13 +3603,14 @@ void i915_oa_init_reg_state(const struct intel_context *ce,
 			    const struct intel_engine_cs *engine)
 {
 	struct i915_perf_stream *stream;
+	struct i915_perf_group *g = engine->oa_group;
 
-	if (!engine_supports_oa(engine->i915, engine))
+	if (!g)
 		return;
 
 	/* perf.exclusive_stream serialised by i915_oa_stream_destroy() */
 	rcu_read_lock();
-	stream = READ_ONCE(engine->gt->perf.exclusive_stream);
+	stream = READ_ONCE(g->exclusive_stream);
 	if (stream && GRAPHICS_VER(stream->perf->i915) < 12)
 		gen8_update_reg_state_unlocked(ce, stream);
 	rcu_read_unlock();
@@ -4237,12 +4244,12 @@ i915_perf_open_ioctl_locked(struct i915_perf *perf,
 	 *
 	 * We want to make sure this is almost the last thing we do before
 	 * returning the stream fd. If we do end up checking for errors in code
-	 * that follows this, we MUST call intel_gt_remove_oa_whitelist in
+	 * that follows this, we MUST call perf_group_remove_oa_whitelist in
 	 * the error handling path to remove the whitelisted registers.
 	 */
 	if (!i915_perf_stream_paranoid &&
 	    props->sample_flags & SAMPLE_OA_REPORT) {
-		intel_gt_apply_oa_whitelist(stream->engine->gt);
+		perf_group_apply_oa_whitelist(stream->engine->oa_group);
 		stream->oa_whitelisted = true;
 	}
 
@@ -5157,6 +5164,130 @@ static struct ctl_table dev_root[] = {
 	{}
 };
 
+static u32 __num_perf_groups_per_gt(struct intel_gt *gt)
+{
+	enum intel_platform platform = INTEL_INFO(gt->i915)->platform;
+
+	switch (platform) {
+	case INTEL_XEHPSDV:
+		return 5;
+	default:
+		return 1;
+	}
+}
+
+static u32 __oam_engine_group(struct intel_engine_cs *engine)
+{
+	enum intel_platform platform = INTEL_INFO(engine->i915)->platform;
+	struct intel_gt *gt = engine->gt;
+	u32 group = PERF_GROUP_INVALID;
+
+	switch (platform) {
+	case INTEL_XEHPSDV:
+		/*
+		 * XEHPSDV mappings:
+		 *
+		 * VCS0, VCS1, VECS0 - PERF_GROUP_OAM_0
+		 * VCS2, VCS3, VECS1 - PERF_GROUP_OAM_1
+		 * VCS4, VCS5, VECS2 - PERF_GROUP_OAM_2
+		 * VCS6, VCS7, VECS3 - PERF_GROUP_OAM_3
+		 */
+		group = engine->class == VIDEO_ENHANCEMENT_CLASS ?
+			engine->instance + 1 : (engine->instance >> 1) + 1;
+		break;
+	default:
+		break;
+	}
+
+	drm_WARN_ON(&gt->i915->drm, group >= __num_perf_groups_per_gt(gt));
+
+	return group;
+}
+
+static u32 __oa_engine_group(struct intel_engine_cs *engine)
+{
+	if (!engine_supports_oa(engine->i915, engine))
+		return PERF_GROUP_INVALID;
+
+	switch (engine->class) {
+	case RENDER_CLASS:
+	case COMPUTE_CLASS:
+		return PERF_GROUP_OAG;
+
+	case VIDEO_DECODE_CLASS:
+	case VIDEO_ENHANCEMENT_CLASS:
+		return __oam_engine_group(engine);
+
+	default:
+		return PERF_GROUP_INVALID;
+	}
+}
+
+static void oa_init_groups(struct intel_gt *gt)
+{
+	int i, num_groups = gt->perf.num_perf_groups;
+	struct i915_perf *perf = &gt->i915->perf;
+
+	for (i = 0; i < num_groups; i++) {
+		struct i915_perf_group *g = &gt->perf.group[i];
+
+		/* Fused off engines can result in a group with num_engines == 0 */
+		if (g->num_engines == 0)
+			continue;
+
+		/* Set oa_unit_ids now to ensure ids remain contiguous. */
+		g->oa_unit_id = perf->oa_unit_ids++;
+
+		g->gt = gt;
+	}
+}
+
+static int oa_init_gt(struct intel_gt *gt)
+{
+	u32 num_groups = __num_perf_groups_per_gt(gt);
+	struct intel_engine_cs *engine;
+	struct i915_perf_group *g;
+	intel_engine_mask_t tmp;
+
+	g = kzalloc(sizeof(*g) * num_groups, GFP_KERNEL);
+	if (drm_WARN_ON(&gt->i915->drm, !g))
+		return -ENOMEM;
+
+	for_each_engine_masked(engine, gt, ALL_ENGINES, tmp) {
+		u32 index;
+
+		index = __oa_engine_group(engine);
+		if (index < num_groups) {
+			g[index].engine_mask |= BIT(engine->id);
+			g[index].num_engines++;
+			engine->oa_group = &g[index];
+		} else {
+			engine->oa_group = NULL;
+		}
+	}
+
+	gt->perf.num_perf_groups = num_groups;
+	gt->perf.group = g;
+
+	oa_init_groups(gt);
+
+	return 0;
+}
+
+static int oa_init_engine_groups(struct i915_perf *perf)
+{
+	struct intel_gt *gt;
+	int i, ret;
+
+	for_each_gt(gt, perf->i915, i) {
+		ret = oa_init_gt(gt);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static void oa_init_supported_formats(struct i915_perf *perf)
 {
 	struct drm_i915_private *i915 = perf->i915;
@@ -5354,7 +5485,7 @@ int i915_perf_init(struct drm_i915_private *i915)
 
 	if (perf->ops.enable_metric_set) {
 		struct intel_gt *gt;
-		int i;
+		int i, ret;
 
 		for_each_gt(gt, i915, i)
 			mutex_init(&gt->perf.lock);
@@ -5393,6 +5524,13 @@ int i915_perf_init(struct drm_i915_private *i915)
 
 		perf->i915 = i915;
 
+		ret = oa_init_engine_groups(perf);
+		if (ret) {
+			drm_err(&i915->drm,
+				"OA initialization failed %d\n", ret);
+			return ret;
+		}
+
 		oa_init_supported_formats(perf);
 	}
 
@@ -5423,9 +5561,14 @@ void i915_perf_sysctl_unregister(void)
 void i915_perf_fini(struct drm_i915_private *i915)
 {
 	struct i915_perf *perf = &i915->perf;
+	struct intel_gt *gt;
+	int i;
 
 	if (!perf->i915)
 		return;
+
+	for_each_gt(gt, perf->i915, i)
+		kfree(gt->perf.group);
 
 	idr_for_each(&perf->metrics_idr, destroy_config, perf);
 	idr_destroy(&perf->metrics_idr);
