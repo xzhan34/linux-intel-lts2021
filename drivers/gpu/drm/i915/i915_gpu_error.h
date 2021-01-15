@@ -259,7 +259,11 @@ static inline u32 i915_reset_engine_count(struct i915_gpu_error *error,
 #define CORE_DUMP_FLAG_NONE           0x0
 #define CORE_DUMP_FLAG_IS_GUC_CAPTURE BIT(0)
 
+
 #if IS_ENABLED(CONFIG_DRM_I915_CAPTURE_ERROR)
+
+void intel_klog_error_capture(struct intel_gt *gt,
+			      intel_engine_mask_t engine_mask);
 
 __printf(2, 3)
 void i915_error_printf(struct drm_i915_error_state_buf *e, const char *f, ...);
@@ -323,6 +327,11 @@ void i915_reset_error_state(struct drm_i915_private *i915);
 void i915_disable_error_state(struct drm_i915_private *i915, int err);
 
 #else
+
+static inline void intel_klog_error_capture(struct intel_gt *gt,
+					    intel_engine_mask_t engine_mask)
+{
+}
 
 __printf(2, 3)
 static inline void
