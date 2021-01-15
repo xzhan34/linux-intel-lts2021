@@ -399,6 +399,15 @@ enum prelim_drm_i915_oa_format {
 	PRELIM_I915_OA_FORMAT_MAX	/* non-ABI */
 };
 
+enum prelim_drm_i915_perf_record_type {
+#define PRELIM_DRM_I915_PERF_RECORD	(1 << 16)
+	/*
+	 * MMIO trigger queue is full.
+	 * This record type is available in perf revision 1003.
+	 */
+	PRELIM_DRM_I915_PERF_RECORD_OA_MMIO_TRG_Q_FULL = (PRELIM_DRM_I915_PERF_RECORD | 1),
+};
+
 struct prelim_drm_i915_gem_context_param {
 /*
  * I915_CONTEXT_PARAM_DEBUG_FLAGS

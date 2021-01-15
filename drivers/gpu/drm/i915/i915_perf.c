@@ -598,7 +598,7 @@ static int append_oa_status(struct i915_perf_stream *stream,
 			    char __user *buf,
 			    size_t count,
 			    size_t *offset,
-			    enum drm_i915_perf_record_type type)
+			    unsigned int type)
 {
 	struct drm_i915_perf_record_header header = { type, 0, sizeof(header) };
 
@@ -925,6 +925,17 @@ static int gen8_oa_read(struct i915_perf_stream *stream,
 		 * reset GEN8_OASTATUS for us
 		 */
 		oastatus = intel_uncore_read(uncore, oastatus_reg);
+	}
+
+	if (HAS_OA_MMIO_TRIGGER(stream->perf->i915) &&
+	    oastatus & XEHPSDV_OAG_OASTATUS_MMIO_TRG_Q_FULL) {
+		ret = append_oa_status(stream, buf, count, offset,
+				       PRELIM_DRM_I915_PERF_RECORD_OA_MMIO_TRG_Q_FULL);
+		if (ret)
+			return ret;
+
+		intel_uncore_write(uncore, oastatus_reg, oastatus &
+				   ~XEHPSDV_OAG_OASTATUS_MMIO_TRG_Q_FULL);
 	}
 
 	if (oastatus & GEN8_OASTATUS_REPORT_LOST) {
@@ -5473,8 +5484,10 @@ int i915_perf_ioctl_version(void)
 	 *
 	 * 1002: Add PRELIM_DRM_I915_PERF_PROP_OA_ENGINE_CLASS and
 	 *	 PRELIM_DRM_I915_PERF_PROP_OA_ENGINE_INSTANCE
+	 *
+	 * 1003: Add perf record type - PRELIM_DRM_I915_PERF_RECORD_OA_MMIO_TRG_Q_FULL
 	 */
-	return 1002;
+	return 1003;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
