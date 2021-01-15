@@ -287,6 +287,9 @@ i915_param_named_unsafe(page_sz_mask, uint, 0600,
 i915_param_named_unsafe(ulls_bcs0_pm_wa, bool, 0600,
 	"Workaround for VLK-20104 which disables bcs0 PM (default: true)");
 
+i915_param_named_unsafe(debug_pages, uint, 0400,
+			"Extra pages allocated for debug (default=0, Bit 31 indicates LMEM)");
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,

@@ -268,6 +268,8 @@ struct intel_gt {
 	struct intel_rc6 rc6;
 	struct intel_rps rps;
 
+	struct i915_vma *dbg;
+
 	spinlock_t *irq_lock;
 	unsigned long irq_count;
 	u32 gt_imr;

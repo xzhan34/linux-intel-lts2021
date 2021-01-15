@@ -596,6 +596,75 @@ static void intel_gt_fini_scratch(struct intel_gt *gt)
 	i915_vma_unpin_and_release(&gt->scratch, 0);
 }
 
+static void intel_gt_init_debug_pages(struct intel_gt *gt)
+{
+	struct drm_i915_private *i915 = gt->i915;
+	struct drm_i915_gem_object *obj;
+	struct i915_vma *vma;
+	int count = i915->params.debug_pages & ~BIT(31);
+	bool lmem = i915->params.debug_pages & BIT(31);
+	u32 size = count << PAGE_SHIFT;
+	void* vaddr;
+
+	if (!count)
+		return;
+
+	if (lmem) {
+		if (!HAS_LMEM(i915)) {
+			drm_err(&i915->drm, "No LMEM, skipping debug pages\n");
+			return;
+		}
+
+		obj = intel_gt_object_create_lmem(gt, size,
+						  I915_BO_ALLOC_CONTIGUOUS |
+						  I915_BO_ALLOC_VOLATILE);
+	} else {
+		obj = i915_gem_object_create_shmem(i915, size);
+	}
+	if (IS_ERR(obj)) {
+		drm_err(&i915->drm, "Failed to allocate debug pages\n");
+		return;
+	}
+
+	vaddr = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WC);
+	if (!vaddr)
+		goto err_unref;
+
+	memset(vaddr, 0, size);
+
+	i915_gem_object_unpin_map(obj);
+
+	vma = i915_vma_instance(obj, &gt->ggtt->vm, NULL);
+	if (IS_ERR(vma))
+		goto err_unref;
+
+	if (i915_ggtt_pin_for_gt(vma, NULL, 0, PIN_HIGH))
+		goto err_unref;
+
+	gt->dbg = i915_vma_make_unshrinkable(vma);
+
+	drm_dbg(&i915->drm,
+		"gt%u debug pages allocated in %s: ggtt=0x%08x, phys=0x%016llx, size=0x%zx\n",
+		gt->info.id,
+		obj->mm.region.mem->name,
+		i915_ggtt_offset(vma),
+		(u64)i915_gem_object_get_dma_address(obj, 0),
+		obj->base.size);
+
+	return;
+
+err_unref:
+	i915_gem_object_put(obj);
+	drm_err(&i915->drm, "Failed to init debug pages\n");
+	return;
+}
+
+static void intel_gt_fini_debug_pages(struct intel_gt *gt)
+{
+	if (gt->dbg)
+		i915_vma_unpin_and_release(&gt->dbg, 0);
+}
+
 static struct i915_address_space *kernel_vm(struct intel_gt *gt)
 {
 	struct i915_ppgtt *ppgtt;
@@ -916,6 +985,8 @@ int intel_gt_init(struct intel_gt *gt)
 	if (err && err != -ENODEV)
 		goto err_scratch;
 
+	intel_gt_init_debug_pages(gt);
+
 	intel_gt_pm_init(gt);
 
 	vm = kernel_vm(gt);
@@ -971,6 +1042,7 @@ err_engines:
 	release_vm(gt);
 err_pm:
 	intel_gt_pm_fini(gt);
+	intel_gt_fini_debug_pages(gt);
 	intel_gt_fini_counters(gt);
 err_scratch:
 	intel_gt_fini_scratch(gt);
@@ -1025,6 +1097,7 @@ void intel_gt_driver_release(struct intel_gt *gt)
 
 	intel_wa_list_free(&gt->wa_list);
 	intel_gt_pm_fini(gt);
+	intel_gt_fini_debug_pages(gt);
 	intel_gt_fini_counters(gt);
 	intel_gt_fini_scratch(gt);
 	intel_gt_fini_buffer_pool(gt);

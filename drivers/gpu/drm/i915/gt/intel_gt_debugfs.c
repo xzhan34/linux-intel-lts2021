@@ -121,6 +121,35 @@ static int fake_int_fast_set(void *data, u64 val)
 }
 DEFINE_SIMPLE_ATTRIBUTE(fake_int_fast_fops, fake_int_fast_get, fake_int_fast_set, "%llu\n");
 
+static int debug_pages_show(struct seq_file *m, void *data)
+{
+	struct intel_gt *gt = m->private;
+
+	if (gt->dbg) {
+		u32* vaddr;
+		int i;
+		seq_printf(m, "debug pages allocated in %s: "
+				"ggtt=0x%08x, phys=0x%016llx, size=0x%zx\n\n",
+				gt->dbg->obj->mm.region.mem->name,
+				i915_ggtt_offset(gt->dbg),
+				(u64)i915_gem_object_get_dma_address(gt->dbg->obj, 0),
+				gt->dbg->obj->base.size);
+
+		vaddr = i915_gem_object_pin_map_unlocked(gt->dbg->obj, I915_MAP_WC);
+		if (!vaddr)
+			return -ENOSPC;
+
+		for (i = 0; i < (gt->dbg->obj->base.size / sizeof(u32)); i += 4)
+			seq_printf(m, "[0x%08x] 0x%08x 0x%08x 0x%08x 0x%08x\n",
+				   i * 4, vaddr[i], vaddr[i + 1], vaddr[i + 2], vaddr[i + 3]);
+
+		i915_gem_object_unpin_map(gt->dbg->obj);
+	}
+
+	return 0;
+}
+DEFINE_INTEL_GT_DEBUGFS_ATTRIBUTE(debug_pages);
+
 static void gt_debugfs_register(struct intel_gt *gt, struct dentry *root)
 {
 	static const struct intel_gt_debugfs_file files[] = {
@@ -128,6 +157,7 @@ static void gt_debugfs_register(struct intel_gt *gt, struct dentry *root)
 		{ "steering", &steering_fops },
 		{ "fake_int_slow_ns", &fake_int_slow_fops, NULL },
 		{ "fake_int_fast_ns", &fake_int_fast_fops, NULL },
+		{ "debug_pages", &debug_pages_fops, NULL },
 	};
 
 	intel_gt_debugfs_register_files(root, files, ARRAY_SIZE(files), gt);
