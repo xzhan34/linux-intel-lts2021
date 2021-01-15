@@ -478,6 +478,9 @@ enum prelim_drm_i915_perf_property_id {
 	 * I915_ENGINE_CLASS_COMPUTE based on the platform.
 	 *
 	 * This property is available in perf revision 1002
+	 *
+	 * Perf revision 1004 supports I915_ENGINE_CLASS_VIDEO and
+	 * I915_ENGINE_CLASS_VIDEO_ENHANCE.
 	 */
 	PRELIM_DRM_I915_PERF_PROP_OA_ENGINE_CLASS = (PRELIM_DRM_I915_PERF_PROP | 2),
 

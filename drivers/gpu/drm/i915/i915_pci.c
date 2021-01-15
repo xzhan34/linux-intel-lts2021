@@ -1036,7 +1036,9 @@ static const struct intel_device_info adl_p_info = {
 	.has_selective_tlb_invalidation = 1, \
 	.has_semaphore_xehpsdv = 1, \
 	.ppgtt_size = 48, \
-	.ppgtt_type = INTEL_PPGTT_FULL
+	.ppgtt_type = INTEL_PPGTT_FULL, \
+	.has_oam = 1, \
+	.oam_uses_vdbox0_channel = 1
 
 #define XE_HPM_FEATURES \
 	.media.ver = 12, \

@@ -20,6 +20,7 @@
 #include "gt/intel_engine_types.h"
 #include "gt/intel_sseu.h"
 #include "i915_reg_defs.h"
+#include "intel_uncore.h"
 #include "intel_wakeref.h"
 
 struct drm_i915_private;
@@ -43,9 +44,27 @@ enum {
 	PERF_GROUP_INVALID = U32_MAX,
 };
 
+struct i915_perf_regs {
+	u32 base;
+	i915_reg_t oa_head_ptr;
+	i915_reg_t oa_tail_ptr;
+	i915_reg_t oa_buffer;
+	i915_reg_t oa_ctx_ctrl;
+	i915_reg_t oa_ctrl;
+	i915_reg_t oa_debug;
+	i915_reg_t oa_status;
+	u32 oa_ctrl_counter_format_shift;
+};
+
+enum {
+	TYPE_OAG,
+	TYPE_OAM,
+};
+
 struct i915_oa_format {
 	u32 format;
 	int size;
+	int type;
 };
 
 struct i915_oa_reg {
@@ -316,6 +335,11 @@ struct i915_perf_stream {
 		 * @tail: The last verified tail that can be read by userspace.
 		 */
 		u32 tail;
+
+		/**
+		 * @group: The group object for this OA buffer.
+		 */
+		struct i915_perf_group *group;
 	} oa_buffer;
 
 	/**
@@ -436,6 +460,21 @@ struct i915_perf_group {
 	 * @engine_mask: A mask of engines using a single OA buffer.
 	 */
 	intel_engine_mask_t engine_mask;
+
+	/*
+	 * @regs: OA buffer register group for programming the OA unit.
+	 */
+	struct i915_perf_regs regs;
+
+	/*
+	 * @type: Type of OA buffer, OAM, OAG etc.
+	 */
+	int type;
+
+	/*
+	 * @fw_domains: forcewake domains required for this group.
+	 */
+	enum forcewake_domains fw_domains;
 };
 
 struct i915_perf_gt {
