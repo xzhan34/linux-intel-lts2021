@@ -261,6 +261,8 @@
 #define   SURFACE_TYPE_2D		(1 << 29)
 #define   DEST_SURF_WIDTH_SHIFT		(14)
 #define   SRC_SURF_WIDTH_SHIFT		(14)
+/* Bspec lists this field as 27:21, but the index alone is in 27:22 */
+#define   XY_BCB_MOCS_INDEX_MASK	GENMASK(27, 22)
 #define GEN9_XY_FAST_COPY_BLT_CMD	(2 << 29 | 0x42 << 22)
 #define   XY_FAST_COPY_BLT_D0_SRC_TILING_MASK     REG_GENMASK(21, 20)
 #define   XY_FAST_COPY_BLT_D0_DST_TILING_MASK     REG_GENMASK(14, 13)

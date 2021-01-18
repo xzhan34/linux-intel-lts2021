@@ -138,6 +138,7 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 {
 	struct drm_i915_private *i915 = ce->vm->i915;
 	const u32 block_size = SZ_8M; /* ~1ms at 8GiB/s preemption delay */
+	struct intel_gt *gt = ce->engine->gt;
 	struct intel_gt_buffer_pool_node *pool;
 	struct i915_vma *batch;
 	u64 offset;
@@ -173,7 +174,7 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 
 	size = round_up(size, PAGE_SIZE);
 
-	pool = intel_gt_get_buffer_pool(ce->engine->gt, size, I915_MAP_WC);
+	pool = intel_gt_get_buffer_pool(gt, size, I915_MAP_WC);
 	if (IS_ERR(pool)) {
 		err = PTR_ERR(pool);
 		goto out_pm;
@@ -212,7 +213,7 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 
 		if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50)) {
 			u32 mocs = FIELD_PREP(XY_FAST_COLOR_BLT_MOCS_MASK,
-					      ce->engine->gt->mocs.uc_index << 1);
+					      gt->mocs.uc_index << 1);
 			u8 mem_type = MEM_TYPE_SYS;
 
 			/* Wa to set the target memory region as system */
@@ -284,7 +285,7 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 	 * the value to be filled in the BO is all zeroes
 	 */
 	if (HAS_FLAT_CCS(i915) && !value)
-		cmd = xehp_emit_ccs_copy(cmd, ce->engine->gt,
+		cmd = xehp_emit_ccs_copy(cmd, gt,
 					 i915_vma_offset(vma), DIRECT_ACCESS,
 					 i915_vma_offset(vma), INDIRECT_ACCESS,
 					 vma->obj->base.size);
@@ -294,7 +295,7 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 	i915_gem_object_flush_map(pool->obj);
 	i915_gem_object_unpin_map(pool->obj);
 
-	intel_gt_chipset_flush(ce->vm->gt);
+	intel_gt_chipset_flush(gt);
 
 	batch->private = pool;
 	return batch;
@@ -455,6 +456,7 @@ struct i915_vma *intel_emit_vma_copy_blt(struct intel_context *ce,
 {
 	struct drm_i915_private *i915 = ce->vm->i915;
 	const u32 block_size = SZ_8M; /* ~1ms at 8GiB/s preemption delay */
+	struct intel_gt *gt = ce->engine->gt;
 	struct intel_gt_buffer_pool_node *pool;
 	struct i915_vma *batch;
 	u64 src_offset, dst_offset;
@@ -477,7 +479,7 @@ struct i915_vma *intel_emit_vma_copy_blt(struct intel_context *ce,
 		size = (1 + 11 * count) * sizeof(u32);
 
 	size = round_up(size, PAGE_SIZE);
-	pool = intel_gt_get_buffer_pool(ce->engine->gt, size, I915_MAP_WC);
+	pool = intel_gt_get_buffer_pool(gt, size, I915_MAP_WC);
 	if (IS_ERR(pool)) {
 		err = PTR_ERR(pool);
 		goto out_pm;
@@ -516,7 +518,7 @@ struct i915_vma *intel_emit_vma_copy_blt(struct intel_context *ce,
 
 		if (IS_XEHPSDV(i915)) {
 			u8 src_mem_type, dst_mem_type;
-			u32 mocs = 4 << 21;
+			u32 mocs = FIELD_PREP(XY_BCB_MOCS_INDEX_MASK, gt->mocs.uc_index);
 
 			/* Wa_14010828422:xehpsdv set target memory region to smem */
 			if (IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0, STEP_B0)) {
@@ -596,7 +598,7 @@ struct i915_vma *intel_emit_vma_copy_blt(struct intel_context *ce,
 	i915_gem_object_flush_map(pool->obj);
 	i915_gem_object_unpin_map(pool->obj);
 
-	intel_gt_chipset_flush(ce->vm->gt);
+	intel_gt_chipset_flush(gt);
 	batch->private = pool;
 	return batch;
 
@@ -617,12 +619,15 @@ prepare_compressed_copy_cmd_buf(struct intel_context *ce,
 {
 	struct intel_gt_buffer_pool_node *pool;
 	struct i915_vma *batch;
+	struct intel_gt *gt = src->vm->gt;
 	u64 src_offset, dst_offset;
 	u64 count, rem, size;
 	u32 *cmd;
 	int err;
 	u8 src_mem_type, dst_mem_type;
-	u32 src_compression, dst_compression, src_mocs, dst_mocs;
+	u32 src_compression, dst_compression;
+	u32 src_mocs = FIELD_PREP(XY_BCB_MOCS_INDEX_MASK, gt->mocs.uc_index);
+	u32 dst_mocs = FIELD_PREP(XY_BCB_MOCS_INDEX_MASK, gt->mocs.uc_index);
 	bool dst_is_lmem = i915_gem_object_is_lmem(dst->obj);
 
 	count = (src->size + SZ_64K - 1)/SZ_64K;
@@ -631,7 +636,7 @@ prepare_compressed_copy_cmd_buf(struct intel_context *ce,
 
 	intel_engine_pm_get(ce->engine);
 
-	pool = intel_gt_get_buffer_pool(ce->engine->gt, size, I915_MAP_WC);
+	pool = intel_gt_get_buffer_pool(gt, size, I915_MAP_WC);
 	if (IS_ERR(pool)) {
 		err = PTR_ERR(pool);
 		goto out_pm;
@@ -661,14 +666,10 @@ prepare_compressed_copy_cmd_buf(struct intel_context *ce,
 		src_compression = 0;
 		dst_compression =  COMPRESSION_ENABLE | AUX_CCS_E;
 		rem = dst->size;
-		dst_mocs = 4 << 21;
-		src_mocs = 4 << 21;
 	} else {
 		src_compression = COMPRESSION_ENABLE | AUX_CCS_E;
 		dst_compression = 0;
 		rem = src->size;
-		dst_mocs = 4 << 21;
-		src_mocs = 4 << 21;
 	}
 
 	src_mem_type = i915_gem_object_is_lmem(src->obj) ?
@@ -680,7 +681,7 @@ prepare_compressed_copy_cmd_buf(struct intel_context *ce,
 	do {
 		int block_size = min_t(u64, rem, SZ_64K);
 		*cmd++ = XY_BLOCK_COPY_BLT_CMD | 0x14;
-		*cmd++ = dst_compression | dst_mocs | TILE_4_FORMAT
+		*cmd++ = dst_mocs | dst_compression | TILE_4_FORMAT
 				| TILE_4_WIDTH_DWORD;
 		*cmd++ = 0;
 		/* BG3 */
