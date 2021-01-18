@@ -137,8 +137,8 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 					 u32 value)
 {
 	struct drm_i915_private *i915 = ce->vm->i915;
-	const u32 block_size = SZ_8M; /* ~1ms at 8GiB/s preemption delay */
 	struct intel_gt *gt = ce->engine->gt;
+	u32 block_size;
 	struct intel_gt_buffer_pool_node *pool;
 	struct i915_vma *batch;
 	u64 offset;
@@ -148,11 +148,19 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 	u32 *cmd;
 	int err;
 
+	GEM_BUG_ON(HAS_LINK_COPY_ENGINES(i915) && value > 255);
 	GEM_BUG_ON(intel_engine_is_virtual(ce->engine));
 	intel_engine_pm_get(ce->engine);
 
+	if (HAS_LINK_COPY_ENGINES(i915))
+		block_size = SZ_256K; /* PVC_MEM_SET has 18 bits for size */
+	else
+		block_size = SZ_8M; /* ~1ms at 8GiB/s preemption delay */
+
 	count = div_u64(round_up(vma->size, block_size), block_size);
-	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
+	if (HAS_LINK_COPY_ENGINES(i915))
+		size = (1 + 8 * count) * sizeof(u32);
+	else if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
 		size = (1 + 17 * count) * sizeof(u32);
 	else if (GRAPHICS_VER(i915) >= 12)
 		size = (1 + 12 * count) * sizeof(u32);
@@ -211,7 +219,19 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 
 		GEM_BUG_ON(size >> PAGE_SHIFT > S16_MAX);
 
-		if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50)) {
+		if (HAS_LINK_COPY_ENGINES(i915)) {
+			u32 mocs = FIELD_PREP(MS_MOCS_INDEX_MASK,
+					      gt->mocs.uc_index);
+
+			*cmd++ = PVC_MEM_SET_CMD | (7 - 2);
+			*cmd++ = size - 1;
+			*cmd++ = 0;
+			*cmd++ = 0;
+			*cmd++ = lower_32_bits(offset);
+			*cmd++ = upper_32_bits(offset);
+			/* Value is Bit 31:24 */
+			*cmd++ = value << 24 | mocs;
+		} else if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50)) {
 			u32 mocs = FIELD_PREP(XY_FAST_COLOR_BLT_MOCS_MASK,
 					      gt->mocs.uc_index << 1);
 			u8 mem_type = MEM_TYPE_SYS;
@@ -455,18 +475,26 @@ struct i915_vma *intel_emit_vma_copy_blt(struct intel_context *ce,
 					 struct i915_vma *dst)
 {
 	struct drm_i915_private *i915 = ce->vm->i915;
-	const u32 block_size = SZ_8M; /* ~1ms at 8GiB/s preemption delay */
 	struct intel_gt *gt = ce->engine->gt;
 	struct intel_gt_buffer_pool_node *pool;
 	struct i915_vma *batch;
 	u64 src_offset, dst_offset;
 	u64 count, rem;
+	u32 block_size;
 	u32 size, *cmd;
 	int err;
 
 	GEM_BUG_ON(src->size > dst->size);
 
 	GEM_BUG_ON(intel_engine_is_virtual(ce->engine));
+
+	if (IS_PONTEVECCHIO(i915)) /* PVC_MEM_COPY has 18 bits for size */
+		block_size = SZ_256K;
+	else if (IS_XEHPSDV(i915))
+		block_size = SZ_16K;
+	else /* ~1ms at 8GiB/s preemption delay */
+		block_size = SZ_8M;
+
 	intel_engine_pm_get(ce->engine);
 	count = div_u64(round_up(dst->size, block_size), block_size);
 
@@ -553,6 +581,22 @@ struct i915_vma *intel_emit_vma_copy_blt(struct intel_context *ce,
 			*cmd++ = 0;
 			*cmd++ = 0;
 			*cmd++ = 0;
+		} else if (HAS_LINK_COPY_ENGINES(i915)) {
+			u32 src_mocs = FIELD_PREP(MC_SRC_MOCS_INDEX_MASK,
+						  gt->mocs.uc_index);
+			u32 dst_mocs = FIELD_PREP(MC_DST_MOCS_INDEX_MASK,
+						  gt->mocs.uc_index);
+
+			*cmd++ = PVC_MEM_COPY_CMD | (10 - 2);
+			*cmd++ = size - 1;
+			*cmd++ = 0;
+			*cmd++ = 0;
+			*cmd++ = 0;
+			*cmd++ = lower_32_bits(src_offset);
+			*cmd++ = upper_32_bits(src_offset);
+			*cmd++ = lower_32_bits(dst_offset);
+			*cmd++ = upper_32_bits(dst_offset);
+			*cmd++ = src_mocs | dst_mocs;
 		} else if (GRAPHICS_VER(i915) >= 9 &&
 			   !wa_1209644611_applies(i915, size)) {
 			*cmd++ = GEN9_XY_FAST_COPY_BLT_CMD | (10 - 2);

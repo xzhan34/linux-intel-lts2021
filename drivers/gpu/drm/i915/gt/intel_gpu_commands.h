@@ -321,6 +321,18 @@
 #define   BLT_DEPTH_32			(3<<24)
 #define   BLT_ROP_SRC_COPY		(0xcc<<16)
 #define   BLT_ROP_COLOR_COPY		(0xf0<<16)
+#define PVC_MEM_COPY_CMD		(2 << 29 | 0x5a << 22)
+/*
+ * Bspec lists MOCS fields as [31:25] and [6:0], but the actual indices are
+ * in [31:26] and [6:1].
+ */
+#define   MC_SRC_MOCS_INDEX_MASK	GENMASK(31, 26)
+#define   MC_DST_MOCS_INDEX_MASK	GENMASK(6, 1)
+#define PVC_MEM_SET_CMD			(2 << 29 | 0x5b << 22)
+#define   MS_LINEAR			0
+#define   MS_MATRIX			REG_BIT(17)
+/* Bspec lists field as [6:0], but index alone is from [6:1] */
+#define   MS_MOCS_INDEX_MASK		GENMASK(6, 1)
 #define XY_SRC_COPY_BLT_SRC_TILED	(1<<15) /* 965+ only */
 #define XY_SRC_COPY_BLT_DST_TILED	(1<<11) /* 965+ only */
 #define CMD_OP_DISPLAYBUFFER_INFO ((0x0<<29)|(0x14<<23)|2)

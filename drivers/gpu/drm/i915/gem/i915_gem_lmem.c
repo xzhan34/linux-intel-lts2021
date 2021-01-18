@@ -448,6 +448,35 @@ lmem_swapin(struct drm_i915_gem_object *obj,
 }
 
 static int
+pvc_emit_clear(struct i915_request *rq, u64 offset, u32 size, u32 page_shift)
+{
+	u32 mocs;
+	u32 *cs;
+
+	cs = intel_ring_begin(rq, 8);
+	if (IS_ERR(cs))
+		return PTR_ERR(cs);
+
+	*cs++ = PVC_MEM_SET_CMD | MS_MATRIX | (7 - 2);
+
+	*cs++ = BIT(page_shift) - 1;
+	*cs++ = (size >> page_shift) - 1;
+	*cs++ = BIT(page_shift) - 1;
+
+	*cs++ = lower_32_bits(offset);
+	*cs++ = upper_32_bits(offset);
+
+	mocs = rq->engine->gt->mocs.uc_index;
+	mocs = FIELD_PREP(MS_MOCS_INDEX_MASK, mocs);
+	*cs++ = mocs;
+
+	*cs++ = MI_NOOP;
+	intel_ring_advance(rq, cs);
+
+	return 0;
+}
+
+static int
 xy_emit_clear(struct i915_request *rq, u64 offset, u32 size, u32 page_shift)
 {
 	u32 mocs = 0;
@@ -534,8 +563,11 @@ clear_blt(struct intel_context *ce,
 	const int page_shift = min(__ffs(page_sizes), 16ul);
 	const u32 step = min(BIT(page_shift) << 14, /* 128-1024MiB */
 			     ce->engine->gt->lmem_clear_chunk);
+	bool use_pvc_memset = HAS_LINK_COPY_ENGINES(ce->engine->i915);
 	const bool use_ccs_clear =
-		flags & I915_BO_ALLOC_USER && HAS_FLAT_CCS(ce->engine->i915);
+		!use_pvc_memset &&
+		flags & I915_BO_ALLOC_USER &&
+		HAS_FLAT_CCS(ce->engine->i915);
 	struct sgt_iter it;
 	u64 offset;
 	int err;
@@ -573,7 +605,10 @@ clear_blt(struct intel_context *ce,
 		if (err)
 			goto skip;
 
-		err = xy_emit_clear(rq, offset, length, page_shift);
+		if (use_pvc_memset)
+			err = pvc_emit_clear(rq, offset, length, page_shift);
+		else
+			err = xy_emit_clear(rq, offset, length, page_shift);
 		if (err == 0 && use_ccs_clear)
 			err = emit_ccs_clear(rq, offset, length);
 		if (err)
