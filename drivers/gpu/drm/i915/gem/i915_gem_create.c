@@ -89,7 +89,6 @@ static int
 i915_gem_setup(struct drm_i915_gem_object *obj, u64 size)
 {
 	struct intel_memory_region *mr = obj->mm.placements[0];
-	unsigned int flags;
 	int ret;
 
 	size = round_up(size, object_max_page_size(obj));
@@ -101,16 +100,10 @@ i915_gem_setup(struct drm_i915_gem_object *obj, u64 size)
 	/* For most of the ABI (e.g. mmap) we think in system pages */
 	GEM_BUG_ON(!IS_ALIGNED(size, PAGE_SIZE));
 
-	if (i915_gem_object_size_2big(size) || size > object_limit(obj))
+	if (overflows_type(size, obj->base.size) || size > object_limit(obj))
 		return -E2BIG;
 
-	/*
-	 * I915_BO_ALLOC_USER will make sure the object is cleared before
-	 * any user access.
-	 */
-	flags = I915_BO_ALLOC_USER;
-
-	ret = mr->ops->init_object(mr, obj, size, flags);
+	ret = mr->ops->init_object(mr, obj, size, I915_BO_ALLOC_USER);
 	if (ret)
 		return ret;
 
@@ -194,7 +187,6 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_private *i915 = to_i915(dev);
 	struct drm_i915_gem_create *args = data;
 	struct drm_i915_gem_object *obj;
-	struct intel_memory_region *mr;
 	int ret;
 
 	i915_gem_flush_free_objects(i915);
@@ -202,9 +194,6 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 	obj = i915_gem_object_alloc();
 	if (!obj)
 		return -ENOMEM;
-
-	mr = intel_memory_region_by_type(i915, INTEL_MEMORY_SYSTEM);
-	object_set_placements(obj, &mr, 1);
 
 	ret = i915_gem_setup(obj, args->size);
 	if (ret)
