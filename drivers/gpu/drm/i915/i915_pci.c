@@ -1135,6 +1135,7 @@ static const struct intel_device_info ats_m_info = {
 	.dma_mask_size = 52, \
 	.has_3d_pipeline = 0, \
 	.has_guc_deprivilege = 1, \
+	.has_guc_programmable_mocs = 1, \
 	.has_l3_ccs_read = 1, \
 	.has_mem_sparing = 1, \
 	.has_mslice_steering = 0, \

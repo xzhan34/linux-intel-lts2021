@@ -242,14 +242,19 @@ int intel_gt_init_hw(struct intel_gt *gt)
 		goto out;
 	}
 
+	/*
+	 * GuC DMA transfers are affected by MOCS programming on some
+	 * platforms so make sure the MOCS table is initialised prior
+	 * to loading the GuC firmware
+	 */
+	intel_mocs_init(gt);
+
 	/* We can't enable contexts until all firmware is loaded */
 	ret = intel_uc_init_hw(&gt->uc);
 	if (ret) {
 		i915_probe_error(i915, "Enabling uc failed (%d)\n", ret);
 		goto out;
 	}
-
-	intel_mocs_init(gt);
 
 out:
 	intel_uncore_forcewake_put(uncore, FORCEWAKE_ALL);

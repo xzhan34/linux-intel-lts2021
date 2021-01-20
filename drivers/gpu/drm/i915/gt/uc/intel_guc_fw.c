@@ -29,6 +29,10 @@ static void guc_prepare_xfer(struct intel_gt *gt)
 		shim_flags |= GUC_DISABLE_SRAM_INIT_TO_ZEROES |
 			      GUC_ENABLE_MIA_CACHING;
 
+	/* Make GUC transactions uncacheable on PVC */
+	if (HAS_GUC_PROGRAMMABLE_MOCS(uncore->i915))
+		shim_flags |= PVC_GUC_MOCS_INDEX(PVC_MOCS_UC_INDEX);
+
 	/* Must program this register before loading the ucode with DMA */
 	intel_uncore_write(uncore, GUC_SHIM_CONTROL, shim_flags);
 
