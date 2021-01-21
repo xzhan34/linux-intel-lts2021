@@ -18,6 +18,7 @@ struct dma_fence_work;
 struct dma_fence_work_ops {
 	const char *name;
 	int (*work)(struct dma_fence_work *f);
+	bool (*enable_signaling)(struct dma_fence_work *f);
 	void (*complete)(struct dma_fence_work *f);
 	void (*release)(struct dma_fence_work *f);
 };
