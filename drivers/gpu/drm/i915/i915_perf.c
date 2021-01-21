@@ -310,7 +310,7 @@ static u32 i915_oa_max_sample_rate = 100000;
  * be used as a mask to align the OA tail pointer. In some of the
  * formats, R is used to denote reserved field.
  */
-static const struct i915_oa_format oa_formats[PRELIM_I915_OA_FORMAT_MAX] = {
+static struct i915_oa_format oa_formats[PRELIM_I915_OA_FORMAT_MAX] = {
 	[I915_OA_FORMAT_A13]	    = { 0, 64 },
 	[I915_OA_FORMAT_A29]	    = { 1, 128 },
 	[I915_OA_FORMAT_A13_B8_C8]  = { 2, 128 },
@@ -5807,6 +5807,14 @@ static void oa_init_supported_formats(struct i915_perf *perf)
 
 	default:
 		MISSING_CASE(platform);
+	}
+
+	if (IS_DG2_G11(i915)) {
+		/* Wa_1608133521:dg2 */
+		oa_formats[PRELIM_I915_OAR_FORMAT_A36u64_B8_C8].header = HDR_32_BIT;
+		oa_formats[PRELIM_I915_OAC_FORMAT_A24u64_B8_C8].header = HDR_32_BIT;
+		oa_formats[PRELIM_I915_OA_FORMAT_A38u64_R2u64_B8_C8].header = HDR_32_BIT;
+		oa_formats[PRELIM_I915_OAM_FORMAT_A2u64_R2u64_B8_C8].header = HDR_32_BIT;
 	}
 }
 
