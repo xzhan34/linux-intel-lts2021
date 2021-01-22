@@ -464,6 +464,7 @@ struct prelim_drm_i915_query_item {
 	 */
 #define PRELIM_DRM_I915_QUERY_CS_CYCLES			(PRELIM_DRM_I915_QUERY | 9)
 #define PRELIM_DRM_I915_QUERY_FABRIC_INFO		(PRELIM_DRM_I915_QUERY | 11)
+#define PRELIM_DRM_I915_QUERY_HW_IP_VERSION		(PRELIM_DRM_I915_QUERY | 12)
 #define PRELIM_DRM_I915_QUERY_ENGINE_INFO		(PRELIM_DRM_I915_QUERY | 13)
 #define PRELIM_DRM_I915_QUERY_L3BANK_COUNT		(PRELIM_DRM_I915_QUERY | 14)
 #define PRELIM_DRM_I915_QUERY_LMEM_MEMORY_REGIONS	(PRELIM_DRM_I915_QUERY | 15)
@@ -1061,6 +1062,28 @@ struct prelim_drm_i915_query_cs_cycles {
 
 	/** Must be zero. */
 	__u32 rsvd;
+};
+
+/**
+ * prelim_struct drm_i915_query_hw_ip_version
+ *
+ * Hardware IP version (i.e., architecture generation) associated with a
+ * specific engine.
+ */
+struct prelim_drm_i915_query_hw_ip_version {
+	/** Engine to query HW IP version for */
+	struct i915_engine_class_instance engine;
+
+	__u8 flags;	/* MBZ */
+
+	/** Architecture  version */
+	__u8 arch;
+
+	/** Architecture release id */
+	__u8 release;
+
+	/** Stepping (e.g., A0, A1, B0, etc.) */
+	__u8 stepping;
 };
 
 /**
