@@ -46,7 +46,7 @@ static int live_slpc_clamp_min(void *arg)
 	enum intel_engine_id id;
 	struct igt_spinner spin;
 	intel_wakeref_t wakeref;
-	u32 slpc_min_freq, slpc_max_freq;
+	u32 slpc_min_freq, slpc_max_freq, saved_min_freq;
 	int err = 0;
 	unsigned int i;
 
@@ -74,8 +74,22 @@ static int live_slpc_clamp_min(void *arg)
 		}
 
 		if (slpc_min_freq == slpc_max_freq) {
-			pr_err("Min/Max are fused to the same value\n");
-			return -EINVAL;
+			/* Servers will have min/max clamped to RP0 */
+			if (slpc->min_is_rpmax) {
+				err = slpc_set_min_freq(slpc, slpc->min_freq);
+				if (err) {
+					pr_err("Unable to update min freq on server part");
+					return err;
+				}
+
+				saved_min_freq = slpc_min_freq;
+
+				/* New temp min freq = RPn */
+				slpc_min_freq = slpc->min_freq;
+			} else {
+				pr_err("Min/Max are fused to the same value");
+				return -EINVAL;
+			}
 		}
 
 		intel_gt_pm_wait_for_idle(gt);
@@ -147,7 +161,8 @@ static int live_slpc_clamp_min(void *arg)
 
 			/* Actual frequency should rise above min */
 			if (max_act_freq == slpc_min_freq) {
-				pr_err("Actual freq did not rise above min\n");
+				pr_err("Actual freq did not rise above min, Perf Limit Reasons: %x\n",
+					intel_uncore_read(gt->uncore, GT0_PERF_LIMIT_REASONS));
 				err = -EINVAL;
 			}
 
@@ -172,6 +187,9 @@ static int live_slpc_clamp_min(void *arg)
 		/* Don't continue with next tile if err is set */
 		if (err)
 			break;
+
+		if (slpc->min_is_rpmax)
+			slpc_set_min_freq(slpc, saved_min_freq);
 	}
 
 	return err;
@@ -188,7 +206,7 @@ static int live_slpc_clamp_max(void *arg)
 	struct igt_spinner spin;
 	intel_wakeref_t wakeref;
 	int err = 0;
-	u32 slpc_min_freq, slpc_max_freq;
+	u32 slpc_min_freq, slpc_max_freq, saved_min_freq;
 	unsigned int i;
 
 	for_each_gt(gt, i915, i) {
@@ -215,8 +233,22 @@ static int live_slpc_clamp_max(void *arg)
 		}
 
 		if (slpc_min_freq == slpc_max_freq) {
-			pr_err("Min/Max are fused to the same value\n");
-			return -EINVAL;
+			/* Servers will have min/max clamped to RP0 */
+			if (slpc->min_is_rpmax) {
+				err = slpc_set_min_freq(slpc, slpc->min_freq);
+				if (err) {
+					pr_err("Unable to update min freq on server part");
+					return err;
+				}
+
+				saved_min_freq = slpc_min_freq;
+
+				/* New temp min freq = RPn */
+				slpc_min_freq = slpc->min_freq;
+			} else {
+				pr_err("Min/Max are fused to the same value");
+				return -EINVAL;
+			}
 		}
 
 		intel_gt_pm_wait_for_idle(gt);
@@ -290,7 +322,8 @@ static int live_slpc_clamp_max(void *arg)
 
 			/* Actual frequency should rise above min */
 			if (max_act_freq == slpc_min_freq) {
-				pr_err("Actual freq did not rise above min\n");
+				pr_err("Actual freq did not rise above min, Perf Limit Reasons: %x\n",
+					intel_uncore_read(gt->uncore, GT0_PERF_LIMIT_REASONS));
 				err = -EINVAL;
 			}
 
@@ -317,6 +350,9 @@ static int live_slpc_clamp_max(void *arg)
 		/* Don't continue with next tile if err is set */
 		if (err)
 			break;
+
+		if (slpc->min_is_rpmax)
+			slpc_set_min_freq(slpc, saved_min_freq);
 	}
 
 	return err;
