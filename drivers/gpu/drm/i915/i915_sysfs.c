@@ -42,6 +42,7 @@
 #include "i915_drv.h"
 #include "i915_sysfs.h"
 #include "intel_pm.h"
+#include "intel_sysfs_mem_health.h"
 
 struct ext_attr {
 	struct device_attribute attr;
@@ -479,6 +480,8 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 	intel_engines_add_sysfs(dev_priv);
 
 	i915_setup_quiesce_gpu_sysfs(dev_priv);
+
+	intel_mem_health_report_sysfs(dev_priv);
 }
 
 void i915_teardown_sysfs(struct drm_i915_private *dev_priv)

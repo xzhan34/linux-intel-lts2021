@@ -57,6 +57,7 @@ i915-y += i915_driver.o \
 	  intel_runtime_pm.o \
 	  intel_sbi.o \
 	  intel_step.o \
+	  intel_sysfs_mem_health.o \
 	  intel_uncore.o \
 	  intel_vsec.o \
 	  intel_wakeref.o \

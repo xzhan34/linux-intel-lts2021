@@ -185,12 +185,14 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
 	struct intel_uncore *uncore = gt->uncore;
+	struct intel_mem_sparing_event *sparing;
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
 	struct intel_memory_region *mem;
 	resource_size_t min_page_size;
 	resource_size_t io_start;
 	resource_size_t lmem_size, lmem_base;
 	resource_size_t root_lmembar_size;
+	bool is_degraded = false;
 	int err;
 
 	if (!IS_DGFX(i915))
@@ -200,6 +202,8 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 		return ERR_PTR(-ENXIO);
 
 	root_lmembar_size = pci_resource_len(pdev, GEN12_LMEM_BAR);
+
+	sparing = &to_gt(i915)->mem_sparing;
 
 	/* Get per tile memory range */
 	err = intel_get_tile_range(gt, &lmem_base, &lmem_size);
@@ -212,15 +216,30 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 
 	if (HAS_FLAT_CCS(i915)) {
 		u64 tile_stolen, flat_ccs_base_addr_reg, flat_ccs_base;
+		u64 actual_flat_ccs_size, expected_flat_ccs_size, bgsm;
 
+		bgsm = intel_uncore_read64(uncore, GEN12_GSMBASE);
 		flat_ccs_base_addr_reg = intel_gt_mcr_read_any_fw(gt, XEHP_FLAT_CCS_BASE_ADDR);
 		flat_ccs_base = (flat_ccs_base_addr_reg >> XEHP_CCS_BASE_SHIFT) * SZ_64K;
+
+		/* CCS to LMEM size ratio is 1:256 */
+		expected_flat_ccs_size = lmem_size / 256;
+		actual_flat_ccs_size = bgsm - flat_ccs_base;
 		tile_stolen = lmem_size - (flat_ccs_base - lmem_base);
 
 		/* If the FLAT_CCS_BASE_ADDR register is not populated, flag an error */
 		if (tile_stolen == lmem_size)
 			drm_err(&i915->drm,
 				"CCS_BASE_ADDR register did not have expected value\n");
+		/*
+		 * If the actual flat ccs size is greater than the expected
+		 * value, then there is memory degradation
+		 */
+		if (actual_flat_ccs_size > expected_flat_ccs_size &&
+		    to_gt(i915)->info.id == 0) {
+			drm_err(&i915->drm, "CCS_BASE_ADDR register did not have expected value - and memory degradation might have occurred\n");
+			is_degraded = true;
+		}
 
 		lmem_size -= tile_stolen;
 	} else {
@@ -279,6 +298,14 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 		 &mem->io_size);
 	drm_info(&i915->drm, "Local memory available: %pa\n",
 		 &lmem_size);
+
+	/* Report memory health status on the root tile */
+	if (to_gt(i915)->info.id == 0) {
+		if (is_degraded)
+			sparing->health_status = MEM_HEALTH_DEGRADED;
+		else
+			sparing->health_status = MEM_HEALTH_OKAY;
+	}
 
 	return mem;
 
