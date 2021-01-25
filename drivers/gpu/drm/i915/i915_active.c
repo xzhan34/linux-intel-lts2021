@@ -411,9 +411,8 @@ static bool replace_barrier(struct i915_active_fence *active,
 	return active_del_barrier(node_from_active(active), fence);
 }
 
-int i915_active_add_request(struct i915_active *ref, struct i915_request *rq)
+int i915_active_ref(struct i915_active *ref, u64 idx, struct dma_fence *fence)
 {
-	struct dma_fence *fence = &rq->fence;
 	struct i915_active_fence *active;
 	int err;
 
@@ -422,7 +421,7 @@ int i915_active_add_request(struct i915_active *ref, struct i915_request *rq)
 	if (err)
 		return err;
 
-	active = active_instance(ref, i915_request_timeline(rq)->fence_context);
+	active = active_instance(ref, idx);
 	if (!active) {
 		err = -ENOMEM;
 		goto out;
@@ -1068,6 +1067,23 @@ int i915_active_fence_set(struct i915_active_fence *active,
 	}
 
 	return err;
+}
+
+int i915_active_add_suspend_fence(struct i915_active *ref,
+				  struct intel_context *ce,
+				  struct i915_request *rq)
+{
+	struct dma_fence *fence;
+
+	if (!ce || !(ce->sfence || rq))
+		return -EINVAL;
+
+	fence = ce->sfence ? &ce->sfence->base.dma : &rq->fence;
+
+	lockdep_assert_held(&ce->timeline->mutex);
+	return i915_active_ref(ref,
+			       ce->timeline->fence_context,
+			       fence);
 }
 
 void i915_active_noop(struct dma_fence *fence, struct dma_fence_cb *cb)

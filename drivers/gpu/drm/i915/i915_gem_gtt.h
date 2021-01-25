@@ -49,9 +49,10 @@ int i915_gem_gtt_insert(struct i915_address_space *vm,
 #define PIN_OFFSET_MASK		I915_GTT_PAGE_MASK
 
 static inline int i915_vm_move_to_active(struct i915_address_space *vm,
+					 struct intel_context *ce,
 					 struct i915_request *rq)
 {
-	return i915_active_add_request(&vm->active, rq);
+	return i915_active_add_suspend_fence(&vm->active, ce, rq);
 }
 
 static inline int i915_vm_sync(struct i915_address_space *vm)

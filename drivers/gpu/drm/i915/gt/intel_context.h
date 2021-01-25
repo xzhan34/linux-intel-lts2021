@@ -12,6 +12,7 @@
 
 #include "i915_active.h"
 #include "i915_drv.h"
+#include "i915_suspend_fence.h"
 #include "intel_context_types.h"
 #include "intel_engine_types.h"
 #include "intel_gt_pm.h"
@@ -234,6 +235,11 @@ static inline void intel_context_exit(struct intel_context *ce)
 	if (--ce->active_count)
 		return;
 
+	if (ce->sfence) {
+		i915_suspend_fence_retire_dma_fence(&ce->sfence->base.dma);
+		ce->sfence = NULL;
+	}
+
 	intel_gt_pm_put_async(ce->vm->gt, ce->wakeref);
 	ce->ops->exit(ce);
 }
@@ -243,6 +249,36 @@ int intel_context_throttle(const struct intel_context *ce);
 static inline bool intel_context_is_active(const struct intel_context *ce)
 {
 	return !i915_active_is_idle(&ce->active);
+}
+
+static inline void intel_context_suspend_fence_set(struct intel_context *ce,
+						   struct dma_fence *fence)
+{
+	struct i915_suspend_fence *sfence =
+		container_of(fence, typeof(*sfence), base.dma);
+
+	lockdep_assert_held(&ce->timeline->mutex);
+
+	GEM_BUG_ON(ce->sfence);
+	dma_fence_get(fence);
+	ce->sfence = sfence;
+}
+
+static inline void
+intel_context_suspend_fence_replace(struct intel_context *ce,
+				    struct dma_fence *fence)
+{
+	struct dma_fence *prev;
+	struct i915_suspend_fence *sfence =
+		container_of(fence, typeof(*sfence), base.dma);
+
+	lockdep_assert_held(&ce->timeline->mutex);
+	GEM_BUG_ON(!ce->sfence);
+
+	prev = &ce->sfence->base.dma;
+	dma_fence_get(fence);
+	ce->sfence = sfence;
+	dma_fence_put(prev);
 }
 
 static inline struct intel_context *intel_context_get(struct intel_context *ce)
@@ -282,7 +318,20 @@ int intel_context_prepare_remote_request(struct intel_context *ce,
 struct i915_request *intel_context_create_request(struct intel_context *ce);
 
 struct i915_request *
-intel_context_find_active_request(struct intel_context *ce);
+__intel_context_find_active_request(struct intel_context *ce,
+				    bool rq_get_ref);
+
+static inline struct i915_request *
+intel_context_find_active_request(struct intel_context *ce)
+{
+	return __intel_context_find_active_request(ce, false);
+}
+
+static inline struct i915_request *
+intel_context_get_active_request(struct intel_context *ce)
+{
+	return __intel_context_find_active_request(ce, true);
+}
 
 static inline bool intel_context_is_barrier(const struct intel_context *ce)
 {

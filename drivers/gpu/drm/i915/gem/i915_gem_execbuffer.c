@@ -33,6 +33,7 @@
 #include "i915_gem_ioctls.h"
 #include "i915_gem_lmem.h"
 #include "i915_gem_vm_bind.h"
+#include "i915_suspend_fence.h"
 #include "i915_trace.h"
 #include "i915_user_extensions.h"
 
@@ -331,6 +332,11 @@ struct i915_execbuffer {
 static int eb_parse(struct i915_execbuffer *eb);
 static int eb_pin_engine(struct i915_execbuffer *eb, bool throttle);
 static void eb_unpin_engine(struct i915_execbuffer *eb);
+static void i915_gem_exec_revalidate(struct intel_context *ce);
+
+static const struct i915_suspend_fence_ops execbuf_suspend_ops = {
+	.revalidate = i915_gem_exec_revalidate,
+};
 
 static inline bool eb_use_cmdparser(const struct i915_execbuffer *eb)
 {
@@ -581,7 +587,7 @@ static int __eb_persistent_vmas_move_to_active(struct i915_execbuffer *eb,
 			return err;
 	}
 
-	return i915_vm_move_to_active(vm, rq);
+	return i915_vm_move_to_active(vm, rq->context, rq);
 }
 
 static inline bool
@@ -3995,6 +4001,14 @@ eb_requests_create(struct i915_execbuffer *eb, struct dma_fence *in_fence,
 	return out_fence;
 }
 
+static void
+init_and_set_context_suspend_fence(struct intel_context *ce,
+				   struct i915_suspend_fence *sfence)
+{
+	intel_context_suspend_fence_set
+		(ce, i915_suspend_fence_init(sfence, ce, &execbuf_suspend_ops));
+}
+
 static int
 i915_gem_do_execbuffer(struct drm_device *dev,
 		       struct drm_file *file,
@@ -4007,6 +4021,7 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 	struct sync_file *out_fence = NULL;
 	int out_fence_fd = -1;
 	int err;
+	struct i915_suspend_fence *sfence = NULL;
 	bool is_long_running;
 
 	BUILD_BUG_ON(__EXEC_INTERNAL_FLAGS & ~__I915_EXEC_ILLEGAL_FLAGS);
@@ -4108,9 +4123,17 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 	if (unlikely(err))
 		goto err_context;
 
+	if (is_long_running) {
+		sfence = kzalloc(sizeof(*sfence), GFP_KERNEL);
+		if (!sfence) {
+			err = -ENOMEM;
+			goto err_engine;
+		}
+	}
+
 	err = eb_enter(&eb);
 	if (unlikely(err))
-		goto err_engine;
+		goto err_sfence;
 
 	i915_gem_vm_bind_lock(eb.context->vm);
 
@@ -4148,6 +4171,13 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 			goto err_request;
 		else
 			goto err_vma;
+	}
+
+	/* For long running context set suspend fence if not already set */
+	if (is_long_running && !eb.context->sfence) {
+		GEM_BUG_ON(!sfence);
+		init_and_set_context_suspend_fence(eb.context, sfence);
+		sfence = NULL;
 	}
 
 	err = eb_submit(&eb);
@@ -4200,6 +4230,8 @@ err_vma:
 err_vm_bind_unlock:
 	i915_gem_vm_bind_unlock(eb.context->vm);
 	eb_exit(&eb);
+err_sfence:
+	kfree(sfence);
 err_engine:
 	eb_put_engine(&eb);
 err_context:
@@ -4314,3 +4346,165 @@ end:;
 	return err;
 }
 
+static int persistent_vmas_move_to_active_sync(struct i915_execbuffer *eb)
+{
+	struct i915_address_space *vm = eb->context->vm;
+	struct i915_vma *vma;
+	int err = 0;
+
+	assert_vm_bind_held(vm);
+	assert_vm_priv_held(vm);
+
+	list_for_each_entry(vma, &vm->vm_bind_list, vm_bind_link) {
+		err = i915_vma_wait_for_bind(vma);
+		if (err)
+			return err;
+	}
+
+	return i915_vm_move_to_active(vm, eb->context, NULL);
+}
+
+static int revalidate_transaction(struct i915_execbuffer *eb)
+{
+	struct intel_context *ce = eb->context;
+	struct i915_suspend_fence *sfence;
+	struct intel_timeline *tl;
+	struct dma_fence *fence;
+	int err;
+
+	err = eb_lock_persistent_vmas(eb);
+	if (err)
+		return err;
+
+	err = eb_validate_persistent_vmas(eb);
+	if (err)
+		return err;
+
+	ww_acquire_done(&eb->ww.ctx);
+
+	sfence = kzalloc(sizeof(*sfence), GFP_KERNEL);
+	if (!sfence)
+		return -ENOMEM;
+
+	/*
+	 * While the request is already on the timeline,
+	 * replacing the suspend_fence requires the timeline lock held.
+	 */
+	tl = intel_context_timeline_lock(ce);
+	if (IS_ERR(tl)) {
+		err = PTR_ERR(tl);
+		kfree(sfence);
+		return err;
+	}
+
+	/* If context is retired, abort */
+	if (!ce->active_count || !ce->sfence) {
+		kfree(sfence);
+		goto err_unlock;
+	}
+
+	/* If signaled, replace the suspend fence under the timeline lock */
+	if (dma_fence_is_signaled(&ce->sfence->base.dma)) {
+		fence = i915_suspend_fence_init(sfence, ce,
+						&execbuf_suspend_ops);
+		intel_context_suspend_fence_replace(eb->context, fence);
+	} else {
+		kfree(sfence);
+	}
+
+	/*
+	 * From now on, we can't retry locally, but need to wait
+	 * on the new suspend_fence to trigger yet another rerun.
+	 *
+	 * TODO: The sync wait for bind below may look non-optimal,
+	 * but we do (currently) expect most binding work here to
+	 * be committed in immediate mode and thus already completed
+	 * at this point. If this turns out not to be true, we might
+	 * need a request resume fence similar to the submit fence
+	 * that awaits the vma bindings to complete before
+	 * resuming the request.
+	 */
+	err = persistent_vmas_move_to_active_sync(eb);
+	if (err)
+		goto err_resume;
+
+	/* Recheck for recently invalidated userptr vmas */
+#ifdef CONFIG_MMU_NOTIFIER
+	read_lock(&eb->i915->mm.notifier_lock);
+	if (!list_empty_careful(&ce->vm->vm_rebind_list))
+		err = -EAGAIN;
+
+	read_unlock(&eb->i915->mm.notifier_lock);
+#endif
+
+err_resume:
+	if (err == -EAGAIN || err == -EINTR || err == -ERESTARTSYS) {
+		/* Triggers a rerun once we've unlocked the vm_bind lock. */
+		dma_fence_enable_sw_signaling(&ce->sfence->base.dma);
+		err = 0;
+	}
+err_unlock:
+	intel_context_timeline_unlock(tl);
+	return err;
+}
+
+/*
+ * Minimalistic "execbuffer" for vm_bind vmas only.
+ * The request already created.
+ * We don't not race with the
+ * ourselves nor with the original execbuffer where the request
+ * was created due to the vm_bind ww lock.
+ */
+static void i915_gem_exec_revalidate(struct intel_context *ce)
+{
+	struct drm_i915_gem_execbuffer2 args = {0};
+	struct i915_execbuffer eb = {0};
+	int err;
+
+	/* Only populate parts of @eb we actually use. */
+	eb.context = ce;
+	eb.i915 = eb.context->engine->i915;
+	eb.args = &args;
+
+	i915_gem_vm_bind_lock(ce->vm);
+retry:
+	err = eb_lookup_persistent_userptr_vmas(&eb);
+	if (err == -EAGAIN) {
+		cpu_relax();
+		goto retry;
+	}
+	if (err)
+		goto done;
+
+	i915_gem_ww_ctx_init(&eb.ww, true);
+revalidate:
+	err = revalidate_transaction(&eb);
+	if (err == -EDEADLK) {
+		err = i915_gem_ww_ctx_backoff(&eb.ww);
+		if (!err)
+			goto revalidate;
+	}
+	eb_release_persistent_vmas(&eb, true);
+	i915_gem_ww_ctx_fini(&eb.ww);
+
+	if (err == -EAGAIN || err == -EINTR || err == -ERESTARTSYS)
+		goto retry;
+
+done:
+	i915_gem_vm_bind_unlock(ce->vm);
+
+	if (err) {
+		struct i915_request *rq;
+
+		/* Attach error to first active request */
+		rq = intel_context_get_active_request(ce);
+		if (rq) {
+			i915_request_set_error_once(rq, err);
+			i915_request_put(rq);
+		}
+	}
+}
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#include "selftests/i915_gem_execbuffer.c"
+#endif

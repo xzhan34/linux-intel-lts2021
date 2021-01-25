@@ -213,7 +213,19 @@ void __i915_active_init(struct i915_active *ref,
 	__i915_active_init(ref, active, retire, flags, &__mkey, &__wkey);	\
 } while (0)
 
-int i915_active_add_request(struct i915_active *ref, struct i915_request *rq);
+int i915_active_ref(struct i915_active *ref, u64 idx, struct dma_fence *fence);
+
+static inline int
+i915_active_add_request(struct i915_active *ref, struct i915_request *rq)
+{
+	return i915_active_ref(ref,
+			       i915_request_timeline(rq)->fence_context,
+			       &rq->fence);
+}
+
+int i915_active_add_suspend_fence(struct i915_active *ref,
+				  struct intel_context *ce,
+				  struct i915_request *rq);
 
 struct dma_fence *
 i915_active_set_exclusive(struct i915_active *ref, struct dma_fence *f);

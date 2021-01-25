@@ -334,22 +334,16 @@ void __intel_context_do_unpin(struct intel_context *ce, int sub)
 static void __intel_context_retire(struct i915_active *active)
 {
 	struct intel_context *ce = container_of(active, typeof(*ce), active);
-	struct i915_suspend_fence *sfence = ce->sfence;
 
 	CE_TRACE(ce, "retire runtime: { total:%lluns, avg:%lluns }\n",
 		 intel_context_get_total_runtime_ns(ce),
 		 intel_context_get_avg_runtime_ns(ce));
 
 	set_bit(CONTEXT_VALID_BIT, &ce->flags);
-	intel_context_post_unpin(ce);
 
 	atomic_dec(&ce->vm->active_contexts_gt[ce->engine->gt->info.id]);
 
-	if (sfence) {
-		i915_suspend_fence_retire_dma_fence(&sfence->base.dma);
-		WRITE_ONCE(ce->sfence, NULL);
-	}
-
+	intel_context_post_unpin(ce);
 	intel_context_put(ce);
 }
 
@@ -593,7 +587,9 @@ retry:
 	return rq;
 }
 
-struct i915_request *intel_context_find_active_request(struct intel_context *ce)
+struct i915_request *
+__intel_context_find_active_request(struct intel_context *ce,
+				    bool rq_get_ref)
 {
 	struct i915_request *rq, *active = NULL;
 
@@ -611,6 +607,10 @@ struct i915_request *intel_context_find_active_request(struct intel_context *ce)
 		if (__i915_request_has_started(rq))
 			active = rq;
 	}
+
+	if (rq_get_ref && active)
+		active = i915_request_get(active);
+
 	rcu_read_unlock();
 
 	return active;
