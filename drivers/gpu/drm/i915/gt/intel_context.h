@@ -339,6 +339,48 @@ static inline bool intel_context_ban(struct intel_context *ce,
 	return ret;
 }
 
+/**
+ * intel_context_suspend - suspend a context
+ * @ce: The context to suspend
+ * @atomic: Perform the suspend without sleeping.
+ *
+ * Return: A pointer to a struct i915_sw_fence that, when signaled,
+ * indicates that the suspension is complete. If the function is called
+ * with @atomic == true, and the suspend can't be performed
+ * without sleeping, return ERR_PTR(-EBUSY);
+ *
+ * The function may be called from reclaim.
+ *
+ * It is safe to recursively suspend the context multiple times.
+ * In that case a corresponding number of calls to
+ * intel_context_resume is needed to resume it.
+ *
+ * The returned i915_sw_fence is guaranteed to be valid until
+ * a paired i915_context_resume is called. In addition the
+ * paired i915_context_resume may not be called unless the
+ * returned fence is complete.
+ */
+static inline struct i915_sw_fence *
+intel_context_suspend(struct intel_context *ce, bool atomic)
+{
+	GEM_BUG_ON(!ce->ops->suspend);
+	return ce->ops->suspend(ce, atomic);
+}
+
+/**
+ * intel_context_resume - Resume a context
+ * @ce: The context to resume
+ *
+ * Resume the context previously suspended using intel_context_suspend().
+ * The i915_sw_fence returned from intel_context_suspend() must be
+ * complete.
+ */
+static inline void intel_context_resume(struct intel_context *ce)
+{
+	GEM_BUG_ON(!ce->ops->resume);
+	ce->ops->resume(ce);
+}
+
 static inline bool
 intel_context_force_single_submission(const struct intel_context *ce)
 {

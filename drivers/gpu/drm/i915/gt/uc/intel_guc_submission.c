@@ -3367,6 +3367,26 @@ static void guc_context_close(struct intel_context *ce)
 	spin_unlock_irqrestore(&ce->guc_state.lock, flags);
 }
 
+static struct i915_sw_fence *guc_context_suspend(struct intel_context *ce,
+						 bool atomic)
+{
+	/*
+	 * Need to sort out pm sleeping and locking around
+	 * __guc_context_sched_disable / enable
+	 */
+	if (atomic)
+		return ERR_PTR(-EBUSY);
+
+	return guc_context_block(ce);
+}
+
+static void guc_context_resume(struct intel_context *ce)
+{
+	GEM_BUG_ON(!i915_sw_fence_done(&ce->guc_state.blocked));
+
+	guc_context_unblock(ce);
+}
+
 int intel_guc_modify_scheduling(struct intel_guc *guc, bool enable)
 {
 	struct intel_gt *gt = guc_to_gt(guc);
@@ -3721,6 +3741,9 @@ static const struct intel_context_ops guc_context_ops = {
 
 	.cancel_request = guc_context_cancel_request,
 
+	.suspend = guc_context_suspend,
+	.resume = guc_context_resume,
+
 	.enter = intel_context_enter_engine,
 	.exit = intel_context_exit_engine,
 
@@ -4008,6 +4031,9 @@ static const struct intel_context_ops virtual_guc_context_ops = {
 
 	.cancel_request = guc_context_cancel_request,
 
+	.suspend = guc_context_suspend,
+	.resume = guc_context_resume,
+
 	.enter = guc_virtual_context_enter,
 	.exit = guc_virtual_context_exit,
 
@@ -4101,6 +4127,9 @@ static const struct intel_context_ops virtual_parent_context_ops = {
 
 	.cancel_request = guc_context_cancel_request,
 
+	.suspend = guc_context_suspend,
+	.resume = guc_context_resume,
+
 	.enter = guc_virtual_context_enter,
 	.exit = guc_virtual_context_exit,
 
@@ -4121,6 +4150,9 @@ static const struct intel_context_ops virtual_child_context_ops = {
 	.post_unpin = guc_child_context_post_unpin,
 
 	.cancel_request = guc_context_cancel_request,
+
+	.suspend = guc_context_suspend,
+	.resume = guc_context_resume,
 
 	.enter = guc_virtual_context_enter,
 	.exit = guc_virtual_context_exit,

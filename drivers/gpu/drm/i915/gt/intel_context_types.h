@@ -53,6 +53,10 @@ struct intel_context_ops {
 	void (*cancel_request)(struct intel_context *ce,
 			       struct i915_request *rq);
 
+	struct i915_sw_fence *(*suspend)(struct intel_context *ce,
+					 bool atomic);
+	void (*resume)(struct intel_context *ce);
+
 	void (*enter)(struct intel_context *ce);
 	void (*exit)(struct intel_context *ce);
 
@@ -75,6 +79,8 @@ struct intel_context_ops {
 			   const struct intel_engine_cs *master,
 			   const struct intel_engine_cs *sibling);
 };
+
+struct i915_suspend_fence;
 
 struct intel_context {
 	/*
@@ -206,6 +212,7 @@ struct intel_context {
 	struct list_head pinned_contexts_link;
 
 	u8 wa_bb_page; /* if set, page num reserved for context workarounds */
+	struct i915_suspend_fence *sfence;
 
 	struct {
 		/** @lock: protects everything in guc_state */
