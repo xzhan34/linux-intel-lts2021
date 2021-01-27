@@ -319,7 +319,6 @@ struct i915_address_space {
 	struct list_head vm_rebind_list;
 	spinlock_t vm_capture_lock;  /* Protects vm_capture_list */
 	spinlock_t vm_rebind_lock;   /* Protects vm_rebind_list */
-	struct list_head invalidate_link;
 	/* va tree of persistent vmas */
 	struct rb_root_cached va;
 	struct list_head non_priv_vm_bind_list;

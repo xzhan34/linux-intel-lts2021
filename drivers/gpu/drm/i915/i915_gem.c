@@ -165,8 +165,12 @@ int i915_gem_object_unbind(struct drm_i915_gem_object *obj,
 	struct i915_vma *vma;
 	int ret;
 
-	if (list_empty(&obj->vma.list))
+	spin_lock(&obj->vma.lock);
+	if (list_empty(&obj->vma.list)) {
+		spin_unlock(&obj->vma.lock);
 		return 0;
+	}
+	spin_unlock(&obj->vma.lock);
 
 	/*
 	 * As some machines use ACPI to handle runtime-resume callbacks, and

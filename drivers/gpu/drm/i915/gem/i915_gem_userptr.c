@@ -47,6 +47,58 @@
 
 #ifdef CONFIG_MMU_NOTIFIER
 
+/*
+ * Utility function to sync all vmas of an object, while still on list.
+ */
+static int i915_sync_all_vmas(struct drm_i915_gem_object *obj)
+{
+	struct list_head still_in_list;
+	struct i915_vma *vma, *next;
+	struct i915_address_space *vm = NULL;
+	int ret;
+	bool loop_done;
+
+	INIT_LIST_HEAD(&still_in_list);
+
+restart:
+	spin_lock(&obj->vma.lock);
+	list_for_each_entry_safe(vma, next, &obj->vma.list, obj_link) {
+		if (!i915_vma_is_active(vma)) {
+			list_move_tail(&vma->obj_link, &still_in_list);
+		} else {
+			if (i915_vma_is_persistent(vma)) {
+				vm = i915_vm_get(vma->vm);
+				break;
+			}
+			if (__i915_vma_get(vma))
+				break;
+
+			list_move_tail(&vma->obj_link, &still_in_list);
+		}
+	}
+	loop_done = (&vma->obj_link == &obj->vma.list);
+	/* Don't break vma list ordering! */
+	list_splice_init(&still_in_list, &obj->vma.list);
+	spin_unlock(&obj->vma.lock);
+
+	if (loop_done)
+		return 0;
+
+	if (vm) {
+		ret = i915_vm_sync(vm);
+		i915_vm_put(vm);
+		vm = NULL;
+	} else {
+		ret = i915_vma_sync(vma);
+		__i915_vma_put(vma);
+	}
+
+	if (!ret)
+		goto restart;
+
+	return ret;
+}
+
 /**
  * i915_gem_userptr_invalidate - callback to notify about mm change
  *
@@ -62,20 +114,13 @@ static bool i915_gem_userptr_invalidate(struct mmu_interval_notifier *mni,
 					unsigned long cur_seq)
 {
 	struct drm_i915_gem_object *obj = container_of(mni, struct drm_i915_gem_object, userptr.notifier);
-	struct drm_i915_private *i915 = to_i915(obj->base.dev);
-	struct list_head invalidate_list;
+	struct drm_i915_private *i915;
 	struct i915_address_space *vm;
 	struct i915_vma *vma;
-	long r;
+	int ret;
 
 	if (!mmu_notifier_range_blockable(range))
 		return false;
-
-	write_lock(&i915->mm.notifier_lock);
-
-	mmu_interval_set_seq(mni, cur_seq);
-
-	write_unlock(&i915->mm.notifier_lock);
 
 	/*
 	 * We don't wait when the process is exiting. This is valid
@@ -85,44 +130,52 @@ static bool i915_gem_userptr_invalidate(struct mmu_interval_notifier *mni,
 	 * cannot currently force non-consistent batch buffers to preempt
 	 * and reschedule by waiting on it, hanging processes on exit.
 	 */
-	if (current->flags & PF_EXITING)
+	if (!kref_get_unless_zero(&obj->base.refcount))
 		return true;
 
-	/* we will unbind on next submission, still have userptr pins */
-	r = dma_resv_wait_timeout(obj->base.resv, true, false,
-				  MAX_SCHEDULE_TIMEOUT);
-	if (r <= 0)
-		drm_err(&i915->drm, "(%ld) failed to wait for idle\n", r);
+	i915 = to_i915(obj->base.dev);
+	write_lock(&i915->mm.notifier_lock);
 
-	/* Wait for any persistent vmas */
 	/*
-	 * XXX: i915_gem_object_unbind() temporarily moves vmas out
-	 * of the obj->vma.list. Handle it.
+	 * Notify execbuf that a rerun is needed. For non-persistent vmas
+	 * the mmu_interval_set_seq() is sufficient, but submissions on
+	 * long running contexts with pre-bound persistent vmas rely on the
+	 * vm_rebind_list being non-empty to restart, so we need to populate
+	 * that list under the notifier lock.
 	 */
-	INIT_LIST_HEAD(&invalidate_list);
+	mmu_interval_set_seq(mni, cur_seq);
+	if (current->flags & PF_EXITING) {
+		write_unlock(&i915->mm.notifier_lock);
+		i915_gem_object_put(obj);
+		return true;
+	}
+
 	spin_lock(&obj->vma.lock);
 	list_for_each_entry(vma, &obj->vma.list, obj_link) {
 		GEM_BUG_ON(vma->obj != obj);
 		if (!i915_vma_is_persistent(vma))
 			continue;
 
-		vm = i915_vm_get(vma->vm);
-		list_add_tail(&vm->invalidate_link, &invalidate_list);
-		/* XXX: Ensure vma is bound again */
+		vm = vma->vm;
+		spin_lock(&vm->vm_rebind_lock);
+		if (list_empty(&vma->vm_rebind_link))
+			list_add_tail(&vma->vm_rebind_link,
+				      &vm->vm_rebind_list);
+		spin_unlock(&vm->vm_rebind_lock);
 	}
 	spin_unlock(&obj->vma.lock);
+	write_unlock(&i915->mm.notifier_lock);
 
-	while ((vm = list_first_entry_or_null(&invalidate_list, typeof(*vm),
-					      invalidate_link))) {
-		list_del_init(&vm->invalidate_link);
-		/* XXX: Use a timeout here */
-		r = i915_vm_sync(vm);
-		if (r)
-			drm_err(&i915->drm,
-				"(%ld) failed to wait for idle\n", r);
-		i915_vm_put(vm);
-	}
+	/*
+	 * mmu_interval_read_begin() should be blocking new bindings of
+	 * these vmas until the full invalidation is complete.
+	 */
+	ret = i915_sync_all_vmas(obj);
+	if (ret)
+		drm_err(&i915->drm,
+			"(%d) failed to wait for idle\n", ret);
 
+	i915_gem_object_put(obj);
 	return true;
 }
 
@@ -337,6 +390,7 @@ int i915_gem_object_userptr_submit_init(struct drm_i915_gem_object *obj)
 {
 	const unsigned long num_pages = obj->base.size >> PAGE_SHIFT;
 	struct mm_struct *mm = obj->userptr.notifier.mm;
+	bool in_kthread = !current->mm;
 	struct page **pvec;
 	unsigned int gup_flags = 0;
 	unsigned long notifier_seq;
@@ -344,7 +398,7 @@ int i915_gem_object_userptr_submit_init(struct drm_i915_gem_object *obj)
 	unsigned long pinned;
 	int ret;
 
-	if (mm != current->mm)
+	if (!in_kthread && mm != current->mm)
 		return -EFAULT;
 
 	notifier_seq = mmu_interval_read_begin(&obj->userptr.notifier);
@@ -372,18 +426,27 @@ int i915_gem_object_userptr_submit_init(struct drm_i915_gem_object *obj)
 	if (!i915_gem_object_is_readonly(obj))
 		gup_flags |= FOLL_WRITE;
 
+	if (in_kthread)
+		kthread_use_mm(mm);
+
 	pinned = ret = 0;
 	while (pinned < num_pages) {
 		ret = pin_user_pages_fast(obj->userptr.ptr + pinned * PAGE_SIZE,
 					  num_pages - pinned, gup_flags,
 					  &pvec[pinned]);
-		if (ret < 0)
+		if (ret < 0) {
+			if (in_kthread)
+				kthread_unuse_mm(mm);
 			goto out;
+		}
 
 		pinned += ret;
 	}
 	lock_range(mm, obj->userptr.ptr, obj->userptr.ptr + obj->base.size);
 	ret = 0;
+
+	if (in_kthread)
+		kthread_unuse_mm(mm);
 
 	ret = i915_gem_object_lock_interruptible(obj, NULL);
 	if (ret)
