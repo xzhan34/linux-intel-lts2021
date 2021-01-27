@@ -11,6 +11,7 @@
 #include "gt/intel_engine.h"
 
 #include "dma_resv_utils.h"
+#include "i915_suspend_fence.h"
 #include "i915_gem_ioctls.h"
 #include "i915_gem_object.h"
 
@@ -21,7 +22,8 @@ i915_gem_object_wait_fence(struct dma_fence *fence,
 {
 	BUILD_BUG_ON(I915_WAIT_INTERRUPTIBLE != 0x1);
 
-	if (dma_fence_is_lr(fence))
+	if (dma_fence_is_lr(fence) ||
+	    dma_fence_is_suspend(fence))
 		return -EINVAL;
 
 	if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))

@@ -36,7 +36,10 @@ struct dma_fence_work {
 
 enum {
 	DMA_FENCE_WORK_IMM = DMA_FENCE_FLAG_USER_BITS,
+	I915_SUSPEND_FENCE,
 };
+
+extern const struct dma_fence_ops sw_fence_work_ops;
 
 void dma_fence_work_init(struct dma_fence_work *f,
 			 const struct dma_fence_work_ops *ops);

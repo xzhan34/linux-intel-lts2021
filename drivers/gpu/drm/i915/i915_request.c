@@ -44,6 +44,7 @@
 #include "i915_active.h"
 #include "i915_driver.h"
 #include "i915_drv.h"
+#include "i915_suspend_fence.h"
 #include "i915_trace.h"
 #include "intel_pm.h"
 
@@ -1677,7 +1678,7 @@ i915_request_await_dma_fence(struct i915_request *rq, struct dma_fence *fence)
 		if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))
 			continue;
 
-		if (dma_fence_is_lr(fence))
+		if (dma_fence_is_lr(fence) || dma_fence_is_suspend(fence))
 			return -EBUSY;
 
 		/*

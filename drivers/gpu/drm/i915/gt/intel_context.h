@@ -240,6 +240,11 @@ static inline void intel_context_exit(struct intel_context *ce)
 
 int intel_context_throttle(const struct intel_context *ce);
 
+static inline bool intel_context_is_active(const struct intel_context *ce)
+{
+	return !i915_active_is_idle(&ce->active);
+}
+
 static inline struct intel_context *intel_context_get(struct intel_context *ce)
 {
 	kref_get(&ce->ref);

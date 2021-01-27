@@ -13,6 +13,7 @@
 
 #include "i915_drv.h"
 #include "i915_active.h"
+#include "i915_suspend_fence.h"
 
 /*
  * Active refs memory management
@@ -610,7 +611,7 @@ static int __await_active(struct i915_active_fence *active,
 	if (fence) {
 		int err = 0;
 
-		if (dma_fence_is_lr(fence))
+		if (dma_fence_is_lr(fence) || dma_fence_is_suspend(fence))
 			err = -EBUSY;
 
 		if (!err)

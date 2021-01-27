@@ -8,6 +8,7 @@
 
 #include "i915_drv.h"
 #include "i915_trace.h"
+#include "i915_suspend_fence.h"
 
 #include "intel_context.h"
 #include "intel_engine.h"
@@ -333,6 +334,7 @@ void __intel_context_do_unpin(struct intel_context *ce, int sub)
 static void __intel_context_retire(struct i915_active *active)
 {
 	struct intel_context *ce = container_of(active, typeof(*ce), active);
+	struct i915_suspend_fence *sfence = ce->sfence;
 
 	CE_TRACE(ce, "retire runtime: { total:%lluns, avg:%lluns }\n",
 		 intel_context_get_total_runtime_ns(ce),
@@ -342,6 +344,12 @@ static void __intel_context_retire(struct i915_active *active)
 	intel_context_post_unpin(ce);
 
 	atomic_dec(&ce->vm->active_contexts_gt[ce->engine->gt->info.id]);
+
+	if (sfence) {
+		i915_suspend_fence_retire_dma_fence(&sfence->base.dma);
+		WRITE_ONCE(ce->sfence, NULL);
+	}
+
 	intel_context_put(ce);
 }
 

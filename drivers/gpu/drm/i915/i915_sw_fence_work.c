@@ -89,7 +89,7 @@ static bool fence_enable_signaling(struct dma_fence *fence)
 	return true;
 }
 
-static const struct dma_fence_ops fence_ops = {
+const struct dma_fence_ops sw_fence_work_ops = {
 	.get_driver_name = get_driver_name,
 	.get_timeline_name = get_timeline_name,
 	.enable_signaling = fence_enable_signaling,
@@ -101,7 +101,7 @@ void dma_fence_work_init(struct dma_fence_work *f,
 {
 	f->ops = ops;
 	spin_lock_init(&f->lock);
-	dma_fence_init(&f->dma, &fence_ops, &f->lock, 0, 0);
+	dma_fence_init(&f->dma, &sw_fence_work_ops, &f->lock, 0, 0);
 	i915_sw_fence_init(&f->chain, fence_notify);
 	INIT_WORK(&f->work, fence_work);
 }
