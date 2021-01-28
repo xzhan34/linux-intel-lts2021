@@ -183,6 +183,9 @@ int i915_getparam_ioctl(struct drm_device *dev, void *data,
 	case PRELIM_I915_PARAM_EXECBUF2_MAX_ENGINE:
 		value = 256;
 		break;
+	case PRELIM_I915_PARAM_OA_TIMESTAMP_FREQUENCY:
+		value = i915_perf_oa_timestamp_frequency(i915);
+		break;
 	case PRELIM_I915_PARAM_EU_DEBUGGER_VERSION:
 		value = IS_ENABLED(CONFIG_DRM_I915_DEBUGGER) ? PRELIM_DRM_I915_DEBUG_VERSION : 0;
 		break;
