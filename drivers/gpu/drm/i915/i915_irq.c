@@ -2782,29 +2782,20 @@ hardware_error_type_to_str(const enum hardware_error hw_err)
 	drm_err_ratelimited(&(gt)->i915->drm, HW_ERR "GT%d detected " fmt, \
 			    (gt)->info.id, ##__VA_ARGS__)
 
-static void update_soc_hw_error_cnt(struct intel_gt *gt, u64 index)
+static void update_soc_hw_error_cnt(struct intel_gt *gt, unsigned long index)
 {
-	unsigned long count = 1, flags;
+	unsigned long flags;
 	void *entry;
 
-	if (BITS_PER_TYPE(unsigned long) < BITS_PER_TYPE(index)) {
-		drm_err_ratelimited(&gt->i915->drm, "losing SOC error on 32bit kernel\n");
-		return;
-	}
-
-	entry = xa_find(&gt->errors.soc, (unsigned long *)&index,
-			(unsigned long)index, XA_PRESENT);
-	if (entry)
-		count = xa_to_value(entry) + 1;
-
-	entry = xa_mk_value(count);
+	entry = xa_load(&gt->errors.soc, index);
+	entry = xa_mk_value(xa_to_value(entry) + 1);
 
 	xa_lock_irqsave(&gt->errors.soc, flags);
-	if (xa_is_err(__xa_store(&gt->errors.soc, (unsigned long)index,
-				 entry, GFP_ATOMIC)))
+	if (xa_is_err(__xa_store(&gt->errors.soc, index, entry, GFP_ATOMIC)))
 		drm_err_ratelimited(&gt->i915->drm,
-				    HW_ERR "SOC error reported by IEH%d on GT %d lost\n",
-				    (int)((index >> IEH_SHIFT) & IEH_MASK), gt->info.id);
+				    HW_ERR "SOC error reported by IEH%lu on GT %d lost\n",
+				   (index >> IEH_SHIFT) & IEH_MASK,
+				    gt->info.id);
 	xa_unlock_irqrestore(&gt->errors.soc, flags);
 }
 
@@ -2822,6 +2813,25 @@ gen12_soc_hw_error_handler(struct intel_gt *gt,
 		return;
 
 	log_gt_hw_err(gt, "SOC %s error\n", hardware_error_type_to_str(hw_err));
+
+	if ((hw_err == HARDWARE_ERROR_CORRECTABLE) || (hw_err ==
+						       HARDWARE_ERROR_NONFATAL))
+		{
+		for (i = 0; i < INTEL_GT_SOC_NUM_IEH; i++)
+			raw_reg_write(regs, SOC_GSYSEVTCTL_REG(i),
+				      ~REG_BIT(hw_err));
+
+		raw_reg_write(regs, SOC_GLOBAL_ERR_STAT_MASTER_REG(hw_err),
+			      REG_GENMASK(31, 0));
+		raw_reg_write(regs, SOC_LOCAL_ERR_STAT_MASTER_REG(hw_err),
+			      REG_GENMASK(31, 0));
+		raw_reg_write(regs, SOC_GLOBAL_ERR_STAT_SLAVE_REG(hw_err),
+			      REG_GENMASK(31, 0));
+		raw_reg_write(regs, SOC_LOCAL_ERR_STAT_SLAVE_REG(hw_err),
+			      REG_GENMASK(31, 0));
+
+		log_gt_hw_err(gt, "UNKNOWN SOC  %s error\n", hardware_error_type_to_str(hw_err));
+	}
 
 	/*
 	 * Mask error type in GSYSEVTCTL so that no new errors of the type
