@@ -370,7 +370,7 @@ struct i915_gem_mm {
 	} swapper;
 };
 
-#define I915_IDLE_ENGINES_TIMEOUT (200) /* in ms */
+#define I915_IDLE_ENGINES_TIMEOUT (500) /* in ms */
 
 unsigned long i915_fence_context_timeout(const struct drm_i915_private *i915,
 					 u64 context);
