@@ -283,11 +283,6 @@ struct intel_engine_execlists_stats {
 	unsigned int active;
 
 	/**
-	 * @lock: Lock protecting the below fields.
-	 */
-	seqcount_t lock;
-
-	/**
 	 * @total: Total time this engine was busy.
 	 *
 	 * Accumulated time not counting the most recent block in cases where
