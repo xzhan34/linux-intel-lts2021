@@ -974,8 +974,14 @@ int intel_guc_ads_create(struct intel_guc *guc)
 	/* Now the total size can be determined: */
 	size = guc_ads_blob_size(guc);
 
-	ret = intel_guc_allocate_and_map_vma(guc, size, &guc->ads_vma,
-					     &ads_blob);
+	/*
+	 * When I915_WA_FORCE_SMEM_OBJECT is enabled we normally create objects
+	 * in SMEM but guc_ads is not accessed by the host and it has
+	 * requirement that physical pages are contiguous in memory for this
+	 * vma. Hence always create guc_ads object in LMEM.
+	 */
+	ret = __intel_guc_allocate_and_map_vma(guc, size, false,
+					       &guc->ads_vma, &ads_blob);
 	if (ret)
 		return ret;
 

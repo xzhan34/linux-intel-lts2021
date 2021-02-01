@@ -96,6 +96,12 @@ i915_gem_mmap_ioctl(struct drm_device *dev, void *data,
 		goto err;
 	}
 
+	if (i915_gem_object_is_lmem(obj) &&
+	    i915_is_level4_wa_active(obj->mm.region.mem->gt) &&
+	    !i915_gem_object_should_migrate_smem(obj) &&
+	    obj->mm.region.mem->instance > 0)
+		drm_dbg(dev, "Trying to mmap lmem1 when L4wa is enabled\n");
+
 	addr = vm_mmap(obj->base.filp, 0, args->size,
 		       PROT_READ | PROT_WRITE, MAP_SHARED,
 		       args->offset);
@@ -788,6 +794,13 @@ __assign_mmap_offset(struct drm_i915_gem_object *obj,
 	    !i915_gem_object_has_struct_page(obj) &&
 	    !i915_gem_object_type_has(obj, I915_GEM_OBJECT_HAS_IOMEM))
 		return -ENODEV;
+
+	if (i915_gem_object_is_lmem(obj) &&
+	    i915_is_level4_wa_active(obj->mm.region.mem->gt) &&
+	    !i915_gem_object_should_migrate_smem(obj) &&
+	    obj->mm.region.mem->instance > 0)
+		drm_dbg(obj->base.dev,
+			"Trying to mmap lmem1 when L4wa is enabled\n");
 
 	mmo = i915_gem_mmap_offset_attach(obj, mmap_type, file);
 	if (IS_ERR(mmo))

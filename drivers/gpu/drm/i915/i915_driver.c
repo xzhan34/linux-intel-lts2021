@@ -1236,9 +1236,10 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	intel_vgpu_detect(i915);
 
 	if (i915->params.smem_access_control == I915_SMEM_ACCESS_CONTROL_DEFAULT) {
-		if (IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0,  STEP_B0)) {
+		if (IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0,  STEP_B0) ||
+		    IS_PVC_BD_STEP(i915, STEP_A0, STEP_B0)) {
+			/* Wa_16012239583:pvc */
 			i915->bind_ctxt_ready = false;
-			/* for XEHPSDV HW enable Level-4 wa by default */
 			i915->params.smem_access_control = 5;
 		} else {
 			/* For other platforms disable level-4 wa */
@@ -1300,7 +1301,8 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	i915->do_release = true;
 
-	if (IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0, STEP_B0) &&
+	if ((IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0, STEP_B0) ||
+	     IS_PVC_BD_STEP(i915, STEP_A0, STEP_B0)) &&
 	    i915->params.smem_access_control == 5)
 		i915->bind_ctxt_ready = true;
 

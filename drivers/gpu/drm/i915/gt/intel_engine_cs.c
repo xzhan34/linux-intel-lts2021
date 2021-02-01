@@ -1436,7 +1436,8 @@ static int engine_init_common(struct intel_engine_cs *engine)
 	 */
 	if (engine->class == COPY_ENGINE_CLASS &&
 	    ce->timeline != engine->legacy.timeline) {
-		if (i915_is_mem_wa_enabled(engine->i915, I915_WA_USE_FLAT_PPGTT_UPDATE)) {
+		if (i915_is_mem_wa_enabled(engine->i915, I915_WA_USE_FLAT_PPGTT_UPDATE) &&
+		    engine->instance == 0) {
 			ret = setup_flat_ppgtt(engine);
 			if (ret)
 				goto err_flat;
