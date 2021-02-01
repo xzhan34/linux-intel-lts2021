@@ -3,6 +3,7 @@
  * Copyright © 2022 Intel Corporation
  */
 
+#include "intel_iov_provisioning.h"
 #include "intel_iov_sysfs.h"
 #include "intel_iov_types.h"
 #include "intel_iov_utils.h"
@@ -84,7 +85,33 @@ static const struct attribute_group *pf_attr_groups[] = {
 
 /* VFs only attributes */
 
+static ssize_t ggtt_quota_iov_attr_show(struct intel_iov *iov,
+					unsigned int id, char *buf)
+{
+	u64 size = intel_iov_provisioning_get_ggtt(iov, id);
+
+	return sysfs_emit(buf, "%llu\n", size);
+}
+
+static ssize_t ggtt_quota_iov_attr_store(struct intel_iov *iov,
+					 unsigned int id,
+					 const char *buf, size_t count)
+{
+	u64 size;
+	int err;
+
+	err = kstrtou64(buf, 0, &size);
+	if (err)
+		return err;
+
+	err = intel_iov_provisioning_set_ggtt(iov, id, size);
+	return err ?: count;
+}
+
+IOV_ATTR(ggtt_quota);
+
 static struct attribute *vf_attrs[] = {
+	&ggtt_quota_iov_attr.attr,
 	NULL
 };
 
@@ -93,6 +120,7 @@ static const struct attribute_group vf_attr_group = {
 };
 
 static const struct attribute_group *vf_attr_groups[] = {
+	&vf_attr_group,
 	NULL
 };
 

@@ -7,11 +7,13 @@
 #define __INTEL_IOV_TYPES_H__
 
 #include <linux/mutex.h>
+#include <drm/drm_mm.h>
 
 /**
  * struct intel_iov_config - IOV configuration data.
  */
 struct intel_iov_config {
+	struct drm_mm_node ggtt_region;
 };
 
 /**
