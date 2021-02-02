@@ -439,4 +439,11 @@ static inline bool i915_run_as_guest(void)
 
 bool i915_vtd_active(struct drm_i915_private *i915);
 
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+void __mark_lock_used_irq(struct lockdep_map *lock);
+#define mark_lock_used_irq(lock) __mark_lock_used_irq(&(lock)->dep_map)
+#else
+#define mark_lock_used_irq(lock)
+#endif
+
 #endif /* !__I915_UTILS_H */
