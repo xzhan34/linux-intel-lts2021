@@ -816,6 +816,7 @@ static int igt_vma_partial(void *arg)
 			for_each_prime_number_from(offset, 0, npages - sz) {
 				struct i915_ggtt_view view;
 
+				memset(&view, 0, sizeof(view));
 				view.type = I915_GGTT_VIEW_PARTIAL;
 				view.partial.offset = offset;
 				view.partial.size = sz;
