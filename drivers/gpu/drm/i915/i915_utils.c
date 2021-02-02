@@ -6,6 +6,7 @@
 #include <linux/device.h>
 
 #include <drm/drm_drv.h>
+#include <linux/sched/mm.h>
 
 #include "i915_drv.h"
 #include "i915_utils.h"
@@ -124,4 +125,17 @@ bool i915_vtd_active(struct drm_i915_private *i915)
 
 	/* Running as a guest, we assume the host is enforcing VT'd */
 	return i915_run_as_guest();
+}
+
+void fs_reclaim_taints_mutex(struct mutex *mutex)
+{
+	if (!IS_ENABLED(CONFIG_LOCKDEP))
+		return;
+
+	fs_reclaim_acquire(GFP_KERNEL);
+
+	mutex_acquire(&mutex->dep_map, 0, 0, _RET_IP_);
+	mutex_release(&mutex->dep_map, _RET_IP_);
+
+	fs_reclaim_release(GFP_KERNEL);
 }
