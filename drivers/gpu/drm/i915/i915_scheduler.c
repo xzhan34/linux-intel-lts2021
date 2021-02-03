@@ -623,3 +623,7 @@ err_priorities:
 	kmem_cache_destroy(slab_priorities);
 	return -ENOMEM;
 }
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#include "selftests/i915_scheduler.c"
+#endif
