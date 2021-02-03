@@ -531,17 +531,18 @@ struct intel_engine_cs {
 
 #define I915_ENGINE_USING_CMD_PARSER BIT(0)
 #define I915_ENGINE_SUPPORTS_STATS   BIT(1)
-#define I915_ENGINE_HAS_PREEMPTION   BIT(2)
-#define I915_ENGINE_HAS_SEMAPHORES   BIT(3)
-#define I915_ENGINE_HAS_TIMESLICES   BIT(4)
-#define I915_ENGINE_IS_VIRTUAL       BIT(5)
-#define I915_ENGINE_HAS_RELATIVE_MMIO BIT(6)
-#define I915_ENGINE_REQUIRES_CMD_PARSER BIT(7)
-#define I915_ENGINE_WANT_FORCED_PREEMPTION BIT(8)
-#define I915_ENGINE_HAS_RCS_REG_STATE  BIT(9)
-#define I915_ENGINE_HAS_EU_PRIORITY    BIT(10)
-#define I915_ENGINE_FIRST_RENDER_COMPUTE BIT(11)
-#define I915_ENGINE_USES_WA_HOLD_CCS_SWITCHOUT BIT(12)
+#define I915_ENGINE_HAS_SCHEDULER    BIT(2)
+#define I915_ENGINE_HAS_PREEMPTION   BIT(3)
+#define I915_ENGINE_HAS_SEMAPHORES   BIT(4)
+#define I915_ENGINE_HAS_TIMESLICES   BIT(5)
+#define I915_ENGINE_IS_VIRTUAL       BIT(6)
+#define I915_ENGINE_HAS_RELATIVE_MMIO BIT(7)
+#define I915_ENGINE_REQUIRES_CMD_PARSER BIT(8)
+#define I915_ENGINE_WANT_FORCED_PREEMPTION BIT(9)
+#define I915_ENGINE_HAS_RCS_REG_STATE  BIT(10)
+#define I915_ENGINE_HAS_EU_PRIORITY    BIT(11)
+#define I915_ENGINE_FIRST_RENDER_COMPUTE BIT(12)
+#define I915_ENGINE_USES_WA_HOLD_CCS_SWITCHOUT BIT(13)
 	unsigned int flags;
 
 	/*
@@ -607,6 +608,12 @@ static inline bool
 intel_engine_supports_stats(const struct intel_engine_cs *engine)
 {
 	return engine->flags & I915_ENGINE_SUPPORTS_STATS;
+}
+
+static inline bool
+intel_engine_has_scheduler(const struct intel_engine_cs *engine)
+{
+	return engine->flags & I915_ENGINE_HAS_SCHEDULER;
 }
 
 static inline bool

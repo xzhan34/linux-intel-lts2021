@@ -4210,8 +4210,6 @@ static void guc_default_vfuncs(struct intel_engine_cs *engine)
 	engine->add_active_request = add_to_context;
 	engine->remove_active_request = remove_from_context;
 
-	engine->sched_engine->schedule = i915_schedule;
-
 	engine->reset.prepare = guc_engine_reset_prepare;
 	engine->reset.rewind = guc_rewind_nop;
 	engine->reset.cancel = guc_reset_nop;
@@ -4227,9 +4225,10 @@ static void guc_default_vfuncs(struct intel_engine_cs *engine)
 	engine->set_default_submission = guc_set_default_submission;
 	engine->busyness = guc_engine_busyness;
 
-	engine->flags |= I915_ENGINE_SUPPORTS_STATS;
+	engine->flags |= I915_ENGINE_HAS_SCHEDULER;
 	engine->flags |= I915_ENGINE_HAS_PREEMPTION;
 	engine->flags |= I915_ENGINE_HAS_TIMESLICES;
+	engine->flags |= I915_ENGINE_SUPPORTS_STATS;
 
 	/* Wa_14014475959:dg2 */
 	if (engine->class == COMPUTE_CLASS)
@@ -4301,7 +4300,6 @@ int intel_guc_submission_setup(struct intel_engine_cs *engine)
 		if (!guc->sched_engine)
 			return -ENOMEM;
 
-		guc->sched_engine->schedule = i915_schedule;
 		guc->sched_engine->disabled = guc_sched_engine_disabled;
 		guc->sched_engine->private_data = guc;
 		guc->sched_engine->destroy = guc_sched_engine_destroy;
