@@ -1778,8 +1778,7 @@ void __i915_request_queue_bh(struct i915_request *rq)
 	i915_sw_fence_commit(&rq->submit);
 }
 
-void __i915_request_queue(struct i915_request *rq,
-			  const struct i915_sched_attr *attr)
+void __i915_request_queue(struct i915_request *rq, int prio)
 {
 	/*
 	 * Let the backend know a new request has arrived that may need
@@ -1792,8 +1791,8 @@ void __i915_request_queue(struct i915_request *rq,
 	 * decide whether to preempt the entire chain so that it is ready to
 	 * run at the earliest possible convenience.
 	 */
-	if (attr)
-		i915_request_set_priority(rq, attr->priority);
+	i915_request_set_priority(rq, prio);
+	GEM_BUG_ON(rq->sched.attr.priority == I915_PRIORITY_INVALID);
 
 	local_bh_disable();
 	__i915_request_queue_bh(rq);
@@ -1803,7 +1802,7 @@ void __i915_request_queue(struct i915_request *rq,
 void i915_request_add(struct i915_request *rq)
 {
 	struct intel_timeline * const tl = i915_request_timeline(rq);
-	struct i915_sched_attr attr = {};
+	int prio = I915_PRIORITY_NORMAL;
 	struct i915_gem_context *ctx;
 
 	lockdep_assert_held(&tl->mutex);
@@ -1816,10 +1815,10 @@ void i915_request_add(struct i915_request *rq)
 	rcu_read_lock();
 	ctx = rcu_dereference(rq->context->gem_context);
 	if (ctx)
-		attr = ctx->sched;
+		prio = ctx->sched.priority;
 	rcu_read_unlock();
 
-	__i915_request_queue(rq, &attr);
+	__i915_request_queue(rq, prio);
 
 	mutex_unlock(&tl->mutex);
 }

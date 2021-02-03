@@ -20,6 +20,7 @@
 #include "i915_gem.h"
 #include "i915_pmu.h"
 #include "i915_priolist_types.h"
+#include "i915_scheduler_types.h"
 #include "i915_selftest.h"
 #include "intel_sseu.h"
 #include "intel_timeline_types.h"
@@ -246,6 +247,8 @@ struct intel_engine_execlists {
 	 * of the same priority.
 	 */
 	struct rb_root_cached virtual;
+
+	struct i915_sched_ipi ipi;
 
 	/**
 	 * @csb_write: control register for Context Switch buffer

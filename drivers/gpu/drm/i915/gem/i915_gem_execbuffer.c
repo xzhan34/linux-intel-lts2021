@@ -3228,7 +3228,7 @@ static int eb_request_add(struct i915_execbuffer *eb, struct i915_request *rq,
 			  int err, bool last_parallel)
 {
 	struct intel_timeline * const tl = i915_request_timeline(rq);
-	struct i915_sched_attr attr = {};
+	int prio = I915_PRIORITY_NORMAL;
 	struct i915_request *prev;
 
 	lockdep_assert_held(&tl->mutex);
@@ -3240,7 +3240,7 @@ static int eb_request_add(struct i915_execbuffer *eb, struct i915_request *rq,
 
 	/* Check that the context wasn't destroyed before submission */
 	if (likely(!intel_context_is_closed(eb->context))) {
-		attr = eb->gem_context->sched;
+		prio = eb->gem_context->sched.priority;
 	} else {
 		/* Serialise with context_close via the add_to_timeline */
 		i915_request_set_error_once(rq, -ENOENT);
@@ -3259,7 +3259,7 @@ static int eb_request_add(struct i915_execbuffer *eb, struct i915_request *rq,
 				&rq->fence.flags);
 	}
 
-	__i915_request_queue(rq, &attr);
+	__i915_request_queue(rq, prio);
 
 	/* Try to clean up the client's timeline after submitting the request */
 	if (prev)
