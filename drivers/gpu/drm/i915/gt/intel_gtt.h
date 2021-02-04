@@ -29,6 +29,8 @@
 #include "i915_scatterlist.h"
 #include "i915_selftest.h"
 #include "i915_vma_types.h"
+#include "i915_params.h"
+#include "intel_memory_region.h"
 
 #if IS_ENABLED(CONFIG_DRM_I915_TRACE_GTT)
 #define DBG(...) trace_printk(__VA_ARGS__)
@@ -270,6 +272,7 @@ struct i915_address_space {
 	struct drm_i915_file_private *file;
 	u64 total;		/* size addr space maps (ex. 2GB for ggtt) */
 	u64 reserved;		/* size addr space reserved */
+	u64 min_alignment[INTEL_MEMORY_STOLEN_LOCAL + 1];
 
 	unsigned int bind_async_flags;
 
@@ -462,6 +465,12 @@ static inline bool
 i915_vm_has_scratch_64K(struct i915_address_space *vm)
 {
 	return vm->scratch_order == get_order(I915_GTT_PAGE_SIZE_64K);
+}
+
+static inline u64 i915_vm_min_alignment(struct i915_address_space *vm,
+					enum intel_memory_type type)
+{
+	return vm->min_alignment[type];
 }
 
 static inline bool
