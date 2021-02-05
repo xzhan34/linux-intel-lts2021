@@ -109,6 +109,7 @@
  * DOC: IOV SELFTEST Opcodes
  *
  *  - IOV_OPCODE_ST_GET_GGTT_PTE_ = 1
+ *  - IOV_OPCODE_ST_SET_GGTT_PTE_ = 2
  */
 
 /**
@@ -164,5 +165,68 @@
 							 2u)
 #define VF2PF_ST_GET_GGTT_PTE_RESPONSE_MSG_1_PTE_LO	VF2PF_PF_ST_ACTION_RESPONSE_MSG_n_RET_DATAn
 #define VF2PF_ST_GET_GGTT_PTE_RESPONSE_MSG_2_PTE_HI	VF2PF_PF_ST_ACTION_RESPONSE_MSG_n_RET_DATAn
+
+/**
+ * DOC: IOV_OPCODE_ST_SET_GGTT_PTE
+ *
+ * Action to set value of PTE, for a given GGTT address, from PF.
+ *
+ * See VF2PF_PF_ST_ACTION_.
+ *
+ * Note: GGTT address must be aligned to 4K, or action will fail
+ * with IOV_ERROR_INVALID_ARGUMENT.
+ * Also GGTT address must be within GGTT range assigned to
+ * given VF, otherwise will fail with EACCES error.
+ *
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_HOST_                                |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_REQUEST_                                 |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:16 | OPCODE = IOV_OPCODE_ST_SET_GGTT_PTE_ = 2                     |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  15:0 | ACTION = VF2PF_PF_ST_ACTION_ = TBD                           |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | DATA1 = **ADDRESS_LO** - lower bits of GGTT address          |
+ *  |   |       |                          (aligned to 4K)                     |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 2 |  31:0 | DATA2 = **ADDRESS_HI** - upper bits of GGTT address          |
+ *  |   |       |                          (aligned to 4K)                     |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 3 |  31:0 | DATA3 = **NEW_PTE_LO** - lower bits of new PTE value         |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 4 |  31:0 | DATA4 = **NEW_PTE_HI** - upper bits of new PTE value         |
+ *  +---+-------+--------------------------------------------------------------+
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_HOST_                                |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_RESPONSE_SUCCESS_                        |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  27:0 | DATA0 = MBZ                                                  |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | DATA1 = **PTE_LO** - lower bits of returned PTE              |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 2 |  31:0 | DATA2 = **PTE_HI** - upper bits of returned PTE              |
+ *  +---+-------+--------------------------------------------------------------+
+ */
+#define IOV_OPCODE_ST_SET_GGTT_PTE			0x2
+
+#define VF2PF_ST_SET_GGTT_PTE_REQUEST_MSG_LEN		(VF2PF_PF_ST_ACTION_REQUEST_MSG_MIN_LEN + \
+							 4u)
+#define VF2PF_ST_SET_GGTT_PTE_REQUEST_MSG_1_ADDRESS_LO	VF2PF_PF_ST_ACTION_REQUEST_MSG_n_ST_DATAn
+#define VF2PF_ST_SET_GGTT_PTE_REQUEST_MSG_2_ADDRESS_HI	VF2PF_PF_ST_ACTION_REQUEST_MSG_n_ST_DATAn
+#define VF2PF_ST_SET_GGTT_PTE_REQUEST_MSG_3_NEW_PTE_LO	VF2PF_PF_ST_ACTION_REQUEST_MSG_n_ST_DATAn
+#define VF2PF_ST_SET_GGTT_PTE_REQUEST_MSG_4_NEW_PTE_HI	VF2PF_PF_ST_ACTION_REQUEST_MSG_n_ST_DATAn
+
+#define VF2PF_ST_SET_GGTT_PTE_RESPONSE_MSG_LEN		(VF2PF_PF_ST_ACTION_RESPONSE_MSG_MIN_LEN + \
+							 2u)
+#define VF2PF_ST_SET_GGTT_PTE_RESPONSE_MSG_1_PTE_LO	VF2PF_PF_ST_ACTION_RESPONSE_MSG_n_RET_DATAn
+#define VF2PF_ST_SET_GGTT_PTE_RESPONSE_MSG_2_PTE_HI	VF2PF_PF_ST_ACTION_RESPONSE_MSG_n_RET_DATAn
 
 #endif /* _ABI_IOV_ACTIONS_SELFTEST_ABI_H_ */

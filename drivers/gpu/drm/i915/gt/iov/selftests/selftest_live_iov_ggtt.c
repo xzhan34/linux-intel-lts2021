@@ -12,6 +12,7 @@
 
 struct pte_testcase {
 	bool (*test)(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, gen8_pte_t *out);
+	bool (*requires)(struct intel_iov *iov);
 };
 
 static void iov_set_pte(struct intel_iov *iov, void __iomem *addr, gen8_pte_t pte)
@@ -218,6 +219,58 @@ pte_valid_not_modifiable_check_via_pf(struct intel_iov *iov, void __iomem *pte_a
 					      __bf_shf(mask), out);
 }
 
+static bool
+pte_valid_readable_check_via_pf(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
+				gen8_pte_t *out)
+{
+	const u64 mask = GEN6_PTE_VALID;
+	int err;
+	gen8_pte_t pte;
+	gen8_pte_t new_pte;
+	u64 orig_val;
+
+	GEM_BUG_ON(!IS_ALIGNED(ggtt_addr, I915_GTT_PAGE_SIZE_4K));
+
+	err = intel_iov_selftest_send_vfpf_get_ggtt_pte(iov, ggtt_addr, &pte);
+	if (err < 0)
+		return false;
+
+	orig_val = FIELD_GET(mask, pte);
+	/*
+	 * Make sure that bit valid is set.
+	 */
+	if (orig_val == 0) {
+		pte |= FIELD_PREP(mask, 1);
+		err = intel_iov_selftest_send_vfpf_set_ggtt_pte(iov, ggtt_addr, &pte);
+		if (err < 0)
+			return false;
+	}
+
+	new_pte = iov->selftest.mmio_get_pte(iov, pte_addr);
+
+	/*
+	 * Set the previous value if we modified it.
+	 */
+	err = intel_iov_selftest_send_vfpf_get_ggtt_pte(iov, ggtt_addr, &pte);
+	if (err < 0)
+		return false;
+
+	if (orig_val == 0) {
+		pte &= ~mask;
+		err = intel_iov_selftest_send_vfpf_set_ggtt_pte(iov, ggtt_addr, &pte);
+		if (err < 0)
+			return false;
+	}
+
+	return FIELD_GET(mask, new_pte) == 1;
+}
+
+static bool wa_1808546409(struct intel_iov *iov)
+{
+	return !IS_TIGERLAKE(iov_to_i915(iov)) &&
+	       !IS_XEHPSDV(iov_to_i915(iov));
+}
+
 static bool run_test_on_pte(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
 			    const struct pte_testcase *tc, u16 vfid)
 {
@@ -248,6 +301,11 @@ run_test_on_ggtt_block(struct intel_iov *iov, void __iomem *gsm, struct drm_mm_n
 	u64 ggtt_addr;
 
 	GEM_BUG_ON(!IS_ALIGNED(ggtt_block->start, I915_GTT_PAGE_SIZE_4K));
+
+	if (tc->requires && !tc->requires(iov)) {
+		IOV_DEBUG(iov, "Skip subtest %ps.%u\n", tc->test, vfid);
+		return true;
+	}
 
 	for_each_pte(pte_addr, ggtt_addr, gsm, ggtt_block, I915_GTT_PAGE_SIZE_4K * mul) {
 		if (!run_test_on_pte(iov, pte_addr, ggtt_addr, tc, vfid))
@@ -398,6 +456,7 @@ static int igt_vf_iov_own_ggtt_via_pf(struct intel_iov *iov)
 	static struct pte_testcase pte_testcases[] = {
 		{ .test = pte_vfid_not_modifiable_check_via_pf },
 		{ .test = pte_valid_not_modifiable_check_via_pf },
+		{ .test = pte_valid_readable_check_via_pf, .requires = wa_1808546409 },
 		{ },
 	};
 	int failed = 0, err;
