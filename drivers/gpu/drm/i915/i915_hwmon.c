@@ -119,7 +119,7 @@ hwm_field_read_and_scale(struct hwm_drvdata *ddat, i915_reg_t rgadr,
  * hwmon->scl_shift_energy of 14 bits we have 57 (63 - 20 + 14) bits before
  * energy1_input overflows. This at 1000 W is an overflow duration of 278 years.
  */
-static void
+static int
 hwm_energy(struct hwm_drvdata *ddat, long *energy)
 {
 	struct intel_uncore *uncore = ddat->uncore;
@@ -133,6 +133,9 @@ hwm_energy(struct hwm_drvdata *ddat, long *energy)
 		rgaddr = hwmon->rg.energy_status_tile;
 	else
 		rgaddr = hwmon->rg.energy_status_all;
+
+	if (!i915_mmio_reg_valid(rgaddr))
+		return -EOPNOTSUPP;
 
 	mutex_lock(&hwmon->hwmon_lock);
 
@@ -148,6 +151,17 @@ hwm_energy(struct hwm_drvdata *ddat, long *energy)
 	*energy = mul_u64_u32_shr(ei->accum_energy, SF_ENERGY,
 				  hwmon->scl_shift_energy);
 	mutex_unlock(&hwmon->hwmon_lock);
+
+	return 0;
+}
+
+int
+i915_hwmon_energy_status_get(struct drm_i915_private *i915, long *energy)
+{
+	struct i915_hwmon *hwmon = i915->hwmon;
+	struct hwm_drvdata *ddat = &hwmon->ddat;
+
+	return hwm_energy(ddat, energy);
 }
 
 static ssize_t
@@ -493,8 +507,7 @@ hwm_energy_read(struct hwm_drvdata *ddat, u32 attr, long *val)
 {
 	switch (attr) {
 	case hwmon_energy_input:
-		hwm_energy(ddat, val);
-		return 0;
+		return hwm_energy(ddat, val);
 	default:
 		return -EOPNOTSUPP;
 	}

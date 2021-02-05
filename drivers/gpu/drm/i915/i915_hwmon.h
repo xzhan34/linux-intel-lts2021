@@ -16,5 +16,6 @@ void i915_hwmon_unregister(struct drm_i915_private *i915);
 static inline void i915_hwmon_register(struct drm_i915_private *i915) { };
 static inline void i915_hwmon_unregister(struct drm_i915_private *i915) { };
 #endif
+int i915_hwmon_energy_status_get(struct drm_i915_private *i915, long *energy);
 
 #endif /* __I915_HWMON_H__ */

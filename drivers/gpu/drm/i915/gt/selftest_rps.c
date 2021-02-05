@@ -1097,28 +1097,28 @@ out:
 	return err;
 }
 
-static u64 __measure_power(int duration_ms)
+static u64 __measure_power(struct intel_gt *gt, int duration_ms)
 {
 	u64 dE, dt;
 
-	dE = librapl_energy_uJ();
+	dE = librapl_energy_uJ(gt->i915);
 	dt = ktime_get();
 	usleep_range(1000 * duration_ms, 2000 * duration_ms);
-	dE = librapl_energy_uJ() - dE;
+	dE = librapl_energy_uJ(gt->i915) - dE;
 	dt = ktime_get() - dt;
 
 	return div64_u64(1000 * 1000 * dE, dt);
 }
 
-static u64 measure_power_at(struct intel_rps *rps, int *freq)
+static u64 measure_power_at(struct intel_gt *gt, int *freq)
 {
 	u64 x[5];
 	int i;
 
-	*freq = rps_set_check(rps, *freq);
+	*freq = rps_set_check(&gt->rps, *freq);
 	for (i = 0; i < 5; i++)
-		x[i] = __measure_power(5);
-	*freq = (*freq + read_cagf(rps)) / 2;
+		x[i] = __measure_power(gt, 5);
+	*freq = (*freq + read_cagf(&gt->rps)) / 2;
 
 	/* A simple triangle filter for better result stability */
 	sort(x, 5, sizeof(*x), cmp_u64, NULL);
@@ -1188,10 +1188,10 @@ int live_rps_power(void *arg)
 		}
 
 		max.freq = rps->max_freq;
-		max.power = measure_power_at(rps, &max.freq);
+		max.power = measure_power_at(gt, &max.freq);
 
 		min.freq = rps->min_freq;
-		min.power = measure_power_at(rps, &min.freq);
+		min.power = measure_power_at(gt, &min.freq);
 
 		igt_spinner_end(&spin);
 		st_engine_heartbeat_enable(engine);
