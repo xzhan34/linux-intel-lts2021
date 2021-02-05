@@ -2375,7 +2375,7 @@ struct drm_i915_gem_context_destroy {
  * returned in the outparam @id.
  *
  * An extension chain maybe provided, starting with @extensions, and terminated
- * by the @next_extension being 0. Currently, no extensions are defined.
+ * by the @next_extension being 0. Currently, mem region extension is defined.
  *
  * DRM_I915_GEM_VM_DESTROY -
  *

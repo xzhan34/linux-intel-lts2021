@@ -1121,12 +1121,44 @@ void i915_gem_context_close(struct drm_file *file)
 	xa_destroy(&file_priv->vm_xa);
 }
 
+struct vm_create_ext {
+	struct drm_i915_private *i915;
+	struct intel_gt *gt;
+};
+
+static int get_vm_gt(struct i915_user_extension __user *ext, void *data)
+{
+	struct prelim_drm_i915_gem_vm_region_ext local;
+	struct intel_memory_region *mem;
+	struct vm_create_ext *vce = data;
+
+	if (copy_from_user(&local, ext, sizeof(local)))
+		return -EFAULT;
+
+	if (local.pad)
+		return -EINVAL;
+
+	mem = intel_memory_region_lookup(vce->i915,
+					 local.region.memory_class,
+					 local.region.memory_instance);
+	if (!mem || mem->type != INTEL_MEMORY_LOCAL)
+		return -EINVAL;
+
+	vce->gt = mem->gt;
+	return 0;
+}
+
+static const i915_user_extension_fn vm_create_extensions[] = {
+	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_GEM_VM_CONTROL_EXT_REGION)] = get_vm_gt,
+};
+
 int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 			     struct drm_file *file)
 {
 	struct drm_i915_private *i915 = to_i915(dev);
 	struct drm_i915_gem_vm_control *args = data;
 	struct drm_i915_file_private *file_priv = file->driver_priv;
+	struct vm_create_ext vce;
 	struct i915_ppgtt *ppgtt;
 	u32 id;
 	int err;
@@ -1137,19 +1169,23 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 	if (args->flags & PRELIM_I915_VM_CREATE_FLAGS_UNKNOWN)
 		return -EINVAL;
 
-	ppgtt = i915_ppgtt_create(to_gt(i915));
+	if (args->extensions) {
+		vce.i915 = i915;
+		err = i915_user_extensions(u64_to_user_ptr(args->extensions),
+					   vm_create_extensions,
+					   ARRAY_SIZE(vm_create_extensions),
+					   &vce);
+		if (err)
+			return err;
+	} else {
+		vce.gt = to_gt(i915);
+	}
+
+	ppgtt = i915_ppgtt_create(vce.gt);
 	if (IS_ERR(ppgtt))
 		return PTR_ERR(ppgtt);
 
 	ppgtt->vm.client = i915_drm_client_get(file_priv->client);
-
-	if (args->extensions) {
-		err = i915_user_extensions(u64_to_user_ptr(args->extensions),
-					   NULL, 0,
-					   ppgtt);
-		if (err)
-			goto err_put;
-	}
 
 	i915_debugger_wait_on_discovery(i915, ppgtt->vm.client);
 

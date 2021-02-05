@@ -1021,4 +1021,12 @@ struct prelim_drm_i915_gem_vm_control {
 #define PRELIM_I915_VM_CREATE_FLAGS_UNKNOWN		(~(GENMASK(18, 18)))
 };
 
+struct prelim_drm_i915_gem_vm_region_ext {
+#define PRELIM_I915_GEM_VM_CONTROL_EXT_REGION	(PRELIM_I915_USER_EXT | 0)
+	struct i915_user_extension base;
+	/* memory region: to find gt to create vm on */
+	struct prelim_drm_i915_gem_memory_class_instance region;
+	__u32 pad;
+};
+
 #endif /* __I915_DRM_PRELIM_H__ */
