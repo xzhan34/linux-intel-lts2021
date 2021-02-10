@@ -159,6 +159,9 @@ static void gt_sanitize(struct intel_gt *gt, bool force)
 	enum intel_engine_id id;
 	intel_wakeref_t wakeref;
 
+	if (is_mock_gt(gt))
+		return;
+
 	GT_TRACE(gt, "force:%s", str_yes_no(force));
 
 	/* Use a raw wakeref to avoid calling intel_display_power_get early */
@@ -352,7 +355,7 @@ void intel_gt_suspend_late(struct intel_gt *gt)
 		intel_llc_disable(&gt->llc);
 	}
 
-	gt_sanitize(gt, false);
+	gt_sanitize(gt, false); /* Be paranoid, remove all residual GPU state */
 
 	GT_TRACE(gt, "\n");
 }
