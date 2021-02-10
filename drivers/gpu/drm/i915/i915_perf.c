@@ -3638,8 +3638,11 @@ get_sseu_config(struct intel_sseu *out_sseu,
  */
 u32 i915_perf_oa_timestamp_frequency(struct drm_i915_private *i915)
 {
-	/* Wa_18013179988:dg2 */
-	if (IS_DG2(i915)) {
+	/*
+	 * Wa_18013179988:dg2
+	 * Wa_14015568240:pvc
+	 */
+	if (IS_DG2(i915) || IS_PONTEVECCHIO(i915)) {
 		intel_wakeref_t wakeref;
 		u32 reg, shift;
 
