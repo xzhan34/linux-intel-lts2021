@@ -5,6 +5,7 @@
  */
 
 #include <linux/random.h>
+#include <linux/suspend.h>
 
 #include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_pm.h"
@@ -88,25 +89,38 @@ static void simulate_hibernate(struct drm_i915_private *i915)
 	intel_runtime_pm_put(&i915->runtime_pm, wakeref);
 }
 
-static int igt_pm_prepare(struct drm_i915_private *i915)
+static int do_prepare(struct drm_i915_private *i915)
 {
 	i915_gem_suspend(i915);
 
 	return 0;
 }
 
-static void igt_pm_suspend(struct drm_i915_private *i915)
+static suspend_state_t set_pm_target(suspend_state_t target)
 {
+#ifdef CONFIG_PM_SLEEP
+	return xchg(&pm_suspend_target_state, target);
+#else
+	return PM_SUSPEND_ON;
+#endif
+}
+
+static suspend_state_t do_suspend(struct drm_i915_private *i915)
+{
+	suspend_state_t old = set_pm_target(PM_SUSPEND_MEM);
 	intel_wakeref_t wakeref;
 
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
 		i915_ggtt_suspend(to_gt(i915)->ggtt);
 		i915_gem_suspend_late(i915);
 	}
+
+	return old;
 }
 
-static void igt_pm_hibernate(struct drm_i915_private *i915)
+static suspend_state_t do_hibernate(struct drm_i915_private *i915)
 {
+	suspend_state_t old = set_pm_target(PM_SUSPEND_MAX);
 	intel_wakeref_t wakeref;
 
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
@@ -115,9 +129,11 @@ static void igt_pm_hibernate(struct drm_i915_private *i915)
 		i915_gem_freeze(i915);
 		i915_gem_freeze_late(i915);
 	}
+
+	return old;
 }
 
-static void igt_pm_resume(struct drm_i915_private *i915)
+static void do_resume(struct drm_i915_private *i915, suspend_state_t saved)
 {
 	intel_wakeref_t wakeref;
 
@@ -131,12 +147,15 @@ static void igt_pm_resume(struct drm_i915_private *i915)
 			setup_private_pat(to_gt(i915));
 		i915_gem_resume(i915);
 	}
+
+	set_pm_target(saved);
 }
 
 static int igt_gem_suspend(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
 	struct i915_gem_context *ctx;
+	suspend_state_t saved;
 	struct file *file;
 	int err;
 
@@ -151,16 +170,16 @@ static int igt_gem_suspend(void *arg)
 	if (err)
 		goto out;
 
-	err = igt_pm_prepare(i915);
+	err = do_prepare(i915);
 	if (err)
 		goto out;
 
-	igt_pm_suspend(i915);
+	saved = do_suspend(i915);
 
 	/* Here be dragons! Note that with S3RST any S3 may become S4! */
 	simulate_hibernate(i915);
 
-	igt_pm_resume(i915);
+	do_resume(i915, saved);
 
 	err = switch_to_context(ctx);
 out:
@@ -172,6 +191,7 @@ static int igt_gem_hibernate(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
 	struct i915_gem_context *ctx;
+	suspend_state_t saved;
 	struct file *file;
 	int err;
 
@@ -186,16 +206,16 @@ static int igt_gem_hibernate(void *arg)
 	if (err)
 		goto out;
 
-	err = igt_pm_prepare(i915);
+	err = do_prepare(i915);
 	if (err)
 		goto out;
 
-	igt_pm_hibernate(i915);
+	saved = do_hibernate(i915);
 
 	/* Here be dragons! */
 	simulate_hibernate(i915);
 
-	igt_pm_resume(i915);
+	do_resume(i915, saved);
 
 	err = switch_to_context(ctx);
 out:
