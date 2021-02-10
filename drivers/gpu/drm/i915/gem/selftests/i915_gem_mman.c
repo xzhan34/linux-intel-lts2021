@@ -117,9 +117,12 @@ static int check_partial_mapping(struct drm_i915_gem_object *obj,
 		return err;
 	}
 
-	page = i915_prandom_u32_max_state(npages, prng);
-	view = compute_partial_view(obj, page, MIN_CHUNK_PAGES);
+	do {
+		page = i915_prandom_u32_max_state(npages, prng);
+		offset = tiled_offset(tile, page << PAGE_SHIFT);
+	} while (offset >= obj->base.size);
 
+	view = compute_partial_view(obj, page, MIN_CHUNK_PAGES);
 	vma = i915_gem_object_ggtt_pin(obj, &view, 0, 0, PIN_MAPPABLE);
 	if (IS_ERR(vma)) {
 		pr_err("Failed to pin partial view: offset=%lu; err=%d\n",
@@ -141,10 +144,6 @@ static int check_partial_mapping(struct drm_i915_gem_object *obj,
 
 	iowrite32(page, io + n * PAGE_SIZE / sizeof(*io));
 	i915_vma_unpin_iomap(vma);
-
-	offset = tiled_offset(tile, page << PAGE_SHIFT);
-	if (offset >= obj->base.size)
-		goto out;
 
 	intel_gt_flush_ggtt_writes(to_gt(i915));
 
