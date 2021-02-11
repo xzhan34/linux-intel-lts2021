@@ -125,7 +125,7 @@ static inline bool i915_vma_is_closed(const struct i915_vma *vma)
 
 static inline u64 __i915_vma_size(const struct i915_vma *vma)
 {
-	return vma->node.size;
+	return vma->node.size - 2 * vma->guard;
 }
 
 static inline u64 i915_vma_size(const struct i915_vma *vma)
@@ -136,7 +136,8 @@ static inline u64 i915_vma_size(const struct i915_vma *vma)
 
 static inline u64 __i915_vma_offset(const struct i915_vma *vma)
 {
-	return vma->node.start;
+	/* The actual start of the vma->pages is after the guard pages. */
+	return vma->node.start + vma->guard;
 }
 
 static inline u64 i915_vma_offset(const struct i915_vma *vma)
