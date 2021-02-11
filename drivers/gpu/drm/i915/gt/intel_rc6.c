@@ -234,6 +234,12 @@ static void gen11_rc6_enable(struct intel_rc6 *rc6)
 			GEN6_RC_CTL_RC6_ENABLE |
 			GEN6_RC_CTL_EI_MODE(1);
 
+	/* Wa_22012237902 - disable coarse PG for PVC BD A0 */
+	if (IS_PVC_BD_STEP(rc6_to_i915(rc6), STEP_A0, STEP_B0)) {
+		set(uncore, GEN9_PG_ENABLE, 0);
+		return;
+	}
+
 	/* Wa_16011777198 - Render powergating must remain disabled */
 	if (IS_DG2_GRAPHICS_STEP(gt->i915, G10, STEP_A0, STEP_C0) ||
 	    IS_DG2_GRAPHICS_STEP(gt->i915, G11, STEP_A0, STEP_B0))
@@ -627,6 +633,29 @@ static bool rc6_supported(struct intel_rc6 *rc6)
 	if (!i915->params.rc6_ignore_steppings &&
 	    IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0, STEP_B0) &&
 	    i915->remote_tiles > 0)
+		return false;
+
+	/*
+	 * Wa_1509372804: pvc_ct[a*]
+	 */
+	if (!i915->params.rc6_ignore_steppings &&
+	    IS_PVC_CT_STEP(i915, STEP_A0, STEP_B0))
+		return false;
+
+	/*
+	 * Wa_1508652630
+	 */
+	if (!i915->params.rc6_ignore_steppings &&
+	    IS_PVC_BD_STEP(i915, STEP_A0, STEP_B0) &&
+	    i915->remote_tiles > 0)
+		return false;
+
+	/*
+	 * Wa for HSD: 14015706335
+	 */
+
+	if (!i915->params.rc6_ignore_steppings &&
+	    IS_PVC_BD_STEP(i915, STEP_B0, STEP_FOREVER))
 		return false;
 
 	return i915->params.enable_rc6;

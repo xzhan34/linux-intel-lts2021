@@ -325,7 +325,9 @@ static u32 guc_ctl_wa_flags(struct intel_guc *guc)
 		flags |= GUC_WA_POLLCS;
 
 	/* Wa_16011759253:dg2_g10:a0 */
-	if (IS_DG2_GRAPHICS_STEP(gt->i915, G10, STEP_A0, STEP_B0))
+	/* Wa_22011383443:pvc - Also needed for PVC BD A0 */
+	if (IS_DG2_GRAPHICS_STEP(gt->i915, G10, STEP_A0, STEP_B0) ||
+	    (IS_PVC_BD_STEP(gt->i915, STEP_A0, STEP_B0)))
 		flags |= GUC_WA_GAM_CREDITS;
 
 	/* Wa_14014475959 */
@@ -365,6 +367,14 @@ static u32 guc_ctl_wa_flags(struct intel_guc *guc)
 	/* Wa_16015675438, Wa_18020744125 */
 	if (!RCS_MASK(gt))
 		flags |= GUC_WA_RCS_REGS_IN_CCS_REGS_LIST;
+
+	/*
+	 * Wa_1509372804: PVC, Apply WA in render force wake step by
+	 * GUC FW before any work submission to CCS engines
+	 */
+	if (IS_PVC_CT_STEP(gt->i915, STEP_B0, STEP_C0) &&
+	    gt->rc6.supported)
+		flags |= GUC_WA_RENDER_RST_RC6_EXIT;
 
 	return flags;
 }
