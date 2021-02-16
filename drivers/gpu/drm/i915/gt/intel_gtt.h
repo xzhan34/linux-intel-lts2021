@@ -87,7 +87,18 @@ typedef u64 gen8_pte_t;
 
 #define GEN12_PPGTT_PTE_LM	BIT_ULL(11)
 
-#define GEN12_GGTT_PTE_LM	BIT_ULL(1)
+/*
+ *  DOC: GEN12 GGTT Table Entry format
+ *
+ * +----------+---------+---------+--------------+---------+
+ * |    63:46 |   45:12 |    11:2 |            1 |       0 |
+ * +==========+=========+=========+==============+=========+
+ * |  Ignored | Address | Ignored | Local Memory | Present |
+ * +----------+---------+---------+--------------+---------+
+ */
+
+#define GEN12_GGTT_PTE_LM		BIT_ULL(1)
+#define GEN12_GGTT_PTE_ADDR_MASK	GENMASK_ULL(45, 12)
 
 #define GEN12_PDE_64K BIT(6)
 
