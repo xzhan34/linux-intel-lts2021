@@ -15,9 +15,9 @@
 
 #ifdef CONFIG_DRM_I915_DEBUG_IOV
 #define MEMIRQ_DEBUG(_gt, _f, ...) \
-	drm_dbg(&(_gt)->i915->drm, "IRQ " _f, ##__VA_ARGS__)
+	drm_dbg(&(_gt)->i915->drm, "IRQ%u " _f, (_gt)->info.id, ##__VA_ARGS__)
 #else
-#define MEMIRQ_DEBUG(...)
+#define MEMIRQ_DEBUG(_gt, ...) typecheck(struct intel_gt *, _gt)
 #endif
 
 /**
