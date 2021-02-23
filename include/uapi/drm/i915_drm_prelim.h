@@ -454,6 +454,7 @@ struct prelim_drm_i915_query_item {
 	 * Query Command Streamer timestamp register.
 	 */
 #define PRELIM_DRM_I915_QUERY_CS_CYCLES			(PRELIM_DRM_I915_QUERY | 9)
+#define PRELIM_DRM_I915_QUERY_FABRIC_INFO		(PRELIM_DRM_I915_QUERY | 11)
 #define PRELIM_DRM_I915_QUERY_ENGINE_INFO		(PRELIM_DRM_I915_QUERY | 13)
 #define PRELIM_DRM_I915_QUERY_L3BANK_COUNT		(PRELIM_DRM_I915_QUERY | 14)
 #define PRELIM_DRM_I915_QUERY_LMEM_MEMORY_REGIONS	(PRELIM_DRM_I915_QUERY | 15)
@@ -1051,6 +1052,28 @@ struct prelim_drm_i915_query_cs_cycles {
 
 	/** Must be zero. */
 	__u32 rsvd;
+};
+
+/**
+ * struct prelim_drm_i915_query_fabric_info
+ *
+ * With the given fabric id, query fabric info wrt the device.
+ * Higher bandwidth is better.  0 means no fabric.
+ * Latency is averaged latency (from all paths)
+ *
+ * fabric_id can be obtained from
+ *    /sys/class/drm/cardx/device/iaf.y/iaf_fabric_id
+ * Bandwidth is in Gigabits per second (max value of 8 * 4 * 90)
+ *    8 possible ports
+ *    4 lanes max per port
+ *   90 gigabits per lane
+ * Latency is in tenths of path length. 10 == 1 fabric link between src and dst
+ *   POR is max 1 link (zero hops).
+ */
+struct prelim_drm_i915_query_fabric_info {
+	__u32 fabric_id;
+	__u16 bandwidth;
+	__u16 latency;
 };
 
 /**

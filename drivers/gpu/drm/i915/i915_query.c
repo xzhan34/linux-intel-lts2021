@@ -7,6 +7,8 @@
 #include <linux/nospec.h>
 #include <linux/bits.h>
 
+#include <drm/intel_iaf_platform.h>
+
 #include "gt/intel_engine_pm.h"
 #include "gt/intel_engine_regs.h"
 #include "gt/intel_engine_user.h"
@@ -342,6 +344,64 @@ query_cs_cycles(struct drm_i915_private *i915,
 		return -EFAULT;
 
 	return sizeof(query);
+}
+
+static int query_fabric_connectivity(struct drm_i915_private *i915,
+				     struct drm_i915_query_item *query_item)
+{
+	struct prelim_drm_i915_query_fabric_info __user *info_ptr =
+		u64_to_user_ptr(query_item->data_ptr);
+	struct prelim_drm_i915_query_fabric_info info;
+	struct query_info *qi;
+	u32 latency = 0;
+	int ret;
+	int cnt;
+	int i;
+
+	ret = copy_query_item(&info, sizeof(info), sizeof(info), query_item);
+	if (ret)
+		return ret;
+
+	info.bandwidth = 0;
+	info.latency = 0;
+
+	/* "Local" access will be on chip, not fabric (bandwith = 0) */
+	if (info.fabric_id == i915->intel_iaf.fabric_id)
+		goto done;
+
+	qi = i915->intel_iaf.ops->connectivity_query(i915->intel_iaf.handle,
+						     info.fabric_id);
+	if (IS_ERR(qi))
+		goto done;
+	/*
+	 * Examine the query information for connectivity.
+	 * Minimum bandwidth value is the bandwith, 0 == no connectivity
+	 * Latency is averaged.
+	 */
+	cnt = qi->src_cnt * qi->dst_cnt;
+	if (!cnt) {
+		kfree(qi);
+		return -ENXIO;
+	}
+
+	info.bandwidth = 0xffff;
+	for (i = 0; i < cnt; i++) {
+		info.bandwidth = min(qi->sd2sd[i].bandwidth, info.bandwidth);
+		GEM_WARN_ON(add_overflows_t(u32, latency,
+					    qi->sd2sd[i].latency));
+		latency += qi->sd2sd[i].latency;
+	}
+
+	info.latency = latency / cnt;
+
+	/* we are responsible for freeing qi */
+	kfree(qi);
+
+done:
+	if (copy_to_user(info_ptr, &info, sizeof(info)))
+		return -EFAULT;
+
+	return 0;
 }
 
 static int
@@ -1112,6 +1172,7 @@ static i915_query_funcs_table i915_query_funcs_prelim[] = {
 	MAKE_TABLE_IDX(GEOMETRY_SUBSLICES) = query_geometry_subslices,
 	MAKE_TABLE_IDX(COMPUTE_SUBSLICES) = query_compute_subslices,
 	MAKE_TABLE_IDX(CS_CYCLES) = query_cs_cycles,
+	MAKE_TABLE_IDX(FABRIC_INFO) = query_fabric_connectivity,
 	MAKE_TABLE_IDX(ENGINE_INFO) = prelim_query_engine_info,
 	MAKE_TABLE_IDX(L3BANK_COUNT) = prelim_query_l3bank_count,
 	MAKE_TABLE_IDX(LMEM_MEMORY_REGIONS) = prelim_query_lmem_memregion_info,
