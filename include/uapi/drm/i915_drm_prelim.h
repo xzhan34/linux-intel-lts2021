@@ -349,6 +349,7 @@ struct prelim_drm_i915_vm_bind_ext_uuid {
  * This ioctl is available in debug version 1.
  */
 #define PRELIM_I915_DEBUG_IOCTL_READ_EVENT _IO('j', 0x0)
+#define PRELIM_I915_DEBUG_IOCTL_READ_UUID  _IOWR('j', 0x1, struct prelim_drm_i915_debug_read_uuid)
 
 struct prelim_drm_i915_debug_event {
 	__u32 type;
@@ -402,6 +403,15 @@ struct prelim_drm_i915_debug_event_uuid {
 
 	__u64 handle;
 	__u64 class_handle; /* Can be filtered based on pre-defined classes */
+	__u64 payload_size;
+} __attribute__((packed));
+
+struct prelim_drm_i915_debug_read_uuid {
+	__u64 client_handle;
+	__u64 handle;
+	__u32 flags; /* MBZ */
+	char uuid[36]; /* output */
+	__u64 payload_ptr;
 	__u64 payload_size;
 } __attribute__((packed));
 

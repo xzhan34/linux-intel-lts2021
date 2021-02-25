@@ -11,6 +11,7 @@
 #include "i915_debugger.h"
 #include "i915_drm_client.h"
 #include "i915_drv.h"
+#include "i915_gpu_error.h"
 
 #define from_event(T, event) container_of((event), typeof(*(T)), base)
 #define to_event(e) (&(e)->base)
@@ -588,6 +589,79 @@ unlock:
 	goto out;
 }
 
+static long i915_debugger_read_uuid_ioctl(struct i915_debugger *debugger,
+					  unsigned int cmd,
+					  const u64 arg)
+{
+	struct prelim_drm_i915_debug_read_uuid read_arg;
+	struct i915_uuid_resource *uuid;
+	struct i915_drm_client *client;
+	long ret = 0;
+
+	if (_IOC_SIZE(cmd) < sizeof(read_arg))
+		return -EINVAL;
+
+	if (!(_IOC_DIR(cmd) & _IOC_WRITE))
+		return -EINVAL;
+
+	if (!(_IOC_DIR(cmd) & _IOC_READ))
+		return -EINVAL;
+
+	if (copy_from_user(&read_arg, u64_to_user_ptr(arg), sizeof(read_arg)))
+		return -EFAULT;
+
+	if (read_arg.flags)
+		return -EINVAL;
+
+	if (!access_ok(u64_to_user_ptr(read_arg.payload_ptr),
+		       read_arg.payload_size))
+		return -EFAULT;
+
+	DD_INFO(debugger, "read_uuid: client_handle=%llu, handle=%llu, flags=0x%x",
+		read_arg.client_handle, read_arg.handle, read_arg.flags);
+
+	uuid = NULL;
+	rcu_read_lock();
+	client = xa_load(&debugger->i915->clients.xarray,
+			 read_arg.client_handle);
+	if (client) {
+		xa_lock(&client->uuids_xa);
+		uuid = xa_load(&client->uuids_xa, read_arg.handle);
+		if (uuid)
+			i915_uuid_get(uuid);
+		xa_unlock(&client->uuids_xa);
+	}
+	rcu_read_unlock();
+	if (!uuid)
+		return -ENOENT;
+
+	if (read_arg.payload_size) {
+		if (read_arg.payload_size < uuid->size) {
+			ret = -EINVAL;
+			goto out_uuid;
+		}
+
+		/* This limits us to a maximum payload size of 2G */
+		if (copy_to_user(u64_to_user_ptr(read_arg.payload_ptr),
+				 uuid->ptr, uuid->size)) {
+			ret = -EFAULT;
+			goto out_uuid;
+		}
+	}
+
+	read_arg.payload_size = uuid->size;
+	memcpy(read_arg.uuid, uuid->uuid, sizeof(read_arg.uuid));
+
+	if (copy_to_user(u64_to_user_ptr(arg), &read_arg, sizeof(read_arg)))
+		ret = -EFAULT;
+
+	DD_INFO(debugger, "read_uuid: payload delivery of %llu bytes returned %ld\n", uuid->size, ret);
+
+out_uuid:
+	i915_uuid_put(uuid);
+	return ret;
+}
+
 static long i915_debugger_ioctl(struct file *file,
 				unsigned int cmd,
 				unsigned long arg)
@@ -606,6 +680,10 @@ static long i915_debugger_ioctl(struct file *file,
 					       file->f_flags & O_NONBLOCK);
 		DD_VERBOSE(debugger, "ioctl cmd=READ_EVENT ret=%ld\n", ret);
 		break;
+	case PRELIM_I915_DEBUG_IOCTL_READ_UUID:
+		ret = i915_debugger_read_uuid_ioctl(debugger, cmd, arg);
+		DD_VERBOSE(debugger, "ioctl cmd=READ_UUID ret = %ld\n", ret);
+		break;
 	default:
 		ret = -EINVAL;
 		break;
@@ -616,7 +694,6 @@ out:
 		DD_INFO(debugger, "ioctl cmd=0x%x arg=0x%lx ret=%ld\n", cmd, arg, ret);
 
 	return ret;
-
 }
 
 static void
