@@ -5,6 +5,7 @@
 
 #include "i915_utils.h"
 #include "gt/intel_gt.h"
+#include "iov_selftest_actions.h"
 #include "../abi/iov_actions_selftest_abi.h"
 #include "../intel_iov_relay.h"
 
@@ -20,6 +21,47 @@ static void iov_set_pte(struct intel_iov *iov, void __iomem *addr, gen8_pte_t pt
 static u64 iov_get_pte(struct intel_iov *iov, void __iomem *addr)
 {
 	return gen8_get_pte(addr);
+}
+
+static void gen8_set_masked_pte_val(struct intel_iov *iov, void __iomem *pte_addr,
+				    const u64 mask_size, const u8 mask_shift, u64 val)
+{
+	gen8_pte_t old_pte = iov->selftest.mmio_get_pte(iov, pte_addr) & ~(mask_size << mask_shift);
+	gen8_pte_t pte = old_pte | (val << mask_shift);
+
+	iov->selftest.mmio_set_pte(iov, pte_addr, pte);
+}
+
+static bool
+vf_pte_is_value_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
+			       const u64 mask_size, const u8 mask_shift, gen8_pte_t *out)
+{
+	const u64 mask = mask_size << mask_shift;
+	int err;
+	u64 new_val;
+	u64 val;
+
+	err = intel_iov_selftest_send_vfpf_get_ggtt_pte(iov, ggtt_addr, &val);
+	if (err < 0)
+		return false;
+
+	val = (val & mask) >> mask_shift;
+
+	new_val = val + 1;
+	if (new_val > mask_size)
+		new_val = 0;
+
+	gen8_set_masked_pte_val(iov, pte_addr, mask_size, mask_shift, new_val);
+
+	err = intel_iov_selftest_send_vfpf_get_ggtt_pte(iov, ggtt_addr, &val);
+	if (err < 0)
+		return false;
+
+	val = (val & mask) >> mask_shift;
+
+	*out = iov->selftest.mmio_get_pte(iov, pte_addr);
+
+	return val != new_val;
 }
 
 static bool
@@ -69,18 +111,18 @@ pte_valid_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt
 	gen8_pte_t read_pte;
 	gen8_pte_t write_pte;
 
-	original_pte = iov->selftest.mmio_get_pte(pte_addr);
+	original_pte = iov->selftest.mmio_get_pte(iov, pte_addr);
 
 	write_pte = original_pte ^ FIELD_MAX(mask);
-	iov->selftest.mmio_set_pte(pte_addr, write_pte);
-	read_pte = iov->selftest.mmio_get_pte(pte_addr);
+	iov->selftest.mmio_set_pte(iov, pte_addr, write_pte);
+	read_pte = iov->selftest.mmio_get_pte(iov, pte_addr);
 
 	*out = read_pte;
 
 	if ((read_pte & mask) == (original_pte & mask))
 		ret = true;
 
-	iov->selftest.mmio_set_pte(pte_addr, original_pte);
+	iov->selftest.mmio_set_pte(iov, pte_addr, original_pte);
 
 	return ret;
 }
@@ -101,9 +143,29 @@ pte_vfid_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_
 static bool
 pte_vfid_not_readable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, u64 *out)
 {
-	*out = iov->selftest.mmio_get_pte(pte_addr);
+	*out = iov->selftest.mmio_get_pte(iov, pte_addr);
 
 	return u64_get_bits(*out, TGL_GGTT_PTE_VFID_MASK) == 0;
+}
+
+static bool
+pte_vfid_not_modifiable_check_via_pf(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
+				     gen8_pte_t *out)
+{
+	const u64 mask = TGL_GGTT_PTE_VFID_MASK;
+
+	return vf_pte_is_value_not_modifiable(iov, pte_addr, ggtt_addr, FIELD_MAX(mask),
+					      __bf_shf(mask), out);
+}
+
+static bool
+pte_valid_not_modifiable_check_via_pf(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
+				      gen8_pte_t *out)
+{
+	const u64 mask = GEN6_PTE_VALID;
+
+	return vf_pte_is_value_not_modifiable(iov, pte_addr, ggtt_addr, FIELD_MAX(mask),
+					      __bf_shf(mask), out);
 }
 
 static bool run_test_on_pte(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
@@ -258,6 +320,56 @@ static int igt_vf_own_ggtt(void *arg)
 	return igt_vf_iov_own_ggtt(&to_gt(i915)->iov);
 }
 
+static int igt_vf_iov_own_ggtt_via_pf(struct intel_iov *iov)
+{
+	const u64 size_ggtt_block = SZ_64K;
+	struct drm_mm_node ggtt_block = {};
+	struct i915_ggtt *ggtt = iov_to_gt(iov)->ggtt;
+	gen8_pte_t __iomem *gsm = ggtt->gsm;
+	static struct pte_testcase pte_testcases[] = {
+		{ .test = pte_vfid_not_modifiable_check_via_pf },
+		{ .test = pte_valid_not_modifiable_check_via_pf },
+		{ },
+	};
+	int failed = 0, err;
+	struct pte_testcase *tc;
+
+	BUILD_BUG_ON(!IS_ALIGNED(size_ggtt_block, I915_GTT_PAGE_SIZE_4K));
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	mutex_lock(&ggtt->vm.mutex);
+	err = i915_gem_gtt_insert(&ggtt->vm, &ggtt_block, size_ggtt_block,
+				  0, I915_COLOR_UNEVICTABLE, 0, U64_MAX,
+				  PIN_HIGH);
+	mutex_unlock(&ggtt->vm.mutex);
+	if (err < 0)
+		goto out;
+
+	IOV_DEBUG(iov, "Subtest %s, gsm: %#llx base: %#llx size: %#llx\n",
+		  __func__, ptr_to_u64(gsm), ggtt_block.start, ggtt_block.size);
+
+	for_each_pte_test(tc, pte_testcases) {
+		IOV_DEBUG(iov, "Run '%ps' check \n", tc->test);
+		if (!run_test_on_ggtt_block(iov, gsm, &ggtt_block, tc, 0))
+			failed++;
+	}
+
+	drm_mm_remove_node(&ggtt_block);
+
+	return failed ? -EPERM : 0;
+out:
+	return err;
+}
+
+static int igt_vf_own_ggtt_via_pf(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+
+	GEM_BUG_ON(!IS_SRIOV_VF(i915));
+
+	return igt_vf_iov_own_ggtt_via_pf(&to_gt(i915)->iov);
+}
+
 static void init_defaults_pte_io(struct intel_iov *iov)
 {
 	iov->selftest.mmio_set_pte = iov_set_pte;
@@ -271,6 +383,7 @@ int intel_iov_ggtt_live_selftests(struct drm_i915_private *i915)
 	};
 	static const struct i915_subtest vf_tests[] = {
 		SUBTEST(igt_vf_own_ggtt),
+		SUBTEST(igt_vf_own_ggtt_via_pf),
 	};
 	intel_wakeref_t wakeref;
 	int ret = 0;
