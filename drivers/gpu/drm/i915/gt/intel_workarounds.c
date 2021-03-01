@@ -870,7 +870,20 @@ static void mtl_ctx_workarounds_init(struct intel_engine_cs *engine,
 static void pvc_ctx_workarounds_init(struct intel_engine_cs *engine,
 				     struct i915_wa_list *wal)
 {
+	struct drm_i915_private *i915 = engine->i915;
+
 	pvc_ctx_gt_tuning_init(engine, wal);
+
+	if (IS_PVC_BD_STEP(i915, STEP_A0, STEP_B0) &&
+	    engine->class == COPY_ENGINE_CLASS) {
+		/*
+		 * Wa_16011062782:pvc - WA applies only to Link Copy
+		 * engines, but setting it also on Main Copy engine doesn't have
+		 * any side-effect
+		 */
+		wa_masked_en(wal, BCS_ENGINE_SWCTL(engine->mmio_base),
+			     BCS_ENGINE_SWCTL_DISABLE_256B);
+	}
 }
 
 static void fakewa_disable_nestedbb_mode(struct intel_engine_cs *engine,
@@ -948,6 +961,7 @@ __intel_engine_init_ctx_wa(struct intel_engine_cs *engine,
 			   const char *name)
 {
 	struct drm_i915_private *i915 = engine->i915;
+	bool render_only_ctx_wa = !IS_PONTEVECCHIO(i915);
 
 	wa_init(wal, name, engine->name);
 
@@ -959,7 +973,7 @@ __intel_engine_init_ctx_wa(struct intel_engine_cs *engine,
 	if (GRAPHICS_VER(i915) >= 12)
 		gen12_ctx_gt_fake_wa_init(engine, wal);
 
-	if (engine->class != RENDER_CLASS)
+	if (engine->class != RENDER_CLASS && render_only_ctx_wa)
 		return;
 
 	if (IS_METEORLAKE(i915))
@@ -1730,9 +1744,6 @@ dg2_gt_workarounds_init(struct intel_gt *gt, struct i915_wa_list *wal)
 	 */
 	wa_mcr_write_or(wal, XEHP_SQCM, EN_32B_ACCESS);
 
-	/* Wa_14015795083 */
-	wa_mcr_write_clr(wal, GEN8_MISCCPCTL, GEN12_DOP_CLOCK_GATE_RENDER_ENABLE);
-
 	/* Wa_18018781329 */
 	wa_mcr_write_or(wal, RENDER_MOD_CTRL, FORCE_MISS_FTLB);
 	wa_mcr_write_or(wal, COMP_MOD_CTRL, FORCE_MISS_FTLB);
@@ -1753,9 +1764,6 @@ pvc_gt_workarounds_init(struct intel_gt *gt, struct i915_wa_list *wal)
 {
 	pvc_init_mcr(gt, wal);
 
-	/* Wa_14015795083 */
-	wa_mcr_write_clr(wal, GEN8_MISCCPCTL, GEN12_DOP_CLOCK_GATE_RENDER_ENABLE);
-
 	/* Wa_18018781329 */
 	wa_mcr_write_or(wal, RENDER_MOD_CTRL, FORCE_MISS_FTLB);
 	wa_mcr_write_or(wal, COMP_MOD_CTRL, FORCE_MISS_FTLB);
@@ -1768,6 +1776,73 @@ pvc_gt_workarounds_init(struct intel_gt *gt, struct i915_wa_list *wal)
 
 	/* Wa_16016694945 */
 	wa_mcr_masked_en(wal, XEHPC_LNCFMISCCFGREG0, XEHPC_OVRLSCCC);
+
+	/*
+	 * Wa_14015795083
+	 * Apply to all PVC but don't verify it on PVC A0 steps, as this Wa is
+	 * dependent on clearing GEN12_DOP_CLOCK_GATE_LOCK Lock bit by
+	 * respective firmware. PVC A0 steps may not have that firmware fix.
+	 */
+	if (IS_PVC_BD_STEP(gt->i915, STEP_A0, STEP_B0))
+		wa_mcr_add(wal, GEN8_MISCCPCTL, GEN12_DOP_CLOCK_GATE_RENDER_ENABLE, 0, 0, false);
+	else
+		wa_mcr_write_clr(wal, GEN8_MISCCPCTL, GEN12_DOP_CLOCK_GATE_RENDER_ENABLE);
+
+	if (IS_PVC_BD_STEP(gt->i915, STEP_A0, STEP_B0)) {
+		/* Wa_14011780169:pvc */
+		wa_write_or(wal, UNSLCGCTL9440, GAMTLBOACS_CLKGATE_DIS |
+			    GAMTLBVDBOX7_CLKGATE_DIS |
+			    GAMTLBVDBOX6_CLKGATE_DIS |
+			    GAMTLBVDBOX5_CLKGATE_DIS |
+			    GAMTLBVDBOX4_CLKGATE_DIS |
+			    GAMTLBVDBOX3_CLKGATE_DIS |
+			    GAMTLBVDBOX2_CLKGATE_DIS |
+			    GAMTLBVDBOX1_CLKGATE_DIS |
+			    GAMTLBVDBOX0_CLKGATE_DIS |
+			    GAMTLBKCR_CLKGATE_DIS |
+			    GAMTLBGUC_CLKGATE_DIS |
+			    GAMTLBBLT_CLKGATE_DIS);
+		wa_write_or(wal, UNSLCGCTL9444, GAMTLBGFXA0_CLKGATE_DIS |
+			    GAMTLBGFXA1_CLKGATE_DIS |
+			    GAMTLBCOMPA0_CLKGATE_DIS |
+			    GAMTLBCOMPA1_CLKGATE_DIS |
+			    GAMTLBCOMPB0_CLKGATE_DIS |
+			    GAMTLBCOMPB1_CLKGATE_DIS |
+			    GAMTLBCOMPC0_CLKGATE_DIS |
+			    GAMTLBCOMPC1_CLKGATE_DIS |
+			    GAMTLBCOMPD0_CLKGATE_DIS |
+			    GAMTLBCOMPD1_CLKGATE_DIS |
+			    GAMTLBMERT_CLKGATE_DIS   |
+			    GAMTLBVEBOX3_CLKGATE_DIS |
+			    GAMTLBVEBOX2_CLKGATE_DIS |
+			    GAMTLBVEBOX1_CLKGATE_DIS |
+			    GAMTLBVEBOX0_CLKGATE_DIS);
+
+		/*
+		 * Wa_1508060568:pvc
+		 * Wa_16011235395:pvc
+		 * Wa_14011776591:pvc Note: Additional registers required for this Wa
+		 */
+		wa_write_or(wal, UNSLCGCTL9430, UNSLCG_FTLUNIT_CLKGATE_DIS);
+
+		/* Wa_14011776591:pvc Note: Additional register required for this Wa */
+		wa_write_or(wal, UNSLICE_UNIT_LEVEL_CLKGATE2, FTLUNIT_CLKGATE_DIS);
+		wa_mcr_write_or(wal, SUBSLICE_UNIT_LEVEL_CLKGATE2, SSMCG_FTLUNIT_CLKGATE_DIS);
+
+		/* Wa_16011254478:pvc */
+		wa_mcr_write_or(wal, INF_UNIT_LEVEL_CLKGATE, MCR_CLKGATE_DIS);
+		wa_mcr_write_or(wal, SCCGCTL94D0, SCCG_SMCR_CLKGATE_DIS);
+		wa_mcr_write_or(wal, SSMCGCTL9520, SSMCG_SMCR_CLKGATE_DIS);
+		wa_write_or(wal, UNSLCGCTL9430, UNSLCG_MCRUNIT_CLKGATE_DIS);
+		wa_write_or(wal, UNSLCGCTL9444, SMCR_CLKGATE_DIS);
+
+		/* Wa_16011062782:pvc */
+		wa_mcr_masked_en(wal, XEHPC_LNCFMISCCFGREG0,
+				 XEHPC_DIS256BREQGLB | XEHPC_DIS128BREQ);
+
+		/* Wa_14010847520:pvc */
+		wa_mcr_write_or(wal, GEN12_LTCDREG, SLPDIS);
+	}
 }
 
 static void
@@ -3193,6 +3268,13 @@ xcs_engine_wa_init(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 		wa_masked_field_set(wal, GAB_MODE,
 				    GAB_MODE_THROTTLE_RATE_MASK,
 				    GAB_MODE_THROTTLE_RATE);
+
+	if (IS_PVC_BD_STEP(i915, STEP_A0, STEP_B0))
+		if (engine->class == COPY_ENGINE_CLASS)
+			/* Wa_16010961369:pvc */
+			wa_masked_field_set(wal, ECOSKPD(engine->mmio_base),
+					    XEHP_BLITTER_SCHEDULING_MODE_MASK,
+					    XEHP_BLITTER_ROUND_ROBIN_MODE);
 }
 
 static void
@@ -3201,6 +3283,31 @@ ccs_engine_wa_init(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 	if (IS_PVC_CT_STEP(engine->i915, STEP_A0, STEP_C0)) {
 		/* Wa_14014999345:pvc */
 		wa_mcr_masked_en(wal, GEN10_CACHE_MODE_SS, DISABLE_ECC);
+	}
+
+	if (IS_PVC_CT_STEP(engine->i915, STEP_A0, STEP_B0)) {
+		/* Wa_18015335494:pvc */
+		wa_mcr_write_or(wal, GEN8_ROW_CHICKEN, FPU_RESIDUAL_DISABLE);
+
+		/* Wa_16011764597:pvc */
+		wa_mcr_write_or(wal, LSC_CHICKEN_BIT_0_UDW,
+				DISABLE_MF_READ_FIFO_DEPTH_DECREASE |
+				ENABLE_CREDIT_UNIFICATION);
+
+		/* Wa_16013172390:pvc */
+		wa_mcr_masked_en(wal, GADSS_CHICKEN, GADSS_128B_COMPRESSION_DISABLE_XEHPC);
+
+		/* Wa_16012607674:pvc */
+		wa_mcr_masked_en(wal, GADSS_CHICKEN,
+				 GADSS_LINK_LAYER_DUMMY_DISABLE);
+	}
+
+	if (IS_PVC_BD_STEP(engine->i915, STEP_A0, STEP_B0)) {
+		/* Wa_16011062782:pvc */
+		wa_mcr_masked_field_set(wal, GADSS_CHICKEN,
+					GADSS_COMPRESSION_MASK,
+					GADSS_READ_COMPRESSION_DISABLE |
+					GADSS_128B_COMPRESSION_DISABLE_XEHPC);
 	}
 }
 
