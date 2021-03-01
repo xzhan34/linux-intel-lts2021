@@ -37,6 +37,11 @@ static u32 reg_access(i915_reg_t reg)
 	return i915_mmio_reg_offset(reg) & RING_FORCE_TO_NONPRIV_ACCESS_MASK;
 }
 
+static bool deny_register(i915_reg_t reg)
+{
+	return i915_mmio_reg_offset(reg) & RING_FORCE_TO_NONPRIV_DENY;
+}
+
 static bool wo_register(i915_reg_t reg)
 {
 	return reg_access(reg) == RING_FORCE_TO_NONPRIV_ACCESS_WR;
@@ -49,6 +54,9 @@ static bool ro_register(i915_reg_t reg)
 
 static const char *repr_access(i915_reg_t reg)
 {
+	if (deny_register(reg))
+		return "deny";
+
 	if (ro_register(reg))
 		return "ro";
 
@@ -500,7 +508,8 @@ static int check_dirty_whitelist(struct intel_context *ce)
 	}
 
 	for (i = 0; i < engine->whitelist.count; i++) {
-		bool ro_reg = ro_register(engine->whitelist.list[i].reg);
+		bool ro_reg = (ro_register(engine->whitelist.list[i].reg) ||
+			       deny_register(engine->whitelist.list[i].reg));
 		bool varying_reg =
 			timestamp(engine, engine->whitelist.list[i].reg);
 		u32 reg = reg_offset(engine->whitelist.list[i].reg);
@@ -961,7 +970,7 @@ static bool pardon_reg(struct drm_i915_private *i915, i915_reg_t reg)
 static bool result_eq(struct intel_engine_cs *engine,
 		      u32 a, u32 b, i915_reg_t reg)
 {
-	if (wo_register(reg)) /* read undefined */
+	if (wo_register(reg) || deny_register(reg)) /* read undefined */
 		return true;
 
 	if (ro_register(reg) || timestamp(engine, reg)) /* expect varying */
@@ -993,7 +1002,7 @@ static bool ignore_reg(struct drm_i915_private *i915, i915_reg_t reg)
 static bool result_neq(struct intel_engine_cs *engine,
 		       u32 a, u32 b, i915_reg_t reg)
 {
-	if (wo_register(reg)) /* read undefined */
+	if (wo_register(reg) || deny_register(reg)) /* read undefined */
 		return true;
 
 	if (ro_register(reg) || timestamp(engine, reg)) /* expect varying */

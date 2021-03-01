@@ -3174,6 +3174,14 @@ ccs_engine_wa_init(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 		/* Wa_14014999345:pvc */
 		wa_mcr_masked_en(wal, GEN10_CACHE_MODE_SS, DISABLE_ECC);
 	}
+
+	if (i915_modparams.debug_eu) {
+		gen9_debug_td_ctl_init(engine, wal);
+
+		/* Wa_14015527279:pvc */
+		if (IS_PONTEVECCHIO(engine->i915))
+			wa_masked_en(wal, GEN7_ROW_CHICKEN2, XEHPC_DISABLE_BTB);
+	}
 }
 
 /*
