@@ -1640,6 +1640,7 @@ static void i915_oa_stream_destroy(struct i915_perf_stream *stream)
 	 * See i915_oa_init_reg_state() and lrc_configure_all_contexts()
 	 */
 	WRITE_ONCE(gt->perf.exclusive_stream, NULL);
+	synchronize_rcu(); /* Serialise with i915_oa_init_reg_state */
 	perf->ops.disable_metric_set(stream);
 
 	free_oa_buffer(stream);
@@ -3418,10 +3419,12 @@ void i915_oa_init_reg_state(const struct intel_context *ce,
 	if (engine->class != RENDER_CLASS)
 		return;
 
-	/* perf.exclusive_stream serialised by lrc_configure_all_contexts() */
+	/* perf.exclusive_stream serialised by i915_oa_stream_destroy() */
+	rcu_read_lock();
 	stream = READ_ONCE(engine->gt->perf.exclusive_stream);
 	if (stream && GRAPHICS_VER(stream->perf->i915) < 12)
 		gen8_update_reg_state_unlocked(ce, stream);
+	rcu_read_unlock();
 }
 
 /**
