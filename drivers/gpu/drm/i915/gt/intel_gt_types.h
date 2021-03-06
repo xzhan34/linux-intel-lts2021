@@ -23,6 +23,7 @@
 
 #include "i915_perf_types.h"
 #include "intel_engine_types.h"
+#include "intel_flat_ppgtt_pool_types.h"
 #include "intel_gt_buffer_pool_types.h"
 #include "intel_hwconfig.h"
 #include "intel_llc_types.h"
@@ -231,6 +232,9 @@ struct intel_gt {
 		u32 delay_fast, delay_slow;
 		bool int_enabled;
 	} fake_int;
+
+	/* Maintain a per-gt pool */
+	struct intel_flat_ppgtt_pool fpp;
 
 	struct intel_wakeref wakeref;
 	atomic_t user_wakeref;

@@ -175,6 +175,8 @@ intel_write_status_page(struct intel_engine_cs *engine, int reg, u32 value)
 #define I915_GEM_HWS_BLITTER_ADDR	(I915_GEM_HWS_BLITTER * sizeof(u32))
 #define I915_GEM_HWS_EVICT		0x44
 #define I915_GEM_HWS_EVICT_ADDR		(I915_GEM_HWS_EVICT * sizeof(u32))
+#define I915_GEM_HWS_BIND		0x46
+#define I915_GEM_HWS_BIND_ADDR		(I915_GEM_HWS_BIND * sizeof(u32))
 #define I915_GEM_HWS_PXP		0x60
 #define I915_GEM_HWS_PXP_ADDR		(I915_GEM_HWS_PXP * sizeof(u32))
 #define I915_GEM_HWS_SCRATCH		0x80

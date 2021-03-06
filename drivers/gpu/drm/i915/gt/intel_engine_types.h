@@ -401,6 +401,7 @@ struct intel_engine_cs {
 	struct intel_context *kernel_context; /* pinned */
 	struct intel_context *blitter_context; /* pinned; exists for BCS only */
 	struct intel_context *evict_context; /* pinned; exists for BCS only */
+	struct intel_context *bind_context; /* Only for bcs used for bind */
 
 	/**
 	 * pinned_contexts_list: List of pinned contexts. This list is only

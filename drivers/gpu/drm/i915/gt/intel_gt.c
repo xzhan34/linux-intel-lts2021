@@ -15,6 +15,7 @@
 #include "i915_drv.h"
 #include "intel_context.h"
 #include "intel_engine_regs.h"
+#include "intel_flat_ppgtt_pool.h"
 #include "intel_ggtt_gmch.h"
 #include "intel_gt.h"
 #include "intel_gt_buffer_pool.h"
@@ -97,6 +98,7 @@ void intel_gt_common_init_early(struct intel_gt *gt)
 	intel_gt_init_tlb(gt);
 	intel_gt_pm_init_early(gt);
 
+	intel_flat_ppgtt_pool_init_early(&gt->fpp);
 	intel_uc_init_early(&gt->uc);
 	intel_rps_init_early(&gt->rps);
 
@@ -982,6 +984,7 @@ out_fw:
 void intel_gt_driver_remove(struct intel_gt *gt)
 {
 	i915_vma_clock_flush(&gt->vma_clock);
+	intel_flat_ppgtt_pool_fini(&gt->fpp);
 
 	__intel_gt_disable(gt);
 

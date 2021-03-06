@@ -20,6 +20,8 @@
 #include "intel_engine_regs.h"
 #include "intel_engine_user.h"
 #include "intel_execlists_submission.h"
+#include "intel_flat_ppgtt_pool.h"
+#include "intel_gpu_commands.h"
 #include "intel_gt.h"
 #include "intel_gt_mcr.h"
 #include "intel_gt_pm.h"
@@ -1324,6 +1326,42 @@ create_evict_context(struct intel_engine_cs *engine)
 						  &evict, "evict_context");
 }
 
+static struct intel_context *
+create_bind_context(struct intel_engine_cs *engine)
+{
+	static struct lock_class_key bind;
+
+	return intel_engine_create_pinned_context(engine, engine->gt->vm, SZ_4K,
+						  I915_GEM_HWS_BIND_ADDR,
+						  &bind, "bind_context");
+}
+
+static int
+setup_flat_ppgtt(struct intel_engine_cs *engine)
+{
+	struct intel_gt *gt = engine->gt;
+	struct intel_context *ce;
+	int ret;
+
+	if (!gt->lmem)
+		return 0;
+
+	ce = create_bind_context(engine);
+	if (IS_ERR(ce))
+		return PTR_ERR(ce);
+
+	ret = intel_flat_ppgtt_pool_init(&gt->fpp, ce->vm);
+	if (ret)
+		goto err;
+
+	engine->bind_context = ce;
+	return 0;
+
+err:
+	destroy_pinned_context(ce);
+	return ret;
+}
+
 /**
  * intel_engines_init_common - initialize cengine state which might require hw access
  * @engine: Engine to initialize.
@@ -1367,6 +1405,12 @@ static int engine_init_common(struct intel_engine_cs *engine)
 	 */
 	if (engine->class == COPY_ENGINE_CLASS &&
 	    ce->timeline != engine->legacy.timeline) {
+		if (i915_is_mem_wa_enabled(engine->i915, I915_WA_USE_FLAT_PPGTT_UPDATE)) {
+			ret = setup_flat_ppgtt(engine);
+			if (ret)
+				goto err_flat;
+		}
+
 		ce = create_blitter_context(engine);
 		if (IS_ERR(ce)) {
 			ret = PTR_ERR(ce);
@@ -1391,6 +1435,8 @@ static int engine_init_common(struct intel_engine_cs *engine)
 err_evict:
 	destroy_pinned_context(fetch_and_zero(&engine->blitter_context));
 err_blitter:
+	destroy_pinned_context(fetch_and_zero(&engine->bind_context));
+err_flat:
 err_context:
 	destroy_pinned_context(fetch_and_zero(&engine->kernel_context));
 	return ret;
@@ -1442,6 +1488,7 @@ void intel_engine_quiesce(struct intel_engine_cs *engine)
 {
 	destroy_pinned_context(engine->evict_context);
 	destroy_pinned_context(engine->blitter_context);
+	destroy_pinned_context(engine->bind_context);
 	destroy_pinned_context(engine->kernel_context);
 	cleanup_status_page(engine);
 }

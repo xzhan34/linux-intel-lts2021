@@ -137,6 +137,7 @@ gt-y += \
 	gt/intel_timeline.o \
 	gt/intel_tlb.o \
 	gt/intel_workarounds.o \
+	gt/intel_flat_ppgtt_pool.o \
 	gt/shmem_utils.o \
 	gt/sysfs_engines.o \
 	gt/sysfs_gt_errors.o
