@@ -816,6 +816,10 @@ gen8_pte_t gen8_get_pte(void __iomem *addr);
 
 u64 ggtt_addr_to_pte_offset(u64 ggtt_addr);
 
+void __gen8_ggtt_insert_page_wa_bcs(struct i915_ggtt *ggtt, u32 vfid,
+				    dma_addr_t addr, u64 offset,
+				    unsigned int pat_index, u32 flags);
+
 int ggtt_set_pages(struct i915_vma *vma);
 int ppgtt_set_pages(struct i915_vma *vma);
 void clear_pages(struct i915_vma *vma);

@@ -14,7 +14,10 @@
 
 #include "gem/i915_gem_lmem.h"
 
+#include "iov/abi/iov_actions_prelim_abi.h"
 #include "iov/intel_iov.h"
+#include "iov/intel_iov_relay.h"
+#include "iov/intel_iov_utils.h"
 
 #include "intel_ggtt_gmch.h"
 #include "intel_gt.h"
@@ -344,24 +347,14 @@ static void gen8_ggtt_insert_page_wa(struct i915_address_space *vm,
 	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
 }
 
-static void gen8_ggtt_insert_page_wa_bcs(struct i915_address_space *vm,
-					 dma_addr_t addr,
-					 u64 offset,
-					 unsigned int pat_index,
-					 u32 flags)
+void __gen8_ggtt_insert_page_wa_bcs(struct i915_ggtt *ggtt, u32 vfid,
+				    dma_addr_t addr, u64 offset,
+				    unsigned int pat_index, u32 flags)
 {
-	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
-	struct intel_gt *gt = vm->gt;
+	struct intel_gt *gt = ggtt->vm.gt;
 	struct i915_request *rq;
-	intel_wakeref_t wakeref;
 	u64 pte_encode;
 	u32 *cs;
-
-	wakeref = l4wa_pm_get(gt);
-	if (!wakeref) {
-		gen8_ggtt_insert_page(vm, addr, offset, pat_index, flags);
-		return;
-	}
 
 	/* inserts a page with addr at offset in GGTT */
 	rq = intel_flat_ppgtt_get_request(&gt->fpp);
@@ -377,7 +370,8 @@ static void gen8_ggtt_insert_page_wa_bcs(struct i915_address_space *vm,
 		goto err_rq;
 	}
 
-	pte_encode = ggtt->vm.pte_encode(addr, pat_index, flags);
+	pte_encode = ggtt->vm.pte_encode(addr, pat_index, flags) |
+		     FIELD_PREP(XEHPSDV_GGTT_PTE_VFID_MASK, vfid);
 
 	*cs++ = MI_UPDATE_GTT | 2;
 	*cs++ = offset;
@@ -392,15 +386,32 @@ static void gen8_ggtt_insert_page_wa_bcs(struct i915_address_space *vm,
 	__i915_request_wait(rq, 0, MAX_SCHEDULE_TIMEOUT);
 
 	i915_request_put(rq);
-	intel_gt_pm_put_async_l4(gt, wakeref);
 	ggtt->invalidate(ggtt);
 	return;
 
 err_rq:
 	i915_request_add(rq);
 err:
+	gen8_ggtt_insert_page(&ggtt->vm, addr, offset, pat_index, flags);
+}
+
+static void gen8_ggtt_insert_page_wa_bcs(struct i915_address_space *vm,
+					 dma_addr_t addr, u64 offset,
+					 unsigned int pat_index, u32 flags)
+{
+	struct intel_gt *gt = vm->gt;
+	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
+	intel_wakeref_t wakeref;
+
+	wakeref = l4wa_pm_get(gt);
+	if (!wakeref) {
+		gen8_ggtt_insert_page(vm, addr, offset, pat_index, flags);
+		return;
+	}
+
+	__gen8_ggtt_insert_page_wa_bcs(ggtt, 0, addr, offset, pat_index, flags);
+
 	intel_gt_pm_put_async_l4(gt, wakeref);
-	gen8_ggtt_insert_page(vm, addr, offset, pat_index, flags);
 }
 
 static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
@@ -586,6 +597,72 @@ flat_err:
 	}
 	intel_gt_pm_put_async_l4(gt, wakeref);
 	gen8_ggtt_insert_entries(vm, stash, vma, pat_index, flags);
+}
+
+static void gen12_vf_ggtt_insert_page_wa_vfpf(struct i915_address_space *vm,
+					      dma_addr_t addr,
+					      u64 offset,
+					      unsigned int pat_index,
+					      u32 flags)
+{
+	struct intel_gt *gt = vm->gt;
+	u32 request[VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_LEN];
+	u32 response[VF2PF_PF_L4_WA_UPDATE_GGTT_RESPONSE_MSG_LEN];
+
+	GEM_BUG_ON(!intel_iov_is_vf(&gt->iov));
+
+	if (!unlikely(i915_is_level4_wa_active(gt))) {
+		gen8_ggtt_insert_page(vm, addr, offset, pat_index, flags);
+		return;
+	}
+
+	request[0] = FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		     FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		     FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION,
+				IOV_ACTION_VF2PF_PF_L4_WA_UPDATE_GGTT) |
+		     FIELD_PREP(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_0_MBZ, 0);
+	request[1] = FIELD_PREP(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_1_OFFSET_LO,
+				lower_32_bits(offset));
+	request[2] = FIELD_PREP(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_2_OFFSET_HI,
+				upper_32_bits(offset));
+	request[3] = FIELD_PREP(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_3_PAT_INDEX, pat_index);
+	request[4] = FIELD_PREP(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_4_PTE_FLAGS, flags);
+	request[5] = FIELD_PREP(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_5_ADDR_LO,
+				lower_32_bits(addr));
+	request[6] = FIELD_PREP(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_6_ADDR_HI,
+				upper_32_bits(addr));
+
+	intel_iov_relay_send_to_pf(&gt->iov.relay,
+				   request, ARRAY_SIZE(request),
+				   response, ARRAY_SIZE(response));
+}
+
+static void gen12_vf_ggtt_insert_entries_wa_vfpf(struct i915_address_space *vm,
+						 struct i915_vm_pt_stash *stash,
+						 struct i915_vma *vma,
+						 unsigned int pat_index,
+						 u32 flags)
+{
+	struct intel_gt *gt = vm->gt;
+	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
+	struct sgt_iter iter;
+	dma_addr_t addr;
+	u64 offset;
+
+	GEM_BUG_ON(!intel_iov_is_vf(&gt->iov));
+
+	if (!unlikely(i915_is_level4_wa_active(gt))) {
+		gen8_ggtt_insert_entries(vm, stash, vma, pat_index, flags);
+		return;
+	}
+
+	offset = i915_vma_offset(vma);
+	for_each_sgt_daddr(addr, iter, vma->pages) {
+		gen12_vf_ggtt_insert_page_wa_vfpf(vm, addr, offset, pat_index, flags);
+		offset += I915_GTT_PAGE_SIZE;
+	}
+
+	ggtt->invalidate(ggtt);
 }
 
 static void gen6_ggtt_insert_page(struct i915_address_space *vm,
@@ -1529,8 +1606,13 @@ static int gen12vf_ggtt_probe(struct i915_ggtt *ggtt)
 	else
 		ggtt->vm.pte_encode = gen8_ggtt_pte_encode;
 	ggtt->vm.clear_range = nop_clear_range;
-	ggtt->vm.insert_page = gen8_ggtt_insert_page;
-	ggtt->vm.insert_entries = gen8_ggtt_insert_entries;
+	if (i915_is_mem_wa_enabled(i915, I915_WA_USE_FLAT_PPGTT_UPDATE)) {
+		ggtt->vm.insert_page = gen12_vf_ggtt_insert_page_wa_vfpf;
+		ggtt->vm.insert_entries = gen12_vf_ggtt_insert_entries_wa_vfpf;
+	} else {
+		ggtt->vm.insert_page = gen8_ggtt_insert_page;
+		ggtt->vm.insert_entries = gen8_ggtt_insert_entries;
+	}
 	ggtt->vm.cleanup = gen6_gmch_remove;
 
 	ggtt->vm.vma_ops.bind_vma    = intel_ggtt_bind_vma;
