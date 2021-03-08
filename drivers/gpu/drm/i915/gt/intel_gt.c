@@ -1282,7 +1282,7 @@ static int intel_gt_tile_setup(struct intel_gt *gt,
 	}
 
 	/* Which tile am I? default to zero on single tile systems */
-	if (HAS_REMOTE_TILES(i915)) {
+	if (HAS_REMOTE_TILES(i915) && !IS_SRIOV_VF(i915)) {
 		u32 instance =
 			__raw_uncore_read32(gt->uncore, XEHPSDV_MTCFG_ADDR) &
 			TILE_NUMBER;
@@ -1298,6 +1298,19 @@ static unsigned int gt_count(struct drm_i915_private *i915)
 {
 	unsigned int num_gt;
 	u32 mtcfg;
+
+	/*
+	 * VFs can't access XEHPSDV_MTCFG_ADDR register directly.
+	 * But they only care about tiles where they were assigned.
+	 */
+	if (IS_SRIOV_VF(i915)) {
+		u32 tile_mask = i915->gt[0]->iov.vf.config.tile_mask;
+
+		if (GEM_WARN_ON(!tile_mask))
+			return 1;
+
+		return fls(tile_mask);
+	}
 
 	/*
 	 * We use raw MMIO reads at this point since the
