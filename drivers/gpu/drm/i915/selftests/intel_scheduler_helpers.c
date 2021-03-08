@@ -19,8 +19,17 @@ struct intel_engine_cs *intel_selftest_find_any_engine(struct intel_gt *gt)
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
 
-	for_each_engine(engine, gt, id)
+	for_each_engine(engine, gt, id) {
+		/*
+		 * Avoid the 'bind' engine as that can lead to problems,
+		 * e.g. due to a test blocking that engine but then
+		 * requiring a bind operation to complete.
+		 */
+		if (engine->bind_context)
+			continue;
+
 		return engine;
+	}
 
 	pr_err("No valid engine found!\n");
 	return NULL;

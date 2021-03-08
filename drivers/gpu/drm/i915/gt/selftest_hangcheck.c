@@ -1009,6 +1009,13 @@ static int __igt_reset_engines(struct intel_gt *gt,
 		if (flags & TEST_ACTIVE) {
 			if (!intel_engine_can_store_dword(engine))
 				continue;
+
+			/*
+			 * Can't idle the bind engine if threads are running
+			 * on other engines which keep poking the bind engine.
+			 */
+			if (engine->bind_context && (flags & TEST_OTHERS))
+				continue;
 		} else if (using_guc)
 			continue;
 
@@ -1670,6 +1677,17 @@ static int igt_reset_queue(void *arg)
 		bool using_guc = intel_engine_uses_guc(engine);
 
 		if (!intel_engine_can_store_dword(engine))
+			continue;
+
+		/*
+		 * Can't test on the 'bind' engine. The test requires creating
+		 * two hanging batches back to back. Creating the second
+		 * requires operations which must go via the bind_engine, which
+		 * is blocked by the first hanging batch. So either the first
+		 * batch is killed by the hangcheck and the test fails, or the
+		 * bind operation times out and the test also fails.
+		 */
+		if (engine->bind_context)
 			continue;
 
 		if (using_guc) {
