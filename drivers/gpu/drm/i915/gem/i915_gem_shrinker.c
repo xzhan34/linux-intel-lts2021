@@ -205,18 +205,12 @@ i915_gem_shrink(struct i915_gem_ww_ctx *ww,
 				continue;
 
 			spin_unlock_irqrestore(&i915->mm.obj_lock, flags);
-
-			/* May arrive from get_pages on another bo */
-			if (!ww) {
-				if (!i915_gem_object_trylock(obj))
+			if (ww) {
+				err = i915_gem_object_lock_to_evict(obj, ww);
+				if (err && err != -EALREADY)
 					goto skip;
 			} else {
-				err = i915_gem_object_lock_to_evict(obj, ww);
-				if (err == -EALREADY) {
-					err = 0;
-					goto skip;
-				}
-				if (err)
+				if (!i915_gem_object_trylock(obj))
 					goto skip;
 			}
 
@@ -225,6 +219,10 @@ i915_gem_shrink(struct i915_gem_ww_ctx *ww,
 				try_to_writeback(obj, shrink);
 				count += obj->base.size >> PAGE_SHIFT;
 			}
+
+			/* If error is not EINTR, skip object */
+			if (err != -EINTR)
+				err = 0;
 
 			if (!ww)
 				i915_gem_object_unlock(obj);
