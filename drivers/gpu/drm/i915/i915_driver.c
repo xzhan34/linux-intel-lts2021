@@ -86,6 +86,7 @@
 #include "i915_ioctl.h"
 #include "i915_irq.h"
 #include "i915_memcpy.h"
+#include "i915_pci.h"
 #include "i915_perf.h"
 #include "i915_query.h"
 #include "i915_suspend.h"
@@ -384,6 +385,112 @@ static void intel_ipver_early_init(struct drm_i915_private *i915)
 	IP_VER_READ(i915_mmio_reg_offset(GMD_ID_DISPLAY), display);
 	IP_VER_READ(MTL_MEDIA_GSI_BASE + i915_mmio_reg_offset(GMD_ID_GRAPHICS),
 		    media);
+}
+
+static void __release_bars(struct pci_dev *pdev)
+{
+	int resno;
+
+	for (resno = PCI_STD_RESOURCES; resno < PCI_STD_RESOURCE_END; resno++) {
+		if (pci_resource_len(pdev, resno))
+			pci_release_resource(pdev, resno);
+	}
+}
+
+static void
+__resize_bar(struct drm_i915_private *i915, int resno, resource_size_t size)
+{
+	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
+	int bar_size = pci_rebar_bytes_to_size(size);
+	int ret;
+
+	__release_bars(pdev);
+
+	ret = pci_resize_resource(pdev, resno, bar_size);
+	if (ret) {
+		drm_info(&i915->drm, "Failed to resize BAR%d to %dM (%pe)\n",
+			 resno, 1 << bar_size, ERR_PTR(ret));
+		return;
+	}
+
+	drm_info(&i915->drm, "BAR%d resized to %dM\n", resno, 1 << bar_size);
+}
+
+/* BAR size starts from 1MB - 2^20 */
+#define BAR_SIZE_SHIFT 20
+static resource_size_t
+__lmem_rebar_size(struct drm_i915_private *i915, int resno)
+{
+	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
+	u32 rebar = pci_rebar_get_possible_sizes(pdev, resno);
+	resource_size_t size;
+
+	if (!rebar)
+		return 0;
+
+	size = 1ULL << (__fls(rebar) + BAR_SIZE_SHIFT);
+
+	if (size <= pci_resource_len(pdev, resno))
+		return 0;
+
+	return size;
+}
+
+/**
+ * i915_resize_lmem_bar - resize local memory BAR
+ * @i915: device private
+ *
+ * This function will attempt to resize LMEM bar to make all memory accessible.
+ * Whether it will be successful depends on both device and platform
+ * capabilities. Any errors are non-critical, even if resize fails, we go back
+ * to the previous configuration.
+ */
+static void i915_resize_lmem_bar(struct drm_i915_private *i915)
+{
+	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
+	struct pci_bus *root = pdev->bus;
+	struct resource *root_res;
+	resource_size_t rebar_size;
+	u32 pci_cmd;
+	int i;
+
+	if (!i915_pci_resource_valid(pdev, GEN12_LMEM_BAR)) {
+		drm_warn(&i915->drm, "Can't resize LMEM BAR - BAR not valid\n");
+		return;
+	}
+
+	rebar_size = __lmem_rebar_size(i915, GEN12_LMEM_BAR);
+
+	if (!rebar_size)
+		return;
+
+	/* Find out if root bus contains 64bit memory addressing */
+	while (root->parent)
+		root = root->parent;
+
+	pci_bus_for_each_resource(root, root_res, i) {
+		if (root_res &&
+				root_res->flags & (IORESOURCE_MEM | IORESOURCE_MEM_64) &&
+				root_res->start > 0x100000000ull)
+			break;
+	}
+
+	/* pci_resize_resource will fail anyways */
+	if (!root_res) {
+		drm_info(&i915->drm,
+				"Can't resize LMEM BAR - platform support is missing\n");
+		return;
+	}
+
+	/* First disable PCI memory decoding references */
+	pci_read_config_dword(pdev, PCI_COMMAND, &pci_cmd);
+	pci_write_config_dword(pdev, PCI_COMMAND,
+			       pci_cmd & ~PCI_COMMAND_MEMORY);
+
+	__resize_bar(i915, GEN12_LMEM_BAR, rebar_size);
+
+	pci_assign_unassigned_bus_resources(pdev->bus);
+	pci_write_config_dword(pdev, PCI_COMMAND, pci_cmd);
 }
 
 /**
@@ -971,6 +1078,9 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto out_pci_disable;
 
 	disable_rpm_wakeref_asserts(&i915->runtime_pm);
+
+	if (HAS_LMEM(i915))
+		i915_resize_lmem_bar(i915);
 
 	intel_vgpu_detect(i915);
 
