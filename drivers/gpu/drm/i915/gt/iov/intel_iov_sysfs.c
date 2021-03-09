@@ -108,10 +108,35 @@ static ssize_t ggtt_quota_iov_attr_store(struct intel_iov *iov,
 	return err ?: count;
 }
 
+static ssize_t contexts_quota_iov_attr_show(struct intel_iov *iov,
+					    unsigned int id, char *buf)
+{
+	u16 num_ctxs = intel_iov_provisioning_get_ctxs(iov, id);
+
+	return sysfs_emit(buf, "%hu\n", num_ctxs);
+}
+
+static ssize_t contexts_quota_iov_attr_store(struct intel_iov *iov,
+					     unsigned int id,
+					     const char *buf, size_t count)
+{
+	u16 num_ctxs;
+	int err;
+
+	err = kstrtou16(buf, 0, &num_ctxs);
+	if (err)
+		return err;
+
+	err = intel_iov_provisioning_set_ctxs(iov, id, num_ctxs);
+	return err ?: count;
+}
+
 IOV_ATTR(ggtt_quota);
+IOV_ATTR(contexts_quota);
 
 static struct attribute *vf_attrs[] = {
 	&ggtt_quota_iov_attr.attr,
+	&contexts_quota_iov_attr.attr,
 	NULL
 };
 

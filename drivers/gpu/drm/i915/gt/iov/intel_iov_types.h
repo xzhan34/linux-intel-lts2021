@@ -11,9 +11,14 @@
 
 /**
  * struct intel_iov_config - IOV configuration data.
+ * @ggtt_region: GGTT region.
+ * @num_ctxs: number of GuC submission contexts.
+ * @begin_ctx: start index of GuC contexts.
  */
 struct intel_iov_config {
 	struct drm_mm_node ggtt_region;
+	u16 num_ctxs;
+	u16 begin_ctx;
 };
 
 /**
