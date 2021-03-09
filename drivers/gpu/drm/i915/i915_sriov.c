@@ -22,6 +22,9 @@
 #include "gt/iov/intel_iov_state.h"
 #include "gt/iov/intel_iov_utils.h"
 
+/* XXX: We need to dig into PCI-core internals to be able to implement VF BAR resize */
+#include "../../../pci/pci.h"
+
 /**
  * DOC: VM Migration with SR-IOV
  *
@@ -516,6 +519,66 @@ static int pf_update_guc_clients(struct intel_iov *iov, unsigned int num_vfs)
 	return err;
 }
 
+#ifdef CONFIG_PCI_IOV
+
+#ifndef PCI_EXT_CAP_ID_VF_REBAR
+#define PCI_EXT_CAP_ID_VF_REBAR        0x24    /* VF Resizable BAR */
+#endif
+static void pf_apply_vf_rebar(struct drm_i915_private *i915, unsigned int num_vfs)
+{
+	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
+	resource_size_t size;
+	unsigned int pos;
+	u32 rebar, ctrl;
+	int i, vf_bar_idx = GEN12_VF_LMEM_BAR - PCI_IOV_RESOURCES;
+
+	if (!HAS_LMEM(i915))
+		return;
+
+	pos = pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_VF_REBAR);
+	if (!pos)
+		return;
+
+	/*
+	 * For all current platform we're expecting a single VF resizable BAR, and we expect it to
+	 * always be BAR2.
+	 */
+	pci_read_config_dword(pdev, pos + PCI_REBAR_CTRL, &ctrl);
+	if (FIELD_GET(PCI_REBAR_CTRL_NBAR_MASK, ctrl) != 1 ||
+	    FIELD_GET(PCI_REBAR_CTRL_BAR_IDX, ctrl) != vf_bar_idx) {
+		drm_warn(&i915->drm, "Unexpected resource in VF resizable BAR, skipping resize\n");
+		return;
+	}
+
+	pci_read_config_dword(pdev, pos + PCI_REBAR_CAP, &rebar);
+	rebar = FIELD_GET(PCI_REBAR_CAP_SIZES, rebar);
+
+	while (rebar > 0) {
+		i = __fls(rebar);
+		size = pci_rebar_size_to_bytes(i);
+
+		if (size * num_vfs <= pci_resource_len(pdev, GEN12_VF_LMEM_BAR)) {
+			ctrl &= ~PCI_REBAR_CTRL_BAR_SIZE;
+			ctrl |= pci_rebar_bytes_to_size(size) << PCI_REBAR_CTRL_BAR_SHIFT;
+			pci_write_config_dword(pdev, pos + PCI_REBAR_CTRL, ctrl);
+			pdev->sriov->barsz[vf_bar_idx] = size;
+			drm_info(&i915->drm, "VF BAR%d resized to %dM\n", vf_bar_idx, 1 << i);
+
+			break;
+		}
+
+		rebar &= ~BIT(i);
+	}
+}
+
+#else
+
+static void pf_apply_vf_rebar(struct drm_i915_private *i915, unsigned int num_vfs)
+{
+}
+
+#endif
+
 /**
  * i915_sriov_pf_enable_vfs - Enable VFs.
  * @i915: the i915 struct
@@ -571,6 +634,8 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 		if (unlikely(err < 0))
 			goto fail_pm;
 	}
+
+	pf_apply_vf_rebar(i915, num_vfs);
 
 	err = pci_enable_sriov(pdev, num_vfs);
 	if (err < 0)

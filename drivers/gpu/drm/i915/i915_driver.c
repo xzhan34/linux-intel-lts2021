@@ -489,6 +489,12 @@ static void __release_bars(struct pci_dev *pdev)
 		if (pci_resource_len(pdev, resno))
 			pci_release_resource(pdev, resno);
 	}
+#ifdef CONFIG_PCI_IOV
+	for (resno = PCI_IOV_RESOURCES; resno < PCI_IOV_RESOURCE_END; resno++) {
+		if (pci_resource_len(pdev, resno))
+			pci_release_resource(pdev, resno);
+	}
+#endif
 }
 
 static void
