@@ -21,6 +21,8 @@ int i915_debugger_open_ioctl(struct drm_device *dev, void *data,
 void i915_debugger_init(struct drm_i915_private *i915);
 void i915_debugger_fini(struct drm_i915_private *i915);
 
+void i915_debugger_wait_on_discovery(struct drm_i915_private * const i915);
+
 void i915_debugger_client_register(struct i915_drm_client *client);
 void i915_debugger_client_release(struct i915_drm_client *client);
 
@@ -40,6 +42,8 @@ static inline int i915_debugger_open_ioctl(struct drm_device *dev, void *data,
 
 static inline void i915_debugger_init(struct drm_i915_private *i915) { }
 static inline void i915_debugger_fini(struct drm_i915_private *i915) { }
+
+static inline void i915_debugger_wait_on_discovery(struct drm_i915_private * const i915) { }
 
 static inline void i915_debugger_client_register(struct i915_drm_client *client) { }
 

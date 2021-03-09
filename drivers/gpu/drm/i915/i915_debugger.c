@@ -197,7 +197,7 @@ is_debugger_closed(const struct i915_debugger * const debugger)
 	return __is_debugger_closed(debugger->i915, debugger);
 }
 
-static void i915_debugger_detach(const struct i915_debugger *debugger)
+static void i915_debugger_detach(struct i915_debugger *debugger)
 {
 	struct drm_i915_private * const i915 = debugger->i915;
 
@@ -225,6 +225,7 @@ static void i915_debugger_close(struct i915_debugger *debugger)
 {
 	i915_debugger_detach(debugger);
 
+	complete_all(&debugger->discovery);
 	wake_up_all(&debugger->write_done);
 	complete_all(&debugger->read_done);
 }
@@ -601,6 +602,105 @@ out:
 
 }
 
+static bool
+i915_debugger_client_task_register(const struct i915_debugger * const debugger,
+				   struct i915_drm_client * const client,
+				   struct task_struct * const task)
+{
+	bool registered = false;
+
+	rcu_read_lock();
+	if (!READ_ONCE(client->closed) &&
+	    !is_debugger_closed(debugger) &&
+	    same_thread_group(debugger->target_task, task)) {
+		GEM_WARN_ON(client->debugger_session >= debugger->session);
+		WRITE_ONCE(client->debugger_session, debugger->session);
+		registered = true;
+	}
+	rcu_read_unlock();
+
+	return registered;
+}
+
+static bool
+i915_debugger_register_client(const struct i915_debugger * const debugger,
+			      struct i915_drm_client * const client)
+{
+	const struct i915_drm_client_name *name;
+	struct task_struct *client_task = NULL;
+	bool registered;
+
+	rcu_read_lock();
+	name = __i915_drm_client_name(client);
+	if (name) {
+		client_task = get_pid_task(name->pid, PIDTYPE_PID);
+	} else {
+		/* XXX: clients->xarray can contain unregistered clients, should we wait or lock? */
+		DD_WARN(debugger, "client %d with no pid, will not be found by discovery\n",
+			 client->id);
+	}
+	rcu_read_unlock();
+
+	if (!client_task)
+		return false;
+
+	registered = i915_debugger_client_task_register(debugger, client, client_task);
+	put_task_struct(client_task);
+
+	return registered;
+}
+
+static void
+i915_debugger_client_discovery(struct i915_debugger *debugger)
+{
+	struct i915_drm_client *client;
+	unsigned long idx;
+
+	rcu_read_lock();
+	xa_for_each(&debugger->i915->clients.xarray, idx, client) {
+		if (READ_ONCE(client->closed))
+			continue;
+
+		client = i915_drm_client_get_rcu(client);
+		if (!client)
+			continue;
+
+		rcu_read_unlock();
+
+		if (i915_debugger_register_client(debugger, client)) {
+			DD_INFO(debugger, "client %u registered, discovery start", client->id);
+
+			i915_debugger_client_create(client);
+
+			DD_INFO(debugger, "client %u discovery done", client->id);
+		}
+
+		i915_drm_client_put(client);
+
+		rcu_read_lock();
+	}
+
+	rcu_read_unlock();
+}
+
+static int i915_debugger_discovery_worker(void *data)
+{
+	struct i915_debugger *debugger = data;
+
+	if (kthread_should_stop())
+		goto out;
+
+	if (is_debugger_closed(debugger))
+		goto out;
+
+	i915_debugger_client_discovery(debugger);
+
+out:
+	complete_all(&debugger->discovery);
+	i915_debugger_put(debugger);
+	return 0;
+}
+
 static int i915_debugger_release(struct inode *inode, struct file *file)
 {
 	struct i915_debugger *debugger = file->private_data;
@@ -632,12 +732,23 @@ static struct task_struct *find_get_target(const pid_t nr)
 	return task;
 }
 
+static int discovery_thread_stop(struct task_struct *task)
+{
+	int ret;
+
+	ret = kthread_stop(task);
+
+	GEM_WARN_ON(ret != -EINTR);
+	return ret;
+}
+
 static int
 i915_debugger_open(struct drm_i915_private * const i915,
 		   struct prelim_drm_i915_debugger_open_param * const param)
 {
 	const u64 known_open_flags = PRELIM_DRM_I915_DEBUG_FLAG_FD_NONBLOCK;
 	struct i915_debugger *debugger;
+	struct task_struct *discovery_task;
 	unsigned long f_flags = 0;
 	int debug_fd;
 	bool allowed;
@@ -668,6 +779,7 @@ i915_debugger_open(struct drm_i915_private * const i915,
 	atomic_long_set(&debugger->event_seqno, 0);
 	init_completion(&debugger->read_done);
 	init_waitqueue_head(&debugger->write_done);
+	init_completion(&debugger->discovery);
 
 	debugger->target_task = find_get_target(param->pid);
 	if (!debugger->target_task) {
@@ -678,6 +790,14 @@ i915_debugger_open(struct drm_i915_private * const i915,
 	allowed = ptrace_may_access(debugger->target_task, PTRACE_MODE_READ_REALCREDS);
 	if (!allowed) {
 		ret = -EACCES;
+		goto err_put_task;
+	}
+
+	kref_get(&debugger->ref); /* +1 for worker thread */
+	discovery_task = kthread_create(i915_debugger_discovery_worker, debugger,
+					"[i915_debugger_discover]");
+	if (IS_ERR(discovery_task)) {
+		ret = PTR_ERR(discovery_task);
 		goto err_put_task;
 	}
 
@@ -716,6 +836,7 @@ i915_debugger_open(struct drm_i915_private * const i915,
 	mutex_unlock(&i915->debug.mutex);
 
 	complete(&debugger->read_done);
+	wake_up_process(discovery_task);
 
 	DD_INFO(debugger, "connected, debug level = %d", debugger->debug_lvl);
 
@@ -728,6 +849,7 @@ i915_debugger_open(struct drm_i915_private * const i915,
 
 err_unlock:
 	mutex_unlock(&i915->debug.mutex);
+	discovery_thread_stop(discovery_task);
 err_put_task:
 	put_task_struct(debugger->target_task);
 err_free:
@@ -773,20 +895,50 @@ void i915_debugger_fini(struct drm_i915_private *i915)
 	mutex_unlock(&i915->debug.mutex);
 }
 
+void i915_debugger_wait_on_discovery(struct drm_i915_private * const i915)
+{
+	const unsigned long waitjiffs = msecs_to_jiffies(5000);
+	struct i915_debugger *debugger;
+	long timeleft;
+
+	debugger = i915_debugger_get(i915);
+	if (!debugger)
+		return;
+
+	if (is_debugger_closed(debugger))
+		goto out;
+
+	if (!same_thread_group(debugger->target_task, current))
+		goto out;
+
+	timeleft = wait_for_completion_interruptible_timeout(&debugger->discovery,
+							     waitjiffs);
+	if (timeleft == -ERESTARTSYS) {
+		DD_WARN(debugger,
+			"task %d interrupted while waited during debugger discovery process\n",
+			task_pid_nr(current));
+	} else if (!timeleft) {
+		DD_WARN(debugger,
+			"task %d waited too long for discovery to complete. Ignoring barrier.\n",
+			task_pid_nr(current));
+	}
+out:
+	i915_debugger_put(debugger);
+}
+
 void i915_debugger_client_register(struct i915_drm_client *client)
 {
-	struct drm_i915_private * const i915 = client->clients->i915;
 	struct i915_debugger *debugger;
 
-	GEM_WARN_ON(client->debugger_session);
+	GEM_WARN_ON(client_debugged(client));
 
-	rcu_read_lock();
-	debugger = rcu_dereference(i915->debug.debugger);
-	if (debugger && same_thread_group(debugger->target_task, current)) {
-		GEM_WARN_ON(client->debugger_session >= debugger->session);
-		WRITE_ONCE(client->debugger_session, debugger->session);
-	}
-	rcu_read_unlock();
+	debugger = i915_debugger_get(client->clients->i915);
+	if (!debugger)
+		return;
+
+	i915_debugger_client_task_register(debugger, client, current);
+
+	i915_debugger_put(debugger);
 }
 
 void i915_debugger_client_release(struct i915_drm_client *client)

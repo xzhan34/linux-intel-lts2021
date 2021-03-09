@@ -43,6 +43,7 @@ struct i915_debugger {
 	struct task_struct *target_task;
 	wait_queue_head_t write_done;
 	struct completion read_done;
+	struct completion discovery;
 
 	u64 session;
 	atomic_long_t event_seqno;

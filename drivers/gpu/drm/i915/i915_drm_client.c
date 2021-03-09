@@ -579,6 +579,8 @@ i915_drm_client_add(struct i915_drm_clients *clients, struct task_struct *task)
 	struct i915_drm_client *client;
 	int ret;
 
+	i915_debugger_wait_on_discovery(clients->i915);
+
 	client = kzalloc(sizeof(*client), GFP_KERNEL);
 	if (!client)
 		return ERR_PTR(-ENOMEM);
@@ -627,6 +629,7 @@ void i915_drm_client_close(struct i915_drm_client *client)
 {
 	GEM_BUG_ON(READ_ONCE(client->closed));
 	WRITE_ONCE(client->closed, true);
+	i915_debugger_wait_on_discovery(client->clients->i915);
 	i915_debugger_client_destroy(client);
 	i915_drm_client_put(client);
 }
