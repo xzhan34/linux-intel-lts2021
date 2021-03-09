@@ -6,6 +6,8 @@
 #include <linux/anon_inodes.h>
 #include <linux/ptrace.h>
 
+#include "gem/i915_gem_context.h"
+
 #include "i915_debugger.h"
 #include "i915_drm_client.h"
 #include "i915_drv.h"
@@ -602,6 +604,27 @@ out:
 
 }
 
+static void
+i915_debugger_discover_contexts(struct i915_drm_client *client)
+{
+	struct i915_gem_context *ctx;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(ctx, &client->ctx_list, client_link) {
+		if (!i915_gem_context_get_rcu(ctx))
+			continue;
+
+		if (!i915_gem_context_is_closed(ctx)) {
+			rcu_read_unlock();
+			i915_debugger_context_create(ctx);
+			rcu_read_lock();
+		}
+
+		i915_gem_context_put(ctx);
+	}
+	rcu_read_unlock();
+}
+
 static bool
 i915_debugger_client_task_register(const struct i915_debugger * const debugger,
 				   struct i915_drm_client * const client,
@@ -671,6 +694,7 @@ i915_debugger_client_discovery(struct i915_debugger *debugger)
 			DD_INFO(debugger, "client %u registered, discovery start", client->id);
 
 			i915_debugger_client_create(client);
+			i915_debugger_discover_contexts(client);
 
 			DD_INFO(debugger, "client %u discovery done", client->id);
 		}

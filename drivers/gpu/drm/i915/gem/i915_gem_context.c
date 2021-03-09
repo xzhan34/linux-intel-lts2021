@@ -610,16 +610,18 @@ static void context_close(struct i915_gem_context *ctx)
 	struct i915_address_space *vm;
 	struct i915_drm_client *client;
 
-	client = ctx->client;
-	if (client)
-		i915_debugger_context_destroy(ctx);
-
 	/* Flush any concurrent set_engines() */
 	mutex_lock(&ctx->engines_mutex);
 	unpin_engines(__context_engines_static(ctx));
 	engines_idle_release(ctx, rcu_replace_pointer(ctx->engines, NULL, 1));
 	i915_gem_context_set_closed(ctx);
 	mutex_unlock(&ctx->engines_mutex);
+
+	client = ctx->client;
+	if (client) {
+		i915_debugger_wait_on_discovery(ctx->client->clients->i915);
+		i915_debugger_context_destroy(ctx);
+	}
 
 	mutex_lock(&ctx->mutex);
 
@@ -2203,6 +2205,8 @@ int i915_gem_context_create_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		return ret;
 
+	i915_debugger_wait_on_discovery(i915);
+
 	ext_data.fpriv = file->driver_priv;
 	if (client_is_banned(ext_data.fpriv)) {
 		drm_dbg(&i915->drm,
@@ -2253,6 +2257,7 @@ int i915_gem_context_destroy_ioctl(struct drm_device *dev, void *data,
 	if (!args->ctx_id)
 		return -ENOENT;
 
+	i915_debugger_wait_on_discovery(file_priv->dev_priv);
 	ctx = xa_erase(&file_priv->context_xa, args->ctx_id);
 	if (!ctx)
 		return -ENOENT;

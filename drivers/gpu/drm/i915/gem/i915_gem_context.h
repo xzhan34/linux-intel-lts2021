@@ -164,6 +164,15 @@ i915_gem_context_get(struct i915_gem_context *ctx)
 	return ctx;
 }
 
+static inline struct i915_gem_context *
+i915_gem_context_get_rcu(struct i915_gem_context *ctx)
+{
+	if (!kref_get_unless_zero(&ctx->ref))
+		ctx = NULL;
+
+	return ctx;
+}
+
 static inline void i915_gem_context_put(struct i915_gem_context *ctx)
 {
 	kref_put(&ctx->ref, i915_gem_context_release);
