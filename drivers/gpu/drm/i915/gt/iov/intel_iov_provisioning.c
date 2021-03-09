@@ -419,3 +419,128 @@ u16 intel_iov_provisioning_get_ctxs(struct intel_iov *iov, unsigned int id)
 
 	return num_ctxs;
 }
+
+static unsigned long *pf_get_dbs_bitmap(struct intel_iov *iov)
+{
+	unsigned long *dbs_bitmap = bitmap_zalloc(GUC_NUM_DOORBELLS, GFP_KERNEL);
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	unsigned int n, total_vfs = pf_get_totalvfs(iov);
+	struct intel_iov_config *config;
+
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	if (unlikely(!dbs_bitmap))
+		return NULL;
+
+	/* don't count PF here, we will treat it differently */
+	for (n = 1; n <= total_vfs; n++) {
+		config = &provisioning->configs[n];
+		if (!config->num_dbs)
+			continue;
+		bitmap_set(dbs_bitmap, config->begin_db, config->num_dbs);
+	}
+
+	/* caller must use bitmap_free */
+	return dbs_bitmap;
+}
+
+static int pf_alloc_dbs_range(struct intel_iov *iov, u16 num_dbs)
+{
+	unsigned long *dbs_bitmap = pf_get_dbs_bitmap(iov);
+	unsigned long index;
+
+	if (unlikely(!dbs_bitmap))
+		return -ENOMEM;
+
+	index = bitmap_find_next_zero_area(dbs_bitmap, GUC_NUM_DOORBELLS, 0, num_dbs, 0);
+	bitmap_free(dbs_bitmap);
+
+	if (index >= GUC_NUM_DOORBELLS)
+		return -ENOSPC;
+
+	IOV_DEBUG(iov, "dbs found %lu-%lu (%u)\n",
+		  index, index + num_dbs - 1, num_dbs);
+	return index;
+}
+
+static int pf_provision_dbs(struct intel_iov *iov, unsigned int id, u16 num_dbs)
+{
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	struct intel_iov_config *config = &provisioning->configs[id];
+	int ret;
+
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	if (num_dbs == config->num_dbs)
+		return 0;
+
+	IOV_DEBUG(iov, "provisioning VF%u with %hu doorbells\n", id, num_dbs);
+
+	if (config->num_dbs) {
+		config->begin_db = 0;
+		config->num_dbs = 0;
+	}
+
+	if (!num_dbs)
+		return 0;
+
+	ret = pf_alloc_dbs_range(iov, num_dbs);
+	if (unlikely(ret < 0))
+		return ret;
+
+	config->begin_db = ret;
+	config->num_dbs = num_dbs;
+
+	return 0;
+}
+
+/**
+ * intel_iov_provisioning_set_dbs - Set VF doorbells quota.
+ * @iov: the IOV struct
+ * @id: VF identifier
+ * @num_dbs: requested doorbells
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_set_dbs(struct intel_iov *iov, unsigned int id, u16 num_dbs)
+{
+	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
+	intel_wakeref_t wakeref;
+	int err = -ENONET;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(id > pf_get_totalvfs(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+
+	with_intel_runtime_pm(rpm, wakeref)
+		err = pf_provision_dbs(iov, id, num_dbs);
+
+	if (unlikely(err))
+		IOV_ERROR(iov, "Failed to provision VF%u with %hu doorbells (%pe)\n",
+			  id, num_dbs, ERR_PTR(err));
+
+	mutex_unlock(pf_provisioning_mutex(iov));
+	return err;
+}
+
+/**
+ * intel_iov_provisioning_get_dbs - Get VF doorbells quota.
+ * @iov: the IOV struct
+ * @id: VF identifier
+ *
+ * This function can only be called on PF.
+ */
+u16 intel_iov_provisioning_get_dbs(struct intel_iov *iov, unsigned int id)
+{
+	u16 num_dbs;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(id > pf_get_totalvfs(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	num_dbs = iov->pf.provisioning.configs[id].num_dbs;
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return num_dbs;
+}

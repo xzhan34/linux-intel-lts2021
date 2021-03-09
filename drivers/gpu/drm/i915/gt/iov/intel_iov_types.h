@@ -14,11 +14,15 @@
  * @ggtt_region: GGTT region.
  * @num_ctxs: number of GuC submission contexts.
  * @begin_ctx: start index of GuC contexts.
+ * @num_dbs: number of GuC doorbells.
+ * @begin_db: start index of GuC doorbells.
  */
 struct intel_iov_config {
 	struct drm_mm_node ggtt_region;
 	u16 num_ctxs;
 	u16 begin_ctx;
+	u16 num_dbs;
+	u16 begin_db;
 };
 
 /**

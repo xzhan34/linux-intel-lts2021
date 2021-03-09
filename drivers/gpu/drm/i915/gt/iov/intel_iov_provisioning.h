@@ -19,4 +19,7 @@ u64 intel_iov_provisioning_get_ggtt(struct intel_iov *iov, unsigned int id);
 int intel_iov_provisioning_set_ctxs(struct intel_iov *iov, unsigned int id, u16 num_ctxs);
 u16 intel_iov_provisioning_get_ctxs(struct intel_iov *iov, unsigned int id);
 
+int intel_iov_provisioning_set_dbs(struct intel_iov *iov, unsigned int id, u16 num_dbs);
+u16 intel_iov_provisioning_get_dbs(struct intel_iov *iov, unsigned int id);
+
 #endif /* __INTEL_IOV_PROVISIONING_H__ */
