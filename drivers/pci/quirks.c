@@ -5393,6 +5393,37 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, 0x7347, quirk_amd_harvest_no_ats);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, 0x734f, quirk_amd_harvest_no_ats);
 /* AMD Raven platform iGPU */
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_ATI, 0x15d8, quirk_amd_harvest_no_ats);
+
+#define PVC_BASE_DIE_SHIFT 3
+#define PVC_BASE_DIE_MASK 0x7
+#define PVC_BASE_DIE_REV_B0 0x3
+
+static void quirk_intel_pvc_no_ats(struct pci_dev *pdev)
+{
+	const u8 base_die_rev = (pdev->revision >> PVC_BASE_DIE_SHIFT) &
+				PVC_BASE_DIE_MASK;
+
+	/* BD A0 */
+	if (base_die_rev < PVC_BASE_DIE_REV_B0)
+		pdev->ats_cap = 0;
+}
+
+#define PVC_PCI_ID_1 0x0BD5
+#define PVC_PCI_ID_2 0x0BD6
+#define PVC_PCI_ID_3 0x0BD7
+#define PVC_PCI_ID_4 0x0BD8
+#define PVC_PCI_ID_5 0x0BD9
+#define PVC_PCI_ID_6 0x0BDA
+#define PVC_PCI_ID_7 0x0BDB
+
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_1, quirk_intel_pvc_no_ats);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_2, quirk_intel_pvc_no_ats);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_3, quirk_intel_pvc_no_ats);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_4, quirk_intel_pvc_no_ats);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_5, quirk_intel_pvc_no_ats);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_6, quirk_intel_pvc_no_ats);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_7, quirk_intel_pvc_no_ats);
+
 #endif /* CONFIG_PCI_ATS */
 
 /* Freescale PCIe doesn't support MSI in RC mode */
