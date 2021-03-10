@@ -625,6 +625,43 @@ err_workqueues:
 	return ret;
 }
 
+static int i915_driver_check_broken_features(struct drm_i915_private *dev_priv)
+{
+#ifdef CONFIG_PCI_ATS
+	if (IS_PVC_BD_STEP(dev_priv, STEP_A0, STEP_B0)) {
+		struct pci_dev *pdev = to_pci_dev(dev_priv->drm.dev);
+		u16 val;
+
+		/* Reading PCI_ATS_CTRL to check if ATS was enabled by IOMMU */
+		pci_read_config_word(pdev, pdev->ats_cap + PCI_ATS_CTRL, &val);
+
+		if (val & PCI_ATS_CTRL_ENABLE) {
+			drm_warn(&dev_priv->drm,
+				 "\n"
+				 "\\*******************************************************\\\n"
+				 "\\* Address translation service (ATS) is set as         *\\\n"
+				 "\\* supported in this platform that is known to have    *\\\n"
+				 "\\* issues with it. Also this notice means you are      *\\\n"
+				 "\\* loading i915 as an external module and your BIOS    *\\\n"
+				 "\\* has this feature enabled, so i915 will not fully   *\\\n"
+				 "\\* load to avoid futher issues and crashes.            *\\\n"
+				 "\\*                                                     *\\\n"
+				 "\\* There are two options to disable this feature      *\\\n"
+				 "\\* and unlock i915 driver load:                        *\\\n"
+				 "\\* - Add 'pci=noats' to your kernel parameters         *\\\n"
+				 "\\* - Disable ATS in your BIOS, that is vendor specific *\\\n"
+				 "\\* and some BIOSes may even not allow this feature to  *\\\n"
+				 "\\* be disabled                                         *\\\n"
+				 "\\*******************************************************\\\n"
+				 );
+			return -ENODEV;
+		}
+	}
+#endif /* CONFIG_PCI_ATS */
+
+	return 0;
+}
+
 /**
  * i915_driver_late_release - cleanup the setup done in
  *			       i915_driver_early_probe()
@@ -1228,6 +1265,10 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (ret < 0)
 		goto out_pci_disable;
 
+	ret = i915_driver_check_broken_features(i915);
+	if (ret < 0)
+		goto out_driver_late_release;
+
 	disable_rpm_wakeref_asserts(&i915->runtime_pm);
 
 	if (HAS_LMEM(i915))
@@ -1335,6 +1376,7 @@ out_cleanup_mmio:
 	i915_driver_mmio_release(i915);
 out_runtime_pm_put:
 	enable_rpm_wakeref_asserts(&i915->runtime_pm);
+out_driver_late_release:
 	i915_driver_late_release(i915);
 out_pci_disable:
 	pci_disable_device(pdev);
