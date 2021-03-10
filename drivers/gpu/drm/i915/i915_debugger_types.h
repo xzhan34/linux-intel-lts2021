@@ -34,6 +34,14 @@ struct i915_debug_event_context {
 	u64 handle;
 } __packed;
 
+struct i915_debug_event_uuid {
+	struct i915_debug_event base;
+	u64 client_handle;
+	u64 handle;
+	u64 class_handle;
+	u64 payload_size;
+} __packed;
+
 struct i915_debugger {
 	struct kref ref;
 	struct rcu_head rcu;

@@ -356,7 +356,8 @@ struct prelim_drm_i915_debug_event {
 #define PRELIM_DRM_I915_DEBUG_EVENT_READ     1
 #define PRELIM_DRM_I915_DEBUG_EVENT_CLIENT   2
 #define PRELIM_DRM_I915_DEBUG_EVENT_CONTEXT  3
-#define PRELIM_DRM_I915_DEBUG_EVENT_MAX_EVENT PRELIM_DRM_I915_DEBUG_EVENT_CONTEXT
+#define PRELIM_DRM_I915_DEBUG_EVENT_UUID     4
+#define PRELIM_DRM_I915_DEBUG_EVENT_MAX_EVENT PRELIM_DRM_I915_DEBUG_EVENT_UUID
 
 	__u32 flags;
 #define PRELIM_DRM_I915_DEBUG_EVENT_CREATE	(1 << 31)
@@ -394,6 +395,15 @@ struct prelim_drm_i915_debugger_open_param {
 	__u64 events;  /* input: event types to subscribe to */
 	__u64 extensions; /* MBZ */
 };
+
+struct prelim_drm_i915_debug_event_uuid {
+	struct prelim_drm_i915_debug_event base;
+	__u64 client_handle;
+
+	__u64 handle;
+	__u64 class_handle; /* Can be filtered based on pre-defined classes */
+	__u64 payload_size;
+} __attribute__((packed));
 
 enum prelim_drm_i915_gem_memory_class {
 	PRELIM_I915_MEMORY_CLASS_SYSTEM = 0,

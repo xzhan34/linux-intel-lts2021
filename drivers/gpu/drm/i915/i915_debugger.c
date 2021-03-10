@@ -82,6 +82,7 @@ static const char *event_type_to_str(u32 type)
 		"read",
 		"client",
 		"context",
+		"uuid",
 		"unknown",
 	};
 
@@ -139,6 +140,19 @@ static void event_printer_context(const struct i915_debugger * const debugger,
 	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, context, handle);
 }
 
+static void event_printer_uuid(const struct i915_debugger * const debugger,
+			       const char * const prefix,
+			       const struct i915_debug_event * const event)
+{
+	const struct i915_debug_event_uuid * const uuid =
+		from_event(uuid, event);
+
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, uuid, client_handle);
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, uuid, handle);
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, uuid, class_handle);
+	EVENT_PRINT_MEMBER_U64(debugger, prefix, uuid, payload_size);
+}
+
 static void i915_debugger_print_event(const struct i915_debugger * const debugger,
 				      const char * const prefix,
 				      const struct i915_debug_event * const event)
@@ -148,6 +162,7 @@ static void i915_debugger_print_event(const struct i915_debugger * const debugge
 		NULL,
 		event_printer_client,
 		event_printer_context,
+		event_printer_uuid,
 	};
 	debug_event_printer_t event_printer = NULL;
 
@@ -605,6 +620,20 @@ out:
 }
 
 static void
+i915_debugger_discover_uuids(struct i915_drm_client *client)
+{
+	unsigned long idx;
+	struct i915_uuid_resource *uuid;
+
+	/*
+	 * Lock not needed since i915_debugger_wait_in_discovery
+	 * prevents from changing the set.
+	 */
+	xa_for_each(&client->uuids_xa, idx, uuid)
+		i915_debugger_uuid_create(client, uuid);
+}
+
+static void
 i915_debugger_discover_contexts(struct i915_drm_client *client)
 {
 	struct i915_gem_context *ctx;
@@ -694,6 +723,7 @@ i915_debugger_client_discovery(struct i915_debugger *debugger)
 			DD_INFO(debugger, "client %u registered, discovery start", client->id);
 
 			i915_debugger_client_create(client);
+			i915_debugger_discover_uuids(client);
 			i915_debugger_discover_contexts(client);
 
 			DD_INFO(debugger, "client %u discovery done", client->id);
@@ -1110,6 +1140,64 @@ void i915_debugger_context_destroy(const struct i915_gem_context *ctx)
 		return;
 
 	send_context_event(ctx, PRELIM_DRM_I915_DEBUG_EVENT_DESTROY);
+}
+
+struct uuid_event_param {
+	u64 client_handle;
+	u64 handle;
+	u64 class_handle;
+	u64 payload_size;
+};
+
+static void uuid_event_ctor(struct i915_debug_event *event, const void *data)
+{
+	const struct uuid_event_param *p = data;
+	struct i915_debug_event_uuid *ec = from_event(ec, event);
+
+	write_member(struct prelim_drm_i915_debug_event_uuid, ec, client_handle, p->client_handle);
+	write_member(struct prelim_drm_i915_debug_event_uuid, ec, handle, p->handle);
+	write_member(struct prelim_drm_i915_debug_event_uuid, ec, class_handle, p->class_handle);
+	write_member(struct prelim_drm_i915_debug_event_uuid, ec, payload_size, p->payload_size);
+}
+
+static void send_uuid_event(const struct i915_drm_client *client,
+			    const struct i915_uuid_resource *uuid,
+			    u32 flags)
+{
+	struct uuid_event_param p = {
+		.client_handle = client->id,
+		.handle = uuid->handle,
+		.class_handle = uuid->uuid_class,
+		.payload_size = 0,
+	};
+
+	if (flags & PRELIM_DRM_I915_DEBUG_EVENT_CREATE)
+		p.payload_size = uuid->size;
+
+	i915_debugger_send_client_event_ctor(client,
+					     PRELIM_DRM_I915_DEBUG_EVENT_UUID,
+					     flags,
+					     sizeof(struct prelim_drm_i915_debug_event_uuid),
+					     uuid_event_ctor, &p,
+					     GFP_KERNEL);
+}
+
+void i915_debugger_uuid_create(const struct i915_drm_client *client,
+			       const struct i915_uuid_resource *uuid)
+{
+	if (!client_debugged(client))
+		return;
+
+	send_uuid_event(client, uuid, PRELIM_DRM_I915_DEBUG_EVENT_CREATE);
+}
+
+void i915_debugger_uuid_destroy(const struct i915_drm_client *client,
+				const struct i915_uuid_resource *uuid)
+{
+	if (!client_debugged(client))
+		return;
+
+	send_uuid_event(client, uuid, PRELIM_DRM_I915_DEBUG_EVENT_DESTROY);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
