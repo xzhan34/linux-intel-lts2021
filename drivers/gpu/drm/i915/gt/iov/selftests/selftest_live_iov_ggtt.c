@@ -151,7 +151,14 @@ pte_valid_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt
 static bool
 pte_vfid_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, gen8_pte_t *out)
 {
-	return pte_is_value_modifiable(iov, pte_addr, ggtt_addr, TGL_GGTT_PTE_VFID_MASK, out);
+	GEM_BUG_ON(!HAS_SRIOV(iov_to_i915(iov)));
+
+	if (i915_ggtt_has_xehpsdv_pte_vfid_mask(iov_to_gt(iov)->ggtt))
+		return pte_is_value_modifiable(iov, pte_addr, ggtt_addr, XEHPSDV_GGTT_PTE_VFID_MASK,
+					       out);
+	else
+		return pte_is_value_modifiable(iov, pte_addr, ggtt_addr, TGL_GGTT_PTE_VFID_MASK,
+					       out);
 }
 
 static bool
@@ -162,11 +169,23 @@ pte_vfid_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_
 }
 
 static bool
-pte_vfid_not_readable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, u64 *out)
+__pte_value_is_not_readable(struct intel_iov *iov, void __iomem *pte_addr, const u64 mask,
+			    gen8_pte_t *out)
 {
 	*out = iov->selftest.mmio_get_pte(iov, pte_addr);
 
-	return u64_get_bits(*out, TGL_GGTT_PTE_VFID_MASK) == 0;
+	return u64_get_bits(*out, mask) == 0;
+}
+
+static bool
+pte_vfid_not_readable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, u64 *out)
+{
+	GEM_BUG_ON(!HAS_SRIOV(iov_to_i915(iov)));
+
+	if (i915_ggtt_has_xehpsdv_pte_vfid_mask(iov_to_gt(iov)->ggtt))
+		return __pte_value_is_not_readable(iov, pte_addr, XEHPSDV_GGTT_PTE_VFID_MASK, out);
+	else
+		return __pte_value_is_not_readable(iov, pte_addr, TGL_GGTT_PTE_VFID_MASK, out);
 }
 
 static bool
