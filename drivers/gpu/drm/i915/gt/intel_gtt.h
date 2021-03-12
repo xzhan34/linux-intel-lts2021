@@ -99,6 +99,8 @@ typedef u64 gen8_pte_t;
 /*
  *  DOC: GEN12 GGTT Table Entry format
  *
+ * TGL:
+ *
  * +----------+---------+---------+-----------------+--------------+---------+
  * |    63:46 |   45:12 |    11:5 |             4:2 |            1 |       0 |
  * +==========+=========+=========+=================+==============+=========+
@@ -113,12 +115,20 @@ typedef u64 gen8_pte_t;
  * |          |              | address extension |         |         | Number   | Memory |         |
  * +----------+--------------+-------------------+---------+---------+----------+--------+---------+
  *
+ * Platforms supporting more than 7 VFs (XEHPSDV and later):
+ *
+ * +----------+---------+-----------------+--------------+---------+
+ * |    63:46 |   45:12 |            11:2 |            1 |       0 |
+ * +==========+=========+=================+==============+=========+
+ * |  Ignored | Address | Function Number | Local Memory | Present |
+ * +----------+---------+-----------------+--------------+---------+
  */
 
 #define GEN12_GGTT_PTE_LM		BIT_ULL(1)
 #define MTL_GGTT_PTE_PAT0		BIT_ULL(52)
 #define MTL_GGTT_PTE_PAT1		BIT_ULL(53)
 #define TGL_GGTT_PTE_VFID_MASK		GENMASK_ULL(4, 2)
+#define XEHPSDV_GGTT_PTE_VFID_MASK	GENMASK_ULL(11, 2)
 #define GEN12_GGTT_PTE_ADDR_MASK	GENMASK_ULL(45, 12)
 #define ADL_GGTT_PTE_ADDR_MASK		GENMASK_ULL(38, 12)
 #define MTL_GGTT_PTE_PAT_MASK		GENMASK_ULL(53, 52)
@@ -728,6 +738,8 @@ void intel_partial_pages_for_sg_table(struct drm_i915_gem_object *obj,
 int i915_ggtt_balloon(struct i915_ggtt *ggtt, u64 start, u64 end,
 		      struct drm_mm_node *node);
 void i915_ggtt_deballoon(struct i915_ggtt *ggtt, struct drm_mm_node *node);
+
+inline bool i915_ggtt_has_xehpsdv_pte_vfid_mask(struct i915_ggtt *ggtt);
 
 void i915_ggtt_set_space_owner(struct i915_ggtt *ggtt, u16 vfid,
 			       const struct drm_mm_node *node);

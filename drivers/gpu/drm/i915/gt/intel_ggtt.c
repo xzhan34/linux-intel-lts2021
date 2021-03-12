@@ -2158,6 +2158,11 @@ int i915_ggtt_balloon(struct i915_ggtt *ggtt, u64 start, u64 end,
 	return 0;
 }
 
+inline bool i915_ggtt_has_xehpsdv_pte_vfid_mask(struct i915_ggtt *ggtt)
+{
+	return GRAPHICS_VER_FULL(ggtt->vm.i915) < IP_VER(12, 50);
+}
+
 void i915_ggtt_deballoon(struct i915_ggtt *ggtt, struct drm_mm_node *node)
 {
 	if (!drm_mm_node_allocated(node))
@@ -2179,16 +2184,31 @@ static gen8_pte_t tgl_prepare_vf_pte_vfid(u16 vfid)
 	return FIELD_PREP(TGL_GGTT_PTE_VFID_MASK, vfid);
 }
 
-static gen8_pte_t prepare_vf_pte(u16 vfid)
+static gen8_pte_t xehpsdv_prepare_vf_pte_vfid(u16 vfid)
 {
-	return tgl_prepare_vf_pte_vfid(vfid) | GEN8_PAGE_PRESENT;
+	GEM_BUG_ON(!FIELD_FIT(XEHPSDV_GGTT_PTE_VFID_MASK, vfid));
+
+	return FIELD_PREP(XEHPSDV_GGTT_PTE_VFID_MASK, vfid);
+}
+
+static gen8_pte_t prepare_vf_pte_vfid(struct i915_ggtt *ggtt, u16 vfid)
+{
+	if (i915_ggtt_has_xehpsdv_pte_vfid_mask(ggtt))
+		return tgl_prepare_vf_pte_vfid(vfid);
+	else
+		return xehpsdv_prepare_vf_pte_vfid(vfid);
+}
+
+static gen8_pte_t prepare_vf_pte(struct i915_ggtt *ggtt, u16 vfid)
+{
+	return prepare_vf_pte_vfid(ggtt, vfid) | GEN8_PAGE_PRESENT;
 }
 
 void i915_ggtt_set_space_owner(struct i915_ggtt *ggtt, u16 vfid,
 			       const struct drm_mm_node *node)
 {
 	gen8_pte_t __iomem *gtt_entries = ggtt->gsm;
-	const gen8_pte_t pte = prepare_vf_pte(vfid);
+	const gen8_pte_t pte = prepare_vf_pte(ggtt, vfid);
 	u64 base = node->start;
 	u64 size = node->size;
 
@@ -2218,7 +2238,7 @@ static inline unsigned int __ggtt_size_to_ptes_size(u64 ggtt_size)
 static void ggtt_pte_clear_vfid(void *buf, u64 size)
 {
 	while (size) {
-		*(gen8_pte_t *)buf &= ~TGL_GGTT_PTE_VFID_MASK;
+		*(gen8_pte_t *)buf &= ~XEHPSDV_GGTT_PTE_VFID_MASK;
 
 		buf += sizeof(gen8_pte_t);
 		size -= sizeof(gen8_pte_t);
@@ -2298,7 +2318,7 @@ int i915_ggtt_restore_ptes(struct i915_ggtt *ggtt, const struct drm_mm_node *nod
 	while (size) {
 		pte = *(gen8_pte_t *)buf;
 		if (flags & I915_GGTT_RESTORE_PTES_NEW_VFID)
-			pte |= tgl_prepare_vf_pte_vfid(vfid);
+			pte |= prepare_vf_pte_vfid(ggtt, vfid);
 		gen8_set_pte(gtt_entries++, pte);
 
 		buf += sizeof(gen8_pte_t);
