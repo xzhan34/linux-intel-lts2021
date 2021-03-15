@@ -375,6 +375,44 @@ u64 intel_iov_provisioning_get_ggtt(struct intel_iov *iov, unsigned int id)
 	return size;
 }
 
+/**
+ * intel_iov_provisioning_query_free_ggtt - Query free GGTT available for provisioning.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u64 intel_iov_provisioning_query_free_ggtt(struct intel_iov *iov)
+{
+	u64 size;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	size = pf_get_free_ggtt(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return size;
+}
+
+/**
+ * intel_iov_provisioning_query_max_ggtt - Query max GGTT available for provisioning.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u64 intel_iov_provisioning_query_max_ggtt(struct intel_iov *iov)
+{
+	u64 size;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	size = pf_get_max_ggtt(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return size;
+}
+
 static u16 pf_get_min_spare_ctxs(struct intel_iov *iov)
 {
 	return SZ_256;

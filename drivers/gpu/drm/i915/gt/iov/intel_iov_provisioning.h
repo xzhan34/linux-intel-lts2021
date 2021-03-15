@@ -23,6 +23,8 @@ int intel_iov_provisioning_set_ggtt(struct intel_iov *iov, unsigned int id, u64 
 u64 intel_iov_provisioning_get_ggtt(struct intel_iov *iov, unsigned int id);
 int intel_iov_provisioning_set_spare_ggtt(struct intel_iov *iov, u64 size);
 u64 intel_iov_provisioning_get_spare_ggtt(struct intel_iov *iov);
+u64 intel_iov_provisioning_query_free_ggtt(struct intel_iov *iov);
+u64 intel_iov_provisioning_query_max_ggtt(struct intel_iov *iov);
 
 int intel_iov_provisioning_set_ctxs(struct intel_iov *iov, unsigned int id, u16 num_ctxs);
 u16 intel_iov_provisioning_get_ctxs(struct intel_iov *iov, unsigned int id);
