@@ -254,6 +254,20 @@ static ssize_t doorbells_max_quota_iov_attr_show(struct intel_iov *iov,
 	return sysfs_emit(buf, "%hu\n", intel_iov_provisioning_query_max_dbs(iov));
 }
 
+static ssize_t lmem_free_iov_attr_show(struct intel_iov *iov,
+				       unsigned int id, char *buf)
+{
+	GEM_WARN_ON(id);
+	return sysfs_emit(buf, "%llu\n", intel_iov_provisioning_query_free_lmem(iov));
+}
+
+static ssize_t lmem_max_quota_iov_attr_show(struct intel_iov *iov,
+					    unsigned int id, char *buf)
+{
+	GEM_WARN_ON(id);
+	return sysfs_emit(buf, "%llu\n", intel_iov_provisioning_query_max_lmem(iov));
+}
+
 static ssize_t sched_if_idle_iov_attr_show(struct intel_iov *iov,
 					   unsigned int id, char *buf)
 {
@@ -334,6 +348,8 @@ IOV_ATTR_RO(contexts_free);
 IOV_ATTR_RO(contexts_max_quota);
 IOV_ATTR_RO(doorbells_free);
 IOV_ATTR_RO(doorbells_max_quota);
+IOV_ATTR_RO(lmem_free);
+IOV_ATTR_RO(lmem_max_quota);
 
 IOV_ATTR(sched_if_idle);
 IOV_ATTR(engine_reset);
@@ -370,12 +386,28 @@ static struct attribute *pf_available_attrs[] = {
 	&contexts_max_quota_iov_attr.attr,
 	&doorbells_free_iov_attr.attr,
 	&doorbells_max_quota_iov_attr.attr,
+	&lmem_free_iov_attr.attr,
+	&lmem_max_quota_iov_attr.attr,
 	NULL
 };
+
+static umode_t pf_available_attr_is_visible(struct kobject *kobj,
+					    struct attribute *attr, int index)
+{
+	struct intel_iov *iov = kobj_to_iov(kobj);
+
+	if (attr == &lmem_free_iov_attr.attr && !HAS_LMEM(iov_to_i915(iov)))
+		return 0;
+	if (attr == &lmem_max_quota_iov_attr.attr && !HAS_LMEM(iov_to_i915(iov)))
+		return 0;
+
+	return attr->mode;
+}
 
 static const struct attribute_group pf_available_attr_group = {
 	.name = "available",
 	.attrs = pf_available_attrs,
+	.is_visible = pf_available_attr_is_visible,
 };
 
 static struct attribute *pf_policies_attrs[] = {

@@ -190,5 +190,11 @@ int intel_memory_regions_add_svm(struct drm_i915_private *i915);
 
 void intel_memory_regions_remove(struct drm_i915_private *i915);
 
+static inline void intel_memory_region_flush(struct intel_memory_region *mem)
+{
+	/* Flush any pending work to free blocks region */
+	flush_work(&mem->pd_put.work);
+}
+
 const char *intel_memory_region_id2str(enum intel_region_id id);
 #endif

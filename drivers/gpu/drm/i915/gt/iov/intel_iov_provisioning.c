@@ -8,6 +8,7 @@
 #include "intel_iov_utils.h"
 #include "gem/i915_gem_object_blt.h"
 #include "gem/i915_gem_region.h"
+#include "gt/intel_gt_buffer_pool.h"
 #include "gt/uc/abi/guc_actions_pf_abi.h"
 #include "gt/uc/abi/guc_klvs_abi.h"
 
@@ -1888,6 +1889,56 @@ u64 intel_iov_provisioning_get_lmem(struct intel_iov *iov, unsigned int id)
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return size;
+}
+
+static u64 pf_query_free_lmem(struct intel_iov *iov)
+{
+	struct intel_gt *gt = iov_to_gt(iov);
+
+	/* Flush any pending work to get reliable results */
+	intel_memory_region_flush(gt->i915->mm.regions[INTEL_REGION_LMEM_0]);
+	intel_gt_flush_buffer_pool(gt);
+	i915_gem_drain_workqueue(gt->i915);
+
+	return gt->i915->mm.regions[INTEL_REGION_LMEM_0]->avail;
+}
+
+/**
+ * intel_iov_provisioning_query_free_lmem - Query available LMEM.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u64 intel_iov_provisioning_query_free_lmem(struct intel_iov *iov)
+{
+	return pf_query_free_lmem(iov);
+}
+
+static u64 pf_query_max_lmem(struct intel_iov *iov)
+{
+	u64 spare = pf_get_spare_lmem(iov);
+	u64 free = pf_query_free_lmem(iov);
+	u64 avail;
+
+	/* XXX: need to account for 2MB blocks only */
+	avail = free > spare ? free - spare : 0;
+	avail = round_down(avail, SZ_2M);
+
+	return avail;
+}
+
+/**
+ * intel_iov_provisioning_query_max_lmem - Query maximum VF quota.
+ * @iov: the IOV struct
+ *
+ * VF can't be provisioned with arbitrary size of LMEM.
+ * One of the limiting factor is size of the VF LMEM BAR.
+ *
+ * This function can only be called on PF.
+ */
+u64 intel_iov_provisioning_query_max_lmem(struct intel_iov *iov)
+{
+	return pf_query_max_lmem(iov);
 }
 
 static u32 intel_iov_threshold_to_klv_key(enum intel_iov_threshold threshold)

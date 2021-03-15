@@ -60,6 +60,8 @@ int intel_iov_provisioning_set_lmem(struct intel_iov *iov, unsigned int id, u64 
 u64 intel_iov_provisioning_get_lmem(struct intel_iov *iov, unsigned int id);
 int intel_iov_provisioning_set_spare_lmem(struct intel_iov *iov, u64 size);
 u64 intel_iov_provisioning_get_spare_lmem(struct intel_iov *iov);
+u64 intel_iov_provisioning_query_free_lmem(struct intel_iov *iov);
+u64 intel_iov_provisioning_query_max_lmem(struct intel_iov *iov);
 
 int intel_iov_provisioning_set_threshold(struct intel_iov *iov, unsigned int id,
 					 enum intel_iov_threshold threshold, u32 value);
