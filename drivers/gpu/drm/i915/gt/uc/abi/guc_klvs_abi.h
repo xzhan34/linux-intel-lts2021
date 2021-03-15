@@ -16,6 +16,7 @@
  *  +===+=======+==============================================================+
  *  | 0 | 31:16 | **KEY** - KLV key identifier                                 |
  *  |   |       |   - `GuC Self Config KLVs`_                                  |
+ *  |   |       |   - `GuC VGT Policy KLVs`_                                   |
  *  |   |       |   - `GuC VF Configuration KLVs`_                             |
  *  |   |       |                                                              |
  *  |   +-------+--------------------------------------------------------------+
@@ -101,6 +102,25 @@ enum {
 
 	GUC_CONTEXT_POLICIES_KLV_NUM_IDS = 5,
 };
+
+/**
+ * DOC: GuC VGT Policy KLVs
+ *
+ * `GuC KLV`_ keys available for use with PF2GUC_UPDATE_VGT_POLICY.
+ *
+ * _`GUC_KLV_VGT_POLICY_SCHED_IF_IDLE` : 0x8001
+ *      This config sets whether strict scheduling is enabled whereby any VF
+ *      that doesn’t have work to submit is still allocated a fixed execution
+ *      time-slice to ensure active VFs execution is always consitent even
+ *      during other VF reprovisiong / rebooting events. Changing this KLV
+ *      impacts all VFs and takes effect on the next VF-Switch event.
+ *
+ *      :0: don't schedule idle (default)
+ *      :1: schedule if idle
+ */
+
+#define GUC_KLV_VGT_POLICY_SCHED_IF_IDLE_KEY		0x8001
+#define GUC_KLV_VGT_POLICY_SCHED_IF_IDLE_LEN		1u
 
 /**
  * DOC: GuC VF Configuration KLVs

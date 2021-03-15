@@ -50,13 +50,23 @@ struct intel_iov_sysfs {
 };
 
 /**
+ * struct intel_iov_policies - IOV policies.
+ * @sched_if_idle: controls strict scheduling.
+ */
+struct intel_iov_policies {
+	bool sched_if_idle;
+};
+
+/**
  * struct intel_iov_provisioning - IOV provisioning data.
  * @auto_mode: indicates manual or automatic provisioning mode.
+ * @policies: provisioning policies.
  * @configs: flexible array with configuration data for PF and VFs.
  * @lock: protects provisionining data
  */
 struct intel_iov_provisioning {
 	bool auto_mode;
+	struct intel_iov_policies policies;
 	struct intel_iov_spare_config spare;
 	struct intel_iov_config *configs;
 	struct mutex lock;

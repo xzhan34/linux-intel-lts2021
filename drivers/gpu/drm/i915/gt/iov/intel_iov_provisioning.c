@@ -72,6 +72,139 @@ static struct mutex *pf_provisioning_mutex(struct intel_iov *iov)
 	return &iov->pf.provisioning.lock;
 }
 
+/*
+ * Return: number of klvs that were successfully parsed and saved,
+ *         negative error code on failure.
+ */
+static int guc_action_update_policy_cfg(struct intel_guc *guc, u64 addr, u32 size)
+{
+	u32 request[] = {
+		GUC_ACTION_PF2GUC_UPDATE_VGT_POLICY,
+		lower_32_bits(addr),
+		upper_32_bits(addr),
+		size,
+	};
+
+	return intel_guc_send(guc, request, ARRAY_SIZE(request));
+}
+
+/*
+ * Return: 0 on success, -ENOKEY if klv was not parsed, -EPROTO if reply was malformed,
+ *         negative error code on failure.
+ */
+static int guc_update_policy_klv32(struct intel_guc *guc, u16 key, u32 value)
+{
+	const u32 len = 1; /* 32bit value fits into 1 klv dword */
+	const u32 cfg_size = (GUC_KLV_LEN_MIN + len);
+	struct i915_vma *vma;
+	u32 *cfg;
+	int ret;
+
+	ret = intel_guc_allocate_and_map_vma(guc, cfg_size * sizeof(u32), &vma, (void **)&cfg);
+	if (unlikely(ret))
+		return ret;
+
+	*cfg++ = FIELD_PREP(GUC_KLV_0_KEY, key) | FIELD_PREP(GUC_KLV_0_LEN, len);
+	*cfg++ = value;
+
+	ret = guc_action_update_policy_cfg(guc, intel_guc_ggtt_offset(guc, vma), cfg_size);
+
+	i915_vma_unpin_and_release(&vma, I915_VMA_RELEASE_MAP);
+
+	if (unlikely(ret < 0))
+		return ret;
+	if (unlikely(!ret))
+		return -ENOKEY;
+	if (unlikely(ret > 1))
+		return -EPROTO;
+
+	return 0;
+}
+
+static const char *policy_key_to_string(u16 key)
+{
+	switch (key) {
+	case GUC_KLV_VGT_POLICY_SCHED_IF_IDLE_KEY:
+		return "sched_if_idle";
+	default:
+		return "<invalid>";
+	}
+}
+
+static int pf_update_bool_policy(struct intel_iov *iov, u16 key, bool *policy, bool value)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	const char *name = policy_key_to_string(key);
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	IOV_DEBUG(iov, "updating policy %#04x (%s) %s -> %s\n",
+		  key, name, str_enable_disable(*policy), str_enable_disable(value));
+
+	err = guc_update_policy_klv32(guc, key, value);
+	if (unlikely(err))
+		goto failed;
+
+	*policy = value;
+	return 0;
+
+failed:
+	IOV_ERROR(iov, "Failed to %s '%s' policy (%pe)\n",
+		  str_enable_disable(value), name, ERR_PTR(err));
+	return err;
+}
+
+static int pf_provision_sched_if_idle(struct intel_iov *iov, bool enable)
+{
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	return pf_update_bool_policy(iov, GUC_KLV_VGT_POLICY_SCHED_IF_IDLE_KEY,
+				     &iov->pf.provisioning.policies.sched_if_idle, enable);
+}
+
+/**
+ * intel_iov_provisioning_set_sched_if_idle - Set 'sched_if_idle' policy.
+ * @iov: the IOV struct
+ * @enable: controls sched_if_idle policy
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_set_sched_if_idle(struct intel_iov *iov, bool enable)
+{
+	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
+	intel_wakeref_t wakeref;
+	int err = -ENONET;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	with_intel_runtime_pm(rpm, wakeref)
+		err = pf_provision_sched_if_idle(iov, enable);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return err;
+}
+
+/**
+ * intel_iov_provisioning_get_sched_if_idle - Get 'sched_if_idle' policy.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+bool intel_iov_provisioning_get_sched_if_idle(struct intel_iov *iov)
+{
+	bool enable;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	enable = iov->pf.provisioning.policies.sched_if_idle;
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return enable;
+}
+
 static inline bool pf_is_auto_provisioned(struct intel_iov *iov)
 {
 	GEM_BUG_ON(!intel_iov_is_pf(iov));

@@ -230,6 +230,29 @@ static ssize_t doorbells_max_quota_iov_attr_show(struct intel_iov *iov,
 	return sysfs_emit(buf, "%hu\n", intel_iov_provisioning_query_max_dbs(iov));
 }
 
+static ssize_t sched_if_idle_iov_attr_show(struct intel_iov *iov,
+					   unsigned int id, char *buf)
+{
+	u32 value = intel_iov_provisioning_get_sched_if_idle(iov);
+
+	return sysfs_emit(buf, "%u\n", value);
+}
+
+static ssize_t sched_if_idle_iov_attr_store(struct intel_iov *iov,
+					    unsigned int id,
+					    const char *buf, size_t count)
+{
+	bool value;
+	int err;
+
+	err = kstrtobool(buf, &value);
+	if (err)
+		return err;
+
+	err = intel_iov_provisioning_set_sched_if_idle(iov, value);
+	return err ?: count;
+}
+
 IOV_ATTR(ggtt_spare);
 IOV_ATTR(contexts_spare);
 IOV_ATTR(doorbells_spare);
@@ -240,6 +263,8 @@ IOV_ATTR_RO(contexts_free);
 IOV_ATTR_RO(contexts_max_quota);
 IOV_ATTR_RO(doorbells_free);
 IOV_ATTR_RO(doorbells_max_quota);
+
+IOV_ATTR(sched_if_idle);
 
 static struct attribute *pf_attrs[] = {
 	&ggtt_spare_iov_attr.attr,
@@ -267,9 +292,20 @@ static const struct attribute_group pf_available_attr_group = {
 	.attrs = pf_available_attrs,
 };
 
+static struct attribute *pf_policies_attrs[] = {
+	&sched_if_idle_iov_attr.attr,
+	NULL
+};
+
+static const struct attribute_group pf_policies_attr_group = {
+	.name = "policies",
+	.attrs = pf_policies_attrs,
+};
+
 static const struct attribute_group *pf_attr_groups[] = {
 	&pf_attr_group,
 	&pf_available_attr_group,
+	&pf_policies_attr_group,
 	NULL
 };
 
