@@ -52,9 +52,11 @@ struct intel_iov_sysfs {
 /**
  * struct intel_iov_policies - IOV policies.
  * @sched_if_idle: controls strict scheduling.
+ * @reset_engine: controls engines reset on VF switch.
  */
 struct intel_iov_policies {
 	bool sched_if_idle;
+	bool reset_engine;
 };
 
 /**

@@ -126,6 +126,8 @@ static const char *policy_key_to_string(u16 key)
 	switch (key) {
 	case GUC_KLV_VGT_POLICY_SCHED_IF_IDLE_KEY:
 		return "sched_if_idle";
+	case GUC_KLV_VGT_POLICY_RESET_AFTER_VF_SWITCH_KEY:
+		return "reset_engine";
 	default:
 		return "<invalid>";
 	}
@@ -200,6 +202,56 @@ bool intel_iov_provisioning_get_sched_if_idle(struct intel_iov *iov)
 
 	mutex_lock(pf_provisioning_mutex(iov));
 	enable = iov->pf.provisioning.policies.sched_if_idle;
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return enable;
+}
+
+static int pf_provision_reset_engine(struct intel_iov *iov, bool enable)
+{
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	return pf_update_bool_policy(iov, GUC_KLV_VGT_POLICY_RESET_AFTER_VF_SWITCH_KEY,
+				     &iov->pf.provisioning.policies.reset_engine, enable);
+}
+
+/**
+ * intel_iov_provisioning_set_reset_engine - Set 'reset_engine' policy.
+ * @iov: the IOV struct
+ * @enable: controls reset_engine policy
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_set_reset_engine(struct intel_iov *iov, bool enable)
+{
+	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
+	intel_wakeref_t wakeref;
+	int err = -ENONET;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	with_intel_runtime_pm(rpm, wakeref)
+		err = pf_provision_reset_engine(iov, enable);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return err;
+}
+
+/**
+ * intel_iov_provisioning_get_reset_engine - Get 'reset_engine' policy.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+bool intel_iov_provisioning_get_reset_engine(struct intel_iov *iov)
+{
+	bool enable;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	enable = iov->pf.provisioning.policies.reset_engine;
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return enable;

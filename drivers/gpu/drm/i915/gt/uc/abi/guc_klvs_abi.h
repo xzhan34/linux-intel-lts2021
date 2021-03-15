@@ -117,10 +117,20 @@ enum {
  *
  *      :0: don't schedule idle (default)
  *      :1: schedule if idle
+ *
+ * _`GUC_KLV_VGT_POLICY_RESET_AFTER_VF_SWITCH` : 0x8D00
+ *      This enum is to reset utilized HW engine after VF Switch (i.e to clean
+ *      up Stale HW register left behind by previous VF)
+ *
+ *      :0: don't reset (default)
+ *      :1: reset
  */
 
 #define GUC_KLV_VGT_POLICY_SCHED_IF_IDLE_KEY		0x8001
 #define GUC_KLV_VGT_POLICY_SCHED_IF_IDLE_LEN		1u
+
+#define GUC_KLV_VGT_POLICY_RESET_AFTER_VF_SWITCH_KEY	0x8D00
+#define GUC_KLV_VGT_POLICY_RESET_AFTER_VF_SWITCH_LEN	1u
 
 /**
  * DOC: GuC VF Configuration KLVs
