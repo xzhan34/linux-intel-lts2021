@@ -1088,6 +1088,9 @@ static int live_all_engines(void *arg)
 	for_each_uabi_engine(engine, i915) {
 		struct i915_vma *batch;
 
+		if (engine->bind_context)
+			continue;
+
 		batch = recursive_batch(engine->gt);
 		if (IS_ERR(batch)) {
 			err = PTR_ERR(batch);
@@ -1126,6 +1129,9 @@ out_unlock:
 
 	idx = 0;
 	for_each_uabi_engine(engine, i915) {
+		if (engine->bind_context)
+			continue;
+
 		if (i915_request_completed(request[idx])) {
 			pr_err("%s(%s): request completed too early!\n",
 			       __func__, engine->name);
@@ -1137,6 +1143,9 @@ out_unlock:
 
 	idx = 0;
 	for_each_uabi_engine(engine, i915) {
+		if (engine->bind_context)
+			continue;
+
 		err = recursive_batch_resolve(request[idx]->batch);
 		if (err) {
 			pr_err("%s: failed to resolve batch, err=%d\n",
@@ -1150,6 +1159,9 @@ out_unlock:
 	for_each_uabi_engine(engine, i915) {
 		struct i915_request *rq = request[idx];
 		long timeout;
+
+		if (engine->bind_context)
+			continue;
 
 		timeout = i915_request_wait(rq, 0, MAX_SCHEDULE_TIMEOUT);
 		if (timeout < 0) {
@@ -1219,6 +1231,9 @@ static int live_sequential_engines(void *arg)
 	for_each_uabi_engine(engine, i915) {
 		struct i915_vma *batch;
 
+		if (engine->bind_context)
+			continue;
+
 		batch = recursive_batch(engine->gt);
 		if (IS_ERR(batch)) {
 			err = PTR_ERR(batch);
@@ -1274,6 +1289,9 @@ out_unlock:
 	for_each_uabi_engine(engine, i915) {
 		long timeout;
 
+		if (engine->bind_context)
+			continue;
+
 		if (i915_request_completed(request[idx])) {
 			pr_err("%s(%s): request completed too early!\n",
 			       __func__, engine->name);
@@ -1307,6 +1325,9 @@ out_request:
 	idx = 0;
 	for_each_uabi_engine(engine, i915) {
 		u32 *cmd;
+
+		if (engine->bind_context)
+			continue;
 
 		if (!request[idx])
 			break;
@@ -1503,10 +1524,14 @@ static int live_parallel_engines(void *arg)
 		if (err)
 			break;
 
-		atomic_set(&i915->selftest.counter, nengines);
+		atomic_set(&i915->selftest.counter, 0);
 
 		idx = 0;
 		for_each_uabi_engine(engine, i915) {
+			if (*fn == __live_parallel_spin && engine->bind_context)
+				continue;
+
+			atomic_inc(&i915->selftest.counter);
 			tsk[idx] = kthread_run(*fn, engine,
 					       "igt/parallel:%s",
 					       engine->name);
@@ -1522,6 +1547,9 @@ static int live_parallel_engines(void *arg)
 		idx = 0;
 		for_each_uabi_engine(engine, i915) {
 			int status;
+
+			if (*fn == __live_parallel_spin && engine->bind_context)
+				continue;
 
 			if (IS_ERR(tsk[idx]))
 				break;
