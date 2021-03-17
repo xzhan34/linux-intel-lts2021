@@ -16,6 +16,7 @@
  * @begin_ctx: start index of GuC contexts.
  * @num_dbs: number of GuC doorbells.
  * @begin_db: start index of GuC doorbells.
+ * @exec_quantum: execution-quantum in milliseconds.
  */
 struct intel_iov_config {
 	struct drm_mm_node ggtt_region;
@@ -23,6 +24,7 @@ struct intel_iov_config {
 	u16 begin_ctx;
 	u16 num_dbs;
 	u16 begin_db;
+	u32 exec_quantum;
 };
 
 /**

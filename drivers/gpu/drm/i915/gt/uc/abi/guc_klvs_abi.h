@@ -16,6 +16,7 @@
  *  +===+=======+==============================================================+
  *  | 0 | 31:16 | **KEY** - KLV key identifier                                 |
  *  |   |       |   - `GuC Self Config KLVs`_                                  |
+ *  |   |       |   - `GuC VF Configuration KLVs`_                             |
  *  |   |       |                                                              |
  *  |   +-------+--------------------------------------------------------------+
  *  |   |  15:0 | **LEN** - length of VALUE (in 32bit dwords)                  |
@@ -100,5 +101,30 @@ enum {
 
 	GUC_CONTEXT_POLICIES_KLV_NUM_IDS = 5,
 };
+
+/**
+ * DOC: GuC VF Configuration KLVs
+ *
+ * `GuC KLV`_ keys available for use with PF2GUC_UPDATE_VF_CFG.
+ *
+ * _`GUC_KLV_VF_CFG_EXEC_QUANTUM` : 0x8A01
+ *      This config sets the VFs-execution-quantum in milliseconds.
+ *      GUC will attempt to obey the maximum values as much as HW is capable
+ *      of and this will never be perfectly-exact (accumulated nano-second
+ *      granularity) since the GPUs clock time runs off a different crystal
+ *      from the CPUs clock. Changing this KLV on a VF that is currently
+ *      running a context wont take effect until a new context is scheduled in.
+ *      That said, when the PF is changing this value from 0xFFFFFFFF to
+ *      something else, it might never take effect if the VF is running an
+ *      inifinitely long compute or shader kernel. In such a scenario, the
+ *      PF would need to trigger a VM PAUSE and then change the KLV to force
+ *      it to take effect. Such cases might typically happen on a 1PF+1VF
+ *      Virtualization config enabled for heavier workloads like AI/ML.
+ *
+ *      :0: infinite exec quantum (default)
+ */
+
+#define GUC_KLV_VF_CFG_EXEC_QUANTUM_KEY		0x8a01
+#define GUC_KLV_VF_CFG_EXEC_QUANTUM_LEN		1u
 
 #endif /* _ABI_GUC_KLVS_ABI_H */

@@ -13,6 +13,11 @@ static inline struct intel_gt *iov_to_gt(struct intel_iov *iov)
 	return container_of(iov, struct intel_gt, iov);
 }
 
+static inline struct intel_guc *iov_to_guc(struct intel_iov *iov)
+{
+	return &iov_to_gt(iov)->uc.guc;
+}
+
 static inline struct drm_i915_private *iov_to_i915(struct intel_iov *iov)
 {
 	return iov_to_gt(iov)->i915;

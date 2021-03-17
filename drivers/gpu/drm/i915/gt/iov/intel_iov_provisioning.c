@@ -6,6 +6,8 @@
 #include "intel_iov.h"
 #include "intel_iov_provisioning.h"
 #include "intel_iov_utils.h"
+#include "gt/uc/abi/guc_actions_pf_abi.h"
+#include "gt/uc/abi/guc_klvs_abi.h"
 
 /*
  * Resource configuration for VFs provisioning is maintained in the
@@ -68,6 +70,57 @@ static struct mutex *pf_provisioning_mutex(struct intel_iov *iov)
 {
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
 	return &iov->pf.provisioning.lock;
+}
+
+/*
+ * Return: number of klvs that were successfully parsed and saved,
+ *         negative error code on failure.
+ */
+static int guc_action_update_vf_cfg(struct intel_guc *guc, u32 vfid,
+				    u64 addr, u32 size)
+{
+	u32 request[] = {
+		GUC_ACTION_PF2GUC_UPDATE_VF_CFG,
+		vfid,
+		lower_32_bits(addr),
+		upper_32_bits(addr),
+		size,
+	};
+
+	return intel_guc_send(guc, request, ARRAY_SIZE(request));
+}
+
+/*
+ * Return: 0 on success, -ENOKEY if klv was not parsed, -EPROTO if reply was malformed,
+ *         negative error code on failure.
+ */
+static int guc_update_vf_klv32(struct intel_guc *guc, u32 vfid, u16 key, u32 value)
+{
+	const u32 len = 1; /* 32bit value fits into 1 klv dword */
+	const u32 cfg_size = (GUC_KLV_LEN_MIN + len);
+	struct i915_vma *vma;
+	u32 *cfg;
+	int ret;
+
+	ret = intel_guc_allocate_and_map_vma(guc, cfg_size * sizeof(u32), &vma, (void **)&cfg);
+	if (unlikely(ret))
+		return ret;
+
+	*cfg++ = FIELD_PREP(GUC_KLV_0_KEY, key) | FIELD_PREP(GUC_KLV_0_LEN, len);
+	*cfg++ = value;
+
+	ret = guc_action_update_vf_cfg(guc, vfid, intel_guc_ggtt_offset(guc, vma), cfg_size);
+
+	i915_vma_unpin_and_release(&vma, I915_VMA_RELEASE_MAP);
+
+	if (unlikely(ret < 0))
+		return ret;
+	if (unlikely(!ret))
+		return -ENOKEY;
+	if (unlikely(ret > 1))
+		return -EPROTO;
+
+	return 0;
 }
 
 static u64 pf_get_ggtt_alignment(struct intel_iov *iov)
@@ -543,4 +596,85 @@ u16 intel_iov_provisioning_get_dbs(struct intel_iov *iov, unsigned int id)
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return num_dbs;
+}
+
+static const char* exec_quantum_unit(u32 exec_quantum)
+{
+	return exec_quantum ? "ms" : "(inifinity)";
+}
+
+static int pf_provision_exec_quantum(struct intel_iov *iov, unsigned int id,
+				     u32 exec_quantum)
+{
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	struct intel_iov_config *config = &provisioning->configs[id];
+	int err;
+
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	if (exec_quantum == config->exec_quantum)
+		return 0;
+
+	err = guc_update_vf_klv32(iov_to_guc(iov), id,
+				  GUC_KLV_VF_CFG_EXEC_QUANTUM_KEY, exec_quantum);
+	if (unlikely(err))
+		return err;
+
+	config->exec_quantum = exec_quantum;
+
+	IOV_DEBUG(iov, "VF%u provisioned with %u%s execution quantum\n",
+		  id, exec_quantum, exec_quantum_unit(exec_quantum));
+	return 0;
+}
+
+/**
+ * intel_iov_provisioning_set_exec_quantum - Provision VF with execution quantum.
+ * @iov: the IOV struct
+ * @id: VF identifier
+ * @exec_quantum: requested execution quantum
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_set_exec_quantum(struct intel_iov *iov, unsigned int id,
+					    u32 exec_quantum)
+{
+	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
+	intel_wakeref_t wakeref;
+	int err = -ENONET;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(id > pf_get_totalvfs(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+
+	with_intel_runtime_pm(rpm, wakeref)
+		err = pf_provision_exec_quantum(iov, id, exec_quantum);
+
+	if (unlikely(err))
+		IOV_ERROR(iov, "Failed to provision VF%u with %u%s execution quantum (%pe)\n",
+			  id, exec_quantum, exec_quantum_unit(exec_quantum), ERR_PTR(err));
+
+	mutex_unlock(pf_provisioning_mutex(iov));
+	return err;
+}
+
+/**
+ * intel_iov_provisioning_get_exec_quantum - Get VF execution quantum.
+ * @iov: the IOV struct
+ * @id: VF identifier
+ *
+ * This function can only be called on PF.
+ */
+u32 intel_iov_provisioning_get_exec_quantum(struct intel_iov *iov, unsigned int id)
+{
+	u32 exec_quantum;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(id > pf_get_totalvfs(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	exec_quantum = iov->pf.provisioning.configs[id].exec_quantum;
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return exec_quantum;
 }

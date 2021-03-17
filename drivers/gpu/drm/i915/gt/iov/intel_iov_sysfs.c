@@ -55,7 +55,33 @@ static struct iov_attr name##_iov_attr = \
 
 /* common attributes */
 
+static ssize_t exec_quantum_ms_iov_attr_show(struct intel_iov *iov,
+					     unsigned int id, char *buf)
+{
+	u32 exec_quantum = intel_iov_provisioning_get_exec_quantum(iov, id);
+
+	return sysfs_emit(buf, "%u\n", exec_quantum);
+}
+
+static ssize_t exec_quantum_ms_iov_attr_store(struct intel_iov *iov,
+					      unsigned int id,
+					      const char *buf, size_t count)
+{
+	u32 exec_quantum;
+	int err;
+
+	err = kstrtou32(buf, 0, &exec_quantum);
+	if (err)
+		return err;
+
+	err = intel_iov_provisioning_set_exec_quantum(iov, id, exec_quantum);
+	return err ?: count;
+}
+
+IOV_ATTR(exec_quantum_ms);
+
 static struct attribute *iov_attrs[] = {
+	&exec_quantum_ms_iov_attr.attr,
 	NULL
 };
 
