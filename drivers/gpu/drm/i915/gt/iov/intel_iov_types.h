@@ -17,6 +17,7 @@
  * @num_dbs: number of GuC doorbells.
  * @begin_db: start index of GuC doorbells.
  * @exec_quantum: execution-quantum in milliseconds.
+ * @preempt_timeout: preemption timeout in microseconds.
  */
 struct intel_iov_config {
 	struct drm_mm_node ggtt_region;
@@ -25,6 +26,7 @@ struct intel_iov_config {
 	u16 num_dbs;
 	u16 begin_db;
 	u32 exec_quantum;
+	u32 preempt_timeout;
 };
 
 /**

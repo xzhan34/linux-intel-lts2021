@@ -78,10 +78,35 @@ static ssize_t exec_quantum_ms_iov_attr_store(struct intel_iov *iov,
 	return err ?: count;
 }
 
+static ssize_t preempt_timeout_us_iov_attr_show(struct intel_iov *iov,
+						unsigned int id, char *buf)
+{
+	u32 preempt_timeout = intel_iov_provisioning_get_preempt_timeout(iov, id);
+
+	return sysfs_emit(buf, "%u\n", preempt_timeout);
+}
+
+static ssize_t preempt_timeout_us_iov_attr_store(struct intel_iov *iov,
+						 unsigned int id,
+						 const char *buf, size_t count)
+{
+	u32 preempt_timeout;
+	int err;
+
+	err = kstrtou32(buf, 0, &preempt_timeout);
+	if (err)
+		return err;
+
+	err = intel_iov_provisioning_set_preempt_timeout(iov, id, preempt_timeout);
+	return err ?: count;
+}
+
 IOV_ATTR(exec_quantum_ms);
+IOV_ATTR(preempt_timeout_us);
 
 static struct attribute *iov_attrs[] = {
 	&exec_quantum_ms_iov_attr.attr,
+	&preempt_timeout_us_iov_attr.attr,
 	NULL
 };
 

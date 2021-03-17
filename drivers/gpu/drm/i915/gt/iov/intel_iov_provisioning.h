@@ -25,4 +25,7 @@ u16 intel_iov_provisioning_get_dbs(struct intel_iov *iov, unsigned int id);
 int intel_iov_provisioning_set_exec_quantum(struct intel_iov *iov, unsigned int id, u32 exec_quantum);
 u32 intel_iov_provisioning_get_exec_quantum(struct intel_iov *iov, unsigned int id);
 
+int intel_iov_provisioning_set_preempt_timeout(struct intel_iov *iov, unsigned int id, u32 preempt_timeout);
+u32 intel_iov_provisioning_get_preempt_timeout(struct intel_iov *iov, unsigned int id);
+
 #endif /* __INTEL_IOV_PROVISIONING_H__ */

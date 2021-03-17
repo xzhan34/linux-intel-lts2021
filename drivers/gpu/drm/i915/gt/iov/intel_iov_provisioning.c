@@ -678,3 +678,82 @@ u32 intel_iov_provisioning_get_exec_quantum(struct intel_iov *iov, unsigned int 
 
 	return exec_quantum;
 }
+
+static const char* preempt_timeout_unit(u32 preempt_timeout)
+{
+	return preempt_timeout ? "us" : "(inifinity)";
+}
+
+static int pf_provision_preempt_timeout(struct intel_iov *iov, unsigned int id,
+					u32 preempt_timeout)
+{
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	struct intel_iov_config *config = &provisioning->configs[id];
+	int err;
+
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	if (preempt_timeout == config->preempt_timeout)
+		return 0;
+
+	err = guc_update_vf_klv32(iov_to_guc(iov), id,
+				  GUC_KLV_VF_CFG_PREEMPT_TIMEOUT_KEY,
+				  preempt_timeout);
+	if (unlikely(err))
+		return err;
+
+	config->preempt_timeout = preempt_timeout;
+
+	IOV_DEBUG(iov, "VF%u provisioned with %u%s preemption timeout\n",
+		  id, preempt_timeout, preempt_timeout_unit(preempt_timeout));
+	return 0;
+}
+
+/**
+ * intel_iov_provisioning_set_preempt_timeout - Provision VF with preemption timeout.
+ * @iov: the IOV struct
+ * @id: VF identifier
+ * @preempt_timeout: requested preemption timeout
+ */
+int intel_iov_provisioning_set_preempt_timeout(struct intel_iov *iov, unsigned int id, u32 preempt_timeout)
+{
+	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
+	intel_wakeref_t wakeref;
+	int err = -ENONET;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(id > pf_get_totalvfs(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+
+	with_intel_runtime_pm(rpm, wakeref)
+		err = pf_provision_preempt_timeout(iov, id, preempt_timeout);
+
+	if (unlikely(err))
+		IOV_ERROR(iov, "Failed to provision VF%u with %u%s preemption timeout (%pe)\n",
+			  id, preempt_timeout, preempt_timeout_unit(preempt_timeout), ERR_PTR(err));
+
+	mutex_unlock(pf_provisioning_mutex(iov));
+	return err;
+}
+
+/**
+ * intel_iov_provisioning_get_preempt_timeout - Get VF preemption timeout.
+ * @iov: the IOV struct
+ * @id: VF identifier
+ *
+ * This function can only be called on PF.
+ */
+u32 intel_iov_provisioning_get_preempt_timeout(struct intel_iov *iov, unsigned int id)
+{
+	u32 preempt_timeout;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(id > pf_get_totalvfs(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	preempt_timeout = iov->pf.provisioning.configs[id].preempt_timeout;
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return preempt_timeout;
+}
