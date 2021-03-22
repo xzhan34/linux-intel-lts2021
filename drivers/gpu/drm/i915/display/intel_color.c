@@ -2579,6 +2579,7 @@ void intel_color_init(struct intel_crtc *crtc)
 						       "logarithmic gamma",
 							xelpd_logarithmic_gamma,
 							sizeof(xelpd_logarithmic_gamma));
+			drm_crtc_attach_gamma_mode_property(&crtc->base);
 		} else if (DISPLAY_VER(dev_priv) >= 11) {
 			dev_priv->color_funcs = &icl_color_funcs;
 		} else if (DISPLAY_VER(dev_priv) == 10) {
