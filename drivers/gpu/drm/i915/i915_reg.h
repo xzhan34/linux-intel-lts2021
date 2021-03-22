@@ -8410,4 +8410,21 @@ enum skl_power_gate {
 #define  MTL_LATENCY_LEVEL_ODD_MASK	REG_GENMASK(28, 16)
 
 #define MTL_MEDIA_GSI_BASE		0x380000
+
+#define MTL_LATENCY_SAGV		_MMIO(0x4578c)
+#define  MTL_LATENCY_QCLK_SAGV		REG_GENMASK(12, 0)
+
+#define MTL_MEM_SS_INFO_GLOBAL			_MMIO(0x45700)
+#define  MTL_DDR_TYPE_MASK			REG_GENMASK(3, 0)
+#define  MTL_N_OF_POPULATED_CH_MASK		REG_GENMASK(7, 4)
+#define  MTL_N_OF_ENABLED_QGV_POINTS_MASK	REG_GENMASK(11, 8)
+
+#define MTL_MEM_SS_INFO_QGV_POINT(point, bitgroup) \
+	 _MMIO(0x45710 + ((point) * 2 + (bitgroup)) * sizeof(u32))
+#define  MTL_TRDPRE_MASK		REG_GENMASK(7, 0)
+#define  MTL_TRAS_MASK			REG_GENMASK(16, 8)
+#define  MTL_DCLK_MASK			REG_GENMASK(15, 0)
+#define  MTL_TRP_MASK			REG_GENMASK(23, 16)
+#define  MTL_TRCD_MASK			REG_GENMASK(31, 24)
+
 #endif /* _I915_REG_H_ */
