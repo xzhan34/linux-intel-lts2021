@@ -165,6 +165,16 @@ pte_vfid_not_readable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_ad
 }
 
 static bool
+pte_gpa_not_modifiable_check_via_pf(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
+				    gen8_pte_t *out)
+{
+	const u64 mask = GEN12_GGTT_PTE_ADDR_MASK;
+
+	return vf_pte_is_value_not_modifiable(iov, pte_addr, ggtt_addr, FIELD_MAX(mask),
+					      __bf_shf(mask), out);
+}
+
+static bool
 pte_vfid_not_modifiable_check_via_pf(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
 				     gen8_pte_t *out)
 {
@@ -390,8 +400,8 @@ static int igt_vf_own_ggtt_via_pf(void *arg)
 }
 
 static int
-test_other_ggtt_region(struct intel_iov *iov, gen8_pte_t __iomem *gsm,
-		       struct drm_mm_node *ggtt_region)
+_test_other_ggtt_region(struct intel_iov *iov, gen8_pte_t __iomem *gsm,
+			struct drm_mm_node *ggtt_region)
 {
 	static struct pte_testcase pte_testcases[] = {
 		{ .test = pte_not_accessible },
@@ -414,6 +424,41 @@ test_other_ggtt_region(struct intel_iov *iov, gen8_pte_t __iomem *gsm,
 	}
 
 	return failed ? -EPERM : 0;
+}
+
+static int
+_test_other_ggtt_region_via_pf(struct intel_iov *iov, gen8_pte_t __iomem *gsm,
+			       struct drm_mm_node *ggtt_region)
+{
+	static struct pte_testcase pte_testcases[] = {
+		{ .test = pte_gpa_not_modifiable_check_via_pf },
+		{ .test = pte_vfid_not_modifiable_check_via_pf },
+		{ .test = pte_valid_not_modifiable_check_via_pf },
+		{ },
+	};
+	int failed = 0;
+	struct pte_testcase *tc;
+
+	IOV_DEBUG(iov, "Subtest %s, gsm: %#llx base: %#llx size: %#llx\n",
+		  __func__, ptr_to_u64(gsm), ggtt_region->start,
+		  ggtt_region->size);
+
+	for_each_pte_test(tc, pte_testcases) {
+		IOV_DEBUG(iov, "Run '%ps' check\n", tc->test);
+		if (!run_test_on_ggtt_block(iov, gsm, ggtt_region, tc, 0))
+			failed++;
+	}
+
+	return failed ? -EPERM : 0;
+}
+
+static int
+test_other_ggtt_region(struct intel_iov *iov, gen8_pte_t __iomem *gsm,
+		       struct drm_mm_node *ggtt_region, bool check_via_pf)
+{
+	return check_via_pf ?
+		_test_other_ggtt_region_via_pf(iov, gsm, ggtt_region) :
+		_test_other_ggtt_region(iov, gsm, ggtt_region);
 }
 
 static void *map_gsm(struct intel_gt *gt, u64 ggtt_size)
@@ -441,7 +486,7 @@ static void *map_gsm(struct intel_gt *gt, u64 ggtt_size)
 	return gsm;
 }
 
-static int igt_vf_iov_other_ggtt(struct intel_iov *iov)
+static int igt_vf_iov_other_ggtt(struct intel_iov *iov, bool check_via_pf)
 {
 	u64 offset_vf = iov->vf.config.ggtt_base;
 	u64 size_vf = iov->vf.config.ggtt_size;
@@ -490,11 +535,12 @@ static int igt_vf_iov_other_ggtt(struct intel_iov *iov)
 	test_region.size = I915_GTT_PAGE_SIZE_4K;
 
 	test_region.start = offset_vf - I915_GTT_PAGE_SIZE_4K;
-	if (test_other_ggtt_region(iov, gsm, &test_region) < 0)
+
+	if (test_other_ggtt_region(iov, gsm, &test_region, check_via_pf) < 0)
 		failed++;
 
 	test_region.start = offset_vf + size_vf;
-	if (test_other_ggtt_region(iov, gsm, &test_region) < 0)
+	if (test_other_ggtt_region(iov, gsm, &test_region, check_via_pf) < 0)
 		failed++;
 
 	iounmap(gsm);
@@ -508,7 +554,16 @@ static int igt_vf_other_ggtt(void *arg)
 
 	GEM_BUG_ON(!IS_SRIOV_VF(i915));
 
-	return igt_vf_iov_other_ggtt(&to_gt(i915)->iov);
+	return igt_vf_iov_other_ggtt(&to_gt(i915)->iov, false);
+}
+
+static int igt_vf_other_ggtt_via_pf(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+
+	GEM_BUG_ON(!IS_SRIOV_VF(i915));
+
+	return igt_vf_iov_other_ggtt(&to_gt(i915)->iov, true);
 }
 
 static void init_defaults_pte_io(struct intel_iov *iov)
@@ -526,6 +581,7 @@ int intel_iov_ggtt_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_vf_own_ggtt),
 		SUBTEST(igt_vf_own_ggtt_via_pf),
 		SUBTEST(igt_vf_other_ggtt),
+		SUBTEST(igt_vf_other_ggtt_via_pf),
 	};
 	intel_wakeref_t wakeref;
 	int ret = 0;
