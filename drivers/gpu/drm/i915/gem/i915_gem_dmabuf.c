@@ -20,6 +20,7 @@
 #include "i915_gem_mman.h"
 #include "i915_gem_object.h"
 #include "i915_scatterlist.h"
+#include "i915_trace.h"
 #include "intel_iaf.h"
 
 I915_SELFTEST_DECLARE(static bool force_different_devices;)
@@ -393,6 +394,8 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 	if (!fabric && p2p_distance < 0 &&
 	    !i915_gem_object_can_migrate(obj, INTEL_REGION_SMEM))
 		return -EOPNOTSUPP;
+
+	trace_i915_dma_buf_attach(obj, fabric, p2p_distance);
 
 	pvc_wa_disallow_rc6(ce->engine->i915);
 	for_i915_gem_ww(&ww, err, true) {

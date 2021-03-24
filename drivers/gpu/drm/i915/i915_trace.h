@@ -40,6 +40,29 @@ TRACE_EVENT(i915_gem_object_create,
 	    TP_printk("obj=%p, size=0x%llx", __entry->obj, __entry->size)
 );
 
+TRACE_EVENT(i915_dma_buf_attach,
+	    TP_PROTO(struct drm_i915_gem_object *obj, unsigned int fabric, int dist),
+	    TP_ARGS(obj, fabric, dist),
+
+	    TP_STRUCT__entry(
+			     __field(struct drm_i915_gem_object *, obj)
+			     __field(bool, lmem)
+			     __field(unsigned int, fabric)
+			     __field(int, distance)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->obj = obj;
+			   __entry->lmem = i915_gem_object_is_lmem(obj);
+			   __entry->fabric = fabric;
+			   __entry->distance = dist;
+			   ),
+
+	    TP_printk("obj=%p, lmem=%d, fabric=%d p2p distance=%d",
+		      __entry->obj, __entry->lmem, __entry->fabric,
+		      __entry->distance)
+);
+
 TRACE_EVENT(i915_gem_shrink,
 	    TP_PROTO(struct drm_i915_private *i915, unsigned long target, unsigned flags),
 	    TP_ARGS(i915, target, flags),
