@@ -283,7 +283,7 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 
 	p2p_distance = pci_p2pdma_distance_many(to_pci_dev(obj->base.dev->dev),
 						&attach->dev, 1, false);
-	if (p2p_distance < 0 &&
+	if (p2p_distance < 0 && !to_i915(obj->base.dev)->params.prelim_override_p2p_dist &&
 	    !i915_gem_object_can_migrate(obj, INTEL_REGION_SMEM))
 		return -EOPNOTSUPP;
 
@@ -292,7 +292,8 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 		if (err)
 			continue;
 
-		if (p2p_distance < 0) {
+		if (p2p_distance < 0 &&
+		    !to_i915(obj->base.dev)->params.prelim_override_p2p_dist) {
 			err = i915_gem_object_migrate(obj, &ww, ce,
 						      INTEL_REGION_SMEM);
 			if (err)

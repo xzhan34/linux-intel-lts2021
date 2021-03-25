@@ -270,6 +270,8 @@ i915_param_named_unsafe(force_alloc_contig, int, 0400,
 	"0=disabled [default], 1=SMEM only, 2=LMEM only, 3=both");
 #endif
 
+i915_param_named_unsafe(prelim_override_p2p_dist, bool, 0400, "Override P2P distance check (default: false)");
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,
