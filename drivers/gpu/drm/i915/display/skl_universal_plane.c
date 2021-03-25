@@ -1474,9 +1474,12 @@ static int skl_plane_max_scale(struct drm_i915_private *dev_priv,
 	 * whether we can use the HQ scaler mode. Assume
 	 * the best case.
 	 * FIXME need to properly check this later.
+	 * FIXME On MTL, adjust specific scaler's downscaling capability.
 	 */
-	if (DISPLAY_VER(dev_priv) >= 10 ||
-	    !intel_format_info_is_yuv_semiplanar(fb->format, fb->modifier))
+	if (DISPLAY_VER(dev_priv) >= 14)
+		return 0x10000;
+	else if (DISPLAY_VER(dev_priv) >= 10 ||
+		 !intel_format_info_is_yuv_semiplanar(fb->format, fb->modifier))
 		return 0x30000 - 1;
 	else
 		return 0x20000 - 1;
