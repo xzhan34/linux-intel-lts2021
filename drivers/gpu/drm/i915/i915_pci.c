@@ -1089,6 +1089,7 @@ static const struct intel_device_info xehpsdv_info = {
 	.extra_gt_list = xehp_sdv_extra_gt,
 	.has_64k_pages = 1,
 	.has_media_ratio_mode = 1,
+	.has_mem_sparing = 1,
 	.platform_engine_mask = XE_HP_SDV_ENGINES,
 	.require_force_probe = 1,
 };
@@ -1130,6 +1131,7 @@ static const struct intel_device_info ats_m_info = {
 	.has_3d_pipeline = 0, \
 	.has_guc_deprivilege = 1, \
 	.has_l3_ccs_read = 1, \
+	.has_mem_sparing = 1, \
 	.has_mslice_steering = 0, \
 	.has_one_eu_per_fuse_bit = 1
 

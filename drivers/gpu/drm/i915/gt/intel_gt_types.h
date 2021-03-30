@@ -68,6 +68,22 @@ enum intel_gt_hw_errors {
 	INTEL_GT_HW_ERROR_COUNT
 };
 
+enum intel_gsc_hw_errors {
+	INTEL_GSC_HW_ERROR_COR_SRAM_ECC = 0,
+	INTEL_GSC_HW_ERROR_UNCOR_MIA_SHUTDOWN,
+	INTEL_GSC_HW_ERROR_UNCOR_MIA_INT,
+	INTEL_GSC_HW_ERROR_UNCOR_SRAM_ECC,
+	INTEL_GSC_HW_ERROR_UNCOR_WDG_TIMEOUT,
+	INTEL_GSC_HW_ERROR_UNCOR_ROM_PARITY,
+	INTEL_GSC_HW_ERROR_UNCOR_UCODE_PARITY,
+	INTEL_GSC_HW_ERROR_UNCOR_GLITCH_DET,
+	INTEL_GSC_HW_ERROR_UNCOR_FUSE_PULL,
+	INTEL_GSC_HW_ERROR_UNCOR_FUSE_CRC_CHECK,
+	INTEL_GSC_HW_ERROR_UNCOR_SELFMBIST,
+	INTEL_GSC_HW_ERROR_UNCOR_AON_PARITY,
+	INTEL_GSC_HW_ERROR_COUNT
+};
+
 enum intel_soc_num_ieh {
 	INTEL_GT_SOC_IEH0 = 0,
 	INTEL_GT_SOC_IEH1,
@@ -130,6 +146,18 @@ enum intel_submission_method {
 	INTEL_SUBMISSION_RING,
 	INTEL_SUBMISSION_ELSP,
 	INTEL_SUBMISSION_GUC,
+};
+
+struct intel_mem_sparing_event {
+	struct work_struct mem_health_work;
+	u32    cause;
+	enum {
+		MEM_HEALTH_OKAY = 0,
+		MEM_HEALTH_ALARM,
+		MEM_HEALTH_EC_PENDING,
+		MEM_HEALTH_DEGRADED,
+		MEM_HEALTH_UNKNOWN
+	} health_status;
 };
 
 struct intel_rps_defaults {
@@ -316,6 +344,7 @@ struct intel_gt {
 
 	struct intel_hw_errors {
 		unsigned long hw[INTEL_GT_HW_ERROR_COUNT];
+		unsigned long gsc_hw[INTEL_GSC_HW_ERROR_COUNT];
 		struct xarray soc;
 		unsigned long sgunit[HARDWARE_ERROR_MAX];
 		unsigned long driver[INTEL_GT_DRIVER_ERROR_COUNT];
@@ -358,6 +387,11 @@ struct intel_gt {
 	/* sysfs defaults per gt */
 	struct intel_rps_defaults rps_defaults;
 	struct kobject *sysfs_defaults;
+
+	struct work_struct gsc_hw_error_work;
+
+	/* Memory sparing data structure for errors reporting on root tile */
+	struct intel_mem_sparing_event mem_sparing;
 
 	struct i915_perf_gt perf;
 };

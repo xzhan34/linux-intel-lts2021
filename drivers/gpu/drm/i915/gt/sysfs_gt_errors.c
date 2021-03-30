@@ -55,6 +55,16 @@ static ssize_t gt_error_show(struct device *dev,
 	return sysfs_emit(buf, "%lu\n", gt->errors.hw[ea->id]);
 }
 
+static ssize_t gsc_error_show(struct device *dev,
+			      struct device_attribute *attr,
+			      char *buf)
+{
+	struct ext_attr *ea = container_of(attr, struct ext_attr, attr);
+	struct intel_gt *gt = kobj_to_gt(&dev->kobj);
+
+	return sysfs_emit(buf, "%lu\n", gt->errors.gsc_hw[ea->id]);
+}
+
 static ssize_t engine_reset_show(struct device *dev,
 				 struct device_attribute *attr,
 				 char *buf)
@@ -85,9 +95,26 @@ static ssize_t eu_attention_show(struct device *dev,
 	struct ext_attr dev_attr_##_name = \
 	{ __ATTR(_name, 0444, gt_error_show, NULL), (_id)}
 
+#define GSC_SYSFS_ERROR_ATTR_RO(_name,  _id) \
+	struct ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, 0444, gsc_error_show, NULL), (_id)}
+
 #define GT_DRIVER_SYSFS_ERROR_ATTR_RO(_name,  _id) \
 	struct ext_attr dev_attr_##_name = \
 	{ __ATTR(_name, 0444, gt_driver_error_show, NULL), (_id)}
+
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_correctable_sram_ecc, INTEL_GSC_HW_ERROR_COR_SRAM_ECC);
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_mia_shutdown, INTEL_GSC_HW_ERROR_UNCOR_MIA_SHUTDOWN);
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_mia_int, INTEL_GSC_HW_ERROR_UNCOR_MIA_INT);
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_sram_ecc, INTEL_GSC_HW_ERROR_UNCOR_SRAM_ECC);
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_wdg_timeout, INTEL_GSC_HW_ERROR_UNCOR_WDG_TIMEOUT);
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_rom_parity, INTEL_GSC_HW_ERROR_UNCOR_ROM_PARITY);
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_ucode_parity, INTEL_GSC_HW_ERROR_UNCOR_UCODE_PARITY);
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_glitch_det, INTEL_GSC_HW_ERROR_UNCOR_GLITCH_DET);
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_fuse_pull, INTEL_GSC_HW_ERROR_UNCOR_FUSE_PULL);
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_fuse_crc_check, INTEL_GSC_HW_ERROR_UNCOR_FUSE_CRC_CHECK);
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_selfmbist, INTEL_GSC_HW_ERROR_UNCOR_SELFMBIST);
+static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_aon_parity, INTEL_GSC_HW_ERROR_UNCOR_AON_PARITY);
 
 static GT_SYSFS_ERROR_ATTR_RO(correctable_l3_sng, INTEL_GT_HW_ERROR_COR_L3_SNG);
 static GT_SYSFS_ERROR_ATTR_RO(correctable_guc, INTEL_GT_HW_ERROR_COR_GUC);
@@ -198,6 +225,22 @@ static const struct attribute *gt_error_attrs[] = {
 	NULL
 };
 
+static const struct attribute *gsc_error_attrs[] = {
+	&dev_attr_gsc_correctable_sram_ecc.attr.attr,
+	&dev_attr_gsc_nonfatal_mia_shutdown.attr.attr,
+	&dev_attr_gsc_nonfatal_mia_int.attr.attr,
+	&dev_attr_gsc_nonfatal_sram_ecc.attr.attr,
+	&dev_attr_gsc_nonfatal_wdg_timeout.attr.attr,
+	&dev_attr_gsc_nonfatal_rom_parity.attr.attr,
+	&dev_attr_gsc_nonfatal_ucode_parity.attr.attr,
+	&dev_attr_gsc_nonfatal_glitch_det.attr.attr,
+	&dev_attr_gsc_nonfatal_fuse_pull.attr.attr,
+	&dev_attr_gsc_nonfatal_fuse_crc_check.attr.attr,
+	&dev_attr_gsc_nonfatal_selfmbist.attr.attr,
+	&dev_attr_gsc_nonfatal_aon_parity.attr.attr,
+	NULL
+};
+
 static const struct attribute *soc_error_attrs[] = {
 	&dev_attr_soc_fatal_psf_csc_0.attr.attr,
 	&dev_attr_soc_fatal_psf_csc_1.attr.attr,
@@ -263,6 +306,11 @@ void intel_gt_sysfs_register_errors(struct intel_gt *gt, struct kobject *parent)
 
 	if (sysfs_create_files(dir, gt_error_attrs))
 		drm_warn(&gt->i915->drm, "Failed to create gt%u gt_error sysfs\n", gt->info.id);
+
+	/* Report GSC errors on root gt only */
+	if ((HAS_MEM_SPARING_SUPPORT(gt->i915) && gt->info.id == 0) &&
+	    sysfs_create_files(dir, gsc_error_attrs))
+		drm_warn(&gt->i915->drm, "Failed to create gt%u gsc_error sysfs\n", gt->info.id);
 
 	if (IS_XEHPSDV(gt->i915) &&
 	    sysfs_create_files(dir, soc_error_attrs))

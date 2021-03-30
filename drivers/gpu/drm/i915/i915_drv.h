@@ -1493,6 +1493,9 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 
 #define HAS_BAR2_SMEM_STOLEN(i915) (!HAS_LMEM(i915) && \
 				    GRAPHICS_VER_FULL(i915) >= IP_VER(12, 70))
+#define HAS_MEM_SPARING_SUPPORT(dev_priv) \
+	(INTEL_INFO(dev_priv)->has_mem_sparing)
+
 static inline bool
 intel_ggtt_needs_same_mem_type_within_cl_wa(struct drm_i915_private *dev_priv)
 {

@@ -5869,7 +5869,39 @@ enum hardware_error {
 						_DEV_ERR_STAT_NONFATAL))
 #define  DEV_ERR_STAT_SOC_ERROR		REG_BIT(16)
 #define  DEV_ERR_STAT_SGUNIT_ERROR	REG_BIT(12)
+#define  DEV_ERR_STAT_GSC_ERROR		REG_BIT(8)
 #define  DEV_ERR_STAT_GT_ERROR		REG_BIT(0)
+
+/* GSC Memory Error Registers */
+#define _GSC_HEC_CORR_ERR_STATUS		0x128
+#define _GSC_HEC_UNCORR_ERR_STATUS		0x118
+#define GSC_HEC_CORR_UNCORR_ERR_STATUS(base, x)	_MMIO(_PICK_EVEN((x), \
+							(base) + _GSC_HEC_CORR_ERR_STATUS, \
+							(base) + _GSC_HEC_UNCORR_ERR_STATUS))
+#define GSC_COR_FW_REPORTED_ERR             (1)
+#define GSC_COR_SRAM_ECC_SINGLE_BIT_ERR     (0)
+
+#define GSC_UNCOR_AON_PARITY_ERR            (11)
+#define GSC_UNCOR_SELFMBIST_ERR             (10)
+#define GSC_UNCOR_FUSE_CRC_CHECK_ERR        (9)
+#define GSC_UNCOR_FUSE_PULL_ERR             (8)
+#define GSC_UNCOR_GLITCH_DET_ERR            (7)
+#define GSC_UNCOR_FW_REPORTED_ERR           (6)
+#define GSC_UNCOR_UCODE_PARITY_ERR          (5)
+#define GSC_UNCOR_ROM_PARITY_ERR            (4)
+#define GSC_UNCOR_WDG_TIMEOUT_ERR           (3)
+#define GSC_UNCOR_SRAM_ECC_ERR              (2)
+#define GSC_UNCOR_MIA_INT_ERR               (1)
+#define GSC_UNCOR_MIA_SHUTDOWN_ERR          (0)
+
+#define GSC_HW_ERROR_MAX_ERR_BITS       12
+
+#define GSC_HEC_CORR_FW_ERR_DW0(base)           _MMIO((base) + 0x130)
+#define GSC_HEC_UNCORR_FW_ERR_DW0(base)         _MMIO((base) + 0x124)
+
+#define BANK_SPARNG_ERR_MITIGATION_DOWNGRADED	0x1000
+#define BANK_SPARNG_DIS_PCLS_EXCEEDED		0x1001
+#define BANK_SPARNG_ENA_PCLS_UNCORRECTABLE	0x1002
 
 #define _ERR_STAT_GT_COR		0x100160
 #define _ERR_STAT_GT_NONFATAL		0x100164

@@ -2993,6 +2993,208 @@ gen12_gt_correctable_hw_error_stats_update(struct intel_gt *gt,
 	}
 }
 
+static void gen12_gsc_hw_error_work(struct work_struct *work)
+{
+	struct intel_gt *gt =
+		container_of(work, typeof(*gt), gsc_hw_error_work);
+	char *csc_hw_error_event[3];
+
+	csc_hw_error_event[0] = PRELIM_I915_MEMORY_HEALTH_UEVENT "=1";
+	csc_hw_error_event[1] = "SPARING_STATUS_UNKNOWN=1 RESET_REQUIRED=1";
+	csc_hw_error_event[2] = NULL;
+	gt->mem_sparing.health_status = MEM_HEALTH_UNKNOWN;
+
+	dev_notice(gt->i915->drm.dev, "Unknown memory health status, Reset Required\n");
+	kobject_uevent_env(&gt->i915->drm.primary->kdev->kobj, KOBJ_CHANGE,
+			   csc_hw_error_event);
+}
+
+static void gen12_mem_health_work(struct work_struct *work)
+{
+	struct intel_gt *gt =
+		container_of(work, typeof(*gt), mem_sparing.mem_health_work);
+	u32 cause;
+	int event_idx = 0;
+	char *sparing_event[3];
+
+	spin_lock_irq(gt->irq_lock);
+	cause = fetch_and_zero(&gt->mem_sparing.cause);
+	spin_unlock_irq(gt->irq_lock);
+	if (!cause)
+		return;
+
+	sparing_event[event_idx++] = PRELIM_I915_MEMORY_HEALTH_UEVENT "=1";
+	switch (cause) {
+	case BANK_SPARNG_ERR_MITIGATION_DOWNGRADED:
+		gt->mem_sparing.health_status = MEM_HEALTH_ALARM;
+		sparing_event[event_idx++] = "MEM_HEALTH_ALARM=1";
+		dev_notice(gt->i915->drm.dev,
+			   "Memory Health Report: Error occurred - No action required.\n"
+			   "Error Cause: 0x%x\n", cause);
+		break;
+	case BANK_SPARNG_DIS_PCLS_EXCEEDED:
+		gt->mem_sparing.health_status = MEM_HEALTH_EC_PENDING;
+		sparing_event[event_idx++] = "RESET_REQUIRED=1 EC_PENDING=1";
+		dev_crit(gt->i915->drm.dev,
+			 "Memory Health Report: Error correction pending.\n"
+			 "Card need to be reset.\n"
+			 "Memory might now be functioning in unreliable state.\n"
+			 "Error Cause: 0x%x\n", cause);
+		add_taint(TAINT_MACHINE_CHECK, LOCKDEP_STILL_OK);
+		break;
+	case BANK_SPARNG_ENA_PCLS_UNCORRECTABLE:
+		gt->mem_sparing.health_status = MEM_HEALTH_DEGRADED;
+		sparing_event[event_idx++] = "DEGRADED=1 EC_FAILED=1";
+		dev_crit(gt->i915->drm.dev,
+			 "Memory Health Report: Memory Health degraded, and runtime fix not feasible.\n"
+			 "Replacing card might be the best option.\n"
+			 "Error Cause: 0x%x\n", cause);
+		add_taint(TAINT_MACHINE_CHECK, LOCKDEP_STILL_OK);
+		break;
+	default:
+		gt->mem_sparing.health_status = MEM_HEALTH_UNKNOWN;
+		sparing_event[event_idx++] = "SPARING_STATUS_UNKNOWN=1";
+		dev_notice(gt->i915->drm.dev,
+			   "Unknown memory health status\n");
+		break;
+	}
+
+	sparing_event[event_idx++] = NULL;
+
+	kobject_uevent_env(&gt->i915->drm.primary->kdev->kobj, KOBJ_CHANGE,
+			   sparing_event);
+}
+
+static void
+gen12_gsc_hw_error_handler(struct intel_gt *gt,
+			   const enum hardware_error hw_err)
+{
+	void __iomem * const regs = gt->uncore->regs;
+	u32 base = DG1_GSC_HECI1_BASE;
+	unsigned long err_status;
+	u32 errbit;
+
+	if (!HAS_MEM_SPARING_SUPPORT(gt->i915))
+		return;
+
+	lockdep_assert_held(gt->irq_lock);
+
+	err_status = raw_reg_read(regs, GSC_HEC_CORR_UNCORR_ERR_STATUS(base, hw_err));
+	if (unlikely(!err_status))
+		return;
+
+	switch (hw_err) {
+	case HARDWARE_ERROR_CORRECTABLE:
+		for_each_set_bit(errbit, &err_status, GSC_HW_ERROR_MAX_ERR_BITS) {
+			u32 err_type = GSC_HW_ERROR_MAX_ERR_BITS;
+			const char *name;
+
+			switch (errbit) {
+			case GSC_COR_SRAM_ECC_SINGLE_BIT_ERR:
+				name = "Single bit error on CSME SRAM";
+				err_type = INTEL_GSC_HW_ERROR_COR_SRAM_ECC;
+				break;
+			case GSC_COR_FW_REPORTED_ERR:
+				gt->mem_sparing.cause |=
+					raw_reg_read(regs,
+						     GSC_HEC_CORR_FW_ERR_DW0(base));
+				if (unlikely(!gt->mem_sparing.cause))
+					goto re_enable_interrupt;
+				schedule_work(&gt->mem_sparing.mem_health_work);
+				break;
+			default:
+				name = "Unknown";
+				break;
+			}
+
+			if (err_type != GSC_HW_ERROR_MAX_ERR_BITS)
+				gt->errors.gsc_hw[err_type]++;
+
+			if (errbit != GSC_COR_FW_REPORTED_ERR)
+				drm_err_ratelimited(&gt->i915->drm, HW_ERR
+						    "%s GSC Correctable Error, GSC_HEC_CORR_ERR_STATUS:0x%08lx\n",
+						    name, err_status);
+		}
+		break;
+	case HARDWARE_ERROR_NONFATAL:
+		for_each_set_bit(errbit, &err_status, GSC_HW_ERROR_MAX_ERR_BITS) {
+			u32 err_type = GSC_HW_ERROR_MAX_ERR_BITS;
+			const char *name;
+
+			switch (errbit) {
+			case GSC_UNCOR_MIA_SHUTDOWN_ERR:
+				name = "MinuteIA Unexpected Shutdown";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_MIA_SHUTDOWN;
+				break;
+			case GSC_UNCOR_MIA_INT_ERR:
+				name = "MinuteIA Internal Error";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_MIA_INT;
+				break;
+			case GSC_UNCOR_SRAM_ECC_ERR:
+				name = "Double bit error on CSME SRAM";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_SRAM_ECC;
+				break;
+			case GSC_UNCOR_WDG_TIMEOUT_ERR:
+				name = "WDT 2nd Timeout";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_WDG_TIMEOUT;
+				break;
+			case GSC_UNCOR_ROM_PARITY_ERR:
+				name = "ROM has a parity error";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_ROM_PARITY;
+				break;
+			case GSC_UNCOR_UCODE_PARITY_ERR:
+				name = "Ucode has a parity error";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_UCODE_PARITY;
+				break;
+			case GSC_UNCOR_FW_REPORTED_ERR:
+				name = "Errors Reported to FW and Detected by FW";
+				break;
+			case GSC_UNCOR_GLITCH_DET_ERR:
+				name = "Glitch is detected on voltage rail";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_GLITCH_DET;
+				break;
+			case GSC_UNCOR_FUSE_PULL_ERR:
+				name = "Fuse Pull Error";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_FUSE_PULL;
+				break;
+			case GSC_UNCOR_FUSE_CRC_CHECK_ERR:
+				name = "Fuse CRC Check Failed on Fuse Pull";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_FUSE_CRC_CHECK;
+				break;
+			case GSC_UNCOR_SELFMBIST_ERR:
+				name = "Self Mbist Failed";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_SELFMBIST;
+				break;
+			case GSC_UNCOR_AON_PARITY_ERR:
+				name = "AON RF has parity error";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_AON_PARITY;
+				break;
+			default:
+				name = "Unknown";
+				break;
+			}
+
+			if (err_type != GSC_HW_ERROR_MAX_ERR_BITS)
+				gt->errors.gsc_hw[err_type]++;
+
+			schedule_work(&gt->gsc_hw_error_work);
+			drm_err_ratelimited(&gt->i915->drm, HW_ERR
+					    "%s GSC NON_FATAL Error, GSC_HEC_UNCORR_ERR_STATUS:0x%08lx\n",
+					    name, err_status);
+		}
+		break;
+	case HARDWARE_ERROR_FATAL:
+		/* GSC error not handled for Fatal Error status */
+		drm_err_ratelimited(&gt->i915->drm,
+				    HW_ERR "Fatal Memory Error Detected\n");
+	default:
+		break;
+	}
+
+re_enable_interrupt:
+	raw_reg_write(regs, GSC_HEC_CORR_UNCORR_ERR_STATUS(base, hw_err), err_status);
+}
+
 static void
 gen12_gt_hw_error_handler(struct intel_gt *gt,
 			  const enum hardware_error hw_err)
@@ -3060,6 +3262,10 @@ gen12_hw_error_source_handler(struct intel_gt *gt,
 
 	if (errsrc & DEV_ERR_STAT_SOC_ERROR)
 		gen12_soc_hw_error_handler(gt, hw_err);
+
+	/* Memory health status is being tracked on root tile only */
+	if ((errsrc & DEV_ERR_STAT_GSC_ERROR) && gt->info.id == 0)
+		gen12_gsc_hw_error_handler(gt, hw_err);
 
 	raw_reg_write(regs, DEV_ERR_STAT_REG(hw_err), errsrc);
 
@@ -5001,15 +5207,24 @@ void intel_hpd_irq_setup(struct drm_i915_private *i915)
 void intel_irq_init(struct drm_i915_private *dev_priv)
 {
 	struct drm_device *dev = &dev_priv->drm;
+	struct intel_gt *gt = to_gt(dev_priv);
 	int i;
 
 	INIT_WORK(&dev_priv->l3_parity.error_work, ivb_parity_work);
 	for (i = 0; i < MAX_L3_SLICES; ++i)
 		dev_priv->l3_parity.remap_info[i] = NULL;
 
+	if (HAS_MEM_SPARING_SUPPORT(dev_priv))
+		INIT_WORK(&gt->gsc_hw_error_work, gen12_gsc_hw_error_work);
+
+	if (HAS_MEM_SPARING_SUPPORT(dev_priv)) {
+		INIT_WORK(&gt->mem_sparing.mem_health_work,
+			  gen12_mem_health_work);
+	}
+
 	/* pre-gen11 the guc irqs bits are in the upper 16 bits of the pm reg */
 	if (HAS_GT_UC(dev_priv) && GRAPHICS_VER(dev_priv) < 11)
-		to_gt(dev_priv)->pm_guc_events = GUC_INTR_GUC2HOST << 16;
+		gt->pm_guc_events = GUC_INTR_GUC2HOST << 16;
 
 	if (!HAS_DISPLAY(dev_priv))
 		return;
