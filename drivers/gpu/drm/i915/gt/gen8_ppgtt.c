@@ -1352,6 +1352,8 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 	vm->scratch[0]->encode =
 		gen8_pte_encode(px_dma(vm->scratch[0]),
 				I915_CACHE_NONE, pte_flags);
+	if (!vm->has_scratch)
+		vm->scratch[0]->encode &= ~GEN8_PAGE_PRESENT;
 
 	wakeref = l4wa_pm_get(gt);
 	if (wakeref) {
@@ -1381,6 +1383,8 @@ retry:
 					    vm->scratch[i - 1]->encode);
 
 		obj->encode = gen8_pde_encode(px_dma(obj), I915_CACHE_NONE);
+		if (!vm->has_scratch)
+			obj->encode &= ~GEN8_PAGE_PRESENT;
 
 		vm->scratch[i] = obj;
 	}
@@ -1612,7 +1616,7 @@ void intel_flat_lmem_ppgtt_fini(struct i915_address_space *vm,
  * space.
  *
  */
-struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt)
+struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt, u32 flags)
 {
 	struct i915_page_directory *pd;
 	struct i915_ppgtt *ppgtt;
@@ -1691,6 +1695,9 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt)
 		ppgtt->vm.allocate_va_range = gen8_ppgtt_alloc_wa;
 		ppgtt->vm.clear_range = gen8_ppgtt_clear_wa;
 	}
+
+	if (flags & PRELIM_I915_VM_CREATE_FLAGS_DISABLE_SCRATCH)
+		ppgtt->vm.has_scratch = false;
 
 	err = gen8_init_scratch(&ppgtt->vm);
 	if (err)

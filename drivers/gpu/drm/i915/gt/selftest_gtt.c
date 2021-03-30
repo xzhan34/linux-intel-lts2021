@@ -864,7 +864,7 @@ mem_write_tearing(struct intel_gt *gt,
 		pr_warn("Failed to allocate contiguous pages for size %zx\n",
 			A->base.size);
 
-	ppgtt = i915_ppgtt_create(gt);
+	ppgtt = i915_ppgtt_create(gt, 0);
 	if (IS_ERR(ppgtt)) {
 		err = PTR_ERR(ppgtt);
 		goto out_b;

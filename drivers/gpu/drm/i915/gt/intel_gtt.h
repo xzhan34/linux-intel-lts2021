@@ -345,6 +345,9 @@ struct i915_address_space {
 	 */
 	bool vm_bind_mode:1;
 
+	/* Does address space maps to a valid scratch page */
+	bool has_scratch:1;
+
 	u8 top;
 	u8 pd_shift;
 	u8 scratch_order;
@@ -670,7 +673,7 @@ void i915_ggtt_deballoon(struct i915_ggtt *ggtt, struct drm_mm_node *node);
 
 int i915_ppgtt_init_hw(struct intel_gt *gt);
 
-struct i915_ppgtt *i915_ppgtt_create(struct intel_gt *gt);
+struct i915_ppgtt *i915_ppgtt_create(struct intel_gt *gt, u32 flags);
 
 void i915_ggtt_suspend_vm(struct i915_address_space *vm);
 bool i915_ggtt_resume_vm(struct i915_address_space *vm);

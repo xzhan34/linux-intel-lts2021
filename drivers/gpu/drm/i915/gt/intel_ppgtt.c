@@ -160,19 +160,19 @@ int i915_ppgtt_init_hw(struct intel_gt *gt)
 }
 
 static struct i915_ppgtt *
-__ppgtt_create(struct intel_gt *gt)
+__ppgtt_create(struct intel_gt *gt, u32 flags)
 {
 	if (GRAPHICS_VER(gt->i915) < 8)
 		return gen6_ppgtt_create(gt);
 	else
-		return gen8_ppgtt_create(gt);
+		return gen8_ppgtt_create(gt, flags);
 }
 
-struct i915_ppgtt *i915_ppgtt_create(struct intel_gt *gt)
+struct i915_ppgtt *i915_ppgtt_create(struct intel_gt *gt, u32 flags)
 {
 	struct i915_ppgtt *ppgtt;
 
-	ppgtt = __ppgtt_create(gt);
+	ppgtt = __ppgtt_create(gt, flags);
 	if (IS_ERR(ppgtt))
 		return ppgtt;
 

@@ -887,7 +887,7 @@ static int init_aliasing_ppgtt(struct i915_ggtt *ggtt)
 	struct i915_ppgtt *ppgtt;
 	int err;
 
-	ppgtt = i915_ppgtt_create(ggtt->vm.gt);
+	ppgtt = i915_ppgtt_create(ggtt->vm.gt, 0);
 	if (IS_ERR(ppgtt))
 		return PTR_ERR(ppgtt);
 

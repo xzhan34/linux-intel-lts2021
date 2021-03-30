@@ -310,6 +310,8 @@ int i915_address_space_init(struct i915_address_space *vm, int subclass)
 	spin_lock_init(&vm->vm_rebind_lock);
 	INIT_ACTIVE_FENCE(&vm->user_fence);
 
+	vm->has_scratch = true;
+
 	i915_active_init(&vm->active, __i915_vm_active, __i915_vm_retire, 0);
 
 	return 0;

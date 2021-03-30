@@ -1017,8 +1017,9 @@ struct prelim_drm_i915_vm_bind_ext_user_fence {
 };
 
 struct prelim_drm_i915_gem_vm_control {
+#define PRELIM_I915_VM_CREATE_FLAGS_DISABLE_SCRATCH	(1 << 16)
 #define PRELIM_I915_VM_CREATE_FLAGS_USE_VM_BIND		(1 << 18)
-#define PRELIM_I915_VM_CREATE_FLAGS_UNKNOWN		(~(GENMASK(18, 18)))
+#define PRELIM_I915_VM_CREATE_FLAGS_UNKNOWN		(~(GENMASK(18, 18)) | ~(GENMASK(16, 16)))
 };
 
 struct prelim_drm_i915_gem_vm_region_ext {

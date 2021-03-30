@@ -604,7 +604,7 @@ static struct i915_address_space *kernel_vm(struct intel_gt *gt)
 	if (INTEL_PPGTT(gt->i915) <= INTEL_PPGTT_ALIASING)
 		return i915_vm_get(&gt->ggtt->vm);
 
-	ppgtt = i915_ppgtt_create(gt);
+	ppgtt = i915_ppgtt_create(gt, 0);
 	if (IS_ERR(ppgtt))
 		return ERR_CAST(ppgtt);
 

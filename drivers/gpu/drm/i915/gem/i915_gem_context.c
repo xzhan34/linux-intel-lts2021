@@ -931,7 +931,7 @@ i915_gem_context_create_for_gt(struct intel_gt *gt, unsigned int flags)
 	if (HAS_FULL_PPGTT(i915)) {
 		struct i915_ppgtt *ppgtt;
 
-		ppgtt = i915_ppgtt_create(gt);
+		ppgtt = i915_ppgtt_create(gt, 0);
 		if (IS_ERR(ppgtt)) {
 			drm_dbg(&i915->drm, "PPGTT setup failed (%ld)\n",
 				PTR_ERR(ppgtt));
@@ -1181,7 +1181,7 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 		vce.gt = to_gt(i915);
 	}
 
-	ppgtt = i915_ppgtt_create(vce.gt);
+	ppgtt = i915_ppgtt_create(vce.gt, args->flags);
 	if (IS_ERR(ppgtt))
 		return PTR_ERR(ppgtt);
 

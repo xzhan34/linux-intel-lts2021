@@ -136,7 +136,7 @@ static struct i915_address_space *migrate_vm(struct intel_gt *gt)
 	 * [3 * CHUNK_SZ, 3 * CHUNK_SZ + ((3 * CHUNK_SZ / SZ_2M) * SZ_64K)] -> PTE
 	 */
 
-	vm = i915_ppgtt_create(gt);
+	vm = i915_ppgtt_create(gt, 0);
 	if (IS_ERR(vm))
 		return ERR_CAST(vm);
 
