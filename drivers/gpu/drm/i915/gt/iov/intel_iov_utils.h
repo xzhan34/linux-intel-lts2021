@@ -28,6 +28,21 @@ static inline struct device *iov_to_dev(struct intel_iov *iov)
 	return iov_to_i915(iov)->drm.dev;
 }
 
+static inline struct intel_iov *iov_get_root(struct intel_iov *iov)
+{
+	return &to_gt(iov_to_i915(iov))->iov;
+}
+
+static inline bool iov_is_root(struct intel_iov *iov)
+{
+	return iov == iov_get_root(iov);
+}
+
+static inline bool iov_is_remote(struct intel_iov *iov)
+{
+	return !iov_is_root(iov);
+}
+
 static inline bool intel_iov_is_pf(struct intel_iov *iov)
 {
 	return IS_SRIOV_PF(iov_to_i915(iov));

@@ -2462,6 +2462,27 @@ int intel_iov_provisioning_verify(struct intel_iov *iov, unsigned int num_vfs)
 	return 0;
 }
 
+static u32 pf_get_vf_tile_mask(struct intel_iov *iov, unsigned int vfid)
+{
+	struct intel_gt *gt;
+	unsigned int gtid;
+	u32 tile_mask  = 0;
+	int err;
+
+	GEM_BUG_ON(iov_is_remote(iov));
+
+	for_each_gt(gt, iov_to_i915(iov), gtid) {
+		err = pf_validate_config(&gt->iov, vfid);
+		if (!err)
+			tile_mask |= BIT(gtid);
+	}
+
+	IOV_DEBUG(iov, "VF%d tile_mask=%#x\n", vfid, tile_mask);
+	GEM_BUG_ON(tile_mask & ~GENMASK(iov_to_i915(iov)->remote_tiles, 0));
+
+	return tile_mask;
+}
+
 /* Return: number of configuration dwords written */
 static u32 encode_config(u32 *cfg, const struct intel_iov_config *config)
 {
@@ -2507,6 +2528,19 @@ static u32 encode_config(u32 *cfg, const struct intel_iov_config *config)
 
 	IOV_THRESHOLDS(__encode_threshold)
 #undef __encode_threshold
+
+	return n;
+}
+
+/* Return: number of configuration dwords written */
+static u32 encode_tile_mask(u32 *cfg, u32 tile_mask)
+{
+	u32 n = 0;
+
+	if (tile_mask) {
+		cfg[n++] = MAKE_GUC_KLV(VF_CFG_TILE_MASK);
+		cfg[n++] = tile_mask;
+	}
 
 	return n;
 }
@@ -2570,6 +2604,12 @@ static int pf_push_configs(struct intel_iov *iov, unsigned int num)
 		err = pf_validate_config(iov, n);
 		if (err != -ENODATA)
 			cfg_size = encode_config(cfg, &provisioning->configs[n]);
+
+		if (iov_is_root(iov) && HAS_REMOTE_TILES(iov_to_i915(iov))) {
+			u32 tile_mask = pf_get_vf_tile_mask(iov, n);
+
+			cfg_size += encode_tile_mask(cfg + cfg_size, tile_mask);
+		}
 
 		GEM_BUG_ON(cfg_size * sizeof(u32) > SZ_4K);
 		if (IS_ENABLED(CONFIG_DRM_I915_SELFTEST)) {
