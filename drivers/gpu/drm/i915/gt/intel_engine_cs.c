@@ -894,6 +894,20 @@ static void engine_mask_apply_compute_fuses(struct intel_gt *gt)
 
 	ccs_mask = intel_slicemask_from_xehp_dssmask(info->sseu.compute_subslice_mask,
 						     ss_per_ccs);
+
+	/*
+	 * As per HSD:22012626112 on PVC when using only quad0, we
+	 * are allowed to use only CCS0 engine and all other engines
+	 * should be masked out, as it GAM daisy chain is broken.
+	 */
+	if (IS_PONTEVECCHIO(i915)) {
+		u32 meml3_mask;
+
+		meml3_mask = intel_uncore_read(gt->uncore, GEN10_MIRROR_FUSE3);
+		if (REG_FIELD_GET(GEN12_MEML3_EN_MASK, meml3_mask) == 1)
+			ccs_mask &= ~(GENMASK(I915_MAX_CCS, 1));
+	}
+
 	/*
 	 * If all DSS in a quadrant are fused off, the corresponding CCS
 	 * engine is not available for use.
