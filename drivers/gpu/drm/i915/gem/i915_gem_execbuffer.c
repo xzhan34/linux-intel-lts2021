@@ -2021,8 +2021,9 @@ static int eb_reinit_userptr(struct i915_execbuffer *eb)
 
 static noinline int eb_relocate_parse_slow(struct i915_execbuffer *eb)
 {
-	bool have_copy = false;
+	unsigned int have_copy = 0;
 	struct eb_vma *ev;
+	unsigned int i;
 	int err = 0;
 
 repeat:
@@ -2052,7 +2053,8 @@ repeat:
 		err = eb_prefault_relocations(eb);
 	} else if (!have_copy) {
 		err = eb_copy_relocations(eb);
-		have_copy = err == 0;
+		if (!err)
+			have_copy = eb->buffer_count;
 	} else {
 		cond_resched();
 		err = 0;
@@ -2124,21 +2126,15 @@ err:
 		goto repeat;
 
 out:
-	if (have_copy) {
-		const unsigned int count = eb->buffer_count;
-		unsigned int i;
+	for (i = 0; i < have_copy; i++) {
+		const struct drm_i915_gem_exec_object2 *entry = &eb->exec[i];
+		struct drm_i915_gem_relocation_entry *relocs;
 
-		for (i = 0; i < count; i++) {
-			const struct drm_i915_gem_exec_object2 *entry =
-				&eb->exec[i];
-			struct drm_i915_gem_relocation_entry *relocs;
+		if (!entry->relocation_count)
+			continue;
 
-			if (!entry->relocation_count)
-				continue;
-
-			relocs = u64_to_ptr(typeof(*relocs), entry->relocs_ptr);
-			kvfree(relocs);
-		}
+		relocs = u64_to_ptr(typeof(*relocs), entry->relocs_ptr);
+		kvfree(relocs);
 	}
 
 	return err;
