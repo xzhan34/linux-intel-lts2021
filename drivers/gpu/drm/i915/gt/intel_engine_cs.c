@@ -1023,6 +1023,9 @@ static void cleanup_status_page(struct intel_engine_cs *engine)
 
 	i915_gem_object_unpin_map(vma->obj);
 	i915_gem_object_put(vma->obj);
+
+	/* no longer in control, nothing left to sanitize */
+	engine->status_page.sanitize = NULL;
 }
 
 static int pin_ggtt_status_page(struct intel_engine_cs *engine,
@@ -1781,8 +1784,8 @@ void intel_engines_reset_default_submission(struct intel_gt *gt)
 	enum intel_engine_id id;
 
 	for_each_engine(engine, gt, id) {
-		if (engine->sanitize)
-			engine->sanitize(engine);
+		if (engine->status_page.sanitize)
+			engine->status_page.sanitize(engine);
 
 		engine->set_default_submission(engine);
 	}

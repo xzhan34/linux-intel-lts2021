@@ -4225,7 +4225,7 @@ static inline int guc_init_submission(struct intel_guc *guc)
 
 static void guc_release(struct intel_engine_cs *engine)
 {
-	engine->sanitize = NULL; /* no longer in control, nothing to sanitize */
+	tasklet_kill(&engine->sched_engine->tasklet);
 
 	intel_engine_cleanup_common(engine);
 	lrc_fini_wa_ctx(engine);
@@ -4364,7 +4364,7 @@ int intel_guc_submission_setup(struct intel_engine_cs *engine)
 	lrc_init_wa_ctx(engine);
 
 	/* Finally, take ownership and responsibility for cleanup! */
-	engine->sanitize = guc_sanitize;
+	engine->status_page.sanitize = guc_sanitize;
 	engine->release = guc_release;
 
 	return 0;

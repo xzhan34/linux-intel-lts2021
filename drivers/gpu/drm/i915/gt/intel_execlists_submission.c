@@ -3402,8 +3402,6 @@ static void execlists_shutdown(struct intel_engine_cs *engine)
 
 static void execlists_release(struct intel_engine_cs *engine)
 {
-	engine->sanitize = NULL; /* no longer in control, nothing to sanitize */
-
 	execlists_shutdown(engine);
 
 	intel_engine_cleanup_common(engine);
@@ -3593,7 +3591,7 @@ int intel_execlists_submission_setup(struct intel_engine_cs *engine)
 	}
 
 	/* Finally, take ownership and responsibility for cleanup! */
-	engine->sanitize = execlists_sanitize;
+	engine->status_page.sanitize = execlists_sanitize;
 	engine->release = execlists_release;
 
 	return 0;

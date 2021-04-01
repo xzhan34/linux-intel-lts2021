@@ -183,8 +183,8 @@ static void gt_sanitize(struct intel_gt *gt, bool force)
 		if (engine->reset.prepare)
 			engine->reset.prepare(engine);
 
-		if (engine->sanitize)
-			engine->sanitize(engine);
+		if (engine->status_page.sanitize)
+			engine->status_page.sanitize(engine);
 	}
 
 	if (reset_engines(gt) || force) {

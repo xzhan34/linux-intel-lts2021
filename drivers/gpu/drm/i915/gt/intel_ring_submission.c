@@ -1128,7 +1128,7 @@ static void setup_common(struct intel_engine_cs *engine)
 	setup_irq(engine);
 
 	engine->resume = xcs_resume;
-	engine->sanitize = xcs_sanitize;
+	engine->status_page.sanitize = xcs_sanitize;
 
 	engine->reset.prepare = reset_prepare;
 	engine->reset.rewind = reset_rewind;

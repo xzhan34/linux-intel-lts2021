@@ -54,6 +54,7 @@ struct intel_gt;
 struct intel_ring;
 struct intel_uncore;
 struct intel_breadcrumbs;
+struct intel_engine_cs;
 
 typedef u32 intel_engine_mask_t;
 #define ALL_ENGINES ((intel_engine_mask_t)~0ul)
@@ -62,6 +63,8 @@ struct intel_hw_status_page {
 	struct list_head timelines;
 	struct i915_vma *vma;
 	u32 *addr;
+
+	void (*sanitize)(struct intel_engine_cs *engine);
 };
 
 struct intel_instdone {
@@ -471,7 +474,6 @@ struct intel_engine_cs {
 	void		(*irq_disable)(struct intel_engine_cs *engine);
 	void		(*irq_handler)(struct intel_engine_cs *engine, u16 iir);
 
-	void		(*sanitize)(struct intel_engine_cs *engine);
 	int		(*resume)(struct intel_engine_cs *engine);
 
 	struct {
