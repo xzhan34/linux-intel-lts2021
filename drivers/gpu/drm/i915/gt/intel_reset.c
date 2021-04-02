@@ -596,10 +596,10 @@ static int gen8_engine_reset_prepare(struct intel_engine_cs *engine)
 	ret = __intel_wait_for_register_fw(uncore, reg, mask, ack,
 					   700, 0, NULL);
 	if (ret)
-		drm_err(&engine->i915->drm,
-			"%s reset request timed out: {request: %08x, RESET_CTL: %08x}\n",
-			engine->name, request,
-			intel_uncore_read_fw(uncore, reg));
+		intel_gt_log_driver_error(engine->gt, INTEL_GT_DRIVER_ERROR_ENGINE_OTHER,
+					  "%s reset request timed out: {request: %08x, RESET_CTL: %08x}\n",
+					  engine->name, request,
+					  intel_uncore_read_fw(uncore, reg));
 
 	return ret;
 }

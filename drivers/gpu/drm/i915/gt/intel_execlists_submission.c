@@ -2927,9 +2927,9 @@ static void enable_error_interrupt(struct intel_engine_cs *engine)
 
 	status = ENGINE_READ(engine, RING_ESR);
 	if (unlikely(status)) {
-		drm_err(&engine->i915->drm,
-			"engine '%s' resumed still in error: %08x\n",
-			engine->name, status);
+		intel_gt_log_driver_error(engine->gt, INTEL_GT_DRIVER_ERROR_ENGINE_OTHER,
+					  "engine '%s' resumed still in error: %08x\n",
+					  engine->name, status);
 		__intel_gt_reset(engine->gt, engine->mask);
 	}
 

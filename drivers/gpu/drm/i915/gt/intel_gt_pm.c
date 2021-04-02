@@ -273,9 +273,9 @@ int intel_gt_resume(struct intel_gt *gt)
 
 		intel_engine_pm_put(engine);
 		if (err) {
-			drm_err(&gt->i915->drm,
-				"Failed to restart %s (%d)\n",
-				engine->name, err);
+			intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_ENGINE_OTHER,
+						  "Failed to restart '%s' (%d)\n",
+						  engine->name, err);
 			goto err_wedged;
 		}
 	}
