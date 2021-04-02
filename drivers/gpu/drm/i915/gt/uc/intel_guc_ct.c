@@ -47,7 +47,8 @@ static inline struct drm_device *ct_to_drm(struct intel_guc_ct *ct)
 }
 
 #define CT_ERROR(_ct, _fmt, ...) \
-	drm_err(ct_to_drm(_ct), "CT%u: " _fmt, ct_to_gt(_ct)->info.id, ##__VA_ARGS__)
+	intel_gt_log_driver_error(ct_to_gt(_ct), INTEL_GT_DRIVER_ERROR_GUC_COMMUNICATION, \
+				  "CT%u: " _fmt, ct_to_gt(_ct)->info.id, ##__VA_ARGS__)
 #ifdef CONFIG_DRM_I915_DEBUG_GUC
 #define CT_DEBUG(_ct, _fmt, ...) \
 	drm_dbg(ct_to_drm(_ct), "CT%u: " _fmt, ct_to_gt(_ct)->info.id, ##__VA_ARGS__)
