@@ -38,6 +38,45 @@
 #include "intel_gt_sysfs.h"
 #include "pxp/intel_pxp.h"
 
+static const char *intel_gt_driver_errors_to_str[] = {
+	[INTEL_GT_DRIVER_ERROR_GGTT] = "GGTT",
+	[INTEL_GT_DRIVER_ERROR_ENGINE_OTHER] = "ENGINE OTHER",
+	[INTEL_GT_DRIVER_ERROR_GUC_COMMUNICATION] = "GUC COMMUNICATION",
+	[INTEL_GT_DRIVER_ERROR_RPS] = "RPS",
+	[INTEL_GT_DRIVER_ERROR_GT_OTHER] = "GT OTHER",
+};
+
+void intel_gt_silent_driver_error(struct intel_gt *gt,
+				  const enum intel_gt_driver_errors error)
+{
+	GEM_BUG_ON(error >= ARRAY_SIZE(gt->errors.driver));
+	WRITE_ONCE(gt->errors.driver[error],
+		   READ_ONCE(gt->errors.driver[error]) + 1);
+}
+
+void intel_gt_log_driver_error(struct intel_gt *gt,
+			       const enum intel_gt_driver_errors error,
+			       const char *fmt, ...)
+{
+	struct va_format vaf;
+	va_list args;
+
+	intel_gt_silent_driver_error(gt, error);
+
+	va_start(args, fmt);
+	vaf.fmt = fmt;
+	vaf.va = &args;
+
+	BUILD_BUG_ON(ARRAY_SIZE(intel_gt_driver_errors_to_str) !=
+		     INTEL_GT_DRIVER_ERROR_COUNT);
+
+	drm_err_ratelimited(&gt->i915->drm, "GT%u [%s] %pV",
+			    gt->info.id,
+			    intel_gt_driver_errors_to_str[error],
+			    &vaf);
+	va_end(args);
+}
+
 void intel_gt_common_init_early(struct intel_gt *gt)
 {
 	spin_lock_init(gt->irq_lock);

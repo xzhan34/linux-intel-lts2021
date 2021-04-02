@@ -116,6 +116,40 @@ static void i915_release_bridge_dev(struct drm_device *dev,
 	pci_dev_put(bridge);
 }
 
+static const char *i915_driver_errors_to_str[] = {
+	[I915_DRIVER_ERROR_OBJECT_MIGRATION] = "OBJECT MIGRATION",
+};
+
+void i915_silent_driver_error(struct drm_i915_private *i915,
+			      const enum i915_driver_errors error)
+{
+	GEM_BUG_ON(error >= ARRAY_SIZE(i915->errors));
+	WRITE_ONCE(i915->errors[error],
+		   READ_ONCE(i915->errors[error]) + 1);
+}
+
+void i915_log_driver_error(struct drm_i915_private *i915,
+			   const enum i915_driver_errors error,
+			   const char *fmt, ...)
+{
+	struct va_format vaf;
+	va_list args;
+
+	i915_silent_driver_error(i915, error);
+
+	va_start(args, fmt);
+	vaf.fmt = fmt;
+	vaf.va = &args;
+
+	BUILD_BUG_ON(ARRAY_SIZE(i915_driver_errors_to_str) !=
+		     I915_DRIVER_ERROR_COUNT);
+
+	drm_err_ratelimited(&i915->drm, "[%s] %pV",
+			    i915_driver_errors_to_str[error], &vaf);
+
+	va_end(args);
+}
+
 static int i915_get_bridge_dev(struct drm_i915_private *dev_priv)
 {
 	int domain = pci_domain_nr(to_pci_dev(dev_priv->drm.dev)->bus);

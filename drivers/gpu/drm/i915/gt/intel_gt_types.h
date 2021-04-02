@@ -79,6 +79,15 @@ enum intel_soc_ieh_reg_type {
 	INTEL_SOC_REG_GLOBAL
 };
 
+enum intel_gt_driver_errors {
+	INTEL_GT_DRIVER_ERROR_GGTT = 0,
+	INTEL_GT_DRIVER_ERROR_ENGINE_OTHER,
+	INTEL_GT_DRIVER_ERROR_GUC_COMMUNICATION,
+	INTEL_GT_DRIVER_ERROR_RPS,
+	INTEL_GT_DRIVER_ERROR_GT_OTHER,
+	INTEL_GT_DRIVER_ERROR_COUNT
+};
+
 struct intel_mmio_range {
 	u32 start;
 	u32 end;
@@ -302,7 +311,7 @@ struct intel_gt {
 		unsigned long hw[INTEL_GT_HW_ERROR_COUNT];
 		struct xarray soc;
 		unsigned long sgunit[HARDWARE_ERROR_MAX];
-
+		unsigned long driver[INTEL_GT_DRIVER_ERROR_COUNT];
 	} errors;
 
 	struct intel_gt_info {

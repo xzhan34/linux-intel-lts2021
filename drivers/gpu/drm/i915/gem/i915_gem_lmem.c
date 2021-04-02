@@ -351,10 +351,13 @@ lmem_swapout(struct drm_i915_gem_object *obj,
 	i915_gem_object_unlock(src);
 	i915_gem_object_put(src);
 
-	if (!err)
+	if (!err) {
 		obj->swapto = dst;
-	else
+	} else {
+		if (err != -EINTR && err != -ERESTARTSYS)
+			i915_silent_driver_error(i915, I915_DRIVER_ERROR_OBJECT_MIGRATION);
 		i915_gem_object_put(dst);
+	}
 
 	__update_stat(stat, obj->base.size >> PAGE_SHIFT, start);
 
@@ -415,6 +418,9 @@ lmem_swapin(struct drm_i915_gem_object *obj,
 	if (!err) {
 		obj->swapto = NULL;
 		i915_gem_object_put(src);
+	} else {
+		if (err != -EINTR && err != -ERESTARTSYS)
+			i915_silent_driver_error(i915, I915_DRIVER_ERROR_OBJECT_MIGRATION);
 	}
 
 	__update_stat(stat, obj->base.size >> PAGE_SHIFT, start);

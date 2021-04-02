@@ -1768,9 +1768,10 @@ int i915_ggtt_balloon(struct i915_ggtt *ggtt, u64 start, u64 end,
 	err = i915_gem_gtt_reserve(&ggtt->vm, node, size, start,
 				   I915_COLOR_UNEVICTABLE, PIN_NOEVICT);
 	if (unlikely(err)) {
-		drm_err(&ggtt->vm.i915->drm, "%sGGTT [%#llx-%#llx] %lluK\n",
-			"Failed to balloon ", node->start,
-			node->start + node->size, node->size / SZ_1K);
+		intel_gt_log_driver_error(ggtt->vm.gt, INTEL_GT_DRIVER_ERROR_GGTT,
+					  "%sGGTT [%#llx-%#llx] %lluK\n",
+					  "Failed to balloon ", node->start,
+					  node->start + node->size, node->size / SZ_1K);
 		return err;
 	}
 

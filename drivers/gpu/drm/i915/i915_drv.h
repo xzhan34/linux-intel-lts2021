@@ -89,7 +89,6 @@
 struct dpll;
 struct drm_i915_clock_gating_funcs;
 struct drm_i915_gem_object;
-struct drm_i915_gem_object;
 struct drm_i915_private;
 struct i915_ggtt;
 struct intel_atomic_state;
@@ -115,6 +114,11 @@ struct intel_overlay_error_state;
 struct vlv_s0ix_state;
 
 #define I915_GFP_ALLOW_FAIL (GFP_KERNEL | __GFP_RETRY_MAYFAIL | __GFP_NOWARN)
+
+enum i915_driver_errors {
+	I915_DRIVER_ERROR_OBJECT_MIGRATION = 0,
+	I915_DRIVER_ERROR_COUNT,
+};
 
 /* Threshold == 5 for long IRQs, 50 for short */
 #define HPD_STORM_DEFAULT_THRESHOLD 50
@@ -891,6 +895,8 @@ struct drm_i915_private {
 	 */
 
 	struct wait_queue_head user_fence_wq;
+
+	unsigned long errors[I915_DRIVER_ERROR_COUNT];
 };
 
 static inline struct drm_i915_private *to_i915(const struct drm_device *dev)
@@ -1652,5 +1658,13 @@ static inline void i915_write_barrier(struct drm_i915_private *i915)
 	 */
 	raw_reg_write(i915->uncore.regs, SOFTWARE_FLAGS_SPR33, 0);
 }
+
+void i915_silent_driver_error(struct drm_i915_private *i915,
+			      const enum i915_driver_errors error);
+
+__printf(3, 4)
+void i915_log_driver_error(struct drm_i915_private *i915,
+			   const enum i915_driver_errors error,
+			   const char *fmt, ...);
 
 #endif

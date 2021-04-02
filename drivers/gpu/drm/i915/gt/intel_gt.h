@@ -102,4 +102,12 @@ void intel_gt_watchdog_work(struct work_struct *work);
 
 void intel_boost_fake_int_timer(struct intel_gt *gt, bool on_off);
 
+void intel_gt_silent_driver_error(struct intel_gt *gt,
+				  const enum intel_gt_driver_errors error);
+
+__printf(3, 4)
+void intel_gt_log_driver_error(struct intel_gt *gt,
+			       const enum intel_gt_driver_errors error,
+			       const char *fmt, ...);
+
 #endif /* __INTEL_GT_H__ */
