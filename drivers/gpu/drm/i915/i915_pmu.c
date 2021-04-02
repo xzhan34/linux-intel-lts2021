@@ -99,6 +99,19 @@ static const unsigned long i915_hw_error_map[] = {
 	[PRELIM_I915_PMU_SOC_ERROR_FATAL_HBM(1, 15)] = SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_HBM_SS1_15),
 };
 
+static const unsigned long gt_driver_error_map[] = {
+	[PRELIM_I915_PMU_GT_DRIVER_ERROR_GGTT] = INTEL_GT_DRIVER_ERROR_GGTT,
+	[PRELIM_I915_PMU_GT_DRIVER_ERROR_ENGINE_OTHER] = INTEL_GT_DRIVER_ERROR_ENGINE_OTHER,
+	[PRELIM_I915_PMU_GT_DRIVER_ERROR_GUC_COMMUNICATION] = INTEL_GT_DRIVER_ERROR_GUC_COMMUNICATION,
+	[PRELIM_I915_PMU_GT_DRIVER_ERROR_RPS] = INTEL_GT_DRIVER_ERROR_RPS,
+	[PRELIM_I915_PMU_GT_DRIVER_ERROR_GT_OTHER] = INTEL_GT_DRIVER_ERROR_GT_OTHER,
+	[PRELIM_I915_PMU_GT_DRIVER_ERROR_INTERRUPT] = INTEL_GT_DRIVER_ERROR_INTERRUPT,
+};
+
+static const unsigned long i915_driver_error_map[] = {
+	[PRELIM_I915_PMU_DRIVER_ERROR_OBJECT_MIGRATION] = I915_DRIVER_ERROR_OBJECT_MIGRATION,
+};
+
 static cpumask_t i915_pmu_cpumask;
 static unsigned int i915_pmu_target_cpu = -1;
 
@@ -617,7 +630,8 @@ engine_event_status(struct intel_engine_cs *engine,
 
 static bool is_hw_error_config(const u64 config)
 {
-	return config_counter(config) >= __PRELIM_I915_PMU_HW_ERROR_EVENT_ID_OFFSET;
+	return (config_counter(config) >= __PRELIM_I915_PMU_HW_ERROR_EVENT_ID_OFFSET) &&
+		(config_counter(config) < __PRELIM_I915_PMU_GT_DRIVER_ERROR_EVENT_ID_OFFSET);
 }
 
 static unsigned int hw_error_id(const u64 config)
@@ -633,6 +647,29 @@ static bool is_xehpsdv_soc_error(const u64 config)
 		return true;
 
 	return false;
+}
+
+static bool is_gt_driver_error_config(const u64 config)
+{
+	return (config_counter(config) >= __PRELIM_I915_PMU_GT_DRIVER_ERROR_EVENT_ID_OFFSET) &&
+		(config_counter(config) < __PRELIM_I915_PMU_DRIVER_ERROR_EVENT_ID_OFFSET);
+}
+
+static unsigned int gt_driver_error_id(const u64 config)
+{
+	return config_counter(config) -
+	       __PRELIM_I915_PMU_GT_DRIVER_ERROR_EVENT_ID_OFFSET;
+}
+
+static bool is_i915_driver_error_config(const u64 config)
+{
+	return config_counter(config) >= __PRELIM_I915_PMU_DRIVER_ERROR_EVENT_ID_OFFSET;
+}
+
+static unsigned int i915_driver_error_id(const u64 config)
+{
+	return config_counter(config) -
+	       __PRELIM_I915_PMU_DRIVER_ERROR_EVENT_ID_OFFSET;
 }
 
 static int
@@ -655,6 +692,18 @@ config_status(struct drm_i915_private *i915, u64 config)
 
 		return (hw_error_id(config) >=
 				ARRAY_SIZE(i915_hw_error_map)) ? -ENOENT : 0;
+	}
+
+	if (is_gt_driver_error_config(config)) {
+		return (gt_driver_error_id(config) >=
+				ARRAY_SIZE(gt_driver_error_map)) ? -ENOENT : 0;
+	}
+
+	if (is_i915_driver_error_config(config)) {
+		if (gt_id)
+			return -ENOENT;
+		return (i915_driver_error_id(config) >=
+				ARRAY_SIZE(i915_driver_error_map)) ? -ENOENT : 0;
 	}
 
 	switch (config_counter(config)) {
@@ -784,6 +833,16 @@ static u64 __i915_pmu_event_read(struct perf_event *event)
 		else
 			val = gt->errors.hw[i915_hw_error_map[id]];
 
+	} else if (is_gt_driver_error_config(event->attr.config)) {
+		const unsigned int gt_id = config_gt_id(event->attr.config);
+		unsigned int id = gt_driver_error_id(event->attr.config);
+		struct intel_gt *gt = i915->gt[gt_id];
+
+		val = gt->errors.driver[gt_driver_error_map[id]];
+	} else if (is_i915_driver_error_config(event->attr.config)) {
+		unsigned int id = i915_driver_error_id(event->attr.config);
+
+		val = i915->errors[i915_driver_error_map[id]];
 	} else {
 		const unsigned int gt_id = config_gt_id(event->attr.config);
 		const u64 config = config_counter(event->attr.config);
@@ -1229,7 +1288,17 @@ create_event_attributes(struct i915_pmu *pmu)
 		[PRELIM_I915_PMU_SOC_ERROR_FATAL_HBM(1, 14)] = "soc-fatal-hbm-ss1-14",
 		[PRELIM_I915_PMU_SOC_ERROR_FATAL_HBM(1, 15)] = "soc-fatal-hbm-ss1-15",
 	};
-
+	static const char *gt_driver_error_events[] = {
+		[PRELIM_I915_PMU_GT_DRIVER_ERROR_GGTT] = "driver-ggtt",
+		[PRELIM_I915_PMU_GT_DRIVER_ERROR_ENGINE_OTHER] = "driver-engine-other",
+		[PRELIM_I915_PMU_GT_DRIVER_ERROR_GUC_COMMUNICATION] = "driver-guc-communication",
+		[PRELIM_I915_PMU_GT_DRIVER_ERROR_RPS] = "driver-rps",
+		[PRELIM_I915_PMU_GT_DRIVER_ERROR_GT_OTHER] = "driver-gt-other",
+		[PRELIM_I915_PMU_GT_DRIVER_ERROR_INTERRUPT] = "driver-gt-interrupt",
+	};
+	static const char *i915_driver_error_events[] = {
+		[PRELIM_I915_PMU_DRIVER_ERROR_OBJECT_MIGRATION] = "driver-object-migration",
+	};
 	static const struct {
 		enum drm_i915_pmu_engine_sample sample;
 		char *name;
@@ -1248,6 +1317,10 @@ create_event_attributes(struct i915_pmu *pmu)
 
 	BUILD_BUG_ON(ARRAY_SIZE(hw_error_events) !=
 		     ARRAY_SIZE(i915_hw_error_map));
+	BUILD_BUG_ON(ARRAY_SIZE(gt_driver_error_events) !=
+		     ARRAY_SIZE(gt_driver_error_map));
+	BUILD_BUG_ON(ARRAY_SIZE(i915_driver_error_events) !=
+		     ARRAY_SIZE(i915_driver_error_map));
 
 	/* Count how many counters we will be exposing. */
 	for_each_gt(gt, i915, j) {
@@ -1264,6 +1337,20 @@ create_event_attributes(struct i915_pmu *pmu)
 			if (!config_status(i915, config))
 				count++;
 		}
+
+		for (i = 0; i < ARRAY_SIZE(gt_driver_error_events); i++) {
+			u64 config = PRELIM_I915_PMU_GT_DRIVER_ERROR(j, i);
+
+			if (!config_status(i915, config))
+				count++;
+		}
+	}
+
+	for (i = 0; i < ARRAY_SIZE(i915_driver_error_events); i++) {
+		u64 config = PRELIM_I915_PMU_DRIVER_ERROR(i);
+
+		if (!config_status(i915, config))
+			count++;
 	}
 
 	for_each_uabi_engine(engine, i915) {
@@ -1353,6 +1440,42 @@ create_event_attributes(struct i915_pmu *pmu)
 			*attr_iter++ = &i915_iter->attr.attr;
 			i915_iter = add_i915_attr(i915_iter, str, config);
 		}
+
+		for (i = 0; i < ARRAY_SIZE(gt_driver_error_events); i++) {
+			u64 config = PRELIM_I915_PMU_GT_DRIVER_ERROR(j, i);
+
+			if (config_status(i915, config))
+				continue;
+
+			if (!i915->remote_tiles)
+				str = kasprintf(GFP_KERNEL, "error--%s",
+						gt_driver_error_events[i]);
+			else
+				str = kasprintf(GFP_KERNEL, "error-gt%u--%s",
+						j, gt_driver_error_events[i]);
+			if (!str)
+				goto err;
+
+			*attr_iter++ = &i915_iter->attr.attr;
+			i915_iter = add_i915_attr(i915_iter, str, config);
+		}
+	}
+
+	/* Initialize global driver error counters */
+	for (i = 0; i < ARRAY_SIZE(i915_driver_error_events); i++) {
+		char *str;
+		u64 config = PRELIM_I915_PMU_DRIVER_ERROR(i);
+
+		if (config_status(i915, config))
+			continue;
+
+		str = kasprintf(GFP_KERNEL, "error--%s",
+				i915_driver_error_events[i]);
+		if (!str)
+			goto err;
+
+		*attr_iter++ = &i915_iter->attr.attr;
+		i915_iter = add_i915_attr(i915_iter, str, config);
 	}
 
 	/* Initialize supported engine counters. */
@@ -1385,6 +1508,8 @@ create_event_attributes(struct i915_pmu *pmu)
 			pmu_iter = add_pmu_attr(pmu_iter, str, "ns");
 		}
 	}
+	GEM_BUG_ON(i915_iter > i915_attr + count);
+	GEM_BUG_ON(pmu_iter > pmu_attr + count);
 
 	pmu->i915_attr = i915_attr;
 	pmu->pmu_attr = pmu_attr;
