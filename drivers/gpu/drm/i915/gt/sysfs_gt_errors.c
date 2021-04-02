@@ -12,6 +12,19 @@ struct ext_attr {
 	unsigned long id;
 };
 
+static ssize_t gt_driver_error_show(struct device *dev,
+				    struct device_attribute *attr,
+				    char *buf)
+{
+	struct ext_attr *ea = container_of(attr, struct ext_attr, attr);
+	struct intel_gt *gt = kobj_to_gt(&dev->kobj);
+
+	if (GEM_WARN_ON(ea->id > ARRAY_SIZE(gt->errors.driver)))
+		return -ENOENT;
+
+	return sysfs_emit(buf, "%lu\n", gt->errors.driver[ea->id]);
+}
+
 static ssize_t sgunit_error_show(struct device *dev,
 			     struct device_attribute *attr,
 			     char *buf)
@@ -71,6 +84,10 @@ static ssize_t eu_attention_show(struct device *dev,
 #define GT_SYSFS_ERROR_ATTR_RO(_name,  _id) \
 	struct ext_attr dev_attr_##_name = \
 	{ __ATTR(_name, 0444, gt_error_show, NULL), (_id)}
+
+#define GT_DRIVER_SYSFS_ERROR_ATTR_RO(_name,  _id) \
+	struct ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, 0444, gt_driver_error_show, NULL), (_id)}
 
 static GT_SYSFS_ERROR_ATTR_RO(correctable_l3_sng, INTEL_GT_HW_ERROR_COR_L3_SNG);
 static GT_SYSFS_ERROR_ATTR_RO(correctable_guc, INTEL_GT_HW_ERROR_COR_GUC);
@@ -143,6 +160,13 @@ static SOC_SYSFS_ERROR_ATTR_RO(soc_fatal_hbm_ss1_15, SOC_ERR_INDEX(INTEL_GT_SOC_
 static DEVICE_ATTR_RO(engine_reset);
 static DEVICE_ATTR_RO(eu_attention);
 
+static GT_DRIVER_SYSFS_ERROR_ATTR_RO(driver_ggtt, INTEL_GT_DRIVER_ERROR_GGTT);
+static GT_DRIVER_SYSFS_ERROR_ATTR_RO(driver_engine_other, INTEL_GT_DRIVER_ERROR_ENGINE_OTHER);
+static GT_DRIVER_SYSFS_ERROR_ATTR_RO(driver_guc_communication, INTEL_GT_DRIVER_ERROR_GUC_COMMUNICATION);
+static GT_DRIVER_SYSFS_ERROR_ATTR_RO(driver_rps, INTEL_GT_DRIVER_ERROR_RPS);
+static GT_DRIVER_SYSFS_ERROR_ATTR_RO(driver_gt_other, INTEL_GT_DRIVER_ERROR_GT_OTHER);
+static GT_DRIVER_SYSFS_ERROR_ATTR_RO(driver_gt_interrupt, INTEL_GT_DRIVER_ERROR_INTERRUPT);
+
 static const struct attribute *gt_error_attrs[] = {
 	&dev_attr_correctable_l3_sng.attr.attr,
 	&dev_attr_correctable_guc.attr.attr,
@@ -165,6 +189,12 @@ static const struct attribute *gt_error_attrs[] = {
 	&dev_attr_sgunit_correctable.attr.attr,
 	&dev_attr_sgunit_nonfatal.attr.attr,
 	&dev_attr_sgunit_fatal.attr.attr,
+	&dev_attr_driver_ggtt.attr.attr,
+	&dev_attr_driver_engine_other.attr.attr,
+	&dev_attr_driver_guc_communication.attr.attr,
+	&dev_attr_driver_rps.attr.attr,
+	&dev_attr_driver_gt_other.attr.attr,
+	&dev_attr_driver_gt_interrupt.attr.attr,
 	NULL
 };
 

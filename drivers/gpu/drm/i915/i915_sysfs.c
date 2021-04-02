@@ -39,6 +39,11 @@
 #include "i915_sysfs.h"
 #include "intel_pm.h"
 
+struct ext_attr {
+	struct device_attribute attr;
+	unsigned long id;
+};
+
 struct drm_i915_private *kdev_minor_to_i915(struct device *kdev)
 {
 	struct drm_minor *minor = dev_get_drvdata(kdev);
@@ -230,6 +235,52 @@ static ssize_t prelim_uapi_version_show(struct device *dev,
 
 static DEVICE_ATTR_RO(prelim_uapi_version);
 
+static ssize_t i915_driver_error_show(struct device *dev,
+				    struct device_attribute *attr,
+				    char *buf)
+{
+	struct device *kdev = kobj_to_dev(dev->kobj.parent);
+	struct drm_i915_private *i915 = kdev_minor_to_i915(kdev);
+	struct ext_attr *ea = container_of(attr, struct ext_attr, attr);
+
+	if (GEM_WARN_ON(ea->id > ARRAY_SIZE(i915->errors)))
+		return -ENOENT;
+
+	return scnprintf(buf, PAGE_SIZE, "%lu\n", i915->errors[ea->id]);
+}
+
+#define I915_DRIVER_SYSFS_ERROR_ATTR_RO(_name,  _id) \
+	struct ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, 0444, i915_driver_error_show, NULL), (_id)}
+
+static I915_DRIVER_SYSFS_ERROR_ATTR_RO(driver_object_migration, I915_DRIVER_ERROR_OBJECT_MIGRATION);
+
+static const struct attribute *i915_error_counter_attrs[] = {
+	&dev_attr_driver_object_migration.attr.attr,
+	NULL
+};
+
+static void i915_setup_error_counter(struct drm_i915_private *i915)
+{
+	struct device *kdev = i915->drm.primary->kdev;
+	struct kobject *kobj;
+	int ret;
+
+	kobj = kobject_create_and_add("error_counter", &kdev->kobj);
+	if (!kobj)
+		goto err;
+
+	ret = sysfs_create_files(kobj, i915_error_counter_attrs);
+	if (ret)
+		goto err;
+
+	return;
+
+err:
+	drm_notice(&i915->drm, "Failed to create error_counter sysfs files at device level\n");
+	kobject_put(kobj);
+}
+
 static struct kobject *i915_setup_gt_sysfs(struct kobject *parent)
 {
 	return kobject_create_and_add("gt", parent);
@@ -269,6 +320,8 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 			"failed to register GT sysfs directory\n");
 
 	i915_setup_error_capture(kdev);
+
+	i915_setup_error_counter(dev_priv);
 
 	intel_engines_add_sysfs(dev_priv);
 }
