@@ -12,7 +12,7 @@
 #include "i915_drv.h"
 #include "i915_utils.h"
 
-#define FDO_BUG_MSG "Please file a bug on drm/i915; see " FDO_BUG_URL " for details."
+#define FDO_BUG_MSG "Please contact your Intel representative."
 
 void
 __i915_printk(struct drm_i915_private *dev_priv, const char *level,
