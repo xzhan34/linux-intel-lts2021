@@ -24,6 +24,10 @@
 #define GUC_DEBUG(_guc, _fmt, ...) typecheck(struct intel_guc *, _guc)
 #endif
 
+static struct i915_vma *guc_vma_from_obj(struct intel_guc *guc,
+					 struct drm_i915_gem_object *obj,
+					 u32 bias);
+
 /**
  * DOC: GuC
  *
@@ -346,6 +350,188 @@ static void guc_init_params(struct intel_guc *guc)
 		DRM_DEBUG_DRIVER("param[%2d] = %#x\n", i, params[i]);
 }
 
+static int guc_action_register_g2g_buffer(struct intel_guc *guc, u32 type, u32 dst,
+					  u32 desc_addr, u32 buff_addr, u32 size)
+{
+	u32 request[HOST2GUC_REGISTER_G2G_REQUEST_MSG_LEN] = {
+		FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, GUC_ACTION_HOST2GUC_REGISTER_G2G),
+		FIELD_PREP(HOST2GUC_REGISTER_G2G_REQUEST_MSG_1_SIZE, size / SZ_4K - 1) |
+		FIELD_PREP(HOST2GUC_REGISTER_G2G_REQUEST_MSG_1_TYPE, type) |
+		FIELD_PREP(HOST2GUC_REGISTER_G2G_REQUEST_MSG_1_DEST, dst),
+		FIELD_PREP(HOST2GUC_REGISTER_G2G_REQUEST_MSG_2_DESC_ADDR, desc_addr),
+		FIELD_PREP(HOST2GUC_REGISTER_G2G_REQUEST_MSG_3_BUFF_ADDR, buff_addr),
+	};
+
+	GEM_BUG_ON(type != GUC_G2G_TYPE_IN && type != GUC_G2G_TYPE_OUT);
+	GEM_BUG_ON(size % SZ_4K);
+
+	return intel_guc_send(guc, request, ARRAY_SIZE(request));
+}
+
+static int guc_action_deregister_g2g_buffer(struct intel_guc *guc, u32 type, u32 dst)
+{
+	u32 request[HOST2GUC_DEREGISTER_G2G_REQUEST_MSG_LEN] = {
+		FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, GUC_ACTION_HOST2GUC_DEREGISTER_G2G),
+		FIELD_PREP(HOST2GUC_DEREGISTER_G2G_REQUEST_MSG_1_TYPE, type) |
+		FIELD_PREP(HOST2GUC_DEREGISTER_G2G_REQUEST_MSG_1_DEST, dst),
+	};
+
+	GEM_BUG_ON(type != GUC_G2G_TYPE_IN && type != GUC_G2G_TYPE_OUT);
+
+	return intel_guc_send(guc, request, ARRAY_SIZE(request));
+}
+
+static unsigned int g2g_num(struct intel_guc *guc, u32 instance, u32 type)
+{
+	u32 local, remote;
+
+	if (type == GUC_G2G_TYPE_IN) {
+		local = instance;
+		remote = guc_to_gt(guc)->info.id;
+	} else {
+		local = guc_to_gt(guc)->info.id;
+		remote = instance;
+	}
+	GEM_BUG_ON(local == remote);
+
+	if (remote > local)
+		remote--;
+
+	return remote * local;
+}
+
+#define G2G_BUFFER_SIZE	(SZ_4K)
+#define G2G_DESC_SIZE (64)
+#define G2G_DESC_AREA_SIZE (SZ_4K)
+static int guc_g2g_register(struct intel_guc *guc, u32 instance, u32 type)
+{
+	unsigned int num = g2g_num(guc, instance, type);
+	u32 base, desc, buf;
+
+	base = intel_guc_ggtt_offset(guc, guc->g2g.vma);
+	desc = base + num * G2G_DESC_SIZE;
+	buf = base + G2G_DESC_AREA_SIZE + num * G2G_BUFFER_SIZE;
+
+	return guc_action_register_g2g_buffer(guc, type, instance, desc, buf, G2G_BUFFER_SIZE);
+}
+
+static void guc_g2g_deregister(struct intel_guc *guc, u32 instance, u32 type)
+{
+	int err;
+
+	err = guc_action_deregister_g2g_buffer(guc, type, instance);
+	GEM_WARN_ON(err);
+}
+
+static u32 guc_g2g_size(struct intel_guc *guc)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+	unsigned int tiles = gt->i915->remote_tiles + 1;
+
+	return tiles * gt->i915->remote_tiles * G2G_BUFFER_SIZE + G2G_DESC_AREA_SIZE;
+}
+
+/*
+ * Allocate the buffer used for guc-to-guc communication.
+ * Root tile owns the allocation. Individual buffer size must be 4K aligned.
+ *
+ *   +--------+-----------------------------+------------------------------+
+ *   | offset | contents                    | size                         |
+ *   +========+=============================+==============================+
+ *   | 0x0000 | Descriptors                 |  4K                          |
+ *   |        |                             |                              |
+ *   +--------+-----------------------------+------------------------------+
+ *   | 0x1000 | Buffers                     | num_tiles*(num_tiles-1)*n*4K |
+ *   |        |                             |                              |
+ *   +--------+-----------------------------+------------------------------+
+ */
+static int guc_g2g_create(struct intel_guc *guc)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+	int err;
+
+	BUILD_BUG_ON(I915_MAX_GT * (I915_MAX_GT - 1) *
+		     G2G_DESC_SIZE > G2G_DESC_AREA_SIZE);
+
+	if (!gt->i915->remote_tiles)
+		return 0;
+
+	if (gt->info.id != 0) {
+		struct intel_guc *root_guc = &gt->i915->gt[0]->uc.guc;
+		struct i915_vma *vma;
+
+		vma = guc_vma_from_obj(guc, root_guc->g2g.obj, 0);
+		if (IS_ERR(vma))
+			return PTR_ERR(vma);
+
+		guc->g2g.vma = i915_vma_get(vma);
+		__i915_gem_object_pin_pages(guc->g2g.vma->obj);
+		return 0;
+	}
+
+	err = intel_guc_allocate_and_map_vma(guc, guc_g2g_size(guc),
+					     &guc->g2g.vma, &guc->g2g.vaddr);
+	if (unlikely(err))
+		return err;
+
+	guc->g2g.obj = guc->g2g.vma->obj;
+	memset(guc->g2g.vaddr, 0, G2G_DESC_AREA_SIZE);
+
+	return 0;
+}
+
+static void guc_g2g_destroy(struct intel_guc *guc)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+
+	if (!gt->i915->remote_tiles)
+		return;
+
+	i915_vma_unpin_and_release(&guc->g2g.vma, I915_VMA_RELEASE_MAP);
+}
+
+int intel_guc_g2g_register(struct intel_guc *guc)
+{
+	struct intel_gt *remote_gt, *gt = guc_to_gt(guc);
+	unsigned int i, j;
+	int err;
+
+	for_each_gt(remote_gt, gt->i915, i) {
+		if (i == gt->info.id)
+			continue;
+
+		err = guc_g2g_register(guc, i, GUC_G2G_TYPE_IN);
+		if (err)
+			goto err_deregister;
+
+		err = guc_g2g_register(guc, i, GUC_G2G_TYPE_OUT);
+		if (err) {
+			guc_g2g_deregister(guc, i, GUC_G2G_TYPE_IN);
+			goto err_deregister;
+		}
+	}
+
+	return 0;
+
+err_deregister:
+	for_each_gt(remote_gt, gt->i915, j) {
+		if (j == gt->info.id)
+			continue;
+
+		if (j >= i)
+			break;
+
+		guc_g2g_deregister(guc, j, GUC_G2G_TYPE_OUT);
+		guc_g2g_deregister(guc, j, GUC_G2G_TYPE_IN);
+	}
+
+	return err;
+}
+
 /*
  * Initialise the GuC parameter block before starting the firmware
  * transfer. These parameters are read by the firmware on startup
@@ -431,6 +617,10 @@ int intel_guc_init(struct intel_guc *guc)
 			goto err_submission;
 	}
 
+	ret = guc_g2g_create(guc);
+	if (ret)
+		goto err_slpc;
+
 	/* now that everything is perma-pinned, initialize the parameters */
 	guc_init_params(guc);
 
@@ -441,6 +631,9 @@ int intel_guc_init(struct intel_guc *guc)
 
 	return 0;
 
+err_slpc:
+	if (intel_guc_slpc_is_used(guc))
+		intel_guc_slpc_fini(&guc->slpc);
 err_submission:
 	intel_guc_submission_fini(guc);
 err_ct:
@@ -466,6 +659,8 @@ void intel_guc_fini(struct intel_guc *guc)
 		return;
 
 	i915_ggtt_disable_guc(gt->ggtt);
+
+	guc_g2g_destroy(guc);
 
 	if (intel_guc_slpc_is_used(guc))
 		intel_guc_slpc_fini(&guc->slpc);
@@ -727,6 +922,28 @@ int intel_guc_resume(struct intel_guc *guc)
  * to DRAM. The value of the GuC ggtt_pin_bias is the GuC WOPCM size.
  */
 
+static struct i915_vma *guc_vma_from_obj(struct intel_guc *guc,
+					 struct drm_i915_gem_object *obj, u32 bias)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+	struct i915_vma *vma;
+	unsigned int flags;
+	int ret;
+
+	vma = i915_vma_instance(obj, &gt->ggtt->vm, NULL);
+	if (IS_ERR(vma))
+		return vma;
+
+	flags = max(bias, i915_ggtt_pin_bias(vma)) | PIN_OFFSET_BIAS;
+	ret = i915_ggtt_pin(vma, NULL, 0, flags);
+	if (ret) {
+		vma = ERR_PTR(ret);
+		return vma;
+	}
+
+	return i915_vma_make_unshrinkable(vma);
+}
+
 /**
  * intel_guc_allocate_vma_with_bias() - Allocate a GGTT VMA for GuC usage above
  * 					the provided offset
@@ -747,8 +964,6 @@ struct i915_vma *intel_guc_allocate_vma_with_bias(struct intel_guc *guc,
 	struct intel_gt *gt = guc_to_gt(guc);
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
-	unsigned int flags;
-	int ret;
 
 	if (HAS_LMEM(gt->i915))
 		obj = intel_gt_object_create_lmem(gt, size,
@@ -760,21 +975,10 @@ struct i915_vma *intel_guc_allocate_vma_with_bias(struct intel_guc *guc,
 	if (IS_ERR(obj))
 		return ERR_CAST(obj);
 
-	vma = i915_vma_instance(obj, &gt->ggtt->vm, NULL);
+	vma = guc_vma_from_obj(guc, obj, bias);
 	if (IS_ERR(vma))
-		goto err;
+		i915_gem_object_put(obj);
 
-	flags = max(bias, i915_ggtt_pin_bias(vma)) | PIN_OFFSET_BIAS;
-	ret = i915_ggtt_pin(vma, NULL, 0, flags);
-	if (ret) {
-		vma = ERR_PTR(ret);
-		goto err;
-	}
-
-	return i915_vma_make_unshrinkable(vma);
-
-err:
-	i915_gem_object_put(obj);
 	return vma;
 }
 

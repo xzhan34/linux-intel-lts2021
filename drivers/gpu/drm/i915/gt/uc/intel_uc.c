@@ -535,6 +535,12 @@ static int __uc_init_hw(struct intel_uc *uc)
 		intel_rps_lower_unslice(&uc_to_gt(uc)->rps);
 	}
 
+	ret = intel_guc_g2g_register(guc);
+	if (ret)
+		drm_info(&i915->drm,
+			 "Failed to register GuC-to-GuC communication channel: %d\n",
+			 ret);
+
 	drm_info(&i915->drm, "GuC submission %s\n",
 		 str_enabled_disabled(intel_uc_uses_guc_submission(uc)));
 	drm_info(&i915->drm, "GuC SLPC %s\n",

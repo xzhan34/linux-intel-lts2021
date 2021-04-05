@@ -187,6 +187,12 @@ struct intel_guc {
 	/** @lrc_desc_pool_vaddr_v69: contents of the GuC LRC descriptor pool */
 	void *lrc_desc_pool_vaddr_v69;
 
+	struct {
+		struct drm_i915_gem_object *obj;
+		struct i915_vma *vma;
+		void *vaddr;
+	} g2g;
+
 	/**
 	 * @context_lookup: used to resolve intel_context from guc_id, if a
 	 * context is present in this structure it is registered with the GuC
@@ -394,6 +400,8 @@ int intel_guc_allocate_and_map_vma(struct intel_guc *guc, u32 size,
 				   struct i915_vma **out_vma, void **out_vaddr);
 int intel_guc_self_cfg32(struct intel_guc *guc, u16 key, u32 value);
 int intel_guc_self_cfg64(struct intel_guc *guc, u16 key, u64 value);
+
+int intel_guc_g2g_register(struct intel_guc *guc);
 
 int intel_guc_invalidate_tlb_guc(struct intel_guc *guc,
 				 enum intel_guc_tlb_inval_mode mode);
