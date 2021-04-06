@@ -13,6 +13,8 @@ struct drm_file;
 struct i915_drm_client;
 struct i915_gem_context;
 struct i915_uuid_resource;
+struct i915_address_space;
+struct drm_i915_file_private;
 
 #if IS_ENABLED(CONFIG_DRM_I915_DEBUGGER)
 
@@ -37,6 +39,11 @@ void i915_debugger_uuid_create(const struct i915_drm_client *client,
 			       const struct i915_uuid_resource *uuid);
 void i915_debugger_uuid_destroy(const struct i915_drm_client *client,
 				const struct i915_uuid_resource *uuid);
+
+void i915_debugger_vm_create(struct i915_drm_client *client,
+			    struct i915_address_space *vm);
+void i915_debugger_vm_destroy(struct i915_drm_client *client,
+			      struct i915_address_space *vm);
 
 #else /* CONFIG_DRM_I915_DEBUGGER */
 
@@ -65,6 +72,11 @@ static inline void i915_debugger_uuid_create(const struct i915_drm_client *clien
 					     const struct i915_uuid_resource *uuid) { }
 static inline void i915_debugger_uuid_destroy(const struct i915_drm_client *client,
 					      const struct i915_uuid_resource *uuid) { }
+
+static inline void i915_debugger_vm_create(struct i915_drm_client *client,
+					   struct i915_address_space *vm) { }
+static inline void i915_debugger_vm_destroy(struct i915_drm_client *client,
+					    struct i915_address_space *vm) { }
 
 #endif /* CONFIG_DRM_I915_DEBUGGER */
 

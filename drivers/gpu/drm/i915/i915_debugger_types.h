@@ -11,6 +11,7 @@
 #include <uapi/drm/i915_drm.h>
 #include <linux/completion.h>
 #include <linux/wait.h>
+#include <linux/xarray.h>
 
 struct task_struct;
 struct drm_i915_private;
@@ -42,6 +43,12 @@ struct i915_debug_event_uuid {
 	u64 payload_size;
 } __packed;
 
+struct i915_debug_event_vm {
+	struct i915_debug_event base;
+	u64 client_handle;
+	u64 handle;
+} __packed;
+
 struct i915_debugger {
 	struct kref ref;
 	struct rcu_head rcu;
@@ -52,6 +59,8 @@ struct i915_debugger {
 	wait_queue_head_t write_done;
 	struct completion read_done;
 	struct completion discovery;
+	unsigned int next_handle;
+	struct xarray resources_xa;
 
 	u64 session;
 	atomic_long_t event_seqno;

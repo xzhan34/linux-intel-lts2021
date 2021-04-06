@@ -84,6 +84,7 @@ static const char *event_type_to_str(u32 type)
 		"client",
 		"context",
 		"uuid",
+		"vm",
 		"unknown",
 	};
 
@@ -154,6 +155,16 @@ static void event_printer_uuid(const struct i915_debugger * const debugger,
 	EVENT_PRINT_MEMBER_U64(debugger, prefix, uuid, payload_size);
 }
 
+static void event_printer_vm(const struct i915_debugger * const debugger,
+			     const char * const prefix,
+			     const struct i915_debug_event * const event)
+{
+	const struct i915_debug_event_vm * const vm = from_event(vm, event);
+
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, vm, client_handle);
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, vm, handle);
+}
+
 static void i915_debugger_print_event(const struct i915_debugger * const debugger,
 				      const char * const prefix,
 				      const struct i915_debug_event * const event)
@@ -164,6 +175,7 @@ static void i915_debugger_print_event(const struct i915_debugger * const debugge
 		event_printer_client,
 		event_printer_context,
 		event_printer_uuid,
+		event_printer_vm,
 	};
 	debug_event_printer_t event_printer = NULL;
 
@@ -193,6 +205,7 @@ static void _i915_debugger_free(struct kref *ref)
 	struct i915_debugger *debugger = container_of(ref, typeof(*debugger), ref);
 
 	put_task_struct(debugger->target_task);
+	xa_destroy(&debugger->resources_xa);
 	kfree_rcu(debugger, rcu);
 }
 
@@ -711,9 +724,139 @@ i915_debugger_discover_uuids(struct i915_drm_client *client)
 }
 
 static void
-i915_debugger_discover_contexts(struct i915_drm_client *client)
+__i915_debugger_vm_send_event(struct i915_debugger *debugger,
+			      const struct i915_drm_client *client,
+			      u32 flags, u64 handle, gfp_t gfp)
+{
+	struct i915_debug_event_vm *vm_event;
+	struct i915_debug_event *event;
+
+	event = i915_debugger_create_event(debugger,
+					   PRELIM_DRM_I915_DEBUG_EVENT_VM,
+					   flags,
+					   sizeof(*vm_event),
+					   gfp);
+	if (event) {
+		vm_event = from_event(vm_event, event);
+		vm_event->client_handle = client->id;
+		vm_event->handle = handle;
+
+		i915_debugger_send_event(debugger, event);
+		kfree(event);
+	}
+}
+
+static int __i915_debugger_alloc_handle(struct i915_debugger *debugger,
+					void *data, u32 *handle)
+{
+	int ret;
+
+	ret = xa_alloc_cyclic(&debugger->resources_xa, handle, data,
+			      xa_limit_32b, &debugger->next_handle,
+			      GFP_KERNEL);
+	if (ret == 1)
+		ret = 0;
+
+	if (ret) {
+		DD_ERR(debugger, "xa_alloc_cyclic failed %d, disconnecting\n", ret);
+		i915_debugger_close(debugger);
+	}
+
+	return ret;
+}
+
+static int __i915_debugger_get_handle(struct i915_debugger *debugger,
+				      const void *data, u32 *handle)
+{
+	unsigned long idx;
+	int ret = -ENOENT;
+	void *entry;
+
+	xa_lock(&debugger->resources_xa);
+	xa_for_each(&debugger->resources_xa, idx, entry) {
+		if (entry == data) {
+			if (handle)
+				*handle = idx;
+			ret = 0;
+			break;
+		}
+	}
+	xa_unlock(&debugger->resources_xa);
+	return ret;
+}
+
+static inline bool
+__i915_debugger_has_resource(struct i915_debugger *debugger, const void *data)
+{
+	return __i915_debugger_get_handle(debugger, data, NULL) == 0;
+}
+
+static int __i915_debugger_del_handle(struct i915_debugger *debugger, u32 id)
+{
+	return xa_erase(&debugger->resources_xa, id) ? 0 : -ENOENT;
+}
+
+static void __i915_debugger_vm_create(struct i915_debugger *debugger,
+				      struct i915_drm_client *client,
+				      struct i915_address_space *vm)
+{
+	u32 handle;
+
+	if (__i915_debugger_alloc_handle(debugger, vm, &handle)) {
+		DD_ERR(debugger,
+		       "unable to allocate vm handle for client %u, disconnecting\n",
+		       client->id);
+		i915_debugger_close(debugger);
+		return;
+	}
+
+	__i915_debugger_vm_send_event(debugger, client,
+				      PRELIM_DRM_I915_DEBUG_EVENT_CREATE,
+				      handle,
+				      GFP_KERNEL);
+}
+
+static void i915_debugger_discover_vm(struct i915_debugger *debugger,
+				      struct i915_drm_client *client)
+{
+	struct i915_address_space *vm;
+	unsigned long i;
+
+	if (!client->file) /* protect kernel internals */
+		return;
+
+	if (!is_client_connected(debugger, client))
+		return;
+
+	xa_for_each(&client->file->vm_xa, i, vm) {
+		if (__i915_debugger_has_resource(debugger, vm))
+			continue;
+
+		__i915_debugger_vm_create(debugger, client, vm);
+	}
+}
+
+static void i915_debugger_ctx_vm_create(struct i915_debugger *debugger,
+					struct i915_gem_context *ctx)
+{
+	struct i915_address_space *vm = i915_gem_context_get_eb_vm(ctx);
+	bool vm_found;
+
+	vm_found = __i915_debugger_has_resource(debugger, vm);
+	if (!vm_found)
+		__i915_debugger_vm_create(debugger, ctx->client, vm);
+
+	i915_vm_put(vm);
+}
+
+static void
+i915_debugger_discover_contexts(struct i915_debugger *debugger,
+				struct i915_drm_client *client)
 {
 	struct i915_gem_context *ctx;
+
+	if (!is_client_connected(debugger, client))
+		return;
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(ctx, &client->ctx_list, client_link) {
@@ -722,7 +865,10 @@ i915_debugger_discover_contexts(struct i915_drm_client *client)
 
 		if (!i915_gem_context_is_closed(ctx)) {
 			rcu_read_unlock();
+
 			i915_debugger_context_create(ctx);
+			i915_debugger_ctx_vm_create(debugger, ctx);
+
 			rcu_read_lock();
 		}
 
@@ -801,7 +947,8 @@ i915_debugger_client_discovery(struct i915_debugger *debugger)
 
 			i915_debugger_client_create(client);
 			i915_debugger_discover_uuids(client);
-			i915_debugger_discover_contexts(client);
+			i915_debugger_discover_contexts(debugger, client);
+			i915_debugger_discover_vm(debugger, client);
 
 			DD_INFO(debugger, "client %u discovery done", client->id);
 		}
@@ -911,6 +1058,7 @@ i915_debugger_open(struct drm_i915_private * const i915,
 	init_completion(&debugger->read_done);
 	init_waitqueue_head(&debugger->write_done);
 	init_completion(&debugger->discovery);
+	xa_init_flags(&debugger->resources_xa, XA_FLAGS_ALLOC1);
 
 	debugger->target_task = find_get_target(param->pid);
 	if (!debugger->target_task) {
@@ -984,6 +1132,7 @@ err_unlock:
 err_put_task:
 	put_task_struct(debugger->target_task);
 err_free:
+	xa_destroy(&debugger->resources_xa);
 	kfree(debugger);
 
 	return ret;
@@ -1283,6 +1432,59 @@ void i915_debugger_uuid_destroy(const struct i915_drm_client *client,
 		return;
 
 	send_uuid_event(client, uuid, PRELIM_DRM_I915_DEBUG_EVENT_DESTROY);
+}
+
+void i915_debugger_vm_create(struct i915_drm_client *client,
+			     struct i915_address_space *vm)
+{
+	struct i915_debugger *debugger;
+
+	if (!client)
+		return;
+
+	if (GEM_WARN_ON(!vm))
+		return;
+
+	debugger = i915_debugger_get_for_client(client);
+	if (!debugger)
+		return;
+
+	if (!__i915_debugger_has_resource(debugger, vm))
+		__i915_debugger_vm_create(debugger, client, vm);
+
+	i915_debugger_put(debugger);
+}
+
+void i915_debugger_vm_destroy(struct i915_drm_client *client,
+			      struct i915_address_space *vm)
+{
+	struct i915_debugger *debugger;
+	u32 handle;
+
+	if (!client)
+		return;
+
+	if (GEM_WARN_ON(!vm))
+		return;
+
+	debugger = i915_debugger_get_for_client(client);
+	if (!debugger)
+		return;
+
+	if (atomic_read(&vm->open) > 1)
+		goto out;
+
+	if (__i915_debugger_get_handle(debugger, vm, &handle))
+		goto out;
+
+	__i915_debugger_del_handle(debugger, handle);
+	__i915_debugger_vm_send_event(debugger, client,
+				      PRELIM_DRM_I915_DEBUG_EVENT_DESTROY,
+				      handle,
+				      GFP_KERNEL);
+
+out:
+	i915_debugger_put(debugger);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

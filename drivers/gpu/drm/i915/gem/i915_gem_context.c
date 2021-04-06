@@ -1082,6 +1082,8 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 	if (args->flags & PRELIM_I915_VM_CREATE_FLAGS_UNKNOWN)
 		return -EINVAL;
 
+	i915_debugger_wait_on_discovery(file_priv->dev_priv);
+
 	ppgtt = i915_ppgtt_create(to_gt(i915));
 	if (IS_ERR(ppgtt))
 		return PTR_ERR(ppgtt);
@@ -1126,6 +1128,8 @@ int i915_gem_vm_destroy_ioctl(struct drm_device *dev, void *data,
 	if (args->extensions)
 		return -EINVAL;
 
+	i915_debugger_wait_on_discovery(file_priv->dev_priv);
+
 	vm = xa_erase(&file_priv->vm_xa, args->vm_id);
 	if (!vm)
 		return -ENOENT;
@@ -1146,6 +1150,8 @@ static int get_ppgtt(struct drm_i915_file_private *file_priv,
 
 	if (!rcu_access_pointer(ctx->vm))
 		return -ENODEV;
+
+	i915_debugger_wait_on_discovery(ctx->i915);
 
 	rcu_read_lock();
 	vm = context_get_vm_rcu(ctx);
