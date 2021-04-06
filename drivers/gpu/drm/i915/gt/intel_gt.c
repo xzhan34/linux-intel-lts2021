@@ -44,6 +44,7 @@ static const char *intel_gt_driver_errors_to_str[] = {
 	[INTEL_GT_DRIVER_ERROR_GUC_COMMUNICATION] = "GUC COMMUNICATION",
 	[INTEL_GT_DRIVER_ERROR_RPS] = "RPS",
 	[INTEL_GT_DRIVER_ERROR_GT_OTHER] = "GT OTHER",
+	[INTEL_GT_DRIVER_ERROR_INTERRUPT] = "INTERRUPT",
 };
 
 void intel_gt_silent_driver_error(struct intel_gt *gt,

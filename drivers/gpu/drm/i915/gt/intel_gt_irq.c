@@ -44,8 +44,9 @@ gen11_gt_engine_identity(struct intel_gt *gt,
 		 !time_after32(local_clock() >> 10, timeout_ts));
 
 	if (unlikely(!(ident & GEN11_INTR_DATA_VALID))) {
-		DRM_ERROR("INTR_IDENTITY_REG%u:%u 0x%08x not valid!\n",
-			  bank, bit, ident);
+		intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+					  "Invalid Engine Interrupt reported INTR_IDENTITY_REG%u:%u 0x%08x not valid!\n",
+					  bank, bit, ident);
 		return 0;
 	}
 
@@ -84,8 +85,9 @@ gen11_other_irq_handler(struct intel_gt *gt, const u8 instance,
 	if (instance == OTHER_GSC_INSTANCE)
 		return intel_gsc_irq_handler(gt, iir);
 
-	WARN_ONCE(1, "unhandled other interrupt instance=0x%x, iir=0x%x\n",
-		  instance, iir);
+	intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+				  "unhandled other interrupt instance=0x%x, iir=0x%x\n",
+				  instance, iir);
 }
 
 static void
@@ -115,8 +117,9 @@ gen11_engine_irq_handler(struct intel_gt *gt, const u8 class,
 		return intel_engine_cs_irq(engine, iir);
 
 err:
-	WARN_ONCE(1, "unhandled engine interrupt class=0x%x, instance=0x%x\n",
-		  class, instance);
+	intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+				  "unhandled engine interrupt class=0x%x, instance=0x%x\n",
+				  class, instance);
 }
 
 static void
@@ -135,8 +138,9 @@ gen11_gt_identity_handler(struct intel_gt *gt, const u32 identity)
 	if (class == OTHER_CLASS)
 		return gen11_other_irq_handler(gt, instance, intr);
 
-	WARN_ONCE(1, "unknown interrupt class=0x%x, instance=0x%x, intr=0x%x\n",
-		  class, instance, intr);
+	intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+				  "unknown interrupt class=0x%x, instance=0x%x, intr=0x%x\n",
+				  class, instance, intr);
 }
 
 static void

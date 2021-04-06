@@ -2945,7 +2945,8 @@ static void gen12_gt_fatal_hw_error_stats_update(struct intel_gt *gt,
 			log_gt_hw_err(gt, "EU GRF FATAL error\n");
 			break;
 		default:
-			log_gt_hw_err(gt, "UNKNOWN FATAL error\n");
+			intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+						  "UNKNOWN FATAL error\n");
 			break;
 		}
 	}
@@ -2986,7 +2987,7 @@ gen12_gt_correctable_hw_error_stats_update(struct intel_gt *gt,
 			log_gt_hw_err(gt, "SINGLE BIT EU GRF CORRECTABLE error\n");
 			break;
 		default:
-			log_gt_hw_err(gt, "UNKNOWN CORRECTABLE error\n");
+			intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT, "UNKNOWN CORRECTABLE error\n");
 			break;
 		}
 	}
@@ -3005,7 +3006,8 @@ gen12_gt_hw_error_handler(struct intel_gt *gt,
 	errstat = raw_reg_read(regs, ERR_STAT_GT_REG(hw_err));
 
 	if (unlikely(!errstat)) {
-		DRM_ERROR("ERR_STAT_GT_REG_%s blank!\n", hw_err_str);
+		intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+					  "ERR_STAT_GT_REG_%s blank!\n", hw_err_str);
 		return;
 	}
 
@@ -3045,7 +3047,8 @@ gen12_hw_error_source_handler(struct intel_gt *gt,
 	errsrc = raw_reg_read(regs, DEV_ERR_STAT_REG(hw_err));
 
 	if (unlikely(!errsrc)) {
-		DRM_ERROR("DEV_ERR_STAT_REG_%s blank!\n", hw_err_str);
+		intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+					  "DEV_ERR_STAT_REG_%s blank!\n", hw_err_str);
 		goto out_unlock;
 	}
 
