@@ -251,8 +251,17 @@ void *__px_vaddr(struct drm_i915_gem_object *p, bool *needs_flush)
 
 	vaddr = page_unpack_bits(p->mm.mapping, &type);
 
-	if (needs_flush)
-		*needs_flush = type != I915_MAP_WC;
+	if (needs_flush) {
+		/*
+		 * On DG1 we sometimes see what looks like a bad TLB lookup in
+		 * some tests. See if adding back the flush helps with the
+		 * timing.
+		 */
+		if (IS_DG1(to_i915(p->base.dev)))
+			*needs_flush = true;
+		else
+			*needs_flush = type != I915_MAP_WC;
+	}
 
 	return vaddr;
 }
