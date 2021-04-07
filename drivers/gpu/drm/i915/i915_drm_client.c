@@ -175,9 +175,6 @@ static int __client_register_sysfs_busy(struct i915_drm_client *client)
 	unsigned int i;
 	int ret = 0;
 
-	if (!(clients->i915->caps.scheduler & I915_SCHEDULER_CAP_ENGINE_BUSY_STATS))
-		return 0;
-
 	client->busy_root = kobject_create_and_add("busy", client->root);
 	if (!client->busy_root)
 		return -ENOMEM;
