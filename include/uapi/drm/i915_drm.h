@@ -33,6 +33,11 @@
 extern "C" {
 #endif
 
+/*
+ * Internal/downstream declarations should be added to i915_drm_prelim.h,
+ * not here in i915_drm.h.
+ */
+
 /* Please note that modifications to all structs defined here are
  * subject to backwards-compatibility constraints.
  */
@@ -3313,6 +3318,7 @@ struct drm_i915_query_memory_regions {
 	/** @regions: Info about each supported region */
 	struct drm_i915_memory_region_info regions[];
 };
+#include "i915_drm_prelim.h"
 
 /**
  * DOC: GuC HWCONFIG blob uAPI
