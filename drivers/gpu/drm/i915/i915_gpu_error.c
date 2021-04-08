@@ -2651,6 +2651,7 @@ int i915_uuid_register_ioctl(struct drm_device *dev, void *data,
 
 	/* Output for the client */
 	uuid_arg->handle = uuid_res->handle;
+	i915_debugger_uuid_create(client, uuid_res);
 	return 0;
 
  err_unlock:
@@ -2703,6 +2704,7 @@ int i915_uuid_unregister_ioctl(struct drm_device *dev, void *data,
 	atomic_dec(&uuid_res_base->bind_count);
 	xa_unlock(&client->uuids_xa);
 
+	i915_debugger_uuid_destroy(client, uuid_res);
 	i915_uuid_put(uuid_res);
 	return 0;
 
@@ -2746,7 +2748,7 @@ static struct i915_uuid_resource_predefined {
 	{ .uuid[0] = 0, }
 };
 
-static void __uuid_init_classes(struct xarray *xa)
+static void __uuid_init_classes(struct i915_drm_client *client)
 {
 	struct i915_uuid_resource_predefined *u;
 	struct i915_uuid_resource *uuid_res;
@@ -2781,10 +2783,12 @@ static void __uuid_init_classes(struct xarray *xa)
 		uuid_res->handle = u->handle;
 		kref_init(&uuid_res->ref);
 		atomic_set(&uuid_res->bind_count, 0);
-		if (xa_insert(xa, uuid_res->handle, uuid_res, GFP_KERNEL)) {
+		if (xa_insert(&client->uuids_xa, uuid_res->handle,
+			      uuid_res, GFP_KERNEL)) {
 			kfree(uuid_res);
 			goto err;
 		}
+		i915_debugger_uuid_create(client, uuid_res);
 		u = &uuid_predefined_classes[++index];
 	}
 	return;
@@ -2792,7 +2796,9 @@ static void __uuid_init_classes(struct xarray *xa)
 err:
 	do {
 		u = &uuid_predefined_classes[index];
-		uuid_res = __xa_erase(xa, u->handle);
+		uuid_res = __xa_erase(&client->uuids_xa, u->handle);
+		if (uuid_res)
+			i915_debugger_uuid_destroy(client, uuid_res);
 		kfree(uuid_res);
 	} while (index--);
 
@@ -2803,7 +2809,7 @@ err:
 void i915_uuid_init(struct i915_drm_client *client)
 {
 	xa_init_flags(&client->uuids_xa, XA_FLAGS_ALLOC);
-	__uuid_init_classes(&client->uuids_xa);
+	__uuid_init_classes(client);
 }
 
 void i915_uuid_cleanup(struct i915_drm_client *client)

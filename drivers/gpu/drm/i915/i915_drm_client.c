@@ -589,7 +589,6 @@ i915_drm_client_add(struct i915_drm_clients *clients, struct task_struct *task)
 	mutex_init(&client->update_lock);
 	spin_lock_init(&client->ctx_lock);
 	INIT_LIST_HEAD(&client->ctx_list);
-	i915_uuid_init(client);
 
 	client->clients = clients;
 	INIT_RCU_WORK(&client->rcu, __rcu_i915_drm_client_free);
@@ -606,10 +605,10 @@ i915_drm_client_add(struct i915_drm_clients *clients, struct task_struct *task)
 	i915_debugger_client_register(client);
 	i915_debugger_client_create(client);
 
+	i915_uuid_init(client);
 	return client;
 
 err_register:
-	i915_uuid_cleanup(client);
 	xa_erase(&clients->xarray, client->id);
 err_id:
 	kfree(client);

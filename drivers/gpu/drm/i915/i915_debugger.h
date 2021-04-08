@@ -28,7 +28,7 @@ void i915_debugger_client_register(struct i915_drm_client *client);
 void i915_debugger_client_release(struct i915_drm_client *client);
 
 void i915_debugger_client_create(const struct i915_drm_client *client);
-void i915_debugger_client_destroy(const struct i915_drm_client *client);
+void i915_debugger_client_destroy(struct i915_drm_client *client);
 
 void i915_debugger_context_create(const struct i915_gem_context *ctx);
 void i915_debugger_context_destroy(const struct i915_gem_context *ctx);
@@ -56,7 +56,7 @@ static inline void i915_debugger_client_register(struct i915_drm_client *client)
 static inline void i915_debugger_client_release(struct i915_drm_client *client) { }
 
 static inline void i915_debugger_client_create(const struct i915_drm_client *client) { }
-static inline void i915_debugger_client_destroy(const struct i915_drm_client *client) { }
+static inline void i915_debugger_client_destroy(struct i915_drm_client *client) { }
 
 static inline void i915_debugger_context_create(const struct i915_gem_context *ctx) { }
 static inline void i915_debugger_context_destroy(const struct i915_gem_context *ctx) { }

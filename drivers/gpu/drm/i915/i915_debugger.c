@@ -1166,12 +1166,20 @@ void i915_debugger_client_create(const struct i915_drm_client *client)
 	send_client_event(client, PRELIM_DRM_I915_DEBUG_EVENT_CREATE);
 }
 
-void i915_debugger_client_destroy(const struct i915_drm_client *client)
+void i915_debugger_client_destroy(struct i915_drm_client *client)
 {
+	struct i915_uuid_resource *uuid_res;
+	unsigned long idx;
+
 	if (!client_debugged(client))
 		return;
 
+	xa_for_each(&client->uuids_xa, idx, uuid_res)
+		i915_debugger_uuid_destroy(client, uuid_res);
+
 	send_client_event(client, PRELIM_DRM_I915_DEBUG_EVENT_DESTROY);
+
+	i915_debugger_client_release(client);
 }
 
 struct ctx_event_param {
