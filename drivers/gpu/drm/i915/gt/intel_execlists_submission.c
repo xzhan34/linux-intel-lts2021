@@ -3602,6 +3602,18 @@ static struct list_head *virtual_queue(struct virtual_engine *ve)
 	return &ve->base.sched_engine->default_priolist.requests;
 }
 
+static void
+virtual_submit_completed(struct virtual_engine *ve, struct i915_request *rq)
+{
+	GEM_BUG_ON(!__i915_request_is_complete(rq));
+	GEM_BUG_ON(rq->engine != &ve->base);
+
+	__i915_request_submit(rq);
+
+	/* Remove the dangling pointer to the stale virtual engine */
+	WRITE_ONCE(rq->engine, ve->siblings[0]);
+}
+
 static void rcu_virtual_context_destroy(struct work_struct *wrk)
 {
 	struct virtual_engine *ve =
@@ -3618,8 +3630,7 @@ static void rcu_virtual_context_destroy(struct work_struct *wrk)
 
 		old = fetch_and_zero(&ve->request);
 		if (old) {
-			GEM_BUG_ON(!__i915_request_is_complete(old));
-			__i915_request_submit(old);
+			virtual_submit_completed(ve, old);
 			i915_request_put(old);
 		}
 
@@ -3911,13 +3922,12 @@ static void virtual_submit_request(struct i915_request *rq)
 
 	/* By the time we resubmit a request, it may be completed */
 	if (__i915_request_is_complete(rq)) {
-		__i915_request_submit(rq);
+		virtual_submit_completed(ve, rq);
 		goto unlock;
 	}
 
 	if (ve->request) { /* background completion from preempt-to-busy */
-		GEM_BUG_ON(!__i915_request_is_complete(ve->request));
-		__i915_request_submit(ve->request);
+		virtual_submit_completed(ve, ve->request);
 		i915_request_put(ve->request);
 	}
 

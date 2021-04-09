@@ -59,7 +59,12 @@ static struct kmem_cache *slab_execute_cbs;
 
 static const char *i915_fence_get_driver_name(struct dma_fence *fence)
 {
-	return dev_name(to_request(fence)->engine->i915->drm.dev);
+	struct i915_request *rq = to_request(fence);
+
+	if (unlikely(!rq->engine)) /* not yet attached to any device */
+		return DRIVER_NAME;
+
+	return dev_name(rq->engine->i915->drm.dev);
 }
 
 static const char *i915_fence_get_timeline_name(struct dma_fence *fence)
