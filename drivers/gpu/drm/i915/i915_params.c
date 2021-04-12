@@ -284,6 +284,9 @@ i915_param_named_unsafe(page_sz_mask, uint, 0600,
 			"mask to force the huge page sizes\n"
 			"bit0 4K page, bit1 64K page bit2 2M page, bit3 1G page size");
 
+i915_param_named_unsafe(ulls_bcs0_pm_wa, bool, 0600,
+	"Workaround for VLK-20104 which disables bcs0 PM (default: true)");
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,

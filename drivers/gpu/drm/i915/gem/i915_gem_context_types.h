@@ -249,6 +249,9 @@ struct i915_gem_context {
 		/** @engines: list of stale engines */
 		struct list_head engines;
 	} stale;
+
+	/* WA for VLK-20104 */
+	bool  bcs0_pm_disabled;
 };
 
 #endif /* __I915_GEM_CONTEXT_TYPES_H__ */
