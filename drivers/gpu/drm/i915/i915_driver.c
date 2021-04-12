@@ -98,6 +98,7 @@
 #include "i915_perf.h"
 #include "i915_perf_stall_cntr.h"
 #include "i915_query.h"
+#include "i915_sriov.h"
 #include "i915_suspend.h"
 #include "i915_svm.h"
 #include "i915_switcheroo.h"
@@ -1940,6 +1941,8 @@ static int i915_drm_suspend_late(struct drm_device *dev, bool hibernation)
 
 	disable_rpm_wakeref_asserts(rpm);
 
+	i915_sriov_suspend_late(dev_priv);
+
 	/* Must be called before GGTT is suspended. */
 	intel_dpt_suspend(dev_priv);
 	ret = i915_gem_suspend_late(dev_priv);
@@ -2170,6 +2173,8 @@ static int i915_drm_resume_early(struct drm_device *dev)
 	i915_gem_resume_early(dev_priv);
 	/* Must be called after GGTT is resumed. */
 	intel_dpt_resume(dev_priv);
+
+	i915_sriov_resume_early(dev_priv);
 
 out:
 	enable_rpm_wakeref_asserts(&dev_priv->runtime_pm);

@@ -8,6 +8,8 @@
 #include "i915_pci.h"
 #include "intel_pci_config.h"
 
+#include "gt/intel_gt_pm.h"
+
 /* safe for use before register access via uncore is completed */
 static u32 pci_peek_mmio_read32(struct pci_dev *pdev, i915_reg_t reg)
 {
@@ -297,13 +299,18 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 	if (err < 0)
 		goto fail;
 
+	/* hold the reference to runtime pm as long as VFs are enabled */
+	intel_gt_pm_get_untracked(to_gt(i915));
+
 	err = pci_enable_sriov(pdev, num_vfs);
 	if (err < 0)
-		goto fail;
+		goto fail_pm;
 
 	dev_info(dev, "Enabled %u VFs\n", num_vfs);
 	return num_vfs;
 
+fail_pm:
+	intel_gt_pm_put_untracked(to_gt(i915));
 fail:
 	drm_err(&i915->drm, "Failed to enable %u VFs (%pe)\n",
 		num_vfs, ERR_PTR(err));
@@ -340,6 +347,56 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 
 	pci_disable_sriov(pdev);
 
+	intel_gt_pm_put_untracked(to_gt(i915));
+
 	dev_info(dev, "Disabled %u VFs\n", num_vfs);
+	return 0;
+}
+
+/**
+ * i915_sriov_suspend_late - Suspend late SR-IOV.
+ * @i915: the i915 struct
+ *
+ * The function is called in a callback suspend_late.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int i915_sriov_suspend_late(struct drm_i915_private *i915)
+{
+	if (IS_SRIOV_PF(i915)) {
+		/*
+		 * When we're enabling the VFs in i915_sriov_pf_enable_vfs(), we also get
+		 * a GT PM wakeref which we hold for the whole VFs life cycle.
+		 * However for the time of suspend this wakeref must be put back.
+		 * We'll get it back during the resume in i915_sriov_resume_early().
+		 */
+		if (pci_num_vf(to_pci_dev(i915->drm.dev)) != 0)
+			intel_gt_pm_put_untracked(to_gt(i915));
+	}
+
+	return 0;
+}
+
+/**
+ * i915_sriov_resume_early - Resume early SR-IOV.
+ * @i915: the i915 struct
+ *
+ * The function is called in a callback resume_early.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int i915_sriov_resume_early(struct drm_i915_private *i915)
+{
+	if (IS_SRIOV_PF(i915)) {
+		/*
+		 * When we're enabling the VFs in i915_sriov_pf_enable_vfs(), we also get
+		 * a GT PM wakeref which we hold for the whole VFs life cycle.
+		 * However for the time of suspend this wakeref must be put back.
+		 * If we have VFs enabled, now is the moment at which we get back this wakeref.
+		 */
+		if (pci_num_vf(to_pci_dev(i915->drm.dev)) != 0)
+			intel_gt_pm_get_untracked(to_gt(i915));
+	}
+
 	return 0;
 }

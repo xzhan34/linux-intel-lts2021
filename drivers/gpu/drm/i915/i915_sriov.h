@@ -33,4 +33,6 @@ int i915_sriov_pf_get_totalvfs(struct drm_i915_private *i915);
 int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int numvfs);
 int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915);
 
+int i915_sriov_suspend_late(struct drm_i915_private *i915);
+int i915_sriov_resume_early(struct drm_i915_private *i915);
 #endif /* __I915_SRIOV_H__ */
