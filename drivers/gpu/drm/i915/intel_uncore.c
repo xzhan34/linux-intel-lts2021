@@ -25,6 +25,7 @@
 #include <linux/pm_runtime.h>
 
 #include "gt/intel_engine_regs.h"
+#include "gt/intel_gt.h"
 #include "gt/intel_gt_regs.h"
 
 #include "i915_drv.h"
@@ -180,13 +181,13 @@ fw_domain_wait_ack_clear(const struct intel_uncore_forcewake_domain *d)
 {
 	if (wait_ack_clear(d, FORCEWAKE_KERNEL)) {
 		if (fw_ack(d) == ~0)
-			drm_err(&d->uncore->i915->drm,
-				"%s: MMIO unreliable (forcewake register returns 0xFFFFFFFF)!\n",
-				intel_uncore_forcewake_domain_to_str(d->id));
+			intel_gt_log_driver_error(d->uncore->gt, INTEL_GT_DRIVER_ERROR_GT_OTHER,
+						  "%s: MMIO unreliable (forcewake register returns 0xFFFFFFFF)!\n",
+						  intel_uncore_forcewake_domain_to_str(d->id));
 		else
-			drm_err(&d->uncore->i915->drm,
-				"%s: timed out waiting for forcewake ack to clear.\n",
-				intel_uncore_forcewake_domain_to_str(d->id));
+			intel_gt_log_driver_error(d->uncore->gt, INTEL_GT_DRIVER_ERROR_GT_OTHER,
+						  "%s: timed out waiting for forcewake ack to clear.\n",
+						  intel_uncore_forcewake_domain_to_str(d->id));
 
 		add_taint_for_CI(d->uncore->i915, TAINT_WARN); /* CI now unreliable */
 	}
@@ -273,8 +274,9 @@ static inline void
 fw_domain_wait_ack_set(const struct intel_uncore_forcewake_domain *d)
 {
 	if (wait_ack_set(d, FORCEWAKE_KERNEL)) {
-		DRM_ERROR("%s: timed out waiting for forcewake ack request.\n",
-			  intel_uncore_forcewake_domain_to_str(d->id));
+		intel_gt_log_driver_error(d->uncore->gt, INTEL_GT_DRIVER_ERROR_GT_OTHER,
+					  "%s: timed out waiting for forcewake ack request.\n",
+					  intel_uncore_forcewake_domain_to_str(d->id));
 		add_taint_for_CI(d->uncore->i915, TAINT_WARN); /* CI now unreliable */
 	}
 }
@@ -490,7 +492,8 @@ intel_uncore_forcewake_reset(struct intel_uncore *uncore)
 			break;
 
 		if (--retry_count == 0) {
-			drm_err(&uncore->i915->drm, "Timed out waiting for forcewake timers to finish\n");
+			intel_gt_log_driver_error(uncore->gt, INTEL_GT_DRIVER_ERROR_GT_OTHER,
+						  "Timed out waiting for forcewake timers to finish\n");
 			break;
 		}
 

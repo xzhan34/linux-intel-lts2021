@@ -1168,7 +1168,8 @@ void intel_gt_reset(struct intel_gt *gt,
 
 	if (!intel_has_gpu_reset(gt)) {
 		if (gt->i915->params.reset)
-			drm_err(&gt->i915->drm, "GPU reset not supported\n");
+			intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_GT_OTHER,
+						  "GPU reset not supported\n");
 		else
 			drm_dbg(&gt->i915->drm, "GPU reset disabled\n");
 		goto error;
@@ -1178,7 +1179,7 @@ void intel_gt_reset(struct intel_gt *gt,
 		intel_runtime_pm_disable_interrupts(gt->i915);
 
 	if (do_reset(gt, stalled_mask)) {
-		drm_err(&gt->i915->drm, "Failed to reset chip\n");
+		intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_GT_OTHER, "Failed to reset chip\n");
 		goto taint;
 	}
 
@@ -1197,9 +1198,9 @@ void intel_gt_reset(struct intel_gt *gt,
 	 */
 	ret = intel_gt_init_hw(gt);
 	if (ret) {
-		drm_err(&gt->i915->drm,
-			"Failed to initialise HW following reset (%d)\n",
-			ret);
+		intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_GT_OTHER,
+					  "Failed to initialise HW following reset (%d)\n",
+					  ret);
 		goto taint;
 	}
 
@@ -1582,9 +1583,9 @@ static void intel_wedge_me(struct work_struct *work)
 {
 	struct intel_wedge_me *w = container_of(work, typeof(*w), work.work);
 
-	drm_err(&w->gt->i915->drm,
-		"%s timed out, cancelling all in-flight rendering.\n",
-		w->name);
+	intel_gt_log_driver_error(w->gt, INTEL_GT_DRIVER_ERROR_GT_OTHER,
+				  "%s timed out, cancelling all in-flight rendering.\n",
+				  w->name);
 	intel_gt_set_wedged(w->gt);
 }
 
