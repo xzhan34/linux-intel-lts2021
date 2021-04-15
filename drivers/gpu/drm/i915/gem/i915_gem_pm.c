@@ -66,6 +66,9 @@ static int lmem_suspend(struct drm_i915_private *i915)
 	struct intel_memory_region *mem;
 	int id;
 
+	if (i915->quiesce_gpu)
+		return 0;
+
 	for_each_memory_region(mem, i915, id) {
 		struct drm_i915_gem_object *obj;
 		struct list_head *phases[] = {

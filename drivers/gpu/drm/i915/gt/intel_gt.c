@@ -429,6 +429,9 @@ void intel_gt_check_and_clear_faults(struct intel_gt *gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
 
+	if (gt->i915->quiesce_gpu)
+		return;
+
 	/* From GEN8 onwards we only have one 'All Engine Fault Register' */
 	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
 		xehp_check_faults(gt);
@@ -773,8 +776,10 @@ static void __intel_gt_disable(struct intel_gt *gt)
 {
 	intel_gt_set_wedged_on_fini(gt);
 
-	intel_gt_suspend_prepare(gt);
-	intel_gt_suspend_late(gt);
+	if (!gt->i915->quiesce_gpu) {
+		intel_gt_suspend_prepare(gt);
+		intel_gt_suspend_late(gt);
+	}
 
 	GEM_BUG_ON(intel_gt_pm_is_awake(gt));
 }

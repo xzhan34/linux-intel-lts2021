@@ -706,6 +706,9 @@ int __intel_gt_reset(struct intel_gt *gt, intel_engine_mask_t engine_mask)
 	int ret = -ETIMEDOUT;
 	int retry;
 
+	if (gt->i915->quiesce_gpu)
+		return 0;
+
 	reset = intel_get_gpu_reset(gt);
 	if (!reset)
 		return -ENODEV;
@@ -1360,11 +1363,19 @@ void intel_gt_handle_error(struct intel_gt *gt,
 			   unsigned long flags,
 			   const char *fmt, ...)
 {
+	struct drm_i915_private *i915 = gt->i915;
 	struct intel_engine_cs *engine;
 	intel_wakeref_t wakeref;
 	intel_engine_mask_t tmp;
 	char error_msg[80];
 	char *msg = NULL;
+
+	/*
+	 * If GPU is wedged intentionally for some diagnostic,
+	 * it should not be unwedged by error handler.
+	 */
+	if (READ_ONCE(i915->quiesce_gpu))
+		return;
 
 	if (fmt) {
 		va_list args;

@@ -5103,6 +5103,9 @@ static irq_handler_t intel_irq_handler(struct drm_i915_private *dev_priv)
 
 static void intel_irq_reset(struct drm_i915_private *dev_priv)
 {
+	if (dev_priv->quiesce_gpu)
+		return;
+
 	if (HAS_GMCH(dev_priv)) {
 		if (IS_CHERRYVIEW(dev_priv))
 			cherryview_irq_reset(dev_priv);
@@ -5249,7 +5252,6 @@ void intel_irq_uninstall(struct drm_i915_private *dev_priv)
 		return;
 
 	dev_priv->drm.irq_enabled = false;
-
 	intel_irq_reset(dev_priv);
 
 	free_irq(irq, dev_priv);
@@ -5267,6 +5269,9 @@ void intel_irq_uninstall(struct drm_i915_private *dev_priv)
  */
 void intel_runtime_pm_disable_interrupts(struct drm_i915_private *dev_priv)
 {
+	if (dev_priv->quiesce_gpu)
+		return;
+
 	intel_irq_reset(dev_priv);
 	dev_priv->runtime_pm.irqs_enabled = false;
 	intel_synchronize_irq(dev_priv);

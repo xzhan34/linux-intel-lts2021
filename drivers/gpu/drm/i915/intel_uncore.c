@@ -217,6 +217,9 @@ fw_domain_wait_ack_with_fallback(const struct intel_uncore_forcewake_domain *d,
 	unsigned int pass;
 	bool ack_detected;
 
+	if (d->uncore->i915->quiesce_gpu)
+		return 0;
+
 	/*
 	 * There is a possibility of driver's wake request colliding
 	 * with hardware's own wake requests and that can cause
@@ -305,6 +308,9 @@ fw_domains_get_normal(struct intel_uncore *uncore, enum forcewake_domains fw_dom
 
 	GEM_BUG_ON(fw_domains & ~uncore->fw_domains);
 
+	if (uncore->gt->i915->quiesce_gpu)
+		return;
+
 	for_each_fw_domain_masked(d, fw_domains, uncore, tmp) {
 		fw_domain_wait_ack_clear(d);
 		fw_domain_get(d);
@@ -325,6 +331,9 @@ fw_domains_get_with_fallback(struct intel_uncore *uncore,
 
 	GEM_BUG_ON(fw_domains & ~uncore->fw_domains);
 
+	if (uncore->gt->i915->quiesce_gpu)
+		return;
+
 	for_each_fw_domain_masked(d, fw_domains, uncore, tmp) {
 		fw_domain_wait_ack_clear_fallback(d);
 		fw_domain_get(d);
@@ -343,6 +352,9 @@ fw_domains_put(struct intel_uncore *uncore, enum forcewake_domains fw_domains)
 	unsigned int tmp;
 
 	GEM_BUG_ON(fw_domains & ~uncore->fw_domains);
+
+	if (uncore->gt->i915->quiesce_gpu)
+		return;
 
 	for_each_fw_domain_masked(d, fw_domains, uncore, tmp)
 		fw_domain_put(d);
@@ -461,6 +473,9 @@ intel_uncore_forcewake_reset(struct intel_uncore *uncore)
 	struct intel_uncore_forcewake_domain *domain;
 	int retry_count = 100;
 	enum forcewake_domains fw, active_domains;
+
+	if (uncore->i915->quiesce_gpu)
+		return 0;
 
 	iosf_mbi_assert_punit_acquired();
 
@@ -2292,7 +2307,7 @@ static void fw_domain_fini(struct intel_uncore *uncore,
 		return;
 
 	uncore->fw_domains &= ~BIT(domain_id);
-	drm_WARN_ON(&uncore->i915->drm, d->wake_count);
+	drm_WARN_ON(&uncore->i915->drm, d->wake_count && !uncore->i915->quiesce_gpu);
 	drm_WARN_ON(&uncore->i915->drm, hrtimer_cancel(&d->timer));
 	kfree(d);
 }
@@ -2863,6 +2878,9 @@ int __intel_wait_for_register_fw(struct intel_uncore *uncore,
 	might_sleep_if(slow_timeout_ms);
 	GEM_BUG_ON(fast_timeout_us > 20000);
 	GEM_BUG_ON(!fast_timeout_us && !slow_timeout_ms);
+
+	if (uncore->i915->quiesce_gpu)
+		return 0;
 
 	ret = -ETIMEDOUT;
 	if (fast_timeout_us && fast_timeout_us <= 20000)

@@ -363,6 +363,9 @@ static void __sprint_engine_name(struct intel_engine_cs *engine)
 
 void intel_engine_set_hwsp_writemask(struct intel_engine_cs *engine, u32 mask)
 {
+	if (engine->i915->quiesce_gpu)
+		return;
+
 	/*
 	 * Though they added more rings on g4x/ilk, they did not add
 	 * per-engine HWSTAM until gen6.
@@ -1435,6 +1438,14 @@ int intel_engines_init(struct intel_gt *gt)
 	return 0;
 }
 
+void intel_engine_quiesce(struct intel_engine_cs *engine)
+{
+	destroy_pinned_context(engine->evict_context);
+	destroy_pinned_context(engine->blitter_context);
+	destroy_pinned_context(engine->kernel_context);
+	cleanup_status_page(engine);
+}
+
 /**
  * intel_engines_cleanup_common - cleans up the engine state created by
  *                                the common initiailizers.
@@ -1455,12 +1466,10 @@ void intel_engine_cleanup_common(struct intel_engine_cs *engine)
 	if (engine->default_state)
 		fput(engine->default_state);
 
-	destroy_pinned_context(engine->evict_context);
-	destroy_pinned_context(engine->blitter_context);
-	destroy_pinned_context(engine->kernel_context);
+	if (!engine->i915->quiesce_gpu)
+		intel_engine_quiesce(engine);
 
 	GEM_BUG_ON(!list_empty(&engine->barrier_tasks));
-	cleanup_status_page(engine);
 
 	intel_wa_list_free(&engine->ctx_wa_list);
 	intel_wa_list_free(&engine->wa_list);

@@ -30,7 +30,11 @@
 #include <linux/stat.h>
 #include <linux/sysfs.h>
 
+#include "gem/i915_gem_mman.h"
+#include "gt/intel_gt.h"
+#include "gt/intel_gt_pm.h"
 #include "gt/intel_gt_regs.h"
+#include "gt/intel_gt_requests.h"
 #include "gt/intel_rc6.h"
 #include "gt/intel_rps.h"
 #include "gt/sysfs_engines.h"
@@ -286,6 +290,155 @@ static struct kobject *i915_setup_gt_sysfs(struct kobject *parent)
 	return kobject_create_and_add("gt", parent);
 }
 
+static ssize_t invalidate_lmem_mmaps_store(struct device *dev,
+					   struct device_attribute *attr,
+					   const char *buff, size_t count)
+{
+	struct drm_i915_private *i915 = kdev_minor_to_i915(dev);
+	struct intel_memory_region *mem;
+	ssize_t ret;
+	bool val;
+	int id;
+
+	ret = kstrtobool(buff, &val);
+	if (ret)
+		return ret;
+
+	if (!val)
+		return -EINVAL;
+
+	if (i915->invalidate_lmem_mmaps)
+		return -EBUSY;
+
+	if (!i915->quiesce_gpu) {
+		drm_dbg(&i915->drm, "Invalidating LMEM mmaps is not allowed if GPU is unwedged\n");
+		return -EPERM;
+	}
+
+	WRITE_ONCE(i915->invalidate_lmem_mmaps, val);
+	ret = wait_var_event_interruptible(&i915->active_fault_handlers,
+					   !atomic_read(&i915->active_fault_handlers));
+	if (ret)
+		return ret;
+
+	for_each_memory_region(mem, i915, id) {
+		struct intel_memory_region_link bookmark = {};
+		struct intel_memory_region_link *pos;
+		struct list_head *phases[] = {
+			&mem->objects.purgeable,
+			&mem->objects.list,
+			NULL,
+		}, **phase = phases;
+
+		if (mem->type != INTEL_MEMORY_LOCAL)
+			continue;
+
+		spin_lock(&mem->objects.lock);
+		do list_for_each_entry(pos, *phase, link) {
+			struct drm_i915_gem_object *obj;
+
+			if (!pos->mem)
+				continue;
+
+			obj = container_of(pos, struct drm_i915_gem_object, mm.region);
+			i915_gem_object_get(obj);
+
+			list_add(&bookmark.link, &pos->link);
+			spin_unlock(&mem->objects.lock);
+
+			i915_gem_object_lock(obj, NULL);
+			i915_gem_object_release_mmap(obj);
+			i915_gem_object_unlock(obj);
+			i915_gem_object_put(obj);
+
+			spin_lock(&mem->objects.lock);
+			__list_del_entry(&bookmark.link);
+			pos = &bookmark;
+		} while (*++phase);
+		spin_unlock(&mem->objects.lock);
+	}
+
+	return count;
+}
+
+static DEVICE_ATTR_WO(invalidate_lmem_mmaps);
+
+static ssize_t quiesce_gpu_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buff, size_t count)
+{
+	struct drm_i915_private *i915 = kdev_minor_to_i915(dev);
+	struct intel_gt *gt = to_gt(i915);
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+	intel_wakeref_t wakeref;
+	unsigned int i;
+	ssize_t ret;
+	bool val;
+	u8 retry = 2;
+
+	ret = kstrtobool(buff, &val);
+	if (ret)
+		return ret;
+
+	if (!val)
+		return -EINVAL;
+
+	if (i915->quiesce_gpu)
+		return -EBUSY;
+
+	/* Do not quiesce the GPU if there are active clients */
+	while (!xa_empty(&i915->clients.xarray) && retry--) {
+		if (!retry)
+			return -EBUSY;
+
+		rcu_barrier();
+		flush_workqueue(system_wq);
+	}
+
+	wakeref = intel_runtime_pm_get(&i915->runtime_pm);
+	for_each_gt(gt, i915, i) {
+		/*
+		 * Disable rc6 and render power gate to make sure GT and
+		 * Render are awake for EUs Array and Scan Diagnostics
+		 */
+		intel_gt_pm_fini(gt);
+		if (intel_gt_terminally_wedged(gt))
+			continue;
+		intel_gt_set_wedged(gt);
+		intel_gt_retire_requests(gt);
+		for_each_engine(engine, gt, id) {
+			intel_engine_quiesce(engine);
+		}
+		GEM_BUG_ON(intel_gt_pm_is_awake(gt));
+	}
+	intel_runtime_pm_put(&i915->runtime_pm, wakeref);
+
+	/* flush the scheduled jobs when clients were closed */
+	rcu_barrier();
+	flush_workqueue(system_wq);
+	i915->drm.unplugged = true;
+	WRITE_ONCE(i915->quiesce_gpu, val);
+
+	return count;
+}
+
+static DEVICE_ATTR_WO(quiesce_gpu);
+
+static const struct attribute *setup_quiesce_gpu_attrs[] = {
+	&dev_attr_quiesce_gpu.attr,
+	&dev_attr_invalidate_lmem_mmaps.attr,
+	NULL
+};
+
+static void i915_setup_quiesce_gpu_sysfs(struct drm_i915_private *i915)
+{
+	struct device *kdev = i915->drm.primary->kdev;
+
+	if (sysfs_create_files(&kdev->kobj, setup_quiesce_gpu_attrs))
+		dev_err(kdev, "Failed to add sysfs files to setup quiesce GPU\n");
+}
+
 void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 {
 	struct device *kdev = dev_priv->drm.primary->kdev;
@@ -324,6 +477,8 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 	i915_setup_error_counter(dev_priv);
 
 	intel_engines_add_sysfs(dev_priv);
+
+	i915_setup_quiesce_gpu_sysfs(dev_priv);
 }
 
 void i915_teardown_sysfs(struct drm_i915_private *dev_priv)

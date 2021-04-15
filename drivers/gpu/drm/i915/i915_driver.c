@@ -1305,9 +1305,24 @@ out_fini:
 	return ret;
 }
 
+static int device_set_offline(struct device *dev, void *data)
+{
+	dev->offline = true;
+	return 0;
+}
+
 void i915_driver_remove(struct drm_i915_private *i915)
 {
+	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
+
 	disable_rpm_wakeref_asserts(&i915->runtime_pm);
+
+	/*
+	 * If device is quiesced set device to offline status
+	 * so MEI driver can avoid access to HW registers
+	 */
+	if (i915->quiesce_gpu)
+		device_for_each_child(&pdev->dev, NULL, device_set_offline);
 
 	i915_driver_unregister(i915);
 

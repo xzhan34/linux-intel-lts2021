@@ -163,6 +163,9 @@ bool intel_gt_retire_requests_timeout(struct intel_gt *gt, long *remain)
 	struct intel_timeline *tl;
 	bool idle = true;
 
+	if (gt->i915->quiesce_gpu)
+		return true;
+
 	if (remain)
 		flush_submission(gt); /* kick the ksoftirqd tasklets */
 

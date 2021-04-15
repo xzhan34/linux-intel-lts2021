@@ -4674,6 +4674,9 @@ void intel_guc_submission_disable(struct intel_guc *guc)
 {
 	struct intel_gt *gt = guc_to_gt(guc);
 
+	if (gt->i915->quiesce_gpu)
+		return;
+
 	cancel_delayed_work_sync(&guc->timestamp.work);
 
 	/* Disable and route to host */

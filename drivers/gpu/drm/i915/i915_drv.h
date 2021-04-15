@@ -864,6 +864,12 @@ struct drm_i915_private {
 
 	struct intel_audio_private audio;
 
+	bool quiesce_gpu;
+
+	bool invalidate_lmem_mmaps;
+
+	atomic_t active_fault_handlers;
+
 	struct i915_pmu pmu;
 
 	struct i915_drm_clients clients;

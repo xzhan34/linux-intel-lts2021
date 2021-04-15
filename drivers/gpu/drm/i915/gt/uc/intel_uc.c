@@ -59,6 +59,9 @@ static int __intel_uc_reset_hw(struct intel_uc *uc)
 	int ret;
 	u32 guc_status;
 
+	if (gt->i915->quiesce_gpu)
+		return 0;
+
 	ret = i915_inject_probe_error(gt->i915, -ENXIO);
 	if (ret)
 		return ret;
@@ -345,6 +348,9 @@ static int __uc_sanitize(struct intel_uc *uc)
 	struct intel_huc *huc = &uc->huc;
 
 	GEM_BUG_ON(!intel_uc_supports_guc(uc));
+
+	if (guc_to_gt(guc)->i915->quiesce_gpu)
+		return 0;
 
 	intel_huc_sanitize(huc);
 	intel_guc_sanitize(guc);

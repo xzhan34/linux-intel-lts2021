@@ -163,6 +163,9 @@ static void gt_sanitize(struct intel_gt *gt, bool force)
 	if (is_mock_gt(gt))
 		return;
 
+	if (gt->i915->quiesce_gpu)
+		return;
+
 	GT_TRACE(gt, "force:%s", str_yes_no(force));
 
 	/* Use a raw wakeref to avoid calling intel_display_power_get early */
@@ -302,6 +305,9 @@ static void wait_for_suspend(struct intel_gt *gt)
 {
 	intel_wakeref_t wf;
 
+	if (gt->i915->quiesce_gpu)
+		return;
+
 	with_intel_gt_pm(gt, wf) {
 		/* Cancel outstanding work and leave the gpu quiet */
 		if (intel_gt_wait_for_idle(gt, I915_GEM_IDLE_TIMEOUT) == -ETIME)
@@ -337,6 +343,9 @@ void intel_gt_suspend_late(struct intel_gt *gt)
 	wait_for_suspend(gt);
 
 	if (is_mock_gt(gt))
+		return;
+
+	if (gt->i915->quiesce_gpu)
 		return;
 
 	GEM_BUG_ON(gt->awake);

@@ -924,6 +924,9 @@ int intel_guc_suspend(struct intel_guc *guc)
 	if (!intel_guc_is_ready(guc))
 		return 0;
 
+	if (gt->i915->quiesce_gpu)
+		return 0;
+
 	/* Wa:16014207253 */
 	if (gt->fake_int.enabled && gt->fake_int.delay) {
 		/*

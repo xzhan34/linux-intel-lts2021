@@ -553,6 +553,9 @@ static void __intel_rc6_disable(struct intel_rc6 *rc6)
 	struct intel_uncore *uncore = rc6_to_uncore(rc6);
 	struct intel_gt *gt = rc6_to_gt(rc6);
 
+	if (i915->quiesce_gpu)
+		return;
+
 	/* Take control of RC6 back from GuC */
 	intel_guc_rc_disable(&gt->uc.guc);
 

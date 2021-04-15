@@ -252,14 +252,27 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 	struct vm_area_struct *area = vmf->vma;
 	struct i915_mmap_offset *mmo = area->vm_private_data;
 	struct drm_i915_gem_object *obj = mmo->obj;
+	struct drm_device *dev = obj->base.dev;
+	struct drm_i915_private *i915 = to_i915(dev);
 	struct i915_gem_ww_ctx ww;
 	resource_size_t iomap;
 	int err;
+	vm_fault_t ret;
+
+	atomic_inc(&i915->active_fault_handlers);
+
+	/* Do not service faults if invalidate_lmem_mmaps is set */
+	if (READ_ONCE(i915->invalidate_lmem_mmaps)) {
+		ret = VM_FAULT_SIGBUS;
+		goto out;
+	}
 
 	/* Sanity check that we allow writing into this object */
 	if (unlikely(i915_gem_object_is_readonly(obj) &&
-		     area->vm_flags & VM_WRITE))
-		return VM_FAULT_SIGBUS;
+		     area->vm_flags & VM_WRITE)) {
+		ret = VM_FAULT_SIGBUS;
+		goto out;
+	}
 
 	do for_i915_gem_ww(&ww, err, true) {
 		err = i915_gem_object_lock(obj, &ww);
@@ -289,7 +302,12 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 		i915_gem_object_unpin_pages(obj);
 	} while (err == -ENXIO);
 
-	return i915_error_to_vmf_fault(err);
+	ret = i915_error_to_vmf_fault(err);
+out:
+	if (atomic_dec_and_test(&i915->active_fault_handlers))
+		wake_up_var(&i915->active_fault_handlers);
+
+	return ret;
 }
 
 static vm_fault_t vm_fault_gtt(struct vm_fault *vmf)

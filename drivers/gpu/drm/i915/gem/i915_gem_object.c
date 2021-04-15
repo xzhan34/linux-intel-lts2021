@@ -1156,7 +1156,9 @@ static void i915_window_vma_teardown(struct i915_vma *vma)
 	if (!vma)
 		return;
 
-	vma->vm->clear_range(vma->vm, i915_vma_offset(vma), vma->size);
+	if (!vma->vm->i915->quiesce_gpu)
+		vma->vm->clear_range(vma->vm, i915_vma_offset(vma), vma->size);
+
 	drm_mm_remove_node(&vma->node);
 	sg_free_table(vma->pages);
 	kfree(vma->pages);
