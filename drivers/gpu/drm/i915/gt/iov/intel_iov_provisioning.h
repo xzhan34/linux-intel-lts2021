@@ -12,6 +12,7 @@ struct intel_iov;
 
 void intel_iov_provisioning_init_early(struct intel_iov *iov);
 void intel_iov_provisioning_release(struct intel_iov *iov);
+int intel_iov_provisioning_verify(struct intel_iov *iov, unsigned int num_vfs);
 
 int intel_iov_provisioning_set_ggtt(struct intel_iov *iov, unsigned int id, u64 size);
 u64 intel_iov_provisioning_get_ggtt(struct intel_iov *iov, unsigned int id);

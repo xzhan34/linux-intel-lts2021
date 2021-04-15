@@ -129,6 +129,14 @@ static u64 pf_get_ggtt_alignment(struct intel_iov *iov)
 	return SZ_4K;
 }
 
+static bool pf_is_valid_config_ggtt(struct intel_iov *iov, unsigned int id)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	return drm_mm_node_allocated(&iov->pf.provisioning.configs[id].ggtt_region);
+}
+
 static int pf_provision_ggtt(struct intel_iov *iov, unsigned int id, u64 size)
 {
 	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
@@ -224,6 +232,14 @@ u64 intel_iov_provisioning_get_ggtt(struct intel_iov *iov, unsigned int id)
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return size;
+}
+
+static bool pf_is_valid_config_ctxs(struct intel_iov *iov, unsigned int id)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	return iov->pf.provisioning.configs[id].num_ctxs;
 }
 
 /*
@@ -756,4 +772,67 @@ u32 intel_iov_provisioning_get_preempt_timeout(struct intel_iov *iov, unsigned i
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return preempt_timeout;
+}
+
+static int pf_validate_config(struct intel_iov *iov, unsigned int id)
+{
+	bool valid_ggtt = pf_is_valid_config_ggtt(iov, id);
+	bool valid_ctxs = pf_is_valid_config_ctxs(iov, id);
+	bool valid_any = valid_ggtt || valid_ctxs;
+	bool valid_all = valid_ggtt && valid_ctxs;
+
+	if (!valid_all) {
+		IOV_DEBUG(iov, "%u: invalid config: %s%s\n", id,
+			  valid_ggtt ? "" : "GGTT ",
+			  valid_ctxs ? "" : "contexts ");
+		return valid_any ? -ENOKEY : -ENODATA;
+	}
+
+	return 0;
+}
+
+/**
+ * intel_iov_provisioning_verify() - TBD
+ * @iov: the IOV struct
+ * @num_vfs: number of VFs configurations to verify
+ *
+ * Verify that VFs configurations are valid.
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_provisioning_verify(struct intel_iov *iov, unsigned int num_vfs)
+{
+	unsigned int num_empty = 0;
+	unsigned int num_valid = 0;
+	unsigned int n;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(num_vfs > pf_get_totalvfs(iov));
+	GEM_BUG_ON(num_vfs < 1);
+
+	mutex_lock(pf_provisioning_mutex(iov));
+
+	for (n = 1; n <= num_vfs; n++) {
+		err = pf_validate_config(iov, n);
+		if (!err)
+			num_valid++;
+		else if (err == -ENODATA)
+			num_empty++;
+	}
+
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	IOV_DEBUG(iov, "found valid(%u) invalid(%u) empty(%u) configs\n",
+		  num_valid, num_vfs - num_valid, num_empty);
+
+	if (num_empty == num_vfs)
+		return -ENODATA;
+
+	if (num_valid + num_empty != num_vfs)
+		return -ENOKEY;
+
+	return 0;
 }

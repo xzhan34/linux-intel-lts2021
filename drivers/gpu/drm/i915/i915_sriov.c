@@ -9,6 +9,7 @@
 #include "intel_pci_config.h"
 
 #include "gt/intel_gt_pm.h"
+#include "gt/iov/intel_iov_provisioning.h"
 
 /* safe for use before register access via uncore is completed */
 static u32 pci_peek_mmio_read32(struct pci_dev *pdev, i915_reg_t reg)
@@ -301,6 +302,10 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 
 	/* hold the reference to runtime pm as long as VFs are enabled */
 	intel_gt_pm_get_untracked(to_gt(i915));
+
+	err = intel_iov_provisioning_verify(&to_gt(i915)->iov, num_vfs);
+	if (unlikely(err))
+		goto fail_pm;
 
 	err = pci_enable_sriov(pdev, num_vfs);
 	if (err < 0)
