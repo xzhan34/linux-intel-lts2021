@@ -2100,6 +2100,9 @@ static void pf_unprovision_config(struct intel_iov *iov, unsigned int id)
 	pf_provision_exec_quantum(iov, id, 0);
 	pf_provision_preempt_timeout(iov, id, 0);
 
+	if (HAS_LMEM(iov_to_i915(iov)))
+		pf_provision_lmem(iov, id, 0);
+
 	pf_unprovision_thresholds(iov, id);
 }
 
@@ -2210,6 +2213,36 @@ static int pf_auto_provision_dbs(struct intel_iov *iov, unsigned int num_vfs)
 	return 0;
 }
 
+static int pf_auto_provision_lmem(struct intel_iov *iov, unsigned int num_vfs)
+{
+	unsigned int n;
+	u64 available = pf_query_max_lmem(iov);
+	u64 fair;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(num_vfs > pf_get_totalvfs(iov));
+
+	fair = div_u64(available, num_vfs);
+	fair = round_down(fair, SZ_2M);
+
+	IOV_DEBUG(iov, "LMEM available(%lluM) fair(%u x %lluM)\n",
+		  available / SZ_1M, num_vfs, fair / SZ_1M);
+	if (!fair)
+		return -ENOSPC;
+
+	for (n = 1; n <= num_vfs; n++) {
+		if (pf_is_config_valid_lmem(iov, n))
+			return -EUCLEAN;
+
+		err = pf_provision_lmem(iov, n, fair);
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
 static int pf_auto_provision(struct intel_iov *iov, unsigned int num_vfs)
 {
 	int err;
@@ -2236,6 +2269,12 @@ static int pf_auto_provision(struct intel_iov *iov, unsigned int num_vfs)
 	err = pf_auto_provision_dbs(iov, num_vfs);
 	if (unlikely(err))
 		goto fail;
+
+	if (HAS_LMEM(iov_to_i915(iov))) {
+		err = pf_auto_provision_lmem(iov, num_vfs);
+		if (unlikely(err))
+			goto fail;
+	}
 
 	return 0;
 fail:
