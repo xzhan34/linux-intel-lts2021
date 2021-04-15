@@ -321,6 +321,7 @@ void i915_sriov_print_info(struct drm_i915_private *i915, struct drm_printer *p)
  */
 int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 {
+	bool auto_provisioning = i915_sriov_pf_is_auto_provisioning_enabled(i915);
 	struct device *dev = i915->drm.dev;
 	struct pci_dev *pdev = to_pci_dev(dev);
 	int err;
@@ -338,6 +339,10 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 	intel_gt_pm_get_untracked(to_gt(i915));
 
 	err = intel_iov_provisioning_verify(&to_gt(i915)->iov, num_vfs);
+	if (err == -ENODATA) {
+		if (auto_provisioning)
+			err = intel_iov_provisioning_auto(&to_gt(i915)->iov, num_vfs);
+	}
 	if (unlikely(err))
 		goto fail_pm;
 
@@ -349,6 +354,7 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 	return num_vfs;
 
 fail_pm:
+	intel_iov_provisioning_auto(&to_gt(i915)->iov, 0);
 	intel_gt_pm_put_untracked(to_gt(i915));
 fail:
 	drm_err(&i915->drm, "Failed to enable %u VFs (%pe)\n",
@@ -386,6 +392,7 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 
 	pci_disable_sriov(pdev);
 
+	intel_iov_provisioning_auto(&to_gt(i915)->iov, 0);
 	intel_gt_pm_put_untracked(to_gt(i915));
 
 	dev_info(dev, "Disabled %u VFs\n", num_vfs);

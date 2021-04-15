@@ -51,10 +51,12 @@ struct intel_iov_sysfs {
 
 /**
  * struct intel_iov_provisioning - IOV provisioning data.
+ * @auto_mode: indicates manual or automatic provisioning mode.
  * @configs: flexible array with configuration data for PF and VFs.
  * @lock: protects provisionining data
  */
 struct intel_iov_provisioning {
+	bool auto_mode;
 	struct intel_iov_spare_config spare;
 	struct intel_iov_config *configs;
 	struct mutex lock;

@@ -72,6 +72,23 @@ static struct mutex *pf_provisioning_mutex(struct intel_iov *iov)
 	return &iov->pf.provisioning.lock;
 }
 
+static inline bool pf_is_auto_provisioned(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	return iov->pf.provisioning.auto_mode;
+}
+
+static void pf_set_auto_provisioning(struct intel_iov *iov, bool value)
+{
+	if (pf_is_auto_provisioned(iov) == value)
+		return;
+
+	IOV_DEBUG(iov, "%ps auto provisioning: %s\n",
+		  __builtin_return_address(0), str_yes_no(value));
+	iov->pf.provisioning.auto_mode = value;
+}
+
 /*
  * Return: number of klvs that were successfully parsed and saved,
  *         negative error code on failure.
@@ -945,6 +962,85 @@ u32 intel_iov_provisioning_get_preempt_timeout(struct intel_iov *iov, unsigned i
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return preempt_timeout;
+}
+
+static bool pf_is_auto_provisioning_enabled(struct intel_iov *iov)
+{
+	return i915_sriov_pf_is_auto_provisioning_enabled(iov_to_i915(iov));
+}
+
+static void pf_unprovision_config(struct intel_iov *iov, unsigned int id)
+{
+	/* placeholder */
+}
+
+static void pf_unprovision_all(struct intel_iov *iov)
+{
+	unsigned int num_vfs = pf_get_totalvfs(iov);
+	unsigned int n;
+
+	for (n = num_vfs; n > 0; n--)
+		pf_unprovision_config(iov, n);
+}
+
+static void pf_auto_unprovision(struct intel_iov *iov)
+{
+	if (pf_is_auto_provisioned(iov))
+		pf_unprovision_all(iov);
+
+	pf_set_auto_provisioning(iov, false);
+}
+
+static int pf_auto_provision(struct intel_iov *iov, unsigned int num_vfs)
+{
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(num_vfs > pf_get_totalvfs(iov));
+	GEM_BUG_ON(num_vfs < 1);
+
+	if (!pf_is_auto_provisioning_enabled(iov)) {
+		err = -EPERM;
+		goto fail;
+	}
+
+	pf_set_auto_provisioning(iov, true);
+
+	err = -EOPNOTSUPP; /* placeholder */
+
+fail:
+	IOV_ERROR(iov, "Failed to auto provision %u VFs (%pe)",
+		  num_vfs, ERR_PTR(err));
+	pf_auto_unprovision(iov);
+	return err;
+}
+
+/**
+ * intel_iov_provisioning_auto() - Perform auto provisioning of VFs
+ * @iov: the IOV struct
+ * @num_vfs: number of VFs to auto configure or 0 to unprovision
+ *
+ * Perform auto provisioning by allocating fair amount of available
+ * resources for each VF that are to be enabled.
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_provisioning_auto(struct intel_iov *iov, unsigned int num_vfs)
+{
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	if (num_vfs)
+		err = pf_auto_provision(iov, num_vfs);
+	else
+		err = 0, pf_auto_unprovision(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return err;
 }
 
 static int pf_validate_config(struct intel_iov *iov, unsigned int id)
