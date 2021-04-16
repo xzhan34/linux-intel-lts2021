@@ -2278,14 +2278,22 @@ static int pf_validate_config(struct intel_iov *iov, unsigned int id)
 	bool valid_ggtt = pf_is_valid_config_ggtt(iov, id);
 	bool valid_ctxs = pf_is_valid_config_ctxs(iov, id);
 	bool valid_dbs = pf_is_valid_config_dbs(iov, id);
+	bool valid_lmem =  true;
 	bool valid_any = valid_ggtt || valid_ctxs || valid_dbs;
 	bool valid_all = valid_ggtt && valid_ctxs;
 
 	/* we don't require doorbells, but will check if were assigned */
 
+	if (HAS_LMEM(iov_to_i915(iov))) {
+		valid_lmem = pf_is_config_valid_lmem(iov, id);
+		valid_any = valid_any || valid_lmem;
+		valid_all = valid_all && valid_lmem;
+	}
+
 	if (!valid_all) {
-		IOV_DEBUG(iov, "%u: invalid config: %s%s%s\n", id,
+		IOV_DEBUG(iov, "%u: invalid config: %s%s%s%s\n", id,
 			  valid_ggtt ? "" : "GGTT ",
+			  valid_lmem ? "" : "LMEM ",
 			  valid_ctxs ? "" : "contexts ",
 			  valid_dbs ? "" : "doorbells ");
 		return valid_any ? -ENOKEY : -ENODATA;
