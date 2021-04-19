@@ -14,7 +14,6 @@ struct i915_drm_client;
 struct i915_gem_context;
 struct i915_uuid_resource;
 struct i915_address_space;
-struct drm_i915_file_private;
 struct i915_vma;
 
 #if IS_ENABLED(CONFIG_DRM_I915_DEBUGGER)
@@ -50,6 +49,10 @@ void i915_debugger_vma_insert(struct i915_drm_client *client,
 			      struct i915_vma *vma);
 void i915_debugger_vma_evict(struct i915_drm_client *client,
 			     struct i915_vma *vma);
+
+void i915_debugger_context_param_vm(const struct i915_drm_client *client,
+				    struct i915_gem_context *ctx,
+				    struct i915_address_space *vm);
 
 #else /* CONFIG_DRM_I915_DEBUGGER */
 
@@ -88,6 +91,10 @@ static inline void i915_debugger_vma_insert(struct i915_drm_client *client,
 					    struct i915_vma *vma) { }
 static inline void i915_debugger_vma_evict(struct i915_drm_client *client,
 					   struct i915_vma *vma) { }
+
+static inline void i915_debugger_context_param_vm(const struct i915_drm_client *client,
+						  struct i915_gem_context *ctx,
+						  struct i915_address_space *vm) { }
 
 #endif /* CONFIG_DRM_I915_DEBUGGER */
 

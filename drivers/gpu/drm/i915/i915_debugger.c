@@ -86,6 +86,7 @@ static const char *event_type_to_str(u32 type)
 		"uuid",
 		"vm",
 		"vm-bind",
+		"context-param",
 		"unknown",
 	};
 
@@ -186,6 +187,22 @@ static void event_printer_vma(const struct i915_debugger * const debugger,
 				    i, ev->uuids[i]);
 }
 
+static void event_printer_context_param(const struct i915_debugger * const debugger,
+					const char * const prefix,
+					const struct i915_debug_event * const event)
+{
+	const struct i915_debug_event_context_param * const context_param =
+		from_event(context_param, event);
+	const struct drm_i915_gem_context_param * const context_param_param =
+		&context_param->param;
+
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, context_param, client_handle);
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, context_param, ctx_handle);
+	EVENT_PRINT_MEMBER_U32(debugger, prefix, context_param_param, ctx_id);
+	EVENT_PRINT_MEMBER_U64(debugger, prefix, context_param_param, param);
+	EVENT_PRINT_MEMBER_U64(debugger, prefix, context_param_param, value);
+}
+
 static void i915_debugger_print_event(const struct i915_debugger * const debugger,
 				      const char * const prefix,
 				      const struct i915_debug_event * const event)
@@ -198,6 +215,7 @@ static void i915_debugger_print_event(const struct i915_debugger * const debugge
 		event_printer_uuid,
 		event_printer_vm,
 		event_printer_vma,
+		event_printer_context_param,
 	};
 	debug_event_printer_t event_printer = NULL;
 
@@ -937,6 +955,38 @@ static void i915_debugger_discover_vm(struct i915_debugger *debugger,
 	}
 }
 
+static void i915_debugger_ctx_vm_def(struct i915_debugger *debugger,
+				     const struct i915_drm_client *client,
+				     u32 ctx_id,
+				     const struct i915_address_space *vm)
+{
+	struct i915_debug_event *event;
+	struct i915_debug_event_context_param *ep;
+	u32 vm_handle;
+
+	if (__i915_debugger_get_handle(debugger, vm, &vm_handle))
+		return;
+
+	event = i915_debugger_create_event(debugger,
+					   PRELIM_DRM_I915_DEBUG_EVENT_CONTEXT_PARAM,
+					   PRELIM_DRM_I915_DEBUG_EVENT_CREATE,
+					   sizeof(*ep),
+					   GFP_KERNEL);
+	if (!event)
+		return;
+
+	ep = from_event(ep, event);
+	ep->client_handle = client->id;
+	ep->ctx_handle = ctx_id;
+	ep->param.ctx_id = ctx_id;
+	ep->param.param = I915_CONTEXT_PARAM_VM;
+	ep->param.value = vm_handle;
+
+	i915_debugger_send_event(debugger, event);
+
+	kfree(event);
+}
+
 static void i915_debugger_ctx_vm_create(struct i915_debugger *debugger,
 					struct i915_gem_context *ctx)
 {
@@ -944,10 +994,13 @@ static void i915_debugger_ctx_vm_create(struct i915_debugger *debugger,
 	bool vm_found;
 
 	vm_found = __i915_debugger_has_resource(debugger, vm);
-	if (!vm_found) {
+	if (!vm_found)
 		__i915_debugger_vm_create(debugger, ctx->client, vm);
+
+	i915_debugger_ctx_vm_def(debugger, ctx->client, ctx->id, vm);
+
+	if (!vm_found)
 		i915_debugger_discover_vma(debugger, vm);
-	}
 
 	i915_vm_put(vm);
 }
@@ -1670,6 +1723,33 @@ void i915_debugger_vm_destroy(struct i915_drm_client *client,
 				      GFP_KERNEL);
 
 out:
+	i915_debugger_put(debugger);
+}
+
+void i915_debugger_context_param_vm(const struct i915_drm_client *client,
+				    struct i915_gem_context *ctx,
+				    struct i915_address_space *vm)
+{
+	struct i915_debugger *debugger;
+
+	if (!client)
+		return;
+
+	if (!ctx) {
+		GEM_WARN_ON(!ctx);
+		return;
+	}
+
+	if (!vm) {
+		GEM_WARN_ON(!vm);
+		return;
+	}
+
+	debugger = i915_debugger_get_for_client(client);
+	if (!debugger)
+		return;
+
+	i915_debugger_ctx_vm_def(debugger, client, ctx->id, vm);
 	i915_debugger_put(debugger);
 }
 

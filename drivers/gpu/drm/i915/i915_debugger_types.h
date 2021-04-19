@@ -61,6 +61,13 @@ struct i915_debug_event_vm_bind {
 	u64 uuids[0];
 } __packed;
 
+struct i915_debug_event_context_param {
+	struct i915_debug_event base;
+	u64 client_handle;
+	u64 ctx_handle;
+	struct drm_i915_gem_context_param param;
+} __packed;
+
 struct i915_debugger {
 	struct kref ref;
 	struct rcu_head rcu;

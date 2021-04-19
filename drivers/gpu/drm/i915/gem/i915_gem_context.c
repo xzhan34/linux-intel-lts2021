@@ -1004,8 +1004,10 @@ static int gem_context_register(struct i915_gem_context *ctx,
 	if (!ret) {
 		ctx->id = *id;
 		i915_debugger_context_create(ctx);
-		if (vm)
+		if (vm) {
 			i915_debugger_vm_create(client, vm);
+			i915_debugger_context_param_vm(client, ctx, vm);
+		}
 	}
 	i915_gem_context_put(ctx);
 	if (!ret)
@@ -1241,6 +1243,10 @@ static int set_ppgtt(struct drm_i915_file_private *file_priv,
 	context_apply_all(ctx, __apply_ppgtt, vm);
 
 	i915_vm_close(old);
+
+	if (!is_ctx_create)
+		i915_debugger_context_param_vm(file_priv->client, ctx, vm);
+
 unlock:
 	mutex_unlock(&ctx->mutex);
 out:
