@@ -1579,20 +1579,17 @@ __lrc_isolation(struct intel_engine_cs *engine, u32 poison, bool relative)
 		usleep_range(100, 500);
 
 	err = poison_registers(B, engine, poison, relative, &sema);
-	if (err) {
-		WRITE_ONCE(*sema.va, -1);
-		i915_request_put(rq);
-		goto err_result1;
-	}
-
-	if (i915_request_wait(rq, 0, HZ / 2) < 0) {
+	if (err == 0 && i915_request_wait(rq, 0, HZ / 2) < 0) {
 		pr_err("%s(%s): wait for results timed out\n",
 		       __func__, engine->name);
-		i915_request_put(rq);
 		err = -ETIME;
-		goto err_result1;
 	}
+
+	/* Always cancel the semaphore wait, just in case the GPU gets stuck */
+	WRITE_ONCE(*sema.va, -1);
 	i915_request_put(rq);
+	if (err)
+		goto err_result1;
 
 	err = compare_isolation(engine, ref, result, A, poison, relative);
 
