@@ -2272,10 +2272,10 @@ static int __vf_runtime_reg_cmp(u32 key, const struct vf_runtime_reg *reg)
 }
 
 static const struct vf_runtime_reg *
-__vf_runtime_reg_find(struct drm_i915_private *i915, u32 offset)
+__vf_runtime_reg_find(struct intel_gt *gt, u32 offset)
 {
-	const struct vf_runtime_reg *regs = to_gt(i915)->iov.vf.runtime.regs;
-	u32 regs_num = to_gt(i915)->iov.vf.runtime.regs_size;
+	const struct vf_runtime_reg *regs = gt->iov.vf.runtime.regs;
+	u32 regs_num = gt->iov.vf.runtime.regs_size;
 
 	return BSEARCH(offset, regs, regs_num, __vf_runtime_reg_cmp);
 }
@@ -2285,7 +2285,7 @@ static u##x vf_read##x(struct intel_uncore *uncore, \
 		       i915_reg_t reg, bool trace) \
 { \
 	u32 offset = i915_mmio_reg_offset(reg); \
-	const struct vf_runtime_reg *vf_reg = __vf_runtime_reg_find(uncore->i915, offset); \
+	const struct vf_runtime_reg *vf_reg = __vf_runtime_reg_find(uncore->gt, offset); \
 	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_IOV) && vf_reg) \
 		drm_dbg(&uncore->i915->drm, "runtime MMIO %#04x = %#x\n", \
 			offset, vf_reg->value); \
