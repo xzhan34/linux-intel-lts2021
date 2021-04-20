@@ -393,6 +393,9 @@ static void emit_batch(struct i915_vma * const vma,
 						     &cb_kernel_ivb,
 						     desc_count);
 
+	/* Disable hostile predication */
+	batch_add(&cmds, MI_PREDICATE | 2 << 6 | 1);
+
 	/* Reset inherited context registers */
 	gen7_emit_pipeline_flush(&cmds);
 	gen7_emit_pipeline_invalidate(&cmds);
