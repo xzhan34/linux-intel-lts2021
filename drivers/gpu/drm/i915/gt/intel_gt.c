@@ -1106,6 +1106,8 @@ out_fw:
 
 void intel_gt_driver_remove(struct intel_gt *gt)
 {
+	intel_gt_fini_clock_frequency(gt);
+
 	i915_vma_clock_flush(&gt->vma_clock);
 	intel_flat_ppgtt_pool_fini(&gt->fpp);
 	intel_iov_fini_hw(&gt->iov);
