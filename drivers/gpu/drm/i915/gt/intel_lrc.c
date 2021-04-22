@@ -7,6 +7,7 @@
 
 #include "gen8_engine_cs.h"
 #include "i915_drv.h"
+#include "i915_memcpy.h"
 #include "i915_perf.h"
 #include "i915_reg.h"
 #include "intel_context.h"
@@ -964,29 +965,64 @@ void lrc_reset_regs(const struct intel_context *ce,
 	__reset_stop_ring(ce->lrc_reg_state, engine);
 }
 
+#define REDZONE_INTERVAL (5ull * NSEC_PER_SEC)
+#define REDZONE_KTIME (I915_GTT_PAGE_SIZE - 64)
+
 static void
 set_redzone(void *vaddr, const struct intel_engine_cs *engine)
 {
+	const int len = REDZONE_KTIME;
+
 	if (!IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM))
 		return;
 
 	vaddr += engine->context_size;
 
-	memset(vaddr, CONTEXT_REDZONE, I915_GTT_PAGE_SIZE);
+	memset(vaddr, CONTEXT_REDZONE, len);
+	*(ktime_t *)(vaddr + len) = -REDZONE_INTERVAL; /* check at least once */
+}
+
+static bool __check_red_cl(const void *vaddr)
+{
+	char stack[80];
+	char *s = stack;
+
+	s = PTR_ALIGN(s, 16);
+	if (!i915_memcpy_from_wc(s, vaddr, 64))
+		memcpy(s, vaddr, 64);
+
+	return memchr_inv(s, CONTEXT_REDZONE, 64) == NULL;
 }
 
 static void
 check_redzone(const void *vaddr, const struct intel_engine_cs *engine)
 {
+	const int len = REDZONE_KTIME;
+	ktime_t now, *last;
+
 	if (!IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM))
 		return;
 
 	vaddr += engine->context_size;
+	last = (void *)vaddr + len;
 
-	if (memchr_inv(vaddr, CONTEXT_REDZONE, I915_GTT_PAGE_SIZE))
+	now = ktime_get();
+	if (ktime_before(now, ktime_add(*last, REDZONE_INTERVAL)))
+		return;
+	*last = now;
+
+	/*
+	 * Check the first cacheline; most likely to be overwritten,
+	 * and double check a cacheline chosen at random.
+	 */
+	if (!__check_red_cl(vaddr) ||
+	    !__check_red_cl(vaddr + ALIGN_DOWN(lower_32_bits(now) % len, 64))) {
 		drm_err_once(&engine->i915->drm,
-			     "%s context redzone overwritten!\n",
-			     engine->name);
+			     "%s context redzone overwritten @ %zu!\n",
+			     engine->name,
+			     memchr_inv(vaddr, CONTEXT_REDZONE, len) - vaddr);
+		*last = KTIME_MAX; /* never check again */
+	}
 }
 
 static u32 context_wa_bb_offset(const struct intel_context *ce)
