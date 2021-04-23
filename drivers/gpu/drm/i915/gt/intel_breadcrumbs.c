@@ -114,13 +114,13 @@ check_signal_order(struct intel_context *ce, struct i915_request *rq)
 		return false;
 
 	if (!list_is_last(&rq->signal_link, &ce->signals) &&
-	    i915_seqno_passed(rq->fence.seqno,
-			      list_next_entry(rq, signal_link)->fence.seqno))
+	    i915_seqno_passed(i915_request_seqno(rq),
+			      i915_request_seqno(list_next_entry(rq, signal_link))))
 		return false;
 
 	if (!list_is_first(&rq->signal_link, &ce->signals) &&
-	    i915_seqno_passed(list_prev_entry(rq, signal_link)->fence.seqno,
-			      rq->fence.seqno))
+	    i915_seqno_passed(i915_request_seqno(list_prev_entry(rq, signal_link)),
+			      i915_request_seqno(rq)))
 		return false;
 
 	return true;
@@ -393,7 +393,8 @@ static void insert_breadcrumb(struct i915_request *rq)
 			struct i915_request *it =
 				list_entry(pos, typeof(*it), signal_link);
 
-			if (i915_seqno_passed(rq->fence.seqno, it->fence.seqno))
+			if (i915_seqno_passed(i915_request_seqno(rq),
+					      i915_request_seqno(it)))
 				break;
 		}
 	}

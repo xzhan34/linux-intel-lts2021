@@ -188,7 +188,7 @@ hang_create_request(struct hang *h, struct intel_engine_cs *engine)
 		*batch++ = MI_STORE_DWORD_IMM_GEN4;
 		*batch++ = lower_32_bits(hws_address(hws, rq));
 		*batch++ = upper_32_bits(hws_address(hws, rq));
-		*batch++ = rq->fence.seqno;
+		*batch++ = i915_request_seqno(rq);
 		*batch++ = MI_NOOP;
 
 		memset(batch, 0, 1024);
@@ -202,7 +202,7 @@ hang_create_request(struct hang *h, struct intel_engine_cs *engine)
 		*batch++ = MI_STORE_DWORD_IMM_GEN4;
 		*batch++ = 0;
 		*batch++ = lower_32_bits(hws_address(hws, rq));
-		*batch++ = rq->fence.seqno;
+		*batch++ = i915_request_seqno(rq);
 		*batch++ = MI_NOOP;
 
 		memset(batch, 0, 1024);
@@ -215,7 +215,7 @@ hang_create_request(struct hang *h, struct intel_engine_cs *engine)
 		*batch++ = MI_STORE_DWORD_IMM_GEN4 | MI_USE_GGTT;
 		*batch++ = 0;
 		*batch++ = lower_32_bits(hws_address(hws, rq));
-		*batch++ = rq->fence.seqno;
+		*batch++ = i915_request_seqno(rq);
 		*batch++ = MI_NOOP;
 
 		memset(batch, 0, 1024);
@@ -227,7 +227,7 @@ hang_create_request(struct hang *h, struct intel_engine_cs *engine)
 	} else {
 		*batch++ = MI_STORE_DWORD_IMM | MI_MEM_VIRTUAL;
 		*batch++ = lower_32_bits(hws_address(hws, rq));
-		*batch++ = rq->fence.seqno;
+		*batch++ = i915_request_seqno(rq);
 		*batch++ = MI_NOOP;
 
 		memset(batch, 0, 1024);
@@ -289,10 +289,10 @@ static void hang_fini(struct hang *h)
 static bool wait_until_running(struct hang *h, struct i915_request *rq)
 {
 	return !(wait_for_us(i915_seqno_passed(hws_seqno(h, rq),
-					       rq->fence.seqno),
+					       i915_request_seqno(rq)),
 			     10) &&
 		 wait_for(i915_seqno_passed(hws_seqno(h, rq),
-					    rq->fence.seqno),
+					    i915_request_seqno(rq)),
 			  1000));
 }
 

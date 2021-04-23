@@ -51,7 +51,8 @@ static inline int __intel_timeline_sync_set(struct intel_timeline *tl,
 static inline int intel_timeline_sync_set(struct intel_timeline *tl,
 					  const struct dma_fence *fence)
 {
-	return __intel_timeline_sync_set(tl, fence->context, fence->seqno);
+	/* An external fence may be 64b, but we are only tracking the low 32b */
+	return __intel_timeline_sync_set(tl, fence->context, lower_32_bits(fence->seqno));
 }
 
 static inline bool __intel_timeline_sync_is_later(struct intel_timeline *tl,
@@ -63,7 +64,7 @@ static inline bool __intel_timeline_sync_is_later(struct intel_timeline *tl,
 static inline bool intel_timeline_sync_is_later(struct intel_timeline *tl,
 						const struct dma_fence *fence)
 {
-	return __intel_timeline_sync_is_later(tl, fence->context, fence->seqno);
+	return __intel_timeline_sync_is_later(tl, fence->context, lower_32_bits(fence->seqno));
 }
 
 bool intel_timeline_get_if_active(struct intel_timeline *tl);

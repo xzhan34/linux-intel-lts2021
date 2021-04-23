@@ -996,7 +996,8 @@ static bool can_merge_rq(const struct i915_request *prev,
 	if (!can_merge_ctx(prev->context, next->context))
 		return false;
 
-	GEM_BUG_ON(i915_seqno_passed(prev->fence.seqno, next->fence.seqno));
+	GEM_BUG_ON(i915_seqno_passed(i915_request_seqno(prev),
+				     i915_request_seqno(next)));
 	return true;
 }
 
@@ -1566,8 +1567,8 @@ unlock:
 					   !can_merge_ctx(last->context,
 							  rq->context));
 				GEM_BUG_ON(last &&
-					   i915_seqno_passed(last->fence.seqno,
-							     rq->fence.seqno));
+					   i915_seqno_passed(i915_request_seqno(last),
+							     i915_request_seqno(rq)));
 
 				submit = true;
 				last = rq;
@@ -1990,7 +1991,7 @@ process_csb(struct intel_engine_cs *engine, struct i915_request **inactive)
 					     i915_ggtt_offset(rq->ring->vma),
 					     rq->head, rq->tail,
 					     rq->fence.context,
-					     lower_32_bits(rq->fence.seqno),
+					     i915_request_seqno(rq),
 					     hwsp_seqno(rq));
 				ENGINE_TRACE(engine,
 					     "ctx:{start:%08x, head:%04x, tail:%04x}, ",

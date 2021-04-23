@@ -953,7 +953,7 @@ static struct i915_request *wrap_timeline(struct i915_request *rq)
 {
 	struct intel_context *ce = rq->context;
 	struct intel_timeline *tl = ce->timeline;
-	u32 seqno = rq->fence.seqno;
+	u32 seqno = i915_request_seqno(rq);
 
 	while (tl->seqno >= seqno) { /* Cause a wrap */
 		i915_request_put(rq);
@@ -1079,7 +1079,8 @@ static int live_hwsp_read(void *arg)
 			err = intel_timeline_read_hwsp(rq, watcher[0].rq, &hwsp);
 			if (err == 0)
 				err = emit_read_hwsp(watcher[0].rq, /* before */
-						     rq->fence.seqno, hwsp,
+						     i915_request_seqno(rq),
+						     hwsp,
 						     &watcher[0].addr);
 			switch_tl_lock(watcher[0].rq, rq);
 			if (err) {
@@ -1093,7 +1094,8 @@ static int live_hwsp_read(void *arg)
 			err = intel_timeline_read_hwsp(rq, watcher[1].rq, &hwsp);
 			if (err == 0)
 				err = emit_read_hwsp(watcher[1].rq, /* after */
-						     rq->fence.seqno, hwsp,
+						     i915_request_seqno(rq),
+						     hwsp,
 						     &watcher[1].addr);
 			switch_tl_lock(watcher[1].rq, rq);
 			if (err) {
@@ -1206,8 +1208,7 @@ static int live_hwsp_rollover_kernel(void *arg)
 			}
 
 			pr_debug("%s: create fence.seqnp:%d\n",
-				 engine->name,
-				 lower_32_bits(this->fence.seqno));
+				 engine->name, i915_request_seqno(this));
 
 			GEM_BUG_ON(rcu_access_pointer(this->timeline) != tl);
 
@@ -1293,8 +1294,7 @@ static int live_hwsp_rollover_user(void *arg)
 			}
 
 			pr_debug("%s: create fence.seqnp:%d\n",
-				 engine->name,
-				 lower_32_bits(this->fence.seqno));
+				 engine->name, i915_request_seqno(this));
 
 			GEM_BUG_ON(rcu_access_pointer(this->timeline) != tl);
 

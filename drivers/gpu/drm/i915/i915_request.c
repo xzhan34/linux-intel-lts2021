@@ -454,8 +454,8 @@ static bool __request_in_flight(const struct i915_request *signal)
 	     (rq = READ_ONCE(*port)); /* may race with promotion of pending[] */
 	     port++) {
 		if (rq->context == signal->context) {
-			inflight = i915_seqno_passed(rq->fence.seqno,
-						     signal->fence.seqno);
+			inflight = i915_seqno_passed(i915_request_seqno(rq),
+						     i915_request_seqno(signal));
 			break;
 		}
 	}
@@ -1236,7 +1236,7 @@ emit_semaphore_wait(struct i915_request *to,
 	if (__await_execution(to, from, NULL, gfp))
 		goto await_fence;
 
-	if (__emit_semaphore_wait(to, from, from->fence.seqno))
+	if (__emit_semaphore_wait(to, from, i915_request_seqno(from)))
 		goto await_fence;
 
 	to->sched.semaphores |= mask;
@@ -1253,13 +1253,15 @@ static bool intel_timeline_sync_has_start(struct intel_timeline *tl,
 {
 	return __intel_timeline_sync_is_later(tl,
 					      fence->context,
-					      fence->seqno - 1);
+					      lower_32_bits(fence->seqno) - 1);
 }
 
 static int intel_timeline_sync_set_start(struct intel_timeline *tl,
 					 const struct dma_fence *fence)
 {
-	return __intel_timeline_sync_set(tl, fence->context, fence->seqno - 1);
+	return __intel_timeline_sync_set(tl,
+					 fence->context,
+					 lower_32_bits(fence->seqno) - 1);
 }
 
 static int
@@ -1318,7 +1320,7 @@ __i915_request_await_execution(struct i915_request *to,
 	if (can_use_semaphore_wait(to, from) &&
 	    intel_engine_has_semaphores(to->engine) &&
 	    !i915_request_has_initial_breadcrumb(to)) {
-		err = __emit_semaphore_wait(to, from, from->fence.seqno - 1);
+		err = __emit_semaphore_wait(to, from, i915_request_seqno(from) - 1);
 		if (err < 0)
 			return err;
 	}
@@ -1681,8 +1683,8 @@ __i915_request_ensure_ordering(struct i915_request *rq,
 		 * context.
 		 */
 		GEM_BUG_ON(same_context &&
-			   i915_seqno_passed(prev->fence.seqno,
-					     rq->fence.seqno));
+			   i915_seqno_passed(i915_request_seqno(prev),
+					     i915_request_seqno(rq)));
 
 		if ((same_context && uses_guc) || (!uses_guc && pow2))
 			i915_sw_fence_await_sw_fence(&rq->submit,
@@ -1748,7 +1750,7 @@ __i915_request_add_to_timeline(struct i915_request *rq)
 	 * our i915_request_alloc() and called __i915_request_add() before
 	 * us, the timeline will hold its seqno which is later than ours.
 	 */
-	GEM_BUG_ON(timeline->seqno != rq->fence.seqno);
+	GEM_BUG_ON(timeline->seqno != i915_request_seqno(rq));
 
 	return prev;
 }

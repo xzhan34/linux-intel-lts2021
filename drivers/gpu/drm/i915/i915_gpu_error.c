@@ -1328,7 +1328,7 @@ static void record_request(const struct i915_request *request,
 {
 	erq->flags = request->fence.flags;
 	erq->context = request->fence.context;
-	erq->seqno = request->fence.seqno;
+	erq->seqno = i915_request_seqno(request);
 	erq->sched_attr = request->sched.attr;
 	erq->head = request->head;
 	erq->tail = request->tail;

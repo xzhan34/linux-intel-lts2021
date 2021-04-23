@@ -496,9 +496,15 @@ static inline u32 hwsp_seqno(const struct i915_request *rq)
 	return seqno;
 }
 
+static inline u32 i915_request_seqno(const struct i915_request *rq)
+{
+	GEM_BUG_ON(overflows_type(rq->fence.seqno, u32));
+	return lower_32_bits(rq->fence.seqno);
+}
+
 static inline bool __i915_request_has_started(const struct i915_request *rq)
 {
-	return i915_seqno_passed(__hwsp_seqno(rq), rq->fence.seqno - 1);
+	return i915_seqno_passed(__hwsp_seqno(rq), i915_request_seqno(rq) - 1);
 }
 
 /**
@@ -589,7 +595,7 @@ static inline bool i915_request_is_ready(const struct i915_request *rq)
 
 static inline bool __i915_request_is_complete(const struct i915_request *rq)
 {
-	return i915_seqno_passed(__hwsp_seqno(rq), rq->fence.seqno);
+	return i915_seqno_passed(__hwsp_seqno(rq), i915_request_seqno(rq));
 }
 
 static inline bool i915_request_completed(const struct i915_request *rq)

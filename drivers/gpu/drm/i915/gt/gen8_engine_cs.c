@@ -364,7 +364,7 @@ int gen8_emit_init_breadcrumb(struct i915_request *rq)
 	*cs++ = MI_STORE_DWORD_IMM_GEN4 | MI_USE_GGTT;
 	*cs++ = hwsp_offset(rq);
 	*cs++ = 0;
-	*cs++ = rq->fence.seqno - 1;
+	*cs++ = i915_request_seqno(rq) - 1;
 
 	/*
 	 * Check if we have been preempted before we even get started.
@@ -574,7 +574,7 @@ gen8_emit_fini_breadcrumb_tail(struct i915_request *rq, u32 *cs)
 
 static u32 *emit_xcs_breadcrumb(struct i915_request *rq, u32 *cs)
 {
-	return gen8_emit_ggtt_write(cs, rq->fence.seqno, hwsp_offset(rq), 0);
+	return gen8_emit_ggtt_write(cs, i915_request_seqno(rq), hwsp_offset(rq), 0);
 }
 
 u32 *gen8_emit_fini_breadcrumb_xcs(struct i915_request *rq, u32 *cs)
@@ -594,7 +594,7 @@ u32 *gen8_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 
 	/* XXX flush+write+CS_STALL all in one upsets gem_concurrent_blt:kbl */
 	cs = gen8_emit_ggtt_write_rcs(cs,
-				      rq->fence.seqno,
+				      i915_request_seqno(rq),
 				      hwsp_offset(rq),
 				      PIPE_CONTROL_FLUSH_ENABLE |
 				      PIPE_CONTROL_CS_STALL);
@@ -615,7 +615,7 @@ u32 *gen11_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 
 	/*XXX: Look at gen8_emit_fini_breadcrumb_rcs */
 	cs = gen8_emit_ggtt_write_rcs(cs,
-				      rq->fence.seqno,
+				      i915_request_seqno(rq),
 				      hwsp_offset(rq),
 				      PIPE_CONTROL_FLUSH_ENABLE |
 				      PIPE_CONTROL_CS_STALL);
@@ -746,7 +746,7 @@ u32 *gen12_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 
 	/*XXX: Look at gen8_emit_fini_breadcrumb_rcs */
 	cs = gen12_emit_ggtt_write_rcs(cs,
-				       rq->fence.seqno,
+				       i915_request_seqno(rq),
 				       hwsp_offset(rq),
 				       0,
 				       PIPE_CONTROL_FLUSH_ENABLE |

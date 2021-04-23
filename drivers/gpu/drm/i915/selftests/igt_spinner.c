@@ -191,7 +191,7 @@ igt_spinner_create_request(struct igt_spinner *spin,
 		*batch++ = MI_STORE_DWORD_IMM | MI_MEM_VIRTUAL;
 		*batch++ = hws_address(hws, rq);
 	}
-	*batch++ = rq->fence.seqno;
+	*batch++ = i915_request_seqno(rq);
 
 	*batch++ = arbitration_command;
 
@@ -269,9 +269,9 @@ bool igt_wait_for_spinner(struct igt_spinner *spin, struct i915_request *rq)
 		intel_engine_flush_submission(rq->engine);
 
 	return !(wait_for_us(i915_seqno_passed(hws_seqno(spin, rq),
-					       rq->fence.seqno),
+					       i915_request_seqno(rq)),
 			     100) &&
 		 wait_for(i915_seqno_passed(hws_seqno(spin, rq),
-					    rq->fence.seqno),
+					    i915_request_seqno(rq)),
 			  50));
 }

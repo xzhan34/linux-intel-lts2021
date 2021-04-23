@@ -283,7 +283,7 @@ TRACE_EVENT(i915_request_queue,
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
-			   __entry->seqno = rq->fence.seqno;
+			   __entry->seqno = i915_request_seqno(rq);
 			   __entry->flags = flags;
 			   ),
 
@@ -312,7 +312,7 @@ DECLARE_EVENT_CLASS(i915_request,
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->guc_id = rq->context->guc_id.id;
 			   __entry->ctx = rq->fence.context;
-			   __entry->seqno = rq->fence.seqno;
+			   __entry->seqno = i915_request_seqno(rq);
 			   __entry->tail = rq->tail;
 			   ),
 
@@ -362,7 +362,7 @@ TRACE_EVENT(i915_request_in,
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
-			   __entry->seqno = rq->fence.seqno;
+			   __entry->seqno = i915_request_seqno(rq);
 			   __entry->prio = rq->sched.attr.priority;
 			   __entry->port = port;
 			   ),
@@ -391,7 +391,7 @@ TRACE_EVENT(i915_request_out,
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
-			   __entry->seqno = rq->fence.seqno;
+			   __entry->seqno = i915_request_seqno(rq);
 			   __entry->completed = i915_request_completed(rq);
 			   ),
 
@@ -632,7 +632,7 @@ TRACE_EVENT(i915_request_wait_begin,
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
-			   __entry->seqno = rq->fence.seqno;
+			   __entry->seqno = i915_request_seqno(rq);
 			   __entry->flags = flags;
 			   ),
 
