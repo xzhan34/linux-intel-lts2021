@@ -1,6 +1,6 @@
 config DRM_I915_REQUEST_TIMEOUT
 	int "Default timeout for requests (ms)"
-	default 20000 # milliseconds
+	default 0 # milliseconds
 	help
 	  Configures the default timeout after which any user submissions will
 	  be forcefully terminated.
