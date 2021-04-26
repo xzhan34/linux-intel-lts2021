@@ -85,6 +85,7 @@ static const char *event_type_to_str(u32 type)
 		"context",
 		"uuid",
 		"vm",
+		"vm-bind",
 		"unknown",
 	};
 
@@ -165,6 +166,26 @@ static void event_printer_vm(const struct i915_debugger * const debugger,
 	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, vm, handle);
 }
 
+static void event_printer_vma(const struct i915_debugger * const debugger,
+			      const char * const prefix,
+			      const struct i915_debug_event * const event)
+{
+	const struct i915_debug_event_vm_bind * const ev = from_event(ev, event);
+	unsigned i;
+
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, ev, client_handle);
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, ev, vm_handle);
+	EVENT_PRINT_MEMBER_U64X(debugger, prefix, ev, va_start);
+	EVENT_PRINT_MEMBER_U64X(debugger, prefix, ev, va_length);
+	EVENT_PRINT_MEMBER_U32(debugger, prefix, ev, num_uuids);
+	EVENT_PRINT_MEMBER_U32(debugger, prefix, ev, flags);
+
+	for (i = 0; i < ev->num_uuids; i++)
+		i915_debugger_print(debugger, DD_DEBUG_LEVEL_INFO, prefix,
+				    "  vma->uuids[%u] = %llu",
+				    i, ev->uuids[i]);
+}
+
 static void i915_debugger_print_event(const struct i915_debugger * const debugger,
 				      const char * const prefix,
 				      const struct i915_debug_event * const event)
@@ -176,6 +197,7 @@ static void i915_debugger_print_event(const struct i915_debugger * const debugge
 		event_printer_context,
 		event_printer_uuid,
 		event_printer_vm,
+		event_printer_vma,
 	};
 	debug_event_printer_t event_printer = NULL;
 
@@ -816,6 +838,84 @@ static void __i915_debugger_vm_create(struct i915_debugger *debugger,
 				      GFP_KERNEL);
 }
 
+static void i915_debugger_discover_vma(struct i915_debugger *debugger,
+				       struct i915_address_space *vm)
+{
+	unsigned long count;
+	void *ev = NULL, *__ev;
+	u32 vm_handle;
+	size_t size;
+
+	if (__i915_debugger_get_handle(debugger, vm, &vm_handle)) {
+		DD_WARN(debugger, "discover_vm did not found handle for vm %p\n", vm);
+		return;
+	}
+
+	size = 0;
+	do {
+		struct drm_mm_node *node;
+		size_t used = 0;
+
+		count = 0;
+		__ev = ev;
+		mutex_lock(&vm->mutex);
+		drm_mm_for_each_node(node, &vm->mm) {
+			struct i915_vma *vma = container_of(node, typeof(*vma), node);
+			struct i915_debug_event_vm_bind *e = __ev;
+			struct i915_vma_metadata *metadata;
+
+			if (!i915_vma_is_persistent(vma))
+				continue;
+
+			used += sizeof(*e);
+			list_for_each_entry(metadata, &vma->metadata_list, vma_link)
+				used += sizeof(e->uuids[0]);
+
+			if (used <= size) {
+				e->base.type     = PRELIM_DRM_I915_DEBUG_EVENT_VM_BIND;
+				e->base.flags    = PRELIM_DRM_I915_DEBUG_EVENT_CREATE;
+				e->base.size     = sizeof(*e);
+				e->client_handle = vm->client->id;
+				e->vm_handle     = vm_handle;
+				e->va_start      = i915_vma_offset(vma);
+				e->va_length     = i915_vma_size(vma);
+				e->num_uuids	 = 0;
+				e->flags         = 0;
+
+				list_for_each_entry(metadata,
+						    &vma->metadata_list, vma_link) {
+					e->uuids[e->num_uuids++] = metadata->uuid->handle;
+					e->base.size += sizeof(e->uuids[0]);
+				}
+
+				__ev += e->base.size;
+				count++;
+			}
+		}
+		mutex_unlock(&vm->mutex);
+		if (size >= used)
+			break;
+
+		__ev = krealloc(ev, used, GFP_KERNEL);
+		if (!__ev) {
+			DD_ERR(debugger, "could not allocate bind event, disconnecting\n");
+			goto out;
+		}
+		ev = __ev;
+		size = used;
+	} while (1);
+
+	for (__ev = ev; count--; ) {
+		struct i915_debug_event_vm_bind *e = __ev;
+		e->base.seqno = atomic_long_inc_return(&debugger->event_seqno);
+		i915_debugger_send_event(debugger, to_event(e));
+		__ev += e->base.size;
+	}
+
+out:
+	kfree(ev);
+}
+
 static void i915_debugger_discover_vm(struct i915_debugger *debugger,
 				      struct i915_drm_client *client)
 {
@@ -833,6 +933,7 @@ static void i915_debugger_discover_vm(struct i915_debugger *debugger,
 			continue;
 
 		__i915_debugger_vm_create(debugger, client, vm);
+		i915_debugger_discover_vma(debugger, vm);
 	}
 }
 
@@ -843,8 +944,10 @@ static void i915_debugger_ctx_vm_create(struct i915_debugger *debugger,
 	bool vm_found;
 
 	vm_found = __i915_debugger_has_resource(debugger, vm);
-	if (!vm_found)
+	if (!vm_found) {
 		__i915_debugger_vm_create(debugger, ctx->client, vm);
+		i915_debugger_discover_vma(debugger, vm);
+	}
 
 	i915_vm_put(vm);
 }
@@ -1432,6 +1535,89 @@ void i915_debugger_uuid_destroy(const struct i915_drm_client *client,
 		return;
 
 	send_uuid_event(client, uuid, PRELIM_DRM_I915_DEBUG_EVENT_DESTROY);
+}
+
+static void __i915_debugger_vma_send_event(struct i915_debugger *debugger,
+					   struct i915_drm_client *client,
+					   struct i915_vma *vma,
+					   u32 flags,
+					   gfp_t gfp)
+{
+	struct i915_vma_metadata *metadata;
+	struct i915_debug_event_vm_bind *ev;
+	struct i915_debug_event *event;
+	u32 vm_handle;
+	u64 size;
+
+	if (GEM_WARN_ON(!vma))
+		return;
+
+	if (__i915_debugger_get_handle(debugger, vma->vm, &vm_handle))
+		return;
+
+	size = sizeof(*ev);
+	list_for_each_entry(metadata, &vma->metadata_list, vma_link)
+		size += sizeof(ev->uuids[0]);
+
+	event = i915_debugger_create_event(debugger,
+					   PRELIM_DRM_I915_DEBUG_EVENT_VM_BIND,
+					   flags,
+					   size,
+					   gfp);
+	if (!event) {
+		DD_ERR(debugger, "debugger: vma: alloc fail, bailing out\n");
+		return;
+	}
+
+	ev = from_event(ev, event);
+
+	ev->client_handle = client->id;
+	ev->vm_handle     = vm_handle;
+	ev->va_start      = i915_vma_offset(vma);
+	ev->va_length     = i915_vma_size(vma);
+	ev->flags         = 0;
+	ev->num_uuids     = 0;
+
+	list_for_each_entry(metadata, &vma->metadata_list, vma_link)
+		ev->uuids[ev->num_uuids++] = metadata->uuid->handle;
+
+	i915_debugger_send_event(debugger, event);
+
+	kfree(event);
+}
+
+void i915_debugger_vma_insert(struct i915_drm_client *client,
+			      struct i915_vma *vma)
+{
+	struct i915_debugger *debugger;
+
+	debugger = i915_debugger_get_for_client(client);
+	if (!debugger)
+		return;
+
+	if (i915_vma_is_persistent(vma))
+		__i915_debugger_vma_send_event(debugger, client, vma,
+					       PRELIM_DRM_I915_DEBUG_EVENT_CREATE,
+					       GFP_ATOMIC);
+
+	i915_debugger_put(debugger);
+}
+
+void i915_debugger_vma_evict(struct i915_drm_client *client,
+			     struct i915_vma *vma)
+{
+	struct i915_debugger *debugger;
+
+	debugger = i915_debugger_get_for_client(client);
+	if (!debugger)
+		return;
+
+	if (i915_vma_is_persistent(vma))
+		__i915_debugger_vma_send_event(debugger, client, vma,
+					       PRELIM_DRM_I915_DEBUG_EVENT_DESTROY,
+					       GFP_ATOMIC);
+
+	i915_debugger_put(debugger);
 }
 
 void i915_debugger_vm_create(struct i915_drm_client *client,

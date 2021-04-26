@@ -35,6 +35,7 @@
 #include "gt/intel_gt_requests.h"
 #include "gt/intel_gt_pm.h"
 
+#include "i915_debugger.h"
 #include "i915_drv.h"
 #include "i915_gem_evict.h"
 #include "i915_sw_fence_work.h"
@@ -930,6 +931,7 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 	list_add_tail(&vma->vm_link, &vma->vm->bound_list);
 	vma->guard = guard;
 
+	i915_debugger_vma_insert(vma->vm->client, vma);
 	return 0;
 }
 
@@ -1085,6 +1087,8 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	/* First try and grab the pin without rebinding the vma */
 	if (try_qad_pin(vma, flags & I915_VMA_BIND_MASK))
 		return 0;
+
+	i915_debugger_wait_on_discovery(vma->vm->i915); /* wait for vm event */
 
 	err = vma_get_pages(vma);
 	if (err)
@@ -1598,6 +1602,8 @@ int _i915_vma_move_to_active(struct i915_vma *vma,
 void __i915_vma_evict(struct i915_vma *vma)
 {
 	GEM_BUG_ON(i915_vma_is_pinned(vma));
+
+	i915_debugger_vma_evict(vma->vm->client, vma);
 
 	if (i915_vma_is_map_and_fenceable(vma)) {
 		/* Force a pagefault for domain tracking on next user access */

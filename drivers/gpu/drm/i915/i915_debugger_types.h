@@ -49,6 +49,18 @@ struct i915_debug_event_vm {
 	u64 handle;
 } __packed;
 
+struct i915_debug_event_vm_bind {
+	struct i915_debug_event base;
+	u64 client_handle;
+
+	u64 vm_handle;
+	u64 va_start;
+	u64 va_length;
+	u32 num_uuids;
+	u32 flags;
+	u64 uuids[0];
+} __packed;
+
 struct i915_debugger {
 	struct kref ref;
 	struct rcu_head rcu;

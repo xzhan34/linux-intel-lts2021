@@ -359,7 +359,8 @@ struct prelim_drm_i915_debug_event {
 #define PRELIM_DRM_I915_DEBUG_EVENT_CONTEXT  3
 #define PRELIM_DRM_I915_DEBUG_EVENT_UUID     4
 #define PRELIM_DRM_I915_DEBUG_EVENT_VM       5
-#define PRELIM_DRM_I915_DEBUG_EVENT_MAX_EVENT PRELIM_DRM_I915_DEBUG_EVENT_VM
+#define PRELIM_DRM_I915_DEBUG_EVENT_VM_BIND  6
+#define PRELIM_DRM_I915_DEBUG_EVENT_MAX_EVENT PRELIM_DRM_I915_DEBUG_EVENT_VM_BIND
 
 	__u32 flags;
 #define PRELIM_DRM_I915_DEBUG_EVENT_CREATE	(1 << 31)
@@ -412,6 +413,18 @@ struct prelim_drm_i915_debug_event_vm {
 	__u64 client_handle;
 
 	__u64 handle;
+} __attribute__((packed));
+
+struct prelim_drm_i915_debug_event_vm_bind {
+	struct prelim_drm_i915_debug_event base;
+	__u64 client_handle;
+
+	__u64 vm_handle;
+	__u64 va_start;
+	__u64 va_length;
+	__u32 num_uuids;
+	__u32 flags;
+	__u64 uuids[0];
 } __attribute__((packed));
 
 struct prelim_drm_i915_debug_read_uuid {
