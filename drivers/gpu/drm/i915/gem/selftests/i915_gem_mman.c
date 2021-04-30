@@ -6,6 +6,7 @@
 
 #include <linux/highmem.h>
 #include <linux/prime_numbers.h>
+#include <linux/sched/mm.h>
 
 #include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_region.h"
@@ -1418,6 +1419,30 @@ int i915_gem_mman_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_mmap_revoke),
 		SUBTEST(igt_mmap_gpu),
 	};
+	struct mm_struct *mm = NULL;
+	int err;
 
-	return i915_live_subtests(tests, i915);
+	/*
+	 * These tests emulate userspace mmaps and so operate on
+	 * current->mm. However, this selftest could be running
+	 * in an anonymous kernel thread, where current->mm is NULL
+	 * and current->active_mm is the "borrowed address space".
+	 * Promote that borrowed address space for use with vm_mmap().
+	 */
+	if (!current->mm) {
+		mm = current->active_mm;
+		mmget(mm);
+		current->mm = mm;
+	}
+
+	err = i915_live_subtests(tests, i915);
+
+	/* restore current->mm in case a persistent kernel thread */
+	if (mm) {
+		GEM_BUG_ON(current->mm != mm);
+		mmput(mm);
+		current->mm = NULL;
+	}
+
+	return err;
 }
