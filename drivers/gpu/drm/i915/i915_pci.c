@@ -809,7 +809,8 @@ static const struct intel_device_info cml_gt2_info = {
 #define GEN11_DEFAULT_PAGE_SIZES \
 	.page_sizes = I915_GTT_PAGE_SIZE_4K | \
 		      I915_GTT_PAGE_SIZE_64K | \
-		      I915_GTT_PAGE_SIZE_2M
+		      I915_GTT_PAGE_SIZE_2M | \
+		      I915_GTT_PAGE_SIZE_1G
 
 #define GEN11_FEATURES \
 	GEN9_FEATURES, \

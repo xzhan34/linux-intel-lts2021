@@ -874,7 +874,16 @@ xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
 		max = I915_PDES;
 		nent = 1;
 
-		if (vma->page_sizes.sg & I915_GTT_PAGE_SIZE_2M &&
+		if (unlikely(vma->page_sizes.sg & I915_GTT_PAGE_SIZE_1G) &&
+				IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_1G) &&
+				rem >= I915_GTT_PAGE_SIZE_1G &&
+				!(__gen8_pte_index(start, 0) | __gen8_pte_index(start, 1))) {
+			index = __gen8_pte_index(start, 2);
+			encode |= GEN8_PDPE_PS_1G;
+			page_size = I915_GTT_PAGE_SIZE_1G;
+			vaddr = px_vaddr(pdp, &needs_flush);
+			daddr = px_dma(pdp);
+		} else if (vma->page_sizes.sg & I915_GTT_PAGE_SIZE_2M &&
 		    IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_2M) &&
 		    rem >= I915_GTT_PAGE_SIZE_2M &&
 		    !__gen8_pte_index(start, 0)) {
@@ -1015,7 +1024,16 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 		bool needs_flush;
 		u16 index;
 
-		if (vma->page_sizes.sg & I915_GTT_PAGE_SIZE_2M &&
+		if (unlikely(vma->page_sizes.sg & I915_GTT_PAGE_SIZE_1G) &&
+				IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_1G) &&
+				rem >= I915_GTT_PAGE_SIZE_1G &&
+				!(__gen8_pte_index(start, 0) | __gen8_pte_index(start, 1))) {
+			index = __gen8_pte_index(start, 2);
+			encode |= GEN8_PDPE_PS_1G;
+			page_size = I915_GTT_PAGE_SIZE_1G;
+			vaddr = px_vaddr(pdp, &needs_flush);
+
+		} else if (vma->page_sizes.sg & I915_GTT_PAGE_SIZE_2M &&
 		    IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_2M) &&
 		    rem >= I915_GTT_PAGE_SIZE_2M &&
 		    !__gen8_pte_index(start, 0)) {
