@@ -779,7 +779,8 @@ TRACE_EVENT(intel_gt_cat_error,
 			   strscpy(__entry->guc_ctx_id, guc_ctx_id, 11);
 			   ),
 
-	    TP_printk("GPU catastrophic memory error. GuC context: %s",
+	    TP_printk("GPU catastrophic memory error. GT: %d, GuC context: %s",
+		      __entry->gt->info.id,
 		      __entry->guc_ctx_id)
 );
 
@@ -801,9 +802,10 @@ TRACE_EVENT(intel_gt_pagefault,
 			   __entry->is_ggtt = is_ggtt;
 			   ),
 
-	    TP_printk("dev %p: GPU %s fault: address space %s, address: %#llx, engine ID: %u, source ID: %u, type: %u, fault level: %u",
+	    TP_printk("dev %p: GPU %s fault: GT: %d, address space %s, address: %#llx, engine ID: %u, source ID: %u, type: %u, fault level: %u",
 		      __entry->gt->i915,
 		      !!(__entry->fault_reg & RING_FAULT_ACCESS_TYPE) ? "Write" : "Read",
+		      __entry->gt->info.id,
 		      __entry->is_ggtt ? "GGTT" : "PPGTT",
 		      __entry->address,
 		      GEN8_RING_FAULT_ENGINE_ID(__entry->fault_reg),

@@ -30,7 +30,7 @@ int intel_gt_pagefault_process_cat_error_msg(struct intel_gt *gt, const u32 *msg
 
 	trace_intel_gt_cat_error(gt, buf);
 
-	drm_err(drm, "GPU catastrophic memory error. GuC context: %s\n", buf);
+	drm_err(drm, "GPU catastrophic memory error. GT: %d, GuC context: %s\n", gt->info.id, buf);
 
 	return 0;
 }
@@ -65,6 +65,7 @@ int intel_gt_pagefault_process_page_fault_msg(struct intel_gt *gt, const u32 *ms
 	trace_intel_gt_pagefault(gt, address, fault_reg, fault_data1 & FAULT_GTT_SEL);
 
 	drm_err(&i915->drm, "Unexpected fault\n"
+			    "\tGT: %d\n"
 			    "\tAddr: 0x%llx\n"
 			    "\tAddress space%s\n"
 			    "\tEngine ID: %u\n"
@@ -72,6 +73,7 @@ int intel_gt_pagefault_process_page_fault_msg(struct intel_gt *gt, const u32 *ms
 			    "\tType: %u\n"
 			    "\tFault Level: %u\n"
 			    "\tAccess type: %s\n",
+			    gt->info.id,
 			    address,
 			    fault_data1 & FAULT_GTT_SEL ? "GGTT" : "PPGTT",
 			    GEN8_RING_FAULT_ENGINE_ID(fault_reg),
