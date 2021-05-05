@@ -348,6 +348,13 @@ static const u32 dg2_oa_base[] = {
 	[PERF_GROUP_OAM_1] = 0x13200,
 };
 
+static const u32 pvc_oa_base[] = {
+	[PERF_GROUP_OAG] = 0,
+	[PERF_GROUP_OAM_0] = 0x13000,
+	[PERF_GROUP_OAM_1] = 0x13200,
+	[PERF_GROUP_OAM_2] = 0x13400,
+};
+
 #define SAMPLE_OA_REPORT      (1<<0)
 
 /**
@@ -1730,7 +1737,8 @@ static bool engine_supports_oa(struct drm_i915_private *i915,
 		       engine->class == VIDEO_DECODE_CLASS ||
 		       engine->class == VIDEO_ENHANCEMENT_CLASS;
 	case INTEL_PONTEVECCHIO:
-		return engine->class == COMPUTE_CLASS;
+		return engine->class == COMPUTE_CLASS ||
+		       engine->class == VIDEO_DECODE_CLASS;
 	default:
 		return engine->class == RENDER_CLASS;
 	}
@@ -5499,6 +5507,8 @@ static u32 __num_perf_groups_per_gt(struct intel_gt *gt)
 	enum intel_platform platform = INTEL_INFO(gt->i915)->platform;
 
 	switch (platform) {
+	case INTEL_PONTEVECCHIO:
+		return 4;
 	case INTEL_DG2:
 		return 3;
 	case INTEL_XEHPSDV:
@@ -5515,6 +5525,27 @@ static u32 __oam_engine_group(struct intel_engine_cs *engine)
 	u32 group = PERF_GROUP_INVALID;
 
 	switch (platform) {
+	case INTEL_PONTEVECCHIO:
+		/*
+		 * PVC mappings:
+		 *
+		 * VCS0 - PERF_GROUP_OAM_0
+		 * VCS1 - PERF_GROUP_OAM_2
+		 * VCS2 - PERF_GROUP_OAM_1
+		 */
+		drm_WARN_ON(&engine->i915->drm,
+			    engine->class == VIDEO_ENHANCEMENT_CLASS);
+
+		if (engine->id == VCS0)
+			group = PERF_GROUP_OAM_0;
+		else if (engine->id == VCS1)
+			group = PERF_GROUP_OAM_2;
+		else if (engine->id == VCS2)
+			group = PERF_GROUP_OAM_1;
+		else
+			drm_WARN(&gt->i915->drm, 1,
+				 "Unsupported vcs for OA %d\n", engine->id);
+		break;
 	case INTEL_DG2:
 		/*
 		 * DG2 mappings:
@@ -5600,6 +5631,8 @@ static void oa_init_regs(struct intel_gt *gt, u32 id)
 
 	if (id == PERF_GROUP_OAG)
 		*regs = __oag_regs();
+	else if (IS_PONTEVECCHIO(gt->i915))
+		*regs = __oam_regs(pvc_oa_base[id]);
 	else if (IS_DG2(gt->i915))
 		*regs = __oam_regs(dg2_oa_base[id]);
 	else if (IS_XEHPSDV(gt->i915))
