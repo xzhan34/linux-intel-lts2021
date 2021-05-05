@@ -338,9 +338,10 @@ int ppgtt_set_pages(struct i915_vma *vma)
 	return 0;
 }
 
-void ppgtt_init(struct i915_ppgtt *ppgtt, struct intel_gt *gt)
+int ppgtt_init(struct i915_ppgtt *ppgtt, struct intel_gt *gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
+	int err;
 
 	ppgtt->vm.gt = gt;
 	ppgtt->vm.i915 = i915;
@@ -348,10 +349,14 @@ void ppgtt_init(struct i915_ppgtt *ppgtt, struct intel_gt *gt)
 	ppgtt->vm.total = BIT_ULL(INTEL_INFO(i915)->ppgtt_size);
 
 	dma_resv_init(&ppgtt->vm._resv);
-	i915_address_space_init(&ppgtt->vm, VM_CLASS_PPGTT);
+	err = i915_address_space_init(&ppgtt->vm, VM_CLASS_PPGTT);
+	if (err)
+		return err;
 
 	ppgtt->vm.vma_ops.bind_vma    = ppgtt_bind_vma;
 	ppgtt->vm.vma_ops.unbind_vma  = ppgtt_unbind_vma;
 	ppgtt->vm.vma_ops.set_pages   = ppgtt_set_pages;
 	ppgtt->vm.vma_ops.clear_pages = clear_pages;
+
+	return 0;
 }

@@ -1665,6 +1665,10 @@ void i915_debugger_vma_evict(struct i915_drm_client *client,
 	if (!debugger)
 		return;
 
+	unmap_mapping_range(vma->vm->inode->i_mapping,
+			    vma->node.start, vma->node.size,
+			    1);
+
 	if (i915_vma_is_persistent(vma))
 		__i915_debugger_vma_send_event(debugger, client, vma,
 					       PRELIM_DRM_I915_DEBUG_EVENT_DESTROY,

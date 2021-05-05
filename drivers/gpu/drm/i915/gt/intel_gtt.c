@@ -6,6 +6,7 @@
 #include <linux/slab.h> /* fault-inject.h is not standalone! */
 
 #include <linux/fault-inject.h>
+#include <linux/pseudo_fs.h>
 
 #include <drm/drm_cache.h>
 
@@ -146,6 +147,8 @@ void i915_address_space_fini(struct i915_address_space *vm)
 	i915_gem_object_put(vm->root_obj);
 	GEM_BUG_ON(!RB_EMPTY_ROOT(&vm->va.rb_root));
 	mutex_destroy(&vm->vm_bind_lock);
+
+	iput(vm->inode);
 }
 
 /**
@@ -219,9 +222,11 @@ static void __i915_vm_retire(struct i915_active *ref)
 	i915_vm_close(active_to_vm(ref));
 }
 
-void i915_address_space_init(struct i915_address_space *vm, int subclass)
+int i915_address_space_init(struct i915_address_space *vm, int subclass)
 {
 	u64 min_alignment;
+
+	GEM_BUG_ON(!vm->total);
 
 	kref_init(&vm->ref);
 
@@ -261,8 +266,11 @@ void i915_address_space_init(struct i915_address_space *vm, int subclass)
 	}
 	dma_resv_init(&vm->_resv);
 
-	GEM_BUG_ON(!vm->total);
 	drm_mm_init(&vm->mm, 0, vm->total);
+	vm->inode = alloc_anon_inode(vm->i915->drm.anon_inode->i_sb);
+	if (IS_ERR(vm->inode))
+		return PTR_ERR(vm->inode);
+	i_size_write(vm->inode, vm->total);
 
 	min_alignment = I915_GTT_MIN_ALIGNMENT;
 	if (subclass == VM_CLASS_GGTT &&
@@ -298,6 +306,8 @@ void i915_address_space_init(struct i915_address_space *vm, int subclass)
 	INIT_ACTIVE_FENCE(&vm->user_fence);
 
 	i915_active_init(&vm->active, __i915_vm_active, __i915_vm_retire, 0);
+
+	return 0;
 }
 
 void clear_pages(struct i915_vma *vma)

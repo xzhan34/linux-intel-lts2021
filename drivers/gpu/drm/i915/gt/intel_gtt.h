@@ -258,6 +258,8 @@ struct i915_address_space {
 	struct drm_i915_private *i915;
 	struct device *dma;
 
+	struct inode *inode;
+
 	u32 poison; /* value used to fill the scratch page */
 
 	/*
@@ -567,7 +569,7 @@ i915_vm_tryopen(struct i915_address_space *vm)
 
 void i915_vm_close(struct i915_address_space *vm);
 
-void i915_address_space_init(struct i915_address_space *vm, int subclass);
+int i915_address_space_init(struct i915_address_space *vm, int subclass);
 void i915_address_space_fini(struct i915_address_space *vm);
 
 static inline u32 i915_pte_index(u64 address, unsigned int pde_shift)
@@ -625,7 +627,7 @@ i915_page_dir_dma_addr(const struct i915_ppgtt *ppgtt, const unsigned int n)
 	return __px_dma(pt ? px_base(pt) : ppgtt->vm.scratch[ppgtt->vm.top]);
 }
 
-void ppgtt_init(struct i915_ppgtt *ppgtt, struct intel_gt *gt);
+int ppgtt_init(struct i915_ppgtt *ppgtt, struct intel_gt *gt);
 
 void intel_ggtt_bind_vma(struct i915_address_space *vm,
 			 struct i915_vm_pt_stash *stash,

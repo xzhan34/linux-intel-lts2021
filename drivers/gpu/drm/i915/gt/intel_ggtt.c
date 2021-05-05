@@ -52,8 +52,11 @@ static void i915_ggtt_color_adjust(const struct drm_mm_node *node,
 static int ggtt_init_hw(struct i915_ggtt *ggtt)
 {
 	struct drm_i915_private *i915 = ggtt->vm.i915;
+	int err;
 
-	i915_address_space_init(&ggtt->vm, VM_CLASS_GGTT);
+	err = i915_address_space_init(&ggtt->vm, VM_CLASS_GGTT);
+	if (err)
+		return err;
 
 	ggtt->vm.is_ggtt = true;
 
