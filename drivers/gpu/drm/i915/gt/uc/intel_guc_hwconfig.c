@@ -92,6 +92,78 @@ static int guc_hwconfig_fill_buffer(struct intel_guc *guc, struct intel_hwconfig
 	return ret;
 }
 
+/*
+static inline struct intel_gt *hwconfig_to_gt(struct intel_hwconfig *hwconfig)
+{
+	return container_of(hwconfig, struct intel_gt, info.hwconfig);
+}
+
+static int intel_hwconf_override_klv(struct intel_hwconfig *hwconfig, u32 new_key, u32 new_len, u32 *new_value)
+{
+	u32 *old_array, *new_array, *new_ptr;
+	u32 old_size, new_size;
+	u32 i;
+
+	if (new_key > INTEL_HWCONFIG_MAX)
+		return -EINVAL;
+
+	old_array = (u32*)(hwconfig->ptr);
+	old_size = hwconfig->size / sizeof(u32);
+	new_size = old_size + 2 + new_len;
+	new_array = new_ptr = kmalloc_array(new_size, sizeof(u32), GFP_KERNEL);
+	if (!new_array)
+		return -ENOMEM;
+
+	i = 0;
+	while (i < old_size) {
+		u32 key = old_array[i];
+		u32 len = old_array[i + 1];
+		u32 next = i + 2 + len;
+
+		if ((key >= __INTEL_HWCONFIG_MAX) || (next > old_size)) {
+			struct intel_gt *gt = hwconfig_to_gt(hwconfig);
+			drm_err(&gt->i915->drm, "HWConfig: corrupted table at %d/%d: 0x%X [0x%X] x 0x%X!\n",
+				i, old_size, key, __INTEL_HWCONFIG_MAX, len);
+			return -EINVAL;
+		}
+
+		if (old_array[i] == new_key)
+			break;
+
+		i = next;
+	}
+
+	if (i) {
+		memcpy(new_array, old_array, i * sizeof(u32));
+		new_ptr += i;
+	}
+
+	*(new_ptr++) = new_key;
+	*(new_ptr++) = new_len;
+	memcpy(new_ptr, new_value, new_len * sizeof(u32));
+	new_ptr += new_len;
+
+	if (i < old_size) {
+		memcpy(new_ptr, old_array + i, (old_size - i) * sizeof(u32));
+		new_ptr += old_size - i;
+	}
+
+	hwconfig->ptr = new_array;
+	hwconfig->size = (new_ptr - new_array) * sizeof(u32);
+	kfree(old_array);
+	return 0;
+}
+*/
+
+static int intel_hwconf_apply_overrides(struct intel_hwconfig *hwconfig)
+{
+	/*
+	 * Add table workarounds here with:
+	 *   intel_hwconf_override_klv(hwconfig, INTEL_HWCONFIG_XXX, len, data);
+	 */
+	return 0;
+}
+
 static bool has_table(struct drm_i915_private *i915)
 {
 	if (IS_ALDERLAKE_P(i915) && !IS_ADLP_N(i915))
@@ -128,12 +200,16 @@ static int guc_hwconfig_init(struct intel_gt *gt)
 	}
 
 	ret = guc_hwconfig_fill_buffer(guc, hwconfig);
-	if (ret < 0) {
-		intel_gt_fini_hwconfig(gt);
-		return ret;
-	}
+	if (ret < 0)
+		goto err;
 
-	return 0;
+	ret = intel_hwconf_apply_overrides(hwconfig);
+	if (!ret)
+		return 0;
+
+err:
+	intel_gt_fini_hwconfig(gt);
+	return ret;
 }
 
 /**
