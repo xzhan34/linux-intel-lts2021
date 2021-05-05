@@ -68,6 +68,12 @@ struct i915_debug_event_context_param {
 	struct drm_i915_gem_context_param param;
 } __packed;
 
+struct i915_debug_vm_open {
+	u64 client_handle;
+	u64 handle;
+	u64 flags;
+};
+
 struct i915_debugger {
 	struct kref ref;
 	struct rcu_head rcu;

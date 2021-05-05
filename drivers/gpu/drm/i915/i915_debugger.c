@@ -4,11 +4,15 @@
  */
 
 #include <linux/anon_inodes.h>
+#include <linux/mman.h>
 #include <linux/ptrace.h>
 
 #include "gem/i915_gem_context.h"
+#include "gem/i915_gem_mman.h"
+#include "gem/i915_gem_vm_bind.h"
 
 #include "i915_debugger.h"
+#include "i915_driver.h"
 #include "i915_drm_client.h"
 #include "i915_drv.h"
 #include "i915_gpu_error.h"
@@ -715,6 +719,207 @@ out_uuid:
 	return ret;
 }
 
+static vm_fault_t vm_mmap_fault(struct vm_fault *vmf)
+{
+	struct vm_area_struct *area = vmf->vma;
+	struct i915_address_space *vm = area->vm_private_data;
+	struct i915_gem_ww_ctx ww;
+	struct i915_vma *vma;
+	unsigned long n;
+	vm_fault_t ret;
+	int err;
+
+	err = i915_gem_vm_bind_lock_interruptible(vm);
+	if (err)
+		return i915_error_to_vmf_fault(err);
+
+	vma = i915_gem_vm_bind_lookup_vma(vm, vmf->pgoff << PAGE_SHIFT);
+	if (!vma) {
+		i915_gem_vm_bind_unlock(vm);
+		return VM_FAULT_SIGBUS;
+	}
+
+	n = vmf->pgoff - (vma->node.start >> PAGE_SHIFT);
+
+	ret = VM_FAULT_SIGBUS;
+	for_i915_gem_ww(&ww, err, true) {
+		struct drm_i915_gem_object *obj = vma->obj;
+		pgprot_t prot = pgprot_decrypted(area->vm_page_prot);
+		unsigned long pfn;
+
+		err = i915_gem_object_lock(obj, &ww);
+		if (err)
+			continue;
+
+		if (!i915_gem_object_has_pages(obj)) {
+			err = ____i915_gem_object_get_pages(obj);
+			if (err)
+				continue;
+		}
+
+		if (i915_gem_object_has_struct_page(obj)) {
+			pfn = page_to_pfn(i915_gem_object_get_page(obj, n));
+		} else if (i915_gem_object_is_lmem(obj)) {
+			const dma_addr_t region_offset =
+				(obj->mm.region.mem->iomap.base -
+				 obj->mm.region.mem->region.start);
+			const dma_addr_t page_start_addr =
+				i915_gem_object_get_dma_address(obj, n);
+
+			pfn = PHYS_PFN(page_start_addr + region_offset);
+			prot = pgprot_writecombine(prot);
+		} else {
+			err = -EFAULT;
+			continue;
+		}
+
+		ret = vmf_insert_pfn_prot(area, vmf->address, pfn, prot);
+	}
+
+	i915_gem_vm_bind_unlock(vm);
+
+	if (err)
+		ret = i915_error_to_vmf_fault(err);
+
+	return ret;
+}
+
+static const struct vm_operations_struct vm_mmap_ops = {
+	.fault = vm_mmap_fault,
+};
+
+static int i915_debugger_vm_mmap(struct file *file, struct vm_area_struct *area)
+{
+	struct i915_address_space *vm = file->private_data;
+	pgoff_t len = (area->vm_end - area->vm_start) >> PAGE_SHIFT;
+	pgoff_t sz = vm->total >> PAGE_SHIFT;
+
+	if (area->vm_pgoff > sz - len)
+	       return -EINVAL;
+
+	area->vm_ops = &vm_mmap_ops;
+	area->vm_private_data = vm;
+	area->vm_flags |= VM_PFNMAP;
+
+	return 0;
+}
+
+static int i915_debugger_vm_release(struct inode *inode, struct file *file)
+{
+	struct i915_address_space *vm = file->private_data;
+	struct drm_device *dev = &vm->i915->drm;
+
+	i915_vm_put(vm);
+	drm_dev_put(dev);
+
+	return 0;
+}
+
+static const struct file_operations vm_fops = {
+	.owner   = THIS_MODULE,
+	.llseek	 = no_llseek,
+	.mmap    = i915_debugger_vm_mmap,
+	.release = i915_debugger_vm_release,
+};
+
+static bool client_has_vm(struct i915_drm_client *client,
+			  struct i915_address_space *vm)
+{
+	struct drm_i915_file_private *file = READ_ONCE(client->file);
+	struct i915_address_space *__vm;
+	unsigned long idx;
+
+	if (READ_ONCE(client->closed))
+		return false;
+
+	xa_for_each(&file->vm_xa, idx, __vm)
+		if (__vm == vm)
+			return true;
+
+	return false;
+}
+
+static void *__i915_debugger_load_handle(struct i915_debugger *debugger,
+					 u32 handle)
+{
+	return xa_load(&debugger->resources_xa, handle);
+}
+
+static struct i915_address_space *
+__get_vm_from_handle(struct i915_debugger *debugger,
+		     struct i915_debug_vm_open *vmo)
+{
+	struct i915_drm_client *client;
+	struct i915_address_space *vm;
+
+	if (upper_32_bits(vmo->handle))
+		return ERR_PTR(-EINVAL);
+
+	rcu_read_lock();
+
+	vm = __i915_debugger_load_handle(debugger, lower_32_bits(vmo->handle));
+
+	client = xa_load(&debugger->i915->clients.xarray, vmo->client_handle);
+	if (client && client_has_vm(client, vm))
+		vm = i915_vm_tryget(vm);
+	else
+		vm = NULL;
+
+	rcu_read_unlock();
+
+	return vm ?: ERR_PTR(-ENOENT);
+}
+
+static long
+i915_debugger_vm_open_ioctl(struct i915_debugger *debugger, unsigned long arg)
+{
+	struct i915_debug_vm_open vmo;
+	struct i915_address_space *vm;
+	struct file *file;
+	int ret;
+	int fd;
+
+	if (_IOC_SIZE(PRELIM_I915_DEBUG_IOCTL_VM_OPEN) != sizeof(vmo))
+		return -EINVAL;
+
+	if (!(_IOC_DIR(PRELIM_I915_DEBUG_IOCTL_VM_OPEN) & _IOC_WRITE))
+		return -EINVAL;
+
+	fd = get_unused_fd_flags(O_CLOEXEC);
+	if (fd < 0)
+		return fd;
+
+	if (copy_from_user(&vmo, (void __user *) arg, sizeof(vmo))) {
+		ret = -EFAULT;
+		goto err_fd;
+	}
+
+	vm = __get_vm_from_handle(debugger, &vmo);
+	if (IS_ERR(vm)) {
+		ret = PTR_ERR(vm);
+		goto err_fd;
+	}
+
+	file = anon_inode_getfile(DRIVER_NAME ".vm", &vm_fops,
+				  vm, vmo.flags & O_ACCMODE);
+	if (IS_ERR(file)) {
+		ret = PTR_ERR(file);
+		goto err_vm;
+	}
+
+	file->f_mapping = vm->inode->i_mapping;
+	fd_install(fd, file);
+
+	drm_dev_get(&vm->i915->drm);
+	return fd;
+
+err_vm:
+	i915_vm_put(vm);
+err_fd:
+	put_unused_fd(fd);
+	return ret;
+}
+
 static long i915_debugger_ioctl(struct file *file,
 				unsigned int cmd,
 				unsigned long arg)
@@ -736,6 +941,10 @@ static long i915_debugger_ioctl(struct file *file,
 	case PRELIM_I915_DEBUG_IOCTL_READ_UUID:
 		ret = i915_debugger_read_uuid_ioctl(debugger, cmd, arg);
 		DD_VERBOSE(debugger, "ioctl cmd=READ_UUID ret = %ld\n", ret);
+		break;
+	case PRELIM_I915_DEBUG_IOCTL_VM_OPEN:
+		ret = i915_debugger_vm_open_ioctl(debugger, arg);
+		DD_VERBOSE(debugger, "ioctl cmd=VM_OPEN ret = %ld\n", ret);
 		break;
 	default:
 		ret = -EINVAL;

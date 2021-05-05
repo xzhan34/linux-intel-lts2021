@@ -350,6 +350,7 @@ struct prelim_drm_i915_vm_bind_ext_uuid {
  */
 #define PRELIM_I915_DEBUG_IOCTL_READ_EVENT _IO('j', 0x0)
 #define PRELIM_I915_DEBUG_IOCTL_READ_UUID  _IOWR('j', 0x1, struct prelim_drm_i915_debug_read_uuid)
+#define PRELIM_I915_DEBUG_IOCTL_VM_OPEN  _IOW('j', 0x2, struct prelim_drm_i915_debug_vm_open)
 
 struct prelim_drm_i915_debug_event {
 	__u32 type;
@@ -443,6 +444,15 @@ struct prelim_drm_i915_debug_event_context_param {
 	__u64 ctx_handle;
 	struct drm_i915_gem_context_param param;
 } __attribute__((packed));
+
+struct prelim_drm_i915_debug_vm_open {
+	__u64 client_handle;
+	__u64 handle; /* input: The target address space (ppGTT) */
+	__u64 flags;
+#define PRELIM_I915_DEBUG_VM_OPEN_READ_ONLY	O_RDONLY
+#define PRELIM_I915_DEBUG_VM_OPEN_WRITE_ONLY	O_WRONLY
+#define PRELIM_I915_DEBUG_VM_OPEN_READ_WRITE	O_RDWR
+};
 
 enum prelim_drm_i915_gem_memory_class {
 	PRELIM_I915_MEMORY_CLASS_SYSTEM = 0,

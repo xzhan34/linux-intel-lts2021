@@ -1274,7 +1274,9 @@ static void i915_driver_lastclose(struct drm_device *dev)
 
 static void i915_driver_preclose(struct drm_device *dev, struct drm_file *file)
 {
-	i915_gem_context_close(file);
+	struct drm_i915_file_private *file_priv = file->driver_priv;
+
+	i915_drm_client_close(file_priv->client);
 }
 
 static void i915_driver_postclose(struct drm_device *dev, struct drm_file *file)
@@ -1282,7 +1284,7 @@ static void i915_driver_postclose(struct drm_device *dev, struct drm_file *file)
 	struct drm_i915_file_private *file_priv = file->driver_priv;
 
 	i915_gem_context_close(file);
-	i915_drm_client_close(file_priv->client);
+	i915_drm_client_cleanup(file_priv->client);
 
 	kfree_rcu(file_priv, rcu);
 
