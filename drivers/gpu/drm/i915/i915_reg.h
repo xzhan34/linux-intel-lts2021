@@ -1882,6 +1882,8 @@
 #define VR_TDC_MASK    0x00000080
 #define XEHPSDV_RAPL_PL1_FREQ_LIMIT	_MMIO(0x250070)
 #define RAPL_PL1_FREQ_LIMIT_MASK 0xffff
+#define GT0_PERF_LIMIT_REASONS_LOG_MASK    0xffff0000
+#define GT0_PERF_LIMIT_REASONS_LOG_SHIFT   16
 
 /* GEN9_RAPL_PL1_FREQ_LIMIT is a 64-bit register, accessed herein as two
  * 32-bit parts.
