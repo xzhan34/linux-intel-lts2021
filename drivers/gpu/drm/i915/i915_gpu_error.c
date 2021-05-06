@@ -50,6 +50,7 @@
 #include "gt/intel_gt_mcr.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_gt_regs.h"
+#include "gt/intel_gt_debug.h"
 #include "gt/uc/intel_guc_capture.h"
 
 #include "i915_debugger.h"
@@ -1380,13 +1381,13 @@ static int wait_thread_attention(const struct intel_engine_cs *engine,
 
 	do {
 		/* XXX: how many threads to wait? */
-		if (intel_engine_eu_attention_fw(engine))
+		if (intel_gt_eu_threads_needing_attention(engine->gt))
 			return 0;
 
 		cpu_relax();
 	} while (!ktime_after(ktime_get_raw(), end));
 
-	if (intel_engine_eu_attention_fw(engine))
+	if (intel_gt_eu_threads_needing_attention(engine->gt))
 		return 0;
 
 	drm_dbg(&engine->i915->drm, "sip thread attention signal timeout\n");
@@ -1516,7 +1517,8 @@ static void engine_record_registers(struct intel_engine_coredump *ee)
 		}
 	}
 
-	if (GRAPHICS_VER(engine->i915) >= 9) {
+	if (intel_engine_has_eu_attention(engine) &&
+	    GRAPHICS_VER(engine->i915) >= 9) {
 		const unsigned int timeout = READ_ONCE(engine->props.stop_timeout_ms);
 		struct intel_gt *gt = engine->gt;
 		int i, ret;

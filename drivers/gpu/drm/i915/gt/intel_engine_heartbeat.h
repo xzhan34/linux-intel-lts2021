@@ -23,4 +23,6 @@ void intel_gt_unpark_heartbeats(struct intel_gt *gt);
 int intel_engine_pulse(struct intel_engine_cs *engine);
 int intel_engine_flush_barriers(struct intel_engine_cs *engine);
 
+void intel_engine_schedule_heartbeat(struct intel_engine_cs *engine);
+
 #endif /* INTEL_ENGINE_HEARTBEAT_H */

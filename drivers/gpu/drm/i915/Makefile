@@ -105,6 +105,7 @@ gt-y += \
 	gt/intel_gt.o \
 	gt/intel_gt_buffer_pool.o \
 	gt/intel_gt_clock_utils.o \
+	gt/intel_gt_debug.o \
 	gt/intel_gt_debugfs.o \
 	gt/intel_gt_engines_debugfs.o \
 	gt/intel_gt_irq.o \

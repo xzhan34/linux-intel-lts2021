@@ -2429,18 +2429,6 @@ void xehp_enable_ccs_engines(struct intel_engine_cs *engine)
 			   _MASKED_BIT_ENABLE(GEN12_RCU_MODE_CCS_ENABLE));
 }
 
-int intel_engine_eu_attention_fw(const struct intel_engine_cs *engine)
-{
-	struct intel_gt *gt = engine->gt;
-	unsigned int count = 0;
-	int i;
-
-	for (i = 0; i < TD_ATT_MAX; i++)
-		count += hweight_long(intel_gt_mcr_read_any_fw(gt, TD_ATT(i)));
-
-	return count;
-}
-
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "mock_engine.c"
 #include "selftest_engine.c"

@@ -383,6 +383,7 @@ struct prelim_drm_i915_vm_bind_ext_uuid {
 #define PRELIM_I915_DEBUG_IOCTL_READ_EVENT _IO('j', 0x0)
 #define PRELIM_I915_DEBUG_IOCTL_READ_UUID  _IOWR('j', 0x1, struct prelim_drm_i915_debug_read_uuid)
 #define PRELIM_I915_DEBUG_IOCTL_VM_OPEN  _IOW('j', 0x2, struct prelim_drm_i915_debug_vm_open)
+#define PRELIM_I915_DEBUG_IOCTL_EU_CONTROL _IOWR('j', 0x3, struct prelim_drm_i915_debug_eu_control)
 
 struct prelim_drm_i915_debug_event {
 	__u32 type;
@@ -394,11 +395,13 @@ struct prelim_drm_i915_debug_event {
 #define PRELIM_DRM_I915_DEBUG_EVENT_VM       5
 #define PRELIM_DRM_I915_DEBUG_EVENT_VM_BIND  6
 #define PRELIM_DRM_I915_DEBUG_EVENT_CONTEXT_PARAM 7
-#define PRELIM_DRM_I915_DEBUG_EVENT_MAX_EVENT PRELIM_DRM_I915_DEBUG_EVENT_CONTEXT_PARAM
+#define PRELIM_DRM_I915_DEBUG_EVENT_EU_ATTENTION 8
+#define PRELIM_DRM_I915_DEBUG_EVENT_MAX_EVENT PRELIM_DRM_I915_DEBUG_EVENT_EU_ATTENTION
 
 	__u32 flags;
 #define PRELIM_DRM_I915_DEBUG_EVENT_CREATE	(1 << 31)
 #define PRELIM_DRM_I915_DEBUG_EVENT_DESTROY	(1 << 30)
+#define PRELIM_DRM_I915_DEBUG_EVENT_STATE_CHANGE (1 << 29)
 	__u64 seqno;
 	__u64 size;
 } __attribute__((packed));
@@ -461,6 +464,31 @@ struct prelim_drm_i915_debug_event_vm_bind {
 	__u64 uuids[0];
 } __attribute__((packed));
 
+struct prelim_drm_i915_debug_event_eu_attention {
+	struct prelim_drm_i915_debug_event base;
+	__u64 client_handle;
+
+	__u32 flags;
+
+	struct i915_engine_class_instance ci;
+
+	__u32 bitmask_size;
+
+	/**
+	 * Bitmask of thread attentions starting from natural
+	 * hardware order of slice=0,subslice=0,eu=0, 8 attention
+	 * bits per eu.
+	 *
+	 * NOTE: For dual subslice GENs, the bitmask is for
+	 * lockstepped EUs and not for logical EUs. This makes
+	 * the bitmask includu only half of logical EU count
+	 * provided by topology query as we only control the
+	 * 'pair' instead of individual EUs.
+	 */
+
+	__u8 bitmask[0];
+} __attribute__((packed));
+
 struct prelim_drm_i915_debug_read_uuid {
 	__u64 client_handle;
 	__u64 handle;
@@ -485,6 +513,33 @@ struct prelim_drm_i915_debug_vm_open {
 #define PRELIM_I915_DEBUG_VM_OPEN_WRITE_ONLY	O_WRONLY
 #define PRELIM_I915_DEBUG_VM_OPEN_READ_WRITE	O_RDWR
 };
+
+struct prelim_drm_i915_debug_eu_control {
+	__u64 client_handle;
+	__u32 cmd;
+#define PRELIM_I915_DEBUG_EU_THREADS_CMD_INTERRUPT_ALL 0
+#define PRELIM_I915_DEBUG_EU_THREADS_CMD_STOPPED   1
+#define PRELIM_I915_DEBUG_EU_THREADS_CMD_RESUME    2
+#define PRELIM_I915_DEBUG_EU_THREADS_CMD_INTERRUPT 3
+	__u32 flags;
+	__u64 seqno;
+
+	struct i915_engine_class_instance ci;
+	__u32 bitmask_size;
+
+	/**
+	 * Bitmask of thread attentions starting from natural
+	 * hardware order of slice=0,subslice=0,eu=0, 8 attention bits
+	 * per eu.
+	 *
+	 * NOTE: For dual subslice GENs, the bitmask is for
+	 * lockstepped EUs and not for logical EUs. This makes
+	 * the bitmask includu only half of logical EU count
+	 * provided by topology query as we only control the
+	 * 'pair' instead of individual EUs.
+	 */
+	__u64 bitmask_ptr;
+} __attribute__((packed));
 
 enum prelim_drm_i915_gem_memory_class {
 	PRELIM_I915_MEMORY_CLASS_SYSTEM = 0,

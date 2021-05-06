@@ -172,6 +172,8 @@
 #define RING_ELSP(base)				_MMIO((base) + 0x230)
 #define RING_EXECLIST_STATUS_LO(base)		_MMIO((base) + 0x234)
 #define RING_EXECLIST_STATUS_HI(base)		_MMIO((base) + 0x234 + 4)
+#define RING_CURRENT_LRCA(base)			_MMIO((base) + 0x240)
+#define   CURRENT_LRCA_VALID			REG_BIT(0)
 #define RING_CONTEXT_CONTROL(base)		_MMIO((base) + 0x244)
 #define	  CTX_CTRL_ENGINE_CTX_RESTORE_INHIBIT	REG_BIT(0)
 #define   CTX_CTRL_RS_CTX_ENABLE		REG_BIT(1)

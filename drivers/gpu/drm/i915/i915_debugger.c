@@ -16,7 +16,11 @@
 #include "gem/i915_gem_vm_bind.h"
 #include "gt/intel_engine_pm.h"
 #include "gt/intel_engine_regs.h"
+#include "gt/intel_engine_user.h"
+#include "gt/intel_engine_heartbeat.h"
 #include "gt/intel_gt.h"
+#include "gt/intel_gt_debug.h"
+#include "gt/intel_gt_mcr.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_gt_regs.h"
 
@@ -100,6 +104,7 @@ static const char *event_type_to_str(u32 type)
 		"vm",
 		"vm-bind",
 		"context-param",
+		"eu-attention",
 		"unknown",
 	};
 
@@ -115,6 +120,8 @@ static const char *event_flags_to_str(const u32 flags)
 		return "create";
 	else if (flags & PRELIM_DRM_I915_DEBUG_EVENT_DESTROY)
 		return "destroy";
+	else if (flags & PRELIM_DRM_I915_DEBUG_EVENT_STATE_CHANGE)
+		return "state-change";
 
 	return "unknown";
 }
@@ -216,6 +223,39 @@ static void event_printer_context_param(const struct i915_debugger * const debug
 	EVENT_PRINT_MEMBER_U64(debugger, prefix, context_param_param, value);
 }
 
+static void event_printer_eu_attention(const struct i915_debugger * const debugger,
+				       const char * const prefix,
+				       const struct i915_debug_event * const event)
+{
+	const struct i915_debug_event_eu_attention * const eu_attention =
+		from_event(eu_attention, event);
+	const struct i915_engine_class_instance * const eu_attention_ci =
+		&eu_attention->ci;
+	unsigned int i, count;
+
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, eu_attention, client_handle);
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, eu_attention, ctx_handle);
+	EVENT_PRINT_MEMBER_U32X(debugger, prefix, eu_attention, flags);
+	EVENT_PRINT_MEMBER_U16(debugger, prefix, eu_attention_ci, engine_class);
+	EVENT_PRINT_MEMBER_U16(debugger, prefix, eu_attention_ci, engine_instance);
+	EVENT_PRINT_MEMBER_U32(debugger, prefix, eu_attention, bitmask_size);
+
+	for (count = 0, i = 0; i < eu_attention->bitmask_size; i++) {
+		if (eu_attention->bitmask[i]) {
+			i915_debugger_print(debugger, DD_DEBUG_LEVEL_INFO, prefix,
+					    "  eu_attention->bitmask[%u] = 0x%x",
+					    i, eu_attention->bitmask[i]);
+			count++;
+		}
+
+		if (debugger->debug_lvl < DD_DEBUG_LEVEL_VERBOSE && count >= 8) {
+			i915_debugger_print(debugger, DD_DEBUG_LEVEL_INFO, prefix,
+					    "  eu_attention->bitmask[%u]++ <snipped>", i);
+			break;
+		}
+	}
+}
+
 static void i915_debugger_print_event(const struct i915_debugger * const debugger,
 				      const char * const prefix,
 				      const struct i915_debug_event * const event)
@@ -229,6 +269,7 @@ static void i915_debugger_print_event(const struct i915_debugger * const debugge
 		event_printer_vm,
 		event_printer_vma,
 		event_printer_context_param,
+		event_printer_eu_attention,
 	};
 	debug_event_printer_t event_printer = NULL;
 
@@ -509,8 +550,8 @@ disconnect:
 }
 
 static struct i915_debug_event *
-i915_debugger_create_event(struct i915_debugger * const debugger,
-			   u32 type, u32 flags, u32 size, gfp_t gfp)
+__i915_debugger_create_event(struct i915_debugger * const debugger,
+			     u32 type, u32 flags, u32 size, gfp_t gfp)
 {
 	struct i915_debug_event *event;
 
@@ -525,8 +566,20 @@ i915_debugger_create_event(struct i915_debugger * const debugger,
 
 	event->type = type;
 	event->flags = flags;
-	event->seqno = atomic_long_inc_return(&debugger->event_seqno);
 	event->size = size;
+
+	return event;
+}
+
+static struct i915_debug_event *
+i915_debugger_create_event(struct i915_debugger * const debugger,
+			   u32 type, u32 flags, u32 size, gfp_t gfp)
+{
+	struct i915_debug_event *event;
+
+	event = __i915_debugger_create_event(debugger, type, flags, size, gfp);
+	if (event)
+		event->seqno = atomic_long_inc_return(&debugger->event_seqno);
 
 	return event;
 }
@@ -821,81 +874,14 @@ static void dg2_flush_engines(struct drm_i915_private *i915, u32 mask)
 	}
 }
 
-static int gen12_gt_invalidate_l3(struct intel_gt *gt,
-				  unsigned int timeout_us)
-{
-	struct intel_uncore * const uncore = gt->uncore;
-	const enum forcewake_domains fw =
-		intel_uncore_forcewake_for_reg(uncore, GEN7_MISCCPCTL,
-					       FW_REG_READ | FW_REG_WRITE) |
-		intel_uncore_forcewake_for_reg(uncore, GEN11_GLBLINVL,
-					       FW_REG_READ | FW_REG_WRITE);
-	intel_wakeref_t wakeref;
-	u32 cpctl, cpctl_org, inv, mask;
-	int ret;
-
-	/* Reasonable to expect that when it went to sleep, it flushed */
-	wakeref = intel_gt_pm_get_if_awake(gt);
-	if (!wakeref)
-		return 0;
-
-	mask = GEN12_DOP_CLOCK_GATE_RENDER_ENABLE;
-	if (GRAPHICS_VER_FULL(gt->i915) >= IP_VER(12, 50))
-		mask |= GEN8_DOP_CLOCK_GATE_CFCLK_ENABLE;
-
-	spin_lock_irq(&uncore->lock);
-	intel_uncore_forcewake_get__locked(uncore, fw);
-
-	cpctl_org = intel_uncore_read_fw(uncore, GEN7_MISCCPCTL);
-	if (cpctl_org & mask)
-		intel_uncore_write_fw(uncore, GEN7_MISCCPCTL, cpctl_org & ~mask);
-
-	cpctl = intel_uncore_read_fw(uncore, GEN7_MISCCPCTL);
-	if (cpctl & mask) {
-		ret = cpctl & GEN12_DOP_CLOCK_GATE_LOCK ? -EACCES : -ENXIO;
-		/*
-		 * XXX: We need to bail out as there are gens
-		 * that wont survive invalidate without disabling
-		 * the gating of above clocks. The resulting hang is
-		 * is catastrophic and we lose the gpu in a way
-		 * that even reset wont help.
-		 */
-		goto out;
-	}
-
-	ret = __intel_wait_for_register_fw(uncore, GEN11_GLBLINVL,
-					   GEN11_L3_GLOBAL_INVALIDATE, 0,
-					   timeout_us, 0, &inv);
-	if (ret)
-		goto out;
-
-	intel_uncore_write_fw(uncore, GEN11_GLBLINVL,
-			      inv | GEN11_L3_GLOBAL_INVALIDATE);
-
-	ret = __intel_wait_for_register_fw(uncore, GEN11_GLBLINVL,
-					   GEN11_L3_GLOBAL_INVALIDATE, 0,
-					   timeout_us, 0, &inv);
-
-out:
-	if (cpctl_org != cpctl)
-		intel_uncore_write_fw(uncore, GEN7_MISCCPCTL, cpctl_org);
-
-	intel_uncore_forcewake_put__locked(uncore, fw);
-	spin_unlock_irq(&uncore->lock);
-
-	intel_gt_pm_put(gt, wakeref);
-
-	return ret;
-}
-
-static void gen12_invalidate_l3(struct drm_i915_private *i915)
+static void gen12_flush_l3(struct drm_i915_private *i915)
 {
 	const unsigned int timeout_us = 5000;
 	struct intel_gt *gt;
 	int id, ret;
 
 	for_each_gt(gt, i915, id) {
-		ret = gen12_gt_invalidate_l3(gt, timeout_us);
+		ret = intel_gt_invalidate_l3_mmio(gt, timeout_us);
 		if (ret)
 			drm_notice_once(&gt->i915->drm,
 					"debugger: gt%d l3 invalidation fail: %s(%d). "
@@ -926,7 +912,7 @@ static void gpu_flush_engines(struct drm_i915_private *i915, u32 mask)
 
 static void gpu_invalidate_l3(struct drm_i915_private *i915)
 {
-	gen12_invalidate_l3(i915);
+	gen12_flush_l3(i915);
 }
 
 static int access_page_in_obj(struct drm_i915_gem_object * const obj,
@@ -1286,6 +1272,86 @@ static const struct file_operations vm_fops = {
 	.release = i915_debugger_vm_release,
 };
 
+static bool context_runalone_is_active(struct intel_engine_cs *engine)
+{
+	u32 val, engine_status, engine_shift;
+	int id;
+
+	val = intel_uncore_read(engine->gt->uncore, GEN12_RCU_DEBUG_1);
+
+	if (engine->class == RENDER_CLASS)
+		id = 0;
+	else if (engine->class == COMPUTE_CLASS)
+		id = engine->instance + 1;
+	else
+		GEM_BUG_ON(engine->class);
+
+	if (GEM_WARN_ON(id > 4))
+		return false;
+
+	/* 3 status bits per engine, starting from bit 7 */
+	engine_shift = 3 * id + 7;
+	engine_status = val >> engine_shift & 0x7;
+
+	/*
+	 * On earlier gen12 the context status seems to be idle when
+	 * it has raised attention. We have to omit the active bit.
+	 */
+	if (IS_DGFX(engine->i915))
+		return (engine_status & GEN12_RCU_DEBUG_1_RUNALONE_ACTIVE) &&
+			(engine_status & GEN12_RCU_DEBUG_1_CONTEXT_ACTIVE);
+
+	return engine_status & GEN12_RCU_DEBUG_1_RUNALONE_ACTIVE;
+}
+
+static bool context_lrc_match(struct intel_engine_cs *engine,
+			      struct intel_context *ce)
+{
+	u32 lrc_ggtt, lrc_reg, lrc_hw;
+
+	lrc_ggtt = ce->lrc.lrca & GENMASK(31, 12);
+	lrc_reg = ENGINE_READ(engine, RING_CURRENT_LRCA);
+	lrc_hw = lrc_reg & GENMASK(31, 12);
+
+	if (lrc_reg & CURRENT_LRCA_VALID)
+		return lrc_ggtt == lrc_hw;
+
+	return false;
+}
+
+static bool context_verify_active(struct intel_engine_cs *engine,
+				  struct intel_context *ce)
+{
+	/* We can't do better than this on older gens */
+	if (GRAPHICS_VER(engine->i915) < 11)
+		return true;
+
+	if (!context_lrc_match(engine, ce))
+		return false;
+
+	if (GRAPHICS_VER(engine->i915) < 12)
+		return true;
+
+	if (!context_runalone_is_active(engine))
+		return false;
+
+	return true;
+}
+
+static struct intel_context *engine_active_context_get(struct intel_engine_cs *engine)
+{
+	struct intel_context *ce = NULL;
+	struct i915_request *rq;
+
+	rcu_read_lock();
+	rq = intel_engine_find_active_request(engine);
+	if (rq && context_verify_active(engine, rq->context))
+		ce = intel_context_get(rq->context);
+	rcu_read_unlock();
+
+	return ce;
+}
+
 static bool client_has_vm(struct i915_drm_client *client,
 			  struct i915_address_space *vm)
 {
@@ -1405,6 +1471,412 @@ err_fd:
 	return ret;
 }
 
+static int eu_control_interrupt_all(struct i915_debugger *debugger,
+				    u64 client_handle,
+				    struct intel_engine_cs *engine,
+				    u8 *bits,
+				    unsigned int bitmask_size)
+{
+	struct intel_gt *gt = engine->gt;
+	struct i915_drm_client *client;
+	struct intel_context *active_ctx;
+	u32 context_lrca, lrca;
+	u64 client_id;
+	u32 td_ctl;
+
+	/* Make sure we dont promise anything but interrupting all */
+	if (bitmask_size)
+		return -EINVAL;
+
+	active_ctx = engine_active_context_get(engine);
+	if (!active_ctx)
+		return -ENOENT;
+
+	if (!active_ctx->client) {
+		intel_context_put(active_ctx);
+		return -ENOENT;
+	}
+
+	client = i915_drm_client_get(active_ctx->client);
+	client_id = client->id;
+	i915_drm_client_put(client);
+	context_lrca = active_ctx->lrc.lrca & GENMASK(31, 12);
+	intel_context_put(active_ctx);
+
+	if (client_id != client_handle)
+		return -EBUSY;
+
+	/* Additional check just before issuing MMIO writes */
+	lrca = ENGINE_READ(engine, RING_CURRENT_LRCA);
+
+	/* LRCA is not valid anymore */
+	if (!(lrca & 0x1))
+		return -ENOENT;
+
+	lrca &= GENMASK(31, 12);
+
+	if (context_lrca != lrca)
+		return -EBUSY;
+
+	td_ctl = intel_gt_mcr_read_any(gt, TD_CTL);
+
+	/* Halt on next thread dispatch */
+	if (!(td_ctl & TD_CTL_FORCE_EXTERNAL_HALT))
+		intel_gt_mcr_multicast_write(gt, TD_CTL,
+					     td_ctl | TD_CTL_FORCE_EXTERNAL_HALT);
+
+	/*
+	 * The sleep is needed because some interrupts are ignored
+	 * by the HW, hence we allow the HW some time to acknowledge
+	 * that.
+	 */
+	udelay(100);
+
+	/* Halt regardless of thread dependancies */
+	if (!(td_ctl & TD_CTL_FORCE_EXCEPTION))
+		intel_gt_mcr_multicast_write(gt, TD_CTL,
+					     td_ctl | TD_CTL_FORCE_EXCEPTION);
+
+	udelay(100);
+
+	intel_gt_mcr_multicast_write(gt, TD_CTL, td_ctl &
+				     ~(TD_CTL_FORCE_EXTERNAL_HALT | TD_CTL_FORCE_EXCEPTION));
+
+	/*
+	 * In case of stopping wrong ctx emit warning.
+	 * Nothing else we can do for now.
+	 */
+	lrca = ENGINE_READ(engine, RING_CURRENT_LRCA);
+	if (!(lrca & 0x1) || context_lrca != (lrca & GENMASK(31, 12)))
+		dev_warn(gt->i915->drm.dev,
+			 "i915 debugger: interrupted wrong context.");
+
+	return 0;
+}
+
+struct ss_iter {
+	struct i915_debugger *debugger;
+	unsigned int i;
+
+	unsigned int size;
+	u8 *bits;
+};
+
+static int check_attn_ss_fw(struct intel_gt *gt, void *data,
+			    unsigned int group, unsigned int instance,
+			    bool present)
+{
+	struct ss_iter *iter = data;
+	struct i915_debugger *debugger = iter->debugger;
+	unsigned int row;
+
+	for (row = 0; row < TD_EU_ATTENTION_MAX_ROWS; row++) {
+		u32 val, cur = 0;
+
+		if (iter->i >= iter->size)
+			return 0;
+
+		if (GEM_WARN_ON((iter->i + sizeof(val)) >
+				(intel_gt_eu_attention_bitmap_size(gt))))
+			return -EIO;
+
+		memcpy(&val, &iter->bits[iter->i], sizeof(val));
+		iter->i += sizeof(val);
+
+		if (present)
+			cur = intel_gt_mcr_read_fw(gt, TD_ATT(row), group, instance);
+
+		if ((val | cur) != cur) {
+			DD_INFO(debugger,
+				"WRONG CLEAR (%u:%u:%u) TD_CRL: 0x%08x; TD_ATT: 0x%08x\n",
+				group, instance, row, val, cur);
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
+static int clear_attn_ss_fw(struct intel_gt *gt, void *data,
+			    unsigned int group, unsigned int instance,
+			    bool present)
+{
+	struct ss_iter *iter = data;
+	struct i915_debugger *debugger = iter->debugger;
+	unsigned int row;
+
+	for (row = 0; row < TD_EU_ATTENTION_MAX_ROWS; row++) {
+		u32 val;
+
+		if (iter->i >= iter->size)
+			return 0;
+
+		if (GEM_WARN_ON((iter->i + sizeof(val)) >
+				(intel_gt_eu_attention_bitmap_size(gt))))
+			return -EIO;
+
+		memcpy(&val, &iter->bits[iter->i], sizeof(val));
+		iter->i += sizeof(val);
+
+		if (!val)
+			continue;
+
+		if (present) {
+			intel_gt_mcr_unicast_write_fw(gt, TD_CLR(row), val,
+						      group, instance);
+
+			DD_INFO(debugger,
+				"TD_CLR: (%u:%u:%u): 0x%08x\n",
+				group, instance, row, val);
+		} else {
+			DD_WARN(debugger,
+				"TD_CLR: (%u:%u:%u): 0x%08x write to fused off subslice\n",
+				group, instance, row, val);
+		}
+	}
+
+	return 0;
+}
+
+static int eu_control_resume(struct i915_debugger *debugger,
+			      struct intel_engine_cs *engine,
+			      u8 *bits,
+			      unsigned int bitmask_size)
+{
+	struct ss_iter iter = {
+		.debugger = debugger,
+		.i = 0,
+		.size = bitmask_size,
+		.bits = bits
+	};
+	int ret = 0;
+
+	/*
+	 * hsdes: 18021122357
+	 * We need to avoid clearing attention bits that are not set
+	 * in order to avoid the EOT hang on PVC.
+	 */
+	if (GRAPHICS_VER_FULL(engine->i915) == IP_VER(12, 60)) {
+		ret = intel_gt_for_each_compute_slice_subslice(engine->gt,
+							       check_attn_ss_fw,
+							       &iter);
+		if (ret)
+			return ret;
+
+		iter.i = 0;
+	}
+
+
+	intel_gt_for_each_compute_slice_subslice(engine->gt,
+						 clear_attn_ss_fw, &iter);
+	return 0;
+}
+
+static int do_eu_control(struct i915_debugger * debugger,
+			 const struct prelim_drm_i915_debug_eu_control * const arg,
+			 struct prelim_drm_i915_debug_eu_control __user * const user_ptr)
+{
+	void __user * const bitmask_ptr = u64_to_user_ptr(arg->bitmask_ptr);
+	struct intel_engine_cs *engine;
+	unsigned int hw_attn_size, attn_size;
+	u8* bits = NULL;
+	u64 seqno;
+	int ret;
+
+	/* Accept only hardware reg granularity mask */
+	if (!IS_ALIGNED(arg->bitmask_size, sizeof(u32)))
+		return -EINVAL;
+
+	/* XXX Do we need to limit to these types? */
+	if (arg->ci.engine_class != I915_ENGINE_CLASS_RENDER &&
+	    arg->ci.engine_class != I915_ENGINE_CLASS_COMPUTE)
+		return -EINVAL;
+
+	engine = intel_engine_lookup_user(debugger->i915,
+					  arg->ci.engine_class,
+					  arg->ci.engine_instance);
+	if (!engine)
+		return -EINVAL;
+
+	hw_attn_size = intel_gt_eu_attention_bitmap_size(engine->gt);
+	attn_size = arg->bitmask_size;
+
+	if (attn_size > hw_attn_size)
+		attn_size = hw_attn_size;
+
+	if (attn_size > 0) {
+		bits = kmalloc(attn_size, GFP_KERNEL);
+		if (!bits)
+			return -ENOMEM;
+
+		if (copy_from_user(bits, bitmask_ptr, attn_size)) {
+			ret = -EFAULT;
+			goto out_free;
+		}
+
+		if (debugger->debug_lvl > DD_DEBUG_LEVEL_INFO) {
+			unsigned long i;
+
+			for (i = 0; i < attn_size; i++) {
+				if (!bits[i])
+					continue;
+
+				i915_debugger_print(debugger, DD_DEBUG_LEVEL_VERBOSE, "eu_control",
+						    "from_user.bitmask[%lu:%u] = 0x%x",
+						    i, attn_size, bits[i]);
+			}
+		}
+	}
+
+	if (!intel_engine_pm_get_if_awake(engine)) {
+		ret = -EIO;
+		goto out_free;
+	}
+
+	ret = 0;
+	write_lock(&debugger->eu_lock);
+	switch (arg->cmd) {
+	case PRELIM_I915_DEBUG_EU_THREADS_CMD_INTERRUPT_ALL:
+		ret = eu_control_interrupt_all(debugger, arg->client_handle,
+					       engine, bits, attn_size);
+		break;
+	case PRELIM_I915_DEBUG_EU_THREADS_CMD_STOPPED:
+		intel_gt_eu_attention_bitmap(engine->gt, bits, attn_size);
+		break;
+	case PRELIM_I915_DEBUG_EU_THREADS_CMD_RESUME:
+		ret = eu_control_resume(debugger, engine, bits, attn_size);
+		break;
+	case PRELIM_I915_DEBUG_EU_THREADS_CMD_INTERRUPT:
+		/* We cant interrupt individual threads */
+		ret = -EINVAL;
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	if (ret == 0)
+		seqno = atomic_long_inc_return(&debugger->event_seqno);
+
+	write_unlock(&debugger->eu_lock);
+
+	intel_engine_schedule_heartbeat(engine);
+	intel_engine_pm_put(engine);
+
+	if (ret)
+		goto out_free;
+
+	if (put_user(seqno, &user_ptr->seqno)) {
+		ret = -EFAULT;
+		goto out_free;
+	}
+
+	if (copy_to_user(bitmask_ptr, bits, attn_size)) {
+		ret = -EFAULT;
+		goto out_free;
+	}
+
+	if (debugger->debug_lvl > DD_DEBUG_LEVEL_INFO) {
+		unsigned long i;
+
+		for (i = 0; i < attn_size; i++) {
+			if (!bits[i])
+				continue;
+
+			i915_debugger_print(debugger, DD_DEBUG_LEVEL_VERBOSE, "eu_control",
+					    "to_user.bitmask[%lu:%u] = 0x%x",
+					    i, attn_size, bits[i]);
+		}
+	}
+
+	if (hw_attn_size != arg->bitmask_size)
+		if (put_user(hw_attn_size, &user_ptr->bitmask_size))
+			ret = -EFAULT;
+
+out_free:
+	kfree(bits);
+
+	return ret;
+}
+
+static struct i915_drm_client *
+find_client_get(struct i915_debugger *debugger, unsigned long handle)
+{
+	struct i915_drm_client *client;
+
+	rcu_read_lock();
+	client = xa_load(&debugger->i915->clients.xarray, handle);
+	if (client) {
+		if (!is_client_connected(debugger, client) ||
+		    READ_ONCE(client->closed))
+			client = NULL;
+		else
+			client = i915_drm_client_get_rcu(client);
+	}
+
+	rcu_read_unlock();
+
+	return client;
+}
+
+static long i915_debugger_eu_control(struct i915_debugger *debugger,
+				     const unsigned int cmd,
+				     const u64 arg)
+{
+	struct prelim_drm_i915_debug_eu_control __user * const user_ptr =
+		u64_to_user_ptr(arg);
+	struct prelim_drm_i915_debug_eu_control user_arg;
+	struct i915_drm_client *client;
+	int ret;
+
+	if (_IOC_SIZE(cmd) < sizeof(user_arg))
+		return -EINVAL;
+
+	/* Userland write */
+	if (!(_IOC_DIR(cmd) & _IOC_WRITE))
+		return -EINVAL;
+
+	/* Userland read */
+	if (!(_IOC_DIR(cmd) & _IOC_READ))
+		return -EINVAL;
+
+	if (copy_from_user(&user_arg,
+			   user_ptr,
+			   sizeof(user_arg)))
+		return -EFAULT;
+
+	if (user_arg.flags)
+		return -EINVAL;
+
+	if (!access_ok(u64_to_user_ptr(user_arg.bitmask_ptr),
+		       user_arg.bitmask_size))
+		return -EFAULT;
+
+	DD_INFO(debugger,
+		"eu_control: client_handle=%llu, cmd=%u, flags=0x%x, ci.engine_class=%hu, ci.engine_instance=%hu, bitmask_size=%u\n",
+		user_arg.client_handle, user_arg.cmd, user_arg.flags, user_arg.ci.engine_class,
+		user_arg.ci.engine_instance, user_arg.bitmask_size);
+
+	client = find_client_get(debugger, user_arg.client_handle);
+	if (!client) {
+		DD_INFO(debugger, "eu_control: no client found for %llu\n", user_arg.client_handle);
+		return -EINVAL;
+	}
+
+	GEM_BUG_ON(client->id != user_arg.client_handle);
+
+	ret = do_eu_control(debugger, &user_arg, user_ptr);
+
+	DD_INFO(debugger,
+		"eu_control: client_handle=%llu, cmd=%u, flags=0x%x, ci.engine_class=%hu, ci.engine_instance=%hu, bitmask_size=%u, ret=%d\n",
+		user_arg.client_handle, user_arg.cmd, user_arg.flags, user_arg.ci.engine_class, user_arg.ci.engine_instance,
+		user_arg.bitmask_size, ret);
+
+	i915_drm_client_put(client);
+
+	return ret;
+}
+
 static long i915_debugger_ioctl(struct file *file,
 				unsigned int cmd,
 				unsigned long arg)
@@ -1430,6 +1902,10 @@ static long i915_debugger_ioctl(struct file *file,
 	case PRELIM_I915_DEBUG_IOCTL_VM_OPEN:
 		ret = i915_debugger_vm_open_ioctl(debugger, arg);
 		DD_VERBOSE(debugger, "ioctl cmd=VM_OPEN ret = %ld\n", ret);
+		break;
+	case PRELIM_I915_DEBUG_IOCTL_EU_CONTROL:
+		ret = i915_debugger_eu_control(debugger, cmd, arg);
+		DD_VERBOSE(debugger, "ioctl cmd=EU_CONTROL ret=%ld\n", ret);
 		break;
 	default:
 		ret = -EINVAL;
@@ -1906,6 +2382,9 @@ i915_debugger_open(struct drm_i915_private * const i915,
 	kref_init(&debugger->ref);
 	mutex_init(&debugger->lock);
 	atomic_long_set(&debugger->event_seqno, 0);
+
+	rwlock_init(&debugger->eu_lock);
+
 	init_completion(&debugger->read_done);
 	init_waitqueue_head(&debugger->write_done);
 	init_completion(&debugger->discovery);
@@ -2099,6 +2578,108 @@ i915_debugger_get_for_client(const struct i915_drm_client *client)
 	i915_debugger_put(debugger);
 
 	return NULL;
+}
+
+static int send_engine_attentions(struct i915_debugger *debugger,
+				  struct intel_engine_cs *engine,
+				  struct i915_drm_client *client,
+				  struct intel_context *ce)
+{
+	struct i915_debug_event_eu_attention *ea;
+	struct i915_debug_event *event;
+	unsigned int size;
+	int ret;
+
+	if (is_debugger_closed(debugger))
+		return -ENODEV;
+
+	if (!intel_engine_pm_get_if_awake(engine))
+		return -ENOENT;
+
+	/* XXX test for CONTEXT_DEBUG when igt/umd is there */
+
+	size = struct_size(ea, bitmask, intel_gt_eu_attention_bitmap_size(engine->gt));
+	event = __i915_debugger_create_event(debugger,
+					     PRELIM_DRM_I915_DEBUG_EVENT_EU_ATTENTION,
+					     PRELIM_DRM_I915_DEBUG_EVENT_STATE_CHANGE,
+					     size,
+					     GFP_KERNEL);
+	if (!event)
+		return -ENOMEM;
+
+	ea = from_event(ea, event);
+	ea->client_handle = client->id;
+
+	ea->ci.engine_class = engine->uabi_class;
+	ea->ci.engine_instance = engine->uabi_instance;
+	ea->bitmask_size = intel_gt_eu_attention_bitmap_size(engine->gt);
+
+	read_lock(&debugger->eu_lock);
+	intel_gt_eu_attention_bitmap(engine->gt, &ea->bitmask[0], ea->bitmask_size);
+	event->seqno = atomic_long_inc_return(&debugger->event_seqno);
+	read_unlock(&debugger->eu_lock);
+	intel_engine_pm_put(engine);
+
+	ret = i915_debugger_send_event(debugger, event);
+
+	kfree(event);
+
+	return ret;
+}
+
+static void i915_debugger_send_engine_attention(struct intel_engine_cs *engine)
+{
+	struct i915_debugger *debugger;
+	struct i915_drm_client *client;
+	struct intel_context *ce;
+	int ret;
+
+	debugger = i915_debugger_get(engine->i915);
+	if (!debugger)
+		return;
+
+	ce = engine_active_context_get(engine);
+	if (!ce) {
+		DD_INFO(debugger, "%s: no active context found\n", engine->name);
+		i915_debugger_put(debugger);
+		return;
+	}
+
+	if (!ce->client) {
+		DD_INFO(debugger, "%s: no active client found\n", engine->name);
+		intel_context_put(ce);
+		i915_debugger_put(debugger);
+		return;
+	}
+
+	client = i915_drm_client_get(ce->client);
+	/*
+	 * There has been attention, thus the engine on which the
+	 * request resides can't proceed with said context as the
+	 * shader is 'stuck'.
+	 *
+	 * Second, the lrca matches what the hardware has lastly
+	 * executed (CURRENT_LRCA) and the RunAlone is set guaranteeing
+	 * that the EU's did belong only to the current context.
+	 *
+	 * So the context that did raise the attention, has to
+	 * be the correct one.
+	 */
+	if (!is_client_connected(debugger, client)) {
+		DD_INFO(debugger, "%s: active client not connected\n", engine->name);
+		ret = -ENOTCONN;
+	} else if (!completion_done(&debugger->discovery)) {
+		DD_INFO(debugger, "%s: discovery not yet done\n", engine->name);
+		ret = -EBUSY;
+	} else {
+		ret = send_engine_attentions(debugger, engine, client, ce);
+	}
+
+	i915_drm_client_put(client);
+	intel_context_put(ce);
+	i915_debugger_put(debugger);
+
+	DD_INFO(debugger, "%s: i915_send_engine_attention: %d\n", engine->name, ret);
 }
 
 static void
@@ -2534,6 +3115,38 @@ void i915_debugger_context_param_engines(struct i915_gem_context *ctx)
 	i915_debugger_send_event(debugger, event);
 	i915_debugger_put(debugger);
 	kfree(ctx_param);
+}
+
+int i915_debugger_handle_engine_attention(struct intel_engine_cs *engine)
+{
+	int ret;
+
+	if (!intel_engine_has_eu_attention(engine))
+		return 0;
+
+	ret = intel_gt_eu_threads_needing_attention(engine->gt);
+	if (ret <= 0)
+		return ret;
+
+	/* We dont care if it fails reach this debugger at this time */
+	i915_debugger_send_engine_attention(engine);
+
+	/*
+	 * We do care if there is no debugger at all to resolve
+	 * the situation
+	 */
+	if (!rcu_access_pointer(engine->i915->debug.debugger))
+		return -ENODEV;
+
+	return 0;
+}
+
+bool i915_debugger_prevents_hangcheck(struct intel_engine_cs *engine)
+{
+	if (!intel_engine_has_eu_attention(engine))
+		return false;
+
+	return rcu_access_pointer(engine->i915->debug.debugger);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

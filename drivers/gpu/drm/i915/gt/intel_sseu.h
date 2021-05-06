@@ -118,6 +118,12 @@ intel_sseu_from_device_info(const struct sseu_dev_info *sseu)
 	return value;
 }
 
+static inline unsigned int
+intel_sseu_highest_xehp_dss(intel_sseu_ss_mask_t ssmask)
+{
+	return find_last_bit(ssmask.xehp, XEHP_BITMAP_BITS(ssmask));
+}
+
 static inline bool
 intel_sseu_has_subslice(const struct sseu_dev_info *sseu, int slice,
 			int subslice)

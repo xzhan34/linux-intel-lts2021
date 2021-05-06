@@ -5,6 +5,7 @@
 
 #include "i915_drv.h"
 #include "i915_request.h"
+#include "i915_debugger.h"
 
 #include "intel_breadcrumbs.h"
 #include "intel_context.h"
@@ -26,7 +27,12 @@ static bool next_heartbeat(struct intel_engine_cs *engine)
 	struct i915_request *rq;
 	long delay;
 
-	delay = READ_ONCE(engine->props.heartbeat_interval_ms);
+	/* XXX refine the interval when heartbeat and attention handling is split */
+	if (intel_engine_has_eu_attention(engine) &&
+	    rcu_access_pointer(engine->i915->debug.debugger))
+		delay = 250;
+	else
+		delay = READ_ONCE(engine->props.heartbeat_interval_ms);
 
 	rq = engine->heartbeat.systole;
 
@@ -122,23 +128,6 @@ reset_engine(struct intel_engine_cs *engine, struct i915_request *rq)
 			      engine->name);
 }
 
-static bool check_attn(struct intel_engine_cs *engine)
-{
-	if (!intel_engine_has_eu_attention(engine))
-		return false;
-
-	/* We happily accept non attention without forcewake */
-	if (!intel_engine_eu_attention_fw(engine))
-		return false;
-
-	intel_gt_handle_error(engine->gt, engine->mask,
-			      I915_ERROR_CAPTURE,
-			      "eu attention on %s",
-			      engine->name);
-
-	return true;
-}
-
 static struct i915_request *get_next_heartbeat(struct intel_timeline *tl)
 {
 	struct i915_request *rq;
@@ -216,6 +205,7 @@ static void heartbeat(struct work_struct *wrk)
 	int prio = I915_PRIORITY_MIN;
 	struct i915_request *rq;
 	unsigned long serial;
+	int ret;
 
 	/* Just in case everything has gone horribly wrong, give it a kick */
 	intel_engine_flush_submission(engine);
@@ -233,8 +223,14 @@ static void heartbeat(struct work_struct *wrk)
 	if (intel_gt_is_wedged(engine->gt))
 		goto out;
 
-	if (check_attn(engine))
+	ret = i915_debugger_handle_engine_attention(engine);
+	if (ret) {
+		intel_gt_handle_error(engine->gt, engine->mask,
+				      I915_ERROR_CAPTURE,
+				      "unable to handle EU attention on %s, error:%d",
+				      engine->name, ret);
 		goto out;
+	}
 
 	if (i915_sched_engine_disabled(engine->sched_engine)) {
 		reset_engine(engine, engine->heartbeat.systole);
@@ -253,7 +249,14 @@ static void heartbeat(struct work_struct *wrk)
 				rq->emitted_jiffies + msecs_to_jiffies(delay)))
 			goto out;
 
-		if (engine_was_active(engine)) {
+		if (i915_debugger_prevents_hangcheck(engine)) {
+			/*
+			 * Until i915 Debugger requires RunAlone
+			 * hangcheck activity during heartbeat must
+			 * be skipped and emitted_jiffies updated.
+			 * This applies on active debugging session.
+			 */
+		} else if (engine_was_active(engine)) {
 			/*
 			 * The engine is still making forward progress, we
 			 * don't yet need to worry about our outstanding
@@ -540,6 +543,14 @@ out_unlock:
 out_rpm:
 	intel_engine_pm_put(engine);
 	return err;
+}
+
+void intel_engine_schedule_heartbeat(struct intel_engine_cs *engine)
+{
+	if (intel_engine_pm_get_if_awake(engine)) {
+		mod_delayed_work(system_highpri_wq, &engine->heartbeat.work, 0);
+		intel_engine_pm_put(engine);
+	}
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

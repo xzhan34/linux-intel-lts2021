@@ -325,6 +325,10 @@ static bool gen9_debug_td_ctl_init(struct intel_engine_cs *engine,
 
 	wa_mcr_add(wal, TD_CTL, 0, ctl_mask, ctl_mask, false);
 
+	/* Wa_22015693276 */
+	if (GRAPHICS_VER_FULL(engine->i915) >= IP_VER(12, 50))
+		wa_mcr_masked_en(wal, GEN8_ROW_CHICKEN, STALL_DOP_GATING_DISABLE);
+
 	return enable;
 }
 

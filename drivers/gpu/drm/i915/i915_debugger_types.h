@@ -68,6 +68,18 @@ struct i915_debug_event_context_param {
 	struct drm_i915_gem_context_param param;
 } __packed;
 
+struct i915_debug_event_eu_attention {
+	struct i915_debug_event base;
+	u64 client_handle;
+	u64 ctx_handle;
+
+	u32 flags;
+	struct i915_engine_class_instance ci;
+
+	u32 bitmask_size;
+	u8  bitmask[0];
+} __packed;
+
 struct i915_debug_vm_open {
 	u64 client_handle;
 	u64 handle;
@@ -89,6 +101,8 @@ struct i915_debugger {
 
 	u64 session;
 	atomic_long_t event_seqno;
+
+	rwlock_t eu_lock;
 
 	const struct i915_debug_event *event;
 };
