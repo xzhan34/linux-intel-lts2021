@@ -1560,10 +1560,22 @@ static int i915_window_blt_copy_prepare_obj(struct drm_i915_gem_object *obj)
 	return i915_gem_object_pin_pages(obj);
 }
 
+static u32
+comp_surface_flag(struct i915_vma *vma, bool compressed)
+{
+	if (HAS_LINK_COPY_ENGINES(vma->vm->i915) && compressed &&
+	    i915_gem_object_is_lmem(vma->obj))
+		return PVC_ENABLE_COMPRESSED_SURFACE;
+
+	return 0;
+}
+
 static int
 i915_window_blt_copy_batch_prepare(struct i915_request *rq,
 				   struct i915_vma *src,
-				   struct i915_vma *dst, size_t size)
+				   struct i915_vma *dst,
+				   size_t size,
+				   bool compressed)
 {
 	u32 *cmd;
 
@@ -1576,13 +1588,13 @@ i915_window_blt_copy_batch_prepare(struct i915_request *rq,
 	GEM_BUG_ON(GRAPHICS_VER(rq->engine->i915) < 9);
 
 	*cmd++ = GEN9_XY_FAST_COPY_BLT_CMD | (10 - 2);
-	*cmd++ = BLT_DEPTH_32 | PAGE_SIZE;
+	*cmd++ = BLT_DEPTH_32 | PAGE_SIZE | comp_surface_flag(dst, compressed);
 	*cmd++ = 0;
 	*cmd++ = size >> PAGE_SHIFT << 16 | PAGE_SIZE / 4;
 	*cmd++ = lower_32_bits(i915_vma_offset(dst));
 	*cmd++ = upper_32_bits(i915_vma_offset(dst));
 	*cmd++ = 0;
-	*cmd++ = PAGE_SIZE;
+	*cmd++ = PAGE_SIZE | comp_surface_flag(src, compressed);
 	*cmd++ = lower_32_bits(i915_vma_offset(src));
 	*cmd++ = upper_32_bits(i915_vma_offset(src));
 	intel_ring_advance(rq, cmd);
@@ -1769,7 +1781,7 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 			}
 		}
 		err = i915_window_blt_copy_batch_prepare(rq, src_vma, dst_vma,
-							 chunk);
+							 chunk, ccs_handling);
 		if (err) {
 			DRM_ERROR("Batch preparation failed. %d\n", err);
 			i915_request_set_error_once(rq, -EIO);
