@@ -258,6 +258,7 @@ struct i915_address_space {
 	 * vma and page directories.
 	 */
 	atomic_t open;
+	struct work_struct close_work;
 
 	struct mutex mutex; /* protects vma and our lists */
 
@@ -483,16 +484,7 @@ i915_vm_tryopen(struct i915_address_space *vm)
 	return false;
 }
 
-void __i915_vm_close(struct i915_address_space *vm);
-
-static inline void
-i915_vm_close(struct i915_address_space *vm)
-{
-	GEM_BUG_ON(!atomic_read(&vm->open));
-	__i915_vm_close(vm);
-
-	i915_vm_put(vm);
-}
+void i915_vm_close(struct i915_address_space *vm);
 
 void i915_address_space_init(struct i915_address_space *vm, int subclass);
 void i915_address_space_fini(struct i915_address_space *vm);

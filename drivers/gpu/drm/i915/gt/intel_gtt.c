@@ -96,13 +96,11 @@ int map_pt_dma_locked(struct i915_address_space *vm, struct drm_i915_gem_object 
 	return 0;
 }
 
-void __i915_vm_close(struct i915_address_space *vm)
+static void __i915_vm_close(struct i915_address_space *vm)
 {
 	struct i915_vma *vma, *vn;
 
-	if (!atomic_dec_and_mutex_lock(&vm->open, &vm->mutex))
-		return;
-
+	mutex_lock(&vm->mutex);
 	list_for_each_entry_safe(vma, vn, &vm->bound_list, vm_link) {
 		struct drm_i915_gem_object *obj = vma->obj;
 
@@ -116,8 +114,6 @@ void __i915_vm_close(struct i915_address_space *vm)
 
 		i915_gem_object_put(obj);
 	}
-	GEM_BUG_ON(!list_empty(&vm->bound_list));
-
 	mutex_unlock(&vm->mutex);
 }
 
@@ -179,6 +175,24 @@ void i915_vm_release(struct kref *kref)
 	queue_rcu_work(vm->i915->wq, &vm->rcu);
 }
 
+static void i915_vm_close_work(struct work_struct *wrk)
+{
+	struct i915_address_space *vm = container_of(wrk, typeof(*vm),
+						     close_work);
+
+	__i915_vm_close(vm);
+	i915_vm_put(vm);
+}
+
+void i915_vm_close(struct i915_address_space *vm)
+{
+	GEM_BUG_ON(atomic_read(&vm->open) <= 0);
+	if (atomic_dec_and_test(&vm->open))
+		queue_work(vm->i915->wq, &vm->close_work);
+	else
+		i915_vm_put(vm);
+}
+
 void i915_address_space_init(struct i915_address_space *vm, int subclass)
 {
 	kref_init(&vm->ref);
@@ -192,6 +206,7 @@ void i915_address_space_init(struct i915_address_space *vm, int subclass)
 
 	INIT_RCU_WORK(&vm->rcu, __i915_vm_release);
 	atomic_set(&vm->open, 1);
+	INIT_WORK(&vm->close_work, i915_vm_close_work);
 
 	/*
 	 * The vm->mutex must be reclaim safe (for use in the shrinker).

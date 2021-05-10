@@ -1918,6 +1918,7 @@ static int mock_context_barrier(void *arg)
 		pr_err("Failed at line %d, err=%d\n", __LINE__, err);
 		goto out;
 	}
+	flush_workqueue(system_unbound_wq);
 	if (counter == 0) {
 		pr_err("Did not retire immediately with 0 engines\n");
 		err = -EINVAL;
@@ -1931,6 +1932,7 @@ static int mock_context_barrier(void *arg)
 		pr_err("Failed at line %d, err=%d\n", __LINE__, err);
 		goto out;
 	}
+	flush_workqueue(system_unbound_wq);
 	if (counter == 0) {
 		pr_err("Did not retire immediately for all unused engines\n");
 		err = -EINVAL;
@@ -1953,6 +1955,7 @@ static int mock_context_barrier(void *arg)
 		err = 0;
 	else
 		pr_err("Did not hit fault injection!\n");
+	flush_workqueue(system_unbound_wq);
 	if (counter != 0) {
 		pr_err("Invoked callback on error!\n");
 		err = -EIO;
@@ -1967,6 +1970,7 @@ static int mock_context_barrier(void *arg)
 		pr_err("Failed at line %d, err=%d\n", __LINE__, err);
 		goto out;
 	}
+	flush_workqueue(system_unbound_wq);
 	mock_device_flush(i915);
 	if (counter == 0) {
 		pr_err("Did not retire on each active engines\n");

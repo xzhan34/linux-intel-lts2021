@@ -609,6 +609,13 @@ static void context_close(struct i915_gem_context *ctx)
 
 	set_closed_name(ctx);
 
+	/*
+	 * The LUT uses the VMA as a backpointer to unref the object,
+	 * so we need to clear the LUT before we close all the VMA (inside
+	 * the ppgtt).
+	 */
+	lut_close(ctx);
+
 	vm = i915_gem_context_vm(ctx);
 	if (vm)
 		i915_vm_close(vm);
@@ -617,13 +624,6 @@ static void context_close(struct i915_gem_context *ctx)
 		drm_syncobj_put(ctx->syncobj);
 
 	ctx->file_priv = ERR_PTR(-EBADF);
-
-	/*
-	 * The LUT uses the VMA as a backpointer to unref the object,
-	 * so we need to clear the LUT before we close all the VMA (inside
-	 * the ppgtt).
-	 */
-	lut_close(ctx);
 
 	spin_lock(&ctx->i915->gem.contexts.lock);
 	list_del(&ctx->link);
@@ -879,7 +879,8 @@ i915_gem_create_context(struct drm_i915_private *i915, unsigned int flags)
 		__assign_ppgtt(ctx, &ppgtt->vm);
 		mutex_unlock(&ctx->mutex);
 
-		i915_vm_put(&ppgtt->vm);
+		/* Release reference taken during i915_ppgtt_create */
+		i915_vm_close(&ppgtt->vm);
 	}
 
 	if (flags & I915_CONTEXT_CREATE_FLAGS_SINGLE_TIMELINE) {
@@ -1001,7 +1002,7 @@ void i915_gem_context_close(struct drm_file *file)
 	xa_destroy(&file_priv->context_xa);
 
 	xa_for_each(&file_priv->vm_xa, idx, vm)
-		i915_vm_put(vm);
+		i915_vm_close(vm);
 	xa_destroy(&file_priv->vm_xa);
 }
 
@@ -1045,7 +1046,7 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 	return 0;
 
 err_put:
-	i915_vm_put(&ppgtt->vm);
+	i915_vm_close(&ppgtt->vm);
 	return err;
 }
 
@@ -1066,7 +1067,7 @@ int i915_gem_vm_destroy_ioctl(struct drm_device *dev, void *data,
 	if (!vm)
 		return -ENOENT;
 
-	i915_vm_put(vm);
+	i915_vm_close(vm);
 
 	i915_gem_flush_free_objects(to_i915(dev));
 	return 0;
@@ -1111,7 +1112,7 @@ static int context_barrier_task(struct i915_gem_context *ctx,
 	if (!cb)
 		return -ENOMEM;
 
-	i915_active_init(&cb->base, NULL, cb_retire, 0);
+	i915_active_init(&cb->base, NULL, cb_retire, I915_ACTIVE_RETIRE_SLEEPS);
 	err = i915_active_acquire(&cb->base);
 	if (err) {
 		kfree(cb);
@@ -1354,9 +1355,9 @@ static int set_ppgtt(struct drm_i915_file_private *file_priv,
 				   set_ppgtt_barrier,
 				   old);
 	if (err) {
+		lut_close(ctx); /* force a rebuild of the old obj:vma cache */
 		i915_vm_close(__set_ppgtt(ctx, old));
 		i915_vm_close(old);
-		lut_close(ctx); /* force a rebuild of the old obj:vma cache */
 	}
 
 unlock:

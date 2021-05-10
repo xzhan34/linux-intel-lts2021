@@ -85,12 +85,26 @@ static inline struct i915_vma *active_to_vma(struct i915_active *ref)
 
 static int __i915_vma_active(struct i915_active *ref)
 {
-	return i915_vma_tryget(active_to_vma(ref)) ? 0 : -ENOENT;
+	struct i915_vma *vma = active_to_vma(ref);
+
+	if (!i915_vma_tryget(vma))
+		return -ENOENT;
+
+	if (!i915_vm_tryopen(vma->vm)) {
+		i915_vma_put(vma);
+		return -ENOENT;
+	}
+
+	return 0;
 }
 
 static void __i915_vma_retire(struct i915_active *ref)
 {
-	i915_vma_put(active_to_vma(ref));
+	struct i915_vma *vma = active_to_vma(ref);
+	struct drm_i915_gem_object *obj = vma->obj;
+
+	i915_vm_close(vma->vm);
+	i915_gem_object_put(obj);
 }
 
 static struct i915_vma *
@@ -1206,8 +1220,8 @@ void i915_vma_parked(struct intel_gt *gt)
 		INIT_LIST_HEAD(&vma->closed_link);
 		__i915_vma_put(vma);
 
-		i915_gem_object_put(obj);
 		i915_vm_close(vm);
+		i915_gem_object_put(obj);
 	}
 }
 
