@@ -96,6 +96,7 @@ int intel_iov_init_hw(struct intel_iov *iov)
 	if (intel_iov_is_pf(iov)) {
 		pf_enable_ggtt_guest_update(iov);
 		intel_iov_service_update(iov);
+		intel_iov_provisioning_restart(iov);
 	}
 
 	return 0;

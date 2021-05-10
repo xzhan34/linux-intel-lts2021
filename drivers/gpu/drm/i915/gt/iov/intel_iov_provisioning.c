@@ -1948,6 +1948,21 @@ void intel_iov_provisioning_fini(struct intel_iov *iov)
 }
 
 /**
+ * intel_iov_provisioning_restart() - Restart provisioning state.
+ * @iov: the IOV struct
+ *
+ * Mark provisioning state as not pushed to GuC.
+ *
+ * This function shall be called only on PF.
+ */
+void intel_iov_provisioning_restart(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	iov->pf.provisioning.num_pushed = 0;
+}
+
+/**
  * intel_iov_provisioning_print_ggtt - Print GGTT provisioning data.
  * @iov: the IOV struct
  * @p: the DRM printer
