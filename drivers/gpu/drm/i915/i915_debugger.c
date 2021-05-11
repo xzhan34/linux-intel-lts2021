@@ -3,9 +3,13 @@
  * Copyright © 2021 Intel Corporation
  */
 
+#include <drm/drm_cache.h>
+
 #include <linux/anon_inodes.h>
+#include <linux/minmax.h>
 #include <linux/mman.h>
 #include <linux/ptrace.h>
+#include <linux/dma-buf.h>
 
 #include "gem/i915_gem_context.h"
 #include "gem/i915_gem_mman.h"
@@ -719,6 +723,233 @@ out_uuid:
 	return ret;
 }
 
+static int access_page_in_obj(struct drm_i915_gem_object * const obj,
+			      const unsigned long vma_offset,
+			      void * const buf,
+			      const size_t len,
+			      const bool write)
+{
+	const pgoff_t pn = vma_offset >> PAGE_SHIFT;
+	const size_t offset = offset_in_page(vma_offset);
+
+	if (i915_gem_object_is_lmem(obj)) {
+		void __iomem *vaddr;
+
+		vaddr = i915_gem_object_lmem_io_map_page(obj, pn);
+		mb();
+
+		if (write)
+			memcpy_toio(vaddr + offset, buf, len);
+		else
+			memcpy_fromio(buf, vaddr + offset, len);
+
+		mb();
+		io_mapping_unmap(vaddr);
+
+		return 0;
+	}
+
+	if (i915_gem_object_has_struct_page(obj)) {
+		struct page *page;
+		void *vaddr;
+
+		page = i915_gem_object_get_page(obj, pn);
+		vaddr = kmap(page);
+
+		drm_clflush_virt_range(vaddr + offset, len);
+
+		if (write)
+			memcpy(vaddr + offset, buf, len);
+		else
+			memcpy(buf, vaddr + offset, len);
+
+		drm_clflush_virt_range(vaddr + offset, len);
+
+		mark_page_accessed(page);
+		if (write)
+			set_page_dirty(page);
+
+		kunmap(page);
+
+		return 0;
+	}
+
+	if (obj->base.import_attach) {
+		struct dma_buf * const b =
+			obj->base.import_attach->dmabuf;
+		struct iosys_map map;
+		int ret;
+
+		ret = dma_buf_vmap(b, &map);
+		if (ret)
+			return ret;
+
+		/*
+		 * There is no dma_buf_[begin|end]_cpu_access. The
+		 * fence_wait inside of begin would deadlock if the
+		 * signal is after the breakpointed kernel.
+		 *
+		 * For now, we just need to give up on coherency
+		 * guarantees on remote dmabufs and leave it to the
+		 * debugger to coordinate access wrt to active surfaces
+		 * to avoid racing against the client.
+		 */
+		if (write)
+			iosys_map_memcpy_to(&map, vma_offset, buf, len);
+		else
+			iosys_map_memcpy_from(buf, &map, vma_offset, len);
+
+		dma_buf_vunmap(b, &map);
+
+		return ret;
+	}
+
+	return -EINVAL;
+}
+
+static ssize_t access_page_in_vm(struct i915_address_space *vm,
+				 const u64 vm_offset,
+				 void *buf,
+				 ssize_t len,
+				 bool write)
+{
+	struct i915_vma *vma;
+	struct i915_gem_ww_ctx ww;
+	struct drm_i915_gem_object *obj;
+	u64 vma_offset;
+	ssize_t ret;
+
+	if (len == 0)
+		return 0;
+
+	if (len < 0)
+		return -EINVAL;
+
+	if (GEM_WARN_ON(range_overflows_t(u64, vm_offset, len, vm->total)))
+		return -EINVAL;
+
+	ret = i915_gem_vm_bind_lock_interruptible(vm);
+	if (ret)
+		return ret;
+
+	vma = i915_gem_vm_bind_lookup_vma(vm, vm_offset);
+	if (!vma) {
+		i915_gem_vm_bind_unlock(vm);
+		return 0;
+	}
+
+	obj = vma->obj;
+
+	for_i915_gem_ww(&ww, ret, true) {
+		ret = i915_gem_object_lock(obj, &ww);
+		if (ret)
+			continue;
+
+		ret = i915_gem_object_pin_pages_sync(obj);
+		if (ret)
+			continue;
+
+		vma_offset = vm_offset - vma->start;
+
+		len = min_t(ssize_t, len, PAGE_SIZE - offset_in_page(vma_offset));
+
+		ret = access_page_in_obj(obj, vma_offset, buf, len, write);
+		i915_gem_object_unpin_pages(obj);
+	}
+
+	i915_gem_vm_bind_unlock(vm);
+
+	if (GEM_WARN_ON(ret > 0))
+		return 0;
+
+	return ret ?: len;
+}
+
+static ssize_t __vm_read_write(struct i915_address_space *vm,
+			       char __user *r_buffer,
+			       const char __user *w_buffer,
+			       size_t count, loff_t *__pos, bool write)
+{
+	void *bounce_buf;
+	ssize_t copied = 0;
+	ssize_t bytes_left = count;
+	loff_t pos = *__pos;
+	ssize_t ret = 0;
+
+	if (bytes_left <= 0)
+		return 0;
+
+	bounce_buf = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!bounce_buf)
+		return -ENOMEM;
+
+	do {
+		ssize_t len = min_t(ssize_t, bytes_left, PAGE_SIZE);
+
+		if (write) {
+			ret = copy_from_user(bounce_buf, w_buffer + copied, len);
+			if (ret < 0)
+				break;
+
+			len = len - ret;
+			if (len > 0) {
+				ret = access_page_in_vm(vm, pos + copied, bounce_buf, len, true);
+				if (ret <= 0)
+					break;
+
+				len = ret;
+			}
+		} else {
+			ret = access_page_in_vm(vm, pos + copied, bounce_buf, len, false);
+			if (ret <= 0)
+				break;
+
+			len = ret;
+
+			ret = copy_to_user(r_buffer + copied, bounce_buf, len);
+			if (ret < 0)
+				break;
+
+			len = len - ret;
+		}
+
+		if (GEM_WARN_ON(len < 0))
+			break;
+
+		if (len == 0)
+			break;
+
+		bytes_left -= len;
+		copied += len;
+	} while(bytes_left >= 0);
+
+	kfree(bounce_buf);
+
+	/* pread/pwrite ignore this increment */
+	if (copied > 0)
+		*__pos += copied;
+
+	return copied ?: ret;
+}
+
+#define debugger_vm_write(pd, b, c, p)	\
+				__vm_read_write(pd, NULL, b, c, p, true)
+#define debugger_vm_read(pd, b, c, p)	\
+				__vm_read_write(pd, b, NULL, c, p, false)
+
+static ssize_t i915_debugger_vm_write(struct file *file,
+				      const char __user *buffer,
+				      size_t count, loff_t *pos)
+{
+	return debugger_vm_write(file->private_data, buffer, count, pos);
+}
+
+static ssize_t i915_debugger_vm_read(struct file *file, char __user *buffer,
+				     size_t count, loff_t *pos)
+{
+	return debugger_vm_read(file->private_data, buffer, count, pos);
+}
+
 static vm_fault_t vm_mmap_fault(struct vm_fault *vmf)
 {
 	struct vm_area_struct *area = vmf->vma;
@@ -817,7 +1048,9 @@ static int i915_debugger_vm_release(struct inode *inode, struct file *file)
 
 static const struct file_operations vm_fops = {
 	.owner   = THIS_MODULE,
-	.llseek	 = no_llseek,
+	.llseek  = generic_file_llseek,
+	.read    = i915_debugger_vm_read,
+	.write   = i915_debugger_vm_write,
 	.mmap    = i915_debugger_vm_mmap,
 	.release = i915_debugger_vm_release,
 };
@@ -876,7 +1109,7 @@ i915_debugger_vm_open_ioctl(struct i915_debugger *debugger, unsigned long arg)
 	struct i915_debug_vm_open vmo;
 	struct i915_address_space *vm;
 	struct file *file;
-	int ret;
+	long ret;
 	int fd;
 
 	if (_IOC_SIZE(PRELIM_I915_DEBUG_IOCTL_VM_OPEN) != sizeof(vmo))
@@ -907,16 +1140,37 @@ i915_debugger_vm_open_ioctl(struct i915_debugger *debugger, unsigned long arg)
 		goto err_vm;
 	}
 
+	switch (vmo.flags & O_ACCMODE) {
+	case O_RDONLY:
+		file->f_mode |= FMODE_PREAD | FMODE_READ | FMODE_LSEEK;
+		break;
+	case O_WRONLY:
+		file->f_mode |= FMODE_PWRITE | FMODE_WRITE| FMODE_LSEEK;
+		break;
+	case O_RDWR:
+		file->f_mode |= FMODE_PREAD | FMODE_PWRITE |
+				FMODE_READ | FMODE_WRITE | FMODE_LSEEK;
+		break;
+	}
+
 	file->f_mapping = vm->inode->i_mapping;
 	fd_install(fd, file);
 
 	drm_dev_get(&vm->i915->drm);
+
+	DD_VERBOSE(debugger, "vm_open: client_handle=%llu, handle=%llu, flags=0x%llx, fd=%d vm_address=%px",
+		   vmo.client_handle, vmo.handle, vmo.flags, fd, vm);
+
 	return fd;
 
 err_vm:
 	i915_vm_put(vm);
 err_fd:
 	put_unused_fd(fd);
+
+	DD_WARN(debugger, "vm_open: client_handle=%llu, handle=%llu, flags=0x%llx, ret=%ld",
+		vmo.client_handle, vmo.handle, vmo.flags, ret);
+
 	return ret;
 }
 
