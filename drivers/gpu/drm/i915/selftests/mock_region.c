@@ -72,8 +72,16 @@ static void mock_region_fini(struct intel_memory_region *mem)
 }
 #endif
 
+static int mock_init_region(struct intel_memory_region *mem)
+{
+	return intel_memory_region_init_buddy(mem,
+					      mem->region.start,
+					      mem->region.end + 1,
+					      PAGE_SIZE);
+}
+
 static const struct intel_memory_region_ops mock_region_ops = {
-	.init = intel_memory_region_init_buddy,
+	.init = mock_init_region,
 	.release = intel_memory_region_release_buddy,
 	.init_object = mock_object_init,
 };

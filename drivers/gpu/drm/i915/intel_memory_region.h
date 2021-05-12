@@ -121,7 +121,8 @@ struct intel_memory_region *
 intel_memory_region_lookup(struct drm_i915_private *i915,
 			   u16 class, u16 instance);
 
-int intel_memory_region_init_buddy(struct intel_memory_region *mem);
+int intel_memory_region_init_buddy(struct intel_memory_region *mem,
+				   u64 start, u64 end, u64 chunk);
 void intel_memory_region_release_buddy(struct intel_memory_region *mem);
 
 int __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,

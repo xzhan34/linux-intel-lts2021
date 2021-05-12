@@ -25,6 +25,7 @@ region_lmem_release(struct intel_memory_region *mem)
 static int
 region_lmem_init(struct intel_memory_region *mem)
 {
+	u64 start, end;
 	int ret;
 
 	if (!io_mapping_init_wc(&mem->iomap,
@@ -32,7 +33,20 @@ region_lmem_init(struct intel_memory_region *mem)
 				mem->io_size))
 		return -EIO;
 
-	ret = intel_memory_region_init_buddy(mem);
+	/*
+	 * We directly map [1:1] offsets into the lmem region as addresses
+	 * within the kernel vm. However, Wa_1409502670 introduces a quirk
+	 * where xehpsdv-a0 cannot use the first page in each ppGTT and so in
+	 * order to prevent the kernel from trying to submit illegal addresses
+	 * when blitting to lmem, we have to exclude the first page from
+	 * being allocated.
+	 */
+	start = mem->region.start;
+	if (IS_XEHPSDV_GRAPHICS_STEP(mem->i915, STEP_A0, STEP_B0))
+		start = max_t(u64, start, SZ_64K);
+	end = mem->region.end + 1;
+
+	ret = intel_memory_region_init_buddy(mem, start, end, PAGE_SIZE);
 	if (ret)
 		io_mapping_fini(&mem->iomap);
 

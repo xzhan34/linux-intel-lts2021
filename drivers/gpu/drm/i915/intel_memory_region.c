@@ -595,12 +595,10 @@ __intel_memory_region_get_block_buddy(struct intel_memory_region *mem,
 	return block;
 }
 
-int intel_memory_region_init_buddy(struct intel_memory_region *mem)
+int intel_memory_region_init_buddy(struct intel_memory_region *mem,
+				   u64 start, u64 end, u64 chunk)
 {
-	return i915_buddy_init(&mem->mm,
-			       mem->region.start,
-			       mem->region.end + 1,
-			       PAGE_SIZE);
+	return i915_buddy_init(&mem->mm, start, end, chunk);
 }
 
 void intel_memory_region_release_buddy(struct intel_memory_region *mem)
