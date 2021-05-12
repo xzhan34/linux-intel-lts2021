@@ -635,8 +635,11 @@ static void context_close(struct i915_gem_context *ctx)
 	lut_close(ctx);
 
 	vm = i915_gem_context_vm(ctx);
-	if (vm)
+	if (vm) {
+		if (client)
+			i915_debugger_vm_destroy(client, vm);
 		i915_vm_close(vm);
+	}
 
 	if (ctx->syncobj)
 		drm_syncobj_put(ctx->syncobj);
@@ -892,8 +895,10 @@ static void __assign_ppgtt(struct i915_gem_context *ctx,
 	context_apply_all(ctx, __apply_ppgtt, vm);
 
 	vm = __set_ppgtt(ctx, vm);
-	if (vm)
+	if (vm) {
+		i915_debugger_vm_destroy(ctx->client, vm);
 		i915_vm_close(vm);
+	}
 }
 
 static struct i915_gem_context *
@@ -999,6 +1004,8 @@ static int gem_context_register(struct i915_gem_context *ctx,
 	if (!ret) {
 		ctx->id = *id;
 		i915_debugger_context_create(ctx);
+		if (vm)
+			i915_debugger_vm_create(client, vm);
 	}
 	i915_gem_context_put(ctx);
 	if (!ret)
@@ -1061,8 +1068,10 @@ void i915_gem_context_close(struct drm_file *file)
 		context_close(ctx);
 	xa_destroy(&file_priv->context_xa);
 
-	xa_for_each(&file_priv->vm_xa, idx, vm)
+	xa_for_each(&file_priv->vm_xa, idx, vm) {
+		i915_debugger_vm_destroy(file_priv->client, vm);
 		i915_vm_close(vm);
+	}
 	xa_destroy(&file_priv->vm_xa);
 }
 
@@ -1108,6 +1117,7 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 
 	GEM_BUG_ON(id == 0); /* reserved for invalid/unassigned ppgtt */
 	args->vm_id = id;
+	i915_debugger_vm_create(file_priv->client, &ppgtt->vm);
 	return 0;
 
 err_put:
@@ -1134,6 +1144,7 @@ int i915_gem_vm_destroy_ioctl(struct drm_device *dev, void *data,
 	if (!vm)
 		return -ENOENT;
 
+	i915_debugger_vm_destroy(file_priv->client, vm);
 	i915_vm_close(vm);
 
 	i915_gem_flush_free_objects(to_i915(dev));
@@ -1217,6 +1228,8 @@ static int set_ppgtt(struct drm_i915_file_private *file_priv,
 		goto unlock;
 	}
 
+	if (!is_ctx_create)
+		i915_debugger_vm_destroy(file_priv->client, old);
 	/* Teardown the existing obj:vma cache, it will have to be rebuilt. */
 	lut_close(ctx);
 
