@@ -4,6 +4,7 @@
  */
 
 #include <linux/prime_numbers.h>
+#include <linux/sizes.h>
 #include <linux/string_helpers.h>
 
 #include "../i915_selftest.h"
@@ -312,7 +313,7 @@ static int igt_buddy_alloc_smoke(void *arg)
 
 	pr_info("buddy_init with size=%llx, chunk_size=%llx\n", mm_size, chunk_size);
 
-	err = i915_buddy_init(&mm, mm_size, chunk_size);
+	err = i915_buddy_init(&mm, 0, mm_size, chunk_size);
 	if (err) {
 		pr_err("buddy_init failed(%d)\n", err);
 		return err;
@@ -405,6 +406,89 @@ out_fini:
 	return err;
 }
 
+static int igt_buddy_alloc_alignment(void *arg)
+{
+	struct i915_buddy_block *block;
+	struct i915_buddy_mm mm;
+	unsigned int start, size, chunk;
+	unsigned int order;
+	LIST_HEAD(blocks);
+	I915_RND_STATE(prng);
+	int err;
+
+	/*
+	 * Request a buddy for a misaligned base, and we expect blocks
+	 * to be naturally aligned.
+	 */
+
+	start = prandom_u32_state(&prng);
+	size = PAGE_SHIFT + i915_prandom_u32_max_state(63 - PAGE_SHIFT - 2, &prng) + 2;
+	chunk = PAGE_SHIFT + i915_prandom_u32_max_state(size - PAGE_SHIFT - 2, &prng);
+	pr_debug("%s: using start:%u, size:%d, chunk:%d\n",
+		 __func__, start, size, chunk);
+
+	err = i915_buddy_init(&mm,
+			      start, start + BIT_ULL(size),
+			      BIT_ULL(chunk));
+	if (err)
+		return err;
+
+	for (order = mm.max_order; order; order--) {
+		block = i915_buddy_alloc(&mm, order);
+		if (block == ERR_PTR(-ENOSPC)) { /* full! */
+			i915_buddy_free_list(&mm, &blocks);
+			continue;
+		}
+		if (IS_ERR(block)) {
+			pr_info("buddy_alloc hit -ENOMEM with order:%d, max_order:%d, pass:%d\n",
+				order, mm.max_order, 0);
+			err = PTR_ERR(block);
+			goto err;
+		}
+		list_add_tail(&block->link, &blocks);
+
+		if (!IS_ALIGNED(i915_buddy_block_offset(block),
+				i915_buddy_block_size(&mm, block))) {
+			pr_err("pass:%d, order:%d block->size:%llx, offset:%llx is not aligned\n",
+			       0, order,
+			       i915_buddy_block_size(&mm, block),
+			       i915_buddy_block_offset(block));
+			err = -EINVAL;
+			goto err;
+		}
+	}
+
+	for (; order <= mm.max_order; order++) {
+		block = i915_buddy_alloc(&mm, order);
+		if (block == ERR_PTR(-ENOSPC)) { /* full! */
+			i915_buddy_free_list(&mm, &blocks);
+			continue;
+		}
+		if (IS_ERR(block)) {
+			pr_info("buddy_alloc hit -ENOMEM with order:%d, pass:%d\n",
+				order, 1);
+			err = PTR_ERR(block);
+			goto err;
+		}
+		list_add_tail(&block->link, &blocks);
+
+		if (!IS_ALIGNED(i915_buddy_block_offset(block),
+				i915_buddy_block_size(&mm, block))) {
+			pr_err("pass:%d, order:%d block->size:%llx, offset:%llx is not aligned\n",
+			       1, order,
+			       i915_buddy_block_size(&mm, block),
+			       i915_buddy_block_offset(block));
+			err = -EINVAL;
+			goto err;
+		}
+	}
+
+err:
+	i915_buddy_free_list(&mm, &blocks);
+	i915_buddy_fini(&mm);
+	return err;
+}
+
 static int igt_buddy_alloc_pessimistic(void *arg)
 {
 	const unsigned int max_order = 16;
@@ -420,7 +504,7 @@ static int igt_buddy_alloc_pessimistic(void *arg)
 	 * page left.
 	 */
 
-	err = i915_buddy_init(&mm, PAGE_SIZE << max_order, PAGE_SIZE);
+	err = i915_buddy_init(&mm, 0, PAGE_SIZE << max_order, PAGE_SIZE);
 	if (err) {
 		pr_err("buddy_init failed(%d)\n", err);
 		return err;
@@ -512,7 +596,7 @@ static int igt_buddy_alloc_optimistic(void *arg)
 	 */
 
 	err = i915_buddy_init(&mm,
-			      PAGE_SIZE * ((1 << (max_order + 1)) - 1),
+			      0, PAGE_SIZE * ((1 << (max_order + 1)) - 1),
 			      PAGE_SIZE);
 	if (err) {
 		pr_err("buddy_init failed(%d)\n", err);
@@ -564,7 +648,7 @@ static int igt_buddy_alloc_pathological(void *arg)
 	 * Eventually we will have a fully 50% fragmented mm.
 	 */
 
-	err = i915_buddy_init(&mm, PAGE_SIZE << max_order, PAGE_SIZE);
+	err = i915_buddy_init(&mm, 0, PAGE_SIZE << max_order, PAGE_SIZE);
 	if (err) {
 		pr_err("buddy_init failed(%d)\n", err);
 		return err;
@@ -645,7 +729,7 @@ static int igt_buddy_alloc_range(void *arg)
 
 	pr_info("buddy_init with size=%llx, chunk_size=%llx\n", size, chunk_size);
 
-	err = i915_buddy_init(&mm, size, chunk_size);
+	err = i915_buddy_init(&mm, 0, size, chunk_size);
 	if (err) {
 		pr_err("buddy_init failed(%d)\n", err);
 		return err;
@@ -735,7 +819,7 @@ static int igt_buddy_alloc_limit(void *arg)
 	const u64 size = U64_MAX;
 	int err;
 
-	err = i915_buddy_init(&mm, size, PAGE_SIZE);
+	err = i915_buddy_init(&mm, 0, size, PAGE_SIZE);
 	if (err)
 		return err;
 
@@ -778,6 +862,7 @@ out_fini:
 int i915_buddy_mock_selftests(void)
 {
 	static const struct i915_subtest tests[] = {
+		SUBTEST(igt_buddy_alloc_alignment),
 		SUBTEST(igt_buddy_alloc_pessimistic),
 		SUBTEST(igt_buddy_alloc_optimistic),
 		SUBTEST(igt_buddy_alloc_pathological),

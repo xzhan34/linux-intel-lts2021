@@ -65,82 +65,104 @@ static void mark_split(struct i915_buddy_block *block)
 	list_del(&block->link);
 }
 
-int i915_buddy_init(struct i915_buddy_mm *mm, u64 size, u64 chunk_size)
+int i915_buddy_init(struct i915_buddy_mm *mm, u64 start, u64 end, u64 chunk)
 {
-	unsigned int i;
-	u64 offset;
-
-	if (size < chunk_size)
+	struct i915_buddy_block **roots;
+	unsigned int i, max_order;
+	u64 offset, size;
+ 
+	if (GEM_WARN_ON(range_overflows(start, chunk, end)))
 		return -EINVAL;
 
-	if (chunk_size < PAGE_SIZE)
+	if (chunk < PAGE_SIZE || !is_power_of_2(chunk))
 		return -EINVAL;
 
-	if (!is_power_of_2(chunk_size))
+	/*
+	 * We want the addresses we return to be naturally aligned, i.e.
+	 *
+	 *     IS_ALIGNED(block->offset, block->size).
+	 *
+	 * This is important when we use large chunks (e.g. 1G) and
+	 * require the physical address to also be aligned to the chunk,
+	 * e.g. huge page support in ppGTT.
+	 */
+	offset = round_up(start, chunk);
+	size = round_down(end, chunk);
+	if (size <= offset)
 		return -EINVAL;
 
-	size = round_down(size, chunk_size);
+	size -= offset;
 
 	mm->size = size;
-	mm->chunk_size = chunk_size;
-	mm->max_order = ilog2(size) - ilog2(chunk_size);
+	mm->chunk_size = chunk;
 
-	GEM_BUG_ON(mm->max_order > I915_BUDDY_MAX_ORDER);
-
-	mm->free_list = kmalloc_array(mm->max_order + 1,
+	max_order = ilog2(size) - ilog2(chunk);
+	GEM_BUG_ON(max_order > I915_BUDDY_MAX_ORDER);
+	mm->max_order = 0;
+ 
+	mm->free_list = kmalloc_array(max_order + 1,
 				      sizeof(struct list_head),
 				      GFP_KERNEL);
 	if (!mm->free_list)
 		return -ENOMEM;
 
-	for (i = 0; i <= mm->max_order; ++i)
+	for (i = 0; i <= max_order; ++i)
 		INIT_LIST_HEAD(&mm->free_list[i]);
 
-	mm->n_roots = hweight64(size);
-
-	mm->roots = kmalloc_array(mm->n_roots,
-				  sizeof(struct i915_buddy_block *),
-				  GFP_KERNEL);
-	if (!mm->roots)
+	roots = kmalloc_array(2 * max_order + 1,
+			      sizeof(*roots),
+			      GFP_KERNEL);
+	if (!roots)
 		goto out_free_list;
-
-	offset = 0;
-	i = 0;
 
 	/*
 	 * Split into power-of-two blocks, in case we are given a size that is
-	 * not itself a power-of-two.
+	 * not itself a power-of-two, or a base address that is not naturally
+	 * aligned.
 	 */
+	i = 0;
 	do {
 		struct i915_buddy_block *root;
-		unsigned int order;
-		u64 root_size;
+		unsigned long order;
 
-		root_size = rounddown_pow_of_two(size);
-		order = ilog2(root_size) - ilog2(chunk_size);
+		order = ilog2(size);
+		if (offset)
+			order = min(order, __ffs64(offset));
+		GEM_BUG_ON(order < ilog2(chunk));
+		GEM_BUG_ON(order > ilog2(chunk) + max_order);
 
-		root = i915_block_alloc(mm, NULL, order, offset);
+		root = i915_block_alloc(mm, NULL, order - ilog2(chunk), offset);
 		if (!root)
 			goto out_free_roots;
 
+		GEM_BUG_ON(i915_buddy_block_size(mm, root) < chunk);
+		GEM_BUG_ON(i915_buddy_block_size(mm, root) > size);
+
+		if (order > mm->max_order)
+			mm->max_order = order;
+ 
 		mark_free(mm, root);
-
-		GEM_BUG_ON(i > mm->max_order);
-		GEM_BUG_ON(i915_buddy_block_size(mm, root) < chunk_size);
-
-		mm->roots[i] = root;
-
-		offset += root_size;
-		size -= root_size;
-		i++;
+		roots[i++] = root;
+		GEM_BUG_ON(i > 2 * max_order + 1);
+ 
+		offset += BIT_ULL(order);
+		size -= BIT_ULL(order);
 	} while (size);
+
+	mm->roots = krealloc(roots, i * sizeof(*roots), GFP_KERNEL);
+	if (!mm->roots) /* Can't reduce our allocation, keep it all! */
+		mm->roots = roots;
+	mm->n_roots = i;
+
+	GEM_BUG_ON(mm->max_order < ilog2(chunk));
+	mm->max_order -= ilog2(chunk);
 
 	return 0;
 
 out_free_roots:
 	while (i--)
-		i915_block_free(mm, mm->roots[i]);
-	kfree(mm->roots);
+		i915_block_free(mm, roots[i]);
+	kfree(roots);
 out_free_list:
 	kfree(mm->free_list);
 	return -ENOMEM;

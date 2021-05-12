@@ -597,7 +597,8 @@ __intel_memory_region_get_block_buddy(struct intel_memory_region *mem,
 
 int intel_memory_region_init_buddy(struct intel_memory_region *mem)
 {
-	return i915_buddy_init(&mem->mm, resource_size(&mem->region),
+	return i915_buddy_init(&mem->mm,
+			       0, resource_size(&mem->region),
 			       PAGE_SIZE);
 }
 

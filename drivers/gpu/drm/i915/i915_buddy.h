@@ -124,8 +124,7 @@ i915_buddy_block_size(struct i915_buddy_mm *mm,
 	return mm->chunk_size << i915_buddy_block_order(block);
 }
 
-int i915_buddy_init(struct i915_buddy_mm *mm, u64 size, u64 chunk_size);
-
+int i915_buddy_init(struct i915_buddy_mm *mm, u64 start, u64 end, u64 chunk);
 void i915_buddy_fini(struct i915_buddy_mm *mm);
 
 struct i915_buddy_block *
