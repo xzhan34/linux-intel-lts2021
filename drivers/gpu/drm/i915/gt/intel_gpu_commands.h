@@ -127,8 +127,10 @@
 #define   MI_SEMAPHORE_SAD_LTE_SDD	(3 << 12)
 #define   MI_SEMAPHORE_SAD_EQ_SDD	(4 << 12)
 #define   MI_SEMAPHORE_SAD_NEQ_SDD	(5 << 12)
-#define   MI_SEMAPHORE_TOKEN_MASK	REG_GENMASK(9, 5)
-#define   MI_SEMAPHORE_TOKEN_SHIFT	5
+#define   MI_SEMAPHORE_27_TOKEN_MASK	REG_GENMASK(9, 5)
+#define   MI_SEMAPHORE_256_TOKEN_MASK	REG_GENMASK(9, 2)
+#define   MI_SEMAPHORE_27_TOKEN_SHIFT	5
+#define   MI_SEMAPHORE_256_TOKEN_SHIFT	2
 #define MI_STORE_DATA_IMM	MI_INSTR(0x20, 0)
 #define MI_STORE_DWORD_IMM	MI_INSTR(0x20, 1)
 #define MI_STORE_DWORD_IMM_GEN4	MI_INSTR(0x20, 2)
@@ -142,6 +144,10 @@
 #define   MI_ATOMIC_INLINE_DATA		(1 << 18)
 #define   MI_ATOMIC_CS_STALL		(1 << 17)
 #define	  MI_ATOMIC_MOVE		(0x4 << 8)
+#define	  MI_ATOMIC_INC			(0x5 << 8)
+#define	  MI_ATOMIC_DEC			(0x6 << 8)
+#define	  MI_ATOMIC_ADD			(0x7 << 8)
+#define	  MI_ATOMIC_SUB			(0x8 << 8)
 
 /*
  * Official intel docs are somewhat sloppy concerning MI_LOAD_REGISTER_IMM:

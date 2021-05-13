@@ -10,6 +10,7 @@
 #include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_lmem.h"
 
+#include "gen8_ppgtt.h"
 #include "i915_drv.h"
 #include "intel_context.h"
 #include "intel_engine_regs.h"
@@ -486,10 +487,46 @@ static void intel_gt_fini_scratch(struct intel_gt *gt)
 
 static struct i915_address_space *kernel_vm(struct intel_gt *gt)
 {
-	if (INTEL_PPGTT(gt->i915) > INTEL_PPGTT_ALIASING)
-		return &i915_ppgtt_create(gt)->vm;
-	else
+	struct i915_ppgtt *ppgtt;
+	int err;
+
+	if (INTEL_PPGTT(gt->i915) <= INTEL_PPGTT_ALIASING)
 		return i915_vm_get(&gt->ggtt->vm);
+
+	ppgtt = i915_ppgtt_create(gt);
+	if (IS_ERR(ppgtt))
+		return ERR_CAST(ppgtt);
+
+	/* Setup a 1:1 mapping into our portion of lmem */
+	if (gt->lmem) {
+		gt->flat.start = round_down(gt->lmem->region.start, SZ_1G);
+		gt->flat.size  = round_up(gt->lmem->region.end, SZ_1G);
+		gt->flat.size -= gt->flat.start;
+		gt->flat.color = I915_COLOR_UNEVICTABLE;
+		drm_dbg(&gt->i915->drm,
+			"Using flat ppGTT [%llx + %llx]\n",
+			gt->flat.start, gt->flat.size);
+
+		err = intel_flat_lmem_ppgtt_init(&ppgtt->vm, &gt->flat);
+		if (err) {
+			i915_vm_put(&ppgtt->vm);
+			return ERR_PTR(err);
+		}
+	}
+
+	return &ppgtt->vm;
+}
+
+static void release_vm(struct intel_gt *gt)
+{
+	struct i915_address_space *vm;
+
+	vm = fetch_and_zero(&gt->vm);
+	if (!vm)
+		return;
+
+	intel_flat_lmem_ppgtt_fini(vm, &gt->flat);
+	i915_vm_put(vm);
 }
 
 static int __engines_record_defaults(struct intel_gt *gt)
@@ -655,6 +692,7 @@ int intel_gt_wait_for_idle(struct intel_gt *gt, long timeout)
 
 int intel_gt_init(struct intel_gt *gt)
 {
+	struct i915_address_space *vm;
 	int err;
 
 	err = i915_inject_probe_error(gt->i915, -ENODEV);
@@ -679,11 +717,12 @@ int intel_gt_init(struct intel_gt *gt)
 
 	intel_gt_pm_init(gt);
 
-	gt->vm = kernel_vm(gt);
-	if (!gt->vm) {
-		err = -ENOMEM;
+	vm = kernel_vm(gt);
+	if (IS_ERR(vm)) {
+		err = PTR_ERR(vm);
 		goto err_pm;
 	}
+	gt->vm = vm;
 
 	intel_set_mocs_index(gt);
 
@@ -728,7 +767,7 @@ err_uc_init:
 	intel_uc_fini(&gt->uc);
 err_engines:
 	intel_engines_release(gt);
-	i915_vm_put(fetch_and_zero(&gt->vm));
+	release_vm(gt);
 err_pm:
 	intel_gt_pm_fini(gt);
 	intel_gt_fini_scratch(gt);
@@ -775,11 +814,7 @@ void intel_gt_driver_unregister(struct intel_gt *gt)
 
 void intel_gt_driver_release(struct intel_gt *gt)
 {
-	struct i915_address_space *vm;
-
-	vm = fetch_and_zero(&gt->vm);
-	if (vm) /* FIXME being called twice on error paths :( */
-		i915_vm_put(vm);
+	release_vm(gt);
 
 	intel_wa_list_free(&gt->wa_list);
 	intel_gt_pm_fini(gt);

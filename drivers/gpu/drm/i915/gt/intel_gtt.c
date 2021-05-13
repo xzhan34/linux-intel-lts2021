@@ -642,4 +642,5 @@ __vm_create_scratch_for_read_pinned(struct i915_address_space *vm, unsigned long
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftests/mock_gtt.c"
+#include "selftest_gtt.c"
 #endif

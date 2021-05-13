@@ -16,6 +16,8 @@
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
+#include <drm/drm_mm.h>
+
 #include "uc/intel_uc.h"
 #include "intel_gsc.h"
 
@@ -195,6 +197,7 @@ struct intel_gt {
 	 * Reserved for exclusive use by the kernel.
 	 */
 	struct i915_address_space *vm;
+	struct drm_mm_node flat; /* 1:1 mapping of lmem reserved in vm */
 
 	/*
 	 * A pool of objects to use as shadow copies of client batch buffers
