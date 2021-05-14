@@ -225,9 +225,58 @@ void i915_gem_vm_unbind_all(struct i915_address_space *vm)
 	i915_gem_vm_bind_unlock(vm);
 }
 
+struct unbind_work {
+	struct dma_fence_work base;
+	struct i915_vma *vma;
+	struct i915_sw_dma_fence_cb cb;
+};
+
+static int unbind(struct dma_fence_work *work)
+{
+	struct unbind_work *w = container_of(work, typeof(*w), base);
+
+	i915_gem_vm_bind_unpublish(w->vma);
+	return 0;
+}
+
+static void release(struct dma_fence_work *work)
+{
+	struct unbind_work *w = container_of(work, typeof(*w), base);
+
+	i915_gem_vm_bind_release(w->vma);
+}
+
+static const struct dma_fence_work_ops unbind_ops = {
+	.name = "unbind",
+	.work = unbind,
+	.release = release,
+};
+
+static struct dma_fence_work *queue_unbind(struct i915_vma *vma)
+{
+	struct dma_fence *prev;
+	struct unbind_work *w;
+
+	w = kzalloc(sizeof(*w), GFP_KERNEL);
+	if (!w)
+		return NULL;
+
+	dma_fence_work_init(&w->base, &unbind_ops);
+	w->vma = vma;
+
+	prev = i915_active_set_exclusive(&vma->active, &w->base.dma);
+	if (!IS_ERR_OR_NULL(prev)) {
+		__i915_sw_fence_await_dma_fence(&w->base.chain, prev, &w->cb);
+		dma_fence_put(prev);
+	}
+
+	return &w->base;
+}
+
 int i915_gem_vm_unbind_obj(struct i915_address_space *vm,
 			   struct prelim_drm_i915_gem_vm_bind *va)
 {
+	struct dma_fence_work *work = NULL;
 	struct i915_vma *vma;
 	int ret;
 
@@ -257,11 +306,29 @@ int i915_gem_vm_unbind_obj(struct i915_address_space *vm,
 		goto out_unlock;
 	}
 
+	ret = i915_active_acquire(&vma->active);
+	if (ret)
+		goto out_unlock;
+
+	work = queue_unbind(vma);
+	i915_active_release(&vma->active);
+	if (!work) {
+		ret = -ENOMEM;
+		goto out_unlock;
+	}
+
 	i915_gem_vm_bind_remove(vma);
-	i915_gem_vm_bind_release(vma);
 
 out_unlock:
 	i915_gem_vm_bind_unlock(vm);
+
+	if (work) {
+		dma_fence_get(&work->dma);
+		dma_fence_work_commit_imm(work);
+		if (!vm->i915->params.async_vm_unbind)
+			dma_fence_wait(&work->dma, false);
+		dma_fence_put(&work->dma);
+	}
 
 	return ret;
 }

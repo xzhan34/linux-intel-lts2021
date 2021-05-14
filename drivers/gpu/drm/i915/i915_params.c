@@ -93,6 +93,9 @@ i915_param_named(error_capture, bool, 0400,
 	"triaging and debugging hangs.");
 #endif
 
+i915_param_named(async_vm_unbind, bool, 0600,
+	"Enable asynchronous vm_unbind. (default: false)");
+
 i915_param_named_unsafe(enable_hangcheck, bool, 0400,
 	"Periodically check GPU activity for detecting hangs. "
 	"WARNING: Disabling this can cause system wide hangs. "
