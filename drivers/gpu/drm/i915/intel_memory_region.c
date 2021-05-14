@@ -598,7 +598,8 @@ __intel_memory_region_get_block_buddy(struct intel_memory_region *mem,
 int intel_memory_region_init_buddy(struct intel_memory_region *mem)
 {
 	return i915_buddy_init(&mem->mm,
-			       0, resource_size(&mem->region),
+			       mem->region.start,
+			       mem->region.end + 1,
 			       PAGE_SIZE);
 }
 
@@ -614,9 +615,13 @@ int intel_memory_region_reserve(struct intel_memory_region *mem,
 	int ret;
 
 	mutex_lock(&mem->mm_lock);
-	ret = i915_buddy_alloc_range(&mem->mm, &mem->reserved, offset, size);
+
+	/* offset is relative to the region, but the buddy is absolute */
+	ret = i915_buddy_alloc_range(&mem->mm, &mem->reserved,
+				     mem->region.start + offset, size);
 	if (!ret)
 		mem->avail -= size;
+
 	mutex_unlock(&mem->mm_lock);
 
 	return ret;

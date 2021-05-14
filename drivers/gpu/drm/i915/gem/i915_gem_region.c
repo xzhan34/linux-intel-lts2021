@@ -96,7 +96,7 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 					sg = __sg_next(sg);
 				}
 
-				sg_dma_address(sg) = mem->region.start + offset;
+				sg_dma_address(sg) = offset;
 				sg->length = 0;
 				st->nents++;
 			}
