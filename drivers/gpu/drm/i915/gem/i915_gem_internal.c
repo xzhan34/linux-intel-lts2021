@@ -37,9 +37,12 @@ static int i915_gem_object_get_pages_internal(struct drm_i915_gem_object *obj)
 	struct sg_table *st;
 	struct scatterlist *sg;
 	unsigned int sg_page_sizes;
-	unsigned int npages;
+	pgoff_t npages; /* restricted by sg_alloc_table */
 	int max_order;
 	gfp_t gfp;
+
+	if (!safe_conversion(&npages, obj->base.size >> PAGE_SHIFT))
+		return -E2BIG;
 
 	max_order = MAX_ORDER;
 #ifdef CONFIG_SWIOTLB
@@ -67,7 +70,6 @@ create_st:
 	if (!st)
 		return -ENOMEM;
 
-	npages = obj->base.size / PAGE_SIZE;
 	if (sg_alloc_table(st, npages, GFP_KERNEL)) {
 		kfree(st);
 		return -ENOMEM;

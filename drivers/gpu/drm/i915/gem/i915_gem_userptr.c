@@ -128,12 +128,15 @@ static void i915_gem_object_userptr_drop_ref(struct drm_i915_gem_object *obj)
 
 static int i915_gem_userptr_get_pages(struct drm_i915_gem_object *obj)
 {
-	const unsigned long num_pages = obj->base.size >> PAGE_SHIFT;
+	pgoff_t num_pages; /* limited by __sg_alloc_table_from_pages */
 	unsigned int max_segment = i915_sg_segment_size();
 	struct sg_table *st;
 	unsigned int sg_page_sizes;
 	struct page **pvec;
 	int ret;
+
+	if (!safe_conversion(&num_pages, obj->base.size >> PAGE_SHIFT))
+		return -E2BIG;
 
 	st = kmalloc(sizeof(*st), GFP_KERNEL);
 	if (!st)

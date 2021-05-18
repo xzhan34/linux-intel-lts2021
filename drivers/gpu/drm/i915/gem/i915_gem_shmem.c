@@ -33,8 +33,6 @@ static int shmem_get_pages(struct drm_i915_gem_object *obj)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct intel_memory_region *mem = obj->mm.region;
-	const unsigned long page_count = obj->base.size / PAGE_SIZE;
-	unsigned long i;
 	struct address_space *mapping;
 	struct sg_table *st;
 	struct scatterlist *sg;
@@ -43,8 +41,12 @@ static int shmem_get_pages(struct drm_i915_gem_object *obj)
 	unsigned long last_pfn = 0;	/* suppress gcc warning */
 	unsigned int max_segment = i915_sg_segment_size();
 	unsigned int sg_page_sizes;
+	pgoff_t page_count, i;
 	gfp_t noreclaim;
 	int ret;
+
+	if (!safe_conversion(&page_count, obj->base.size >> PAGE_SHIFT))
+		return -E2BIG;
 
 	/*
 	 * Assert that the object is not currently in any GPU domain. As it

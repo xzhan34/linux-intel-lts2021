@@ -492,4 +492,16 @@ void __mark_lock_used_irq(struct lockdep_map *lock);
 
 #define exactly_pgoff_t(n) exact_type(pgoff_t, n)
 
+/*
+ * Perform a type conversion (cast) of an integer value into a new
+ * variable, checking that the destination is large enough to hold the source
+ * value. If the value would overflow the destination leaving a truncated
+ * result, return false instead.
+ */
+#define safe_conversion(ptr, value) ({ \
+	typeof(value) __v = (value); \
+	typeof(ptr) __ptr = (ptr); \
+	overflows_type(__v, *__ptr) ? 0 : (*__ptr = (typeof(*__ptr))__v), 1; \
+})
+
 #endif /* !__I915_UTILS_H */
