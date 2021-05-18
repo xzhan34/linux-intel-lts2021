@@ -51,7 +51,7 @@ static void close_objects(struct intel_memory_region *mem,
 static int igt_mock_fill(void *arg)
 {
 	struct intel_memory_region *mem = arg;
-	resource_size_t total = resource_size(&mem->region);
+	resource_size_t total = mem->mm.size;
 	resource_size_t page_size;
 	resource_size_t rem;
 	unsigned long max_pages;
@@ -119,6 +119,13 @@ igt_object_create(struct intel_memory_region *mem,
 	if (IS_ERR(obj))
 		return obj;
 
+	if (obj->base.size != size) {
+		pr_err("Tried to create object with size %lld, but returned %zd\n",
+		       size, obj->base.size);
+		err = -EINVAL;
+		goto put;
+	}
+
 	err = i915_gem_object_pin_pages_unlocked(obj);
 	if (err)
 		goto put;
@@ -160,7 +167,6 @@ static int igt_mock_reserve(void *arg)
 {
 	struct intel_memory_region *mem = arg;
 	struct drm_i915_private *i915 = mem->i915;
-	resource_size_t avail = resource_size(&mem->region);
 	struct drm_i915_gem_object *obj;
 	const u32 chunk_size = SZ_32M;
 	u32 i, offset, count, *order;
@@ -169,7 +175,7 @@ static int igt_mock_reserve(void *arg)
 	LIST_HEAD(objects);
 	int err = 0;
 
-	count = avail / chunk_size;
+	count = mem->avail / chunk_size;
 	order = i915_random_order(count, &prng);
 	if (!order)
 		return 0;
@@ -199,15 +205,15 @@ static int igt_mock_reserve(void *arg)
 			pr_err("%s failed to reserve range", __func__);
 			goto out_close;
 		}
-
-		/* XXX: maybe sanity check the block range here? */
-		avail -= size;
 	}
+
+	pr_info("After reservation, available %pa / %pa\n",
+		&mem->avail, &mem->mm.size);
 
 	/* Try to see if we can allocate from the remaining space */
 	allocated = 0;
-	cur_avail = avail;
-	do {
+	cur_avail = mem->avail;
+	while (cur_avail) {
 		u32 size = i915_prandom_u32_max_state(cur_avail, &prng);
 
 retry:
@@ -223,14 +229,16 @@ retry:
 				break;
 			}
 			err = PTR_ERR(obj);
+			pr_err("%s allocation { size: %d, avail : %lld / %pa } failed",
+			       __func__, size, cur_avail, &mem->avail);
 			goto out_close;
 		}
 		cur_avail -= size;
 		allocated += size;
-	} while (1);
+	}
 
-	if (allocated != avail) {
-		pr_err("%s mismatch between allocation and free space", __func__);
+	if (mem->avail) {
+		pr_err("%s mismatch between allocation:%lld and remaining free space:%lld/%pa", __func__, allocated, cur_avail, &mem->avail);
 		err = -EINVAL;
 	}
 
@@ -247,15 +255,14 @@ static int igt_mock_contiguous(void *arg)
 	struct intel_memory_region *mem = arg;
 	struct drm_i915_gem_object *obj;
 	unsigned long n_objects;
+	resource_size_t total = mem->mm.size;
+	resource_size_t min;
 	LIST_HEAD(objects);
 	LIST_HEAD(holes);
 	I915_RND_STATE(prng);
-	resource_size_t total;
-	resource_size_t min;
-	u64 target;
+	u64 target, max;
 	int err = 0;
 
-	total = resource_size(&mem->region);
 
 	/* Min size */
 	obj = igt_object_create(mem, &objects, PAGE_SIZE,
@@ -272,7 +279,8 @@ static int igt_mock_contiguous(void *arg)
 	igt_object_release(obj);
 
 	/* Max size */
-	obj = igt_object_create(mem, &objects, total, I915_BO_ALLOC_CONTIGUOUS);
+	max = BIT_ULL(mem->mm.max_order) * mem->mm.chunk_size;
+	obj = igt_object_create(mem, &objects, max, I915_BO_ALLOC_CONTIGUOUS);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
@@ -286,7 +294,7 @@ static int igt_mock_contiguous(void *arg)
 
 	/* Internal fragmentation should not bleed into the object size */
 	target = i915_prandom_u64_state(&prng);
-	div64_u64_rem(target, total, &target);
+	div64_u64_rem(target, max, &target);
 	target = round_up(target, PAGE_SIZE);
 	target = max_t(u64, PAGE_SIZE, target);
 
@@ -337,7 +345,7 @@ static int igt_mock_contiguous(void *arg)
 	close_objects(mem, &holes);
 
 	min = target;
-	target = total >> 1;
+	target = max >> 1;
 
 	if (!mem->is_range_manager) {
 		/* Make sure we can still allocate all the fragmented space */
@@ -1333,7 +1341,7 @@ static int igt_mock_shrink(void *arg)
 	int err = 0;
 
 	target = mem->mm.chunk_size;
-	total = resource_size(&mem->region);
+	total = mem->mm.size;
 	n_objects = total / target;
 
 	while (n_objects--) {
@@ -1529,7 +1537,10 @@ static int igt_lmem_pages_migrate_cross_tile(void *arg)
 	return ret;
 }
 
-int intel_memory_region_mock_selftests(void)
+static int mock_selftests(struct intel_gt *gt,
+			  u64 start, u64 end, u64 chunk,
+			  unsigned int flags,
+			  bool exact)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_mock_reserve),
@@ -1540,6 +1551,42 @@ int intel_memory_region_mock_selftests(void)
 		SUBTEST(igt_mock_shrink),
 	};
 	struct intel_memory_region *mem;
+	int err = 0;
+
+	mem = mock_region_create(gt, start, end - start, chunk, flags, 0);
+	if (IS_ERR(mem)) {
+		pr_err("failed to create memory region [%llx, %llx]\n", start, end);
+		return PTR_ERR(mem);
+	}
+
+	pr_info("mock region [%llx, %llx]: { size: %llu, max_order: %u, chunk: %llu, nroots: %u }\n",
+		start, end,
+		mem->mm.size,
+		mem->mm.max_order,
+		mem->mm.chunk_size,
+		mem->mm.n_roots);
+
+	if (exact) { /* Check that we generate an "ideal" buddy */
+		if (mem->mm.size != end - start ||
+		    mem->mm.chunk_size != chunk ||
+		    mem->mm.max_order != ilog2(mem->mm.size) - ilog2(mem->mm.chunk_size) ||
+		    mem->mm.n_roots != 1) {
+			pr_err("[%llx, %llx] exact mock region construction failed\n",
+			       start, end);
+			err = -EINVAL;
+		}
+	}
+
+	if (err == 0)
+		err = i915_subtests(tests, mem);
+
+	intel_memory_region_put(mem);
+
+	return err;
+}
+
+int intel_memory_region_mock_selftests(void)
+{
 	struct drm_i915_private *i915;
 	int err;
 
@@ -1547,17 +1594,22 @@ int intel_memory_region_mock_selftests(void)
 	if (!i915)
 		return -ENOMEM;
 
-	mem = mock_region_create(to_gt(i915), 0, SZ_2G, I915_GTT_PAGE_SIZE_4K, 0, 0);
-	if (IS_ERR(mem)) {
-		pr_err("failed to create memory region\n");
-		err = PTR_ERR(mem);
-		goto out_unref;
-	}
+	/* Ideal */
+	err = mock_selftests(to_gt(i915), 0, SZ_2G, SZ_4K, 0, true);
+	if (err)
+		goto out;
 
-	err = i915_subtests(tests, mem);
+	/* Slight misalignment */
+	err = mock_selftests(to_gt(i915), SZ_64K, SZ_2G, SZ_4K, 0, false);
+	if (err)
+		goto out;
 
-	intel_memory_region_put(mem);
-out_unref:
+	/* Second slice */
+	err = mock_selftests(to_gt(i915), SZ_2G, SZ_4G, SZ_4K, 0, true);
+	if (err)
+		goto out;
+
+out:
 	mock_destroy_device(i915);
 	return err;
 }
