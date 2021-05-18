@@ -85,6 +85,7 @@
 #include "intel_step.h"
 #include "intel_uncore.h"
 #include "intel_wopcm.h"
+#include "i915_addr_trans_svc.h"
 
 struct dpll;
 struct drm_i915_clock_gating_funcs;
@@ -975,6 +976,11 @@ struct drm_i915_private {
 
 	bool device_faulted;
 	struct pci_saved_state *pci_state;
+
+	/* Address translation service support */
+	struct i915_ats_priv *ats_priv;
+	unsigned long flags;
+#define INTEL_FLAG_ATS_ENABLED		0
 };
 
 static inline struct drm_i915_private *to_i915(const struct drm_device *dev)

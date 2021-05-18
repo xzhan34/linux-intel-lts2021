@@ -115,6 +115,7 @@
 #include "intel_pm.h"
 #include "intel_vsec.h"
 #include "vlv_suspend.h"
+#include "i915_addr_trans_svc.h"
 
 static const struct drm_driver i915_drm_driver;
 
@@ -1500,6 +1501,9 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	    i915->params.smem_access_control == 5)
 		i915->bind_ctxt_ready = true;
 
+	/* Enable Address Translation Services */
+	i915_enable_ats(i915);
+
 	return 0;
 
 out_cleanup_blt_windows:
@@ -1559,6 +1563,9 @@ void i915_driver_remove(struct drm_i915_private *i915)
 	synchronize_rcu();
 
 	i915_gem_suspend(i915);
+
+	/* Disable Address Translation Services */
+	i915_disable_ats(i915);
 
 	if (HAS_LMEM(i915))
 		i915_teardown_blt_windows(i915);
