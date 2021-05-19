@@ -20,6 +20,7 @@
 #include "gt/intel_engine_types.h"
 
 struct drm_i915_private;
+struct drm_i915_file_private;
 
 struct i915_drm_clients {
 	struct drm_i915_private *i915;
@@ -50,6 +51,8 @@ struct i915_drm_client {
 	struct rcu_work rcu;
 
 	struct mutex update_lock; /* Serializes name and pid updates. */
+
+	struct drm_i915_file_private *file;
 
 	unsigned int id;
 	struct i915_drm_client_name __rcu *name;
@@ -125,7 +128,8 @@ static inline void i915_drm_client_put(struct i915_drm_client *client)
 void i915_drm_client_close(struct i915_drm_client *client);
 
 struct i915_drm_client *i915_drm_client_add(struct i915_drm_clients *clients,
-					    struct task_struct *task);
+					    struct task_struct *task,
+					    struct drm_i915_file_private *file);
 
 int i915_drm_client_update(struct i915_drm_client *client,
 			   struct task_struct *task);

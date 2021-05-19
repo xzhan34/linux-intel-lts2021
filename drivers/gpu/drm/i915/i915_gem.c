@@ -1284,7 +1284,7 @@ int i915_gem_open(struct drm_i915_private *i915, struct drm_file *file)
 	if (!file_priv)
 		goto err_alloc;
 
-	client = i915_drm_client_add(&i915->clients, current);
+	client = i915_drm_client_add(&i915->clients, current, file_priv);
 	if (IS_ERR(client)) {
 		ret = PTR_ERR(client);
 		goto err_client;

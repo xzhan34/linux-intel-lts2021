@@ -574,7 +574,9 @@ static void __rcu_i915_drm_client_free(struct work_struct *wrk)
 }
 
 struct i915_drm_client *
-i915_drm_client_add(struct i915_drm_clients *clients, struct task_struct *task)
+i915_drm_client_add(struct i915_drm_clients *clients,
+		    struct task_struct *task,
+		    struct drm_i915_file_private *file)
 {
 	struct i915_drm_client *client;
 	int ret;
@@ -589,6 +591,8 @@ i915_drm_client_add(struct i915_drm_clients *clients, struct task_struct *task)
 	mutex_init(&client->update_lock);
 	spin_lock_init(&client->ctx_lock);
 	INIT_LIST_HEAD(&client->ctx_list);
+
+	client->file = file;
 
 	client->clients = clients;
 	INIT_RCU_WORK(&client->rcu, __rcu_i915_drm_client_free);
