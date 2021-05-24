@@ -216,6 +216,20 @@ static ssize_t contexts_max_quota_iov_attr_show(struct intel_iov *iov, unsigned 
 	return sysfs_emit(buf, "%hu\n", intel_iov_provisioning_query_max_ctxs(iov));
 }
 
+static ssize_t doorbells_free_iov_attr_show(struct intel_iov *iov,
+					    unsigned int id, char *buf)
+{
+	GEM_WARN_ON(id);
+	return sysfs_emit(buf, "%hu\n", intel_iov_provisioning_query_free_dbs(iov));
+}
+
+static ssize_t doorbells_max_quota_iov_attr_show(struct intel_iov *iov,
+						 unsigned int id, char *buf)
+{
+	GEM_WARN_ON(id);
+	return sysfs_emit(buf, "%hu\n", intel_iov_provisioning_query_max_dbs(iov));
+}
+
 IOV_ATTR(ggtt_spare);
 IOV_ATTR(contexts_spare);
 IOV_ATTR(doorbells_spare);
@@ -224,6 +238,8 @@ IOV_ATTR_RO(ggtt_free);
 IOV_ATTR_RO(ggtt_max_quota);
 IOV_ATTR_RO(contexts_free);
 IOV_ATTR_RO(contexts_max_quota);
+IOV_ATTR_RO(doorbells_free);
+IOV_ATTR_RO(doorbells_max_quota);
 
 static struct attribute *pf_attrs[] = {
 	&ggtt_spare_iov_attr.attr,
@@ -241,6 +257,8 @@ static struct attribute *pf_available_attrs[] = {
 	&ggtt_max_quota_iov_attr.attr,
 	&contexts_free_iov_attr.attr,
 	&contexts_max_quota_iov_attr.attr,
+	&doorbells_free_iov_attr.attr,
+	&doorbells_max_quota_iov_attr.attr,
 	NULL
 };
 

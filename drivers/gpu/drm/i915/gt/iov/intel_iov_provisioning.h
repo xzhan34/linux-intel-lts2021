@@ -37,6 +37,8 @@ int intel_iov_provisioning_set_dbs(struct intel_iov *iov, unsigned int id, u16 n
 u16 intel_iov_provisioning_get_dbs(struct intel_iov *iov, unsigned int id);
 int intel_iov_provisioning_set_spare_dbs(struct intel_iov *iov, u16 spare);
 u16 intel_iov_provisioning_get_spare_dbs(struct intel_iov *iov);
+u16 intel_iov_provisioning_query_free_dbs(struct intel_iov *iov);
+u16 intel_iov_provisioning_query_max_dbs(struct intel_iov *iov);
 
 int intel_iov_provisioning_set_exec_quantum(struct intel_iov *iov, unsigned int id, u32 exec_quantum);
 u32 intel_iov_provisioning_get_exec_quantum(struct intel_iov *iov, unsigned int id);

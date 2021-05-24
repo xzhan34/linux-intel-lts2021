@@ -1044,6 +1044,74 @@ u16 intel_iov_provisioning_get_dbs(struct intel_iov *iov, unsigned int id)
 	return num_dbs;
 }
 
+static u16 pf_get_free_dbs(struct intel_iov *iov)
+{
+	unsigned long *dbs_bitmap = pf_get_dbs_bitmap(iov);
+	int used;
+
+	if (unlikely(!dbs_bitmap))
+		return 0;
+
+	used = bitmap_weight(dbs_bitmap, GUC_NUM_DOORBELLS);
+	GEM_WARN_ON(used > GUC_NUM_DOORBELLS);
+
+	bitmap_free(dbs_bitmap);
+
+	return GUC_NUM_DOORBELLS - used;
+}
+
+/**
+ * intel_iov_provisioning_query_free_dbs - Get available doorbells.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u16 intel_iov_provisioning_query_free_dbs(struct intel_iov *iov)
+{
+	u16 num_dbs;
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	num_dbs = pf_get_free_dbs(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return num_dbs;
+}
+
+static u16 pf_get_max_dbs(struct intel_iov *iov)
+{
+	unsigned long *dbs_bitmap = pf_get_dbs_bitmap(iov);
+	unsigned int rs, re;
+	u16 limit = 0;
+
+	if (unlikely(!dbs_bitmap))
+		return 0;
+
+	bitmap_for_each_clear_region(dbs_bitmap, rs, re, 0, GUC_NUM_DOORBELLS) {
+		IOV_DEBUG(iov, "dbs hole %u-%u (%u)\n", rs, re, re - rs);
+		limit = max_t(u16, limit, re - rs);
+	}
+	bitmap_free(dbs_bitmap);
+
+	return limit;
+}
+
+/**
+ * intel_iov_provisioning_query_max_dbs - Get maximum available doorbells quota.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u16 intel_iov_provisioning_query_max_dbs(struct intel_iov *iov)
+{
+	u16 num_dbs;
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	num_dbs = pf_get_max_dbs(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return num_dbs;
+}
+
 static const char* exec_quantum_unit(u32 exec_quantum)
 {
 	return exec_quantum ? "ms" : "(inifinity)";
