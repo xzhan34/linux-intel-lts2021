@@ -293,6 +293,8 @@ int intel_memory_region_reserve(struct intel_memory_region *mem,
 
 	mutex_lock(&mem->mm_lock);
 	ret = i915_buddy_alloc_range(&mem->mm, &mem->reserved, offset, size);
+	if (!ret)
+		mem->avail -= size;
 	mutex_unlock(&mem->mm_lock);
 
 	return ret;
