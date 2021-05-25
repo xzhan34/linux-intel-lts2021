@@ -282,17 +282,31 @@ fill_page_dma(struct drm_i915_gem_object *p, const u64 val, unsigned int count)
 	drm_clflush_virt_range(vaddr, PAGE_SIZE);
 }
 
-static void poison_scratch_page(struct drm_i915_gem_object *scratch)
+static u32 poison_scratch_page(struct drm_i915_gem_object *scratch)
 {
 	void *vaddr = __px_vaddr(scratch);
-	u8 val;
+	u32 val;
 
 	val = 0;
-	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM))
-		val = POISON_FREE;
+	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM)) {
+		/*
+		 * Partially randomise the scratch page.
+		 *
+		 * By giving every scratch page a unique poison, we can
+		 * identify if a stale read is coming from a local scratch
+		 * or worse, a remote vm. However, we still want to quickly
+		 * identify scratch reads from regular client hangs, so
+		 * we keep the top byte as a marker.
+		 */
+		val = get_random_u32();
+		val >>= 8;
+		val |= (u32)POISON_FREE << 24;
+	}
 
-	memset(vaddr, val, scratch->base.size);
+	memset32(vaddr, val, scratch->base.size / sizeof(u32));
 	drm_clflush_virt_range(vaddr, scratch->base.size);
+
+	return val;
 }
 
 int setup_scratch_page(struct i915_address_space *vm)
@@ -342,7 +356,7 @@ int setup_scratch_page(struct i915_address_space *vm)
 		 * should it ever be accidentally used, the effect should be
 		 * fairly benign.
 		 */
-		poison_scratch_page(obj);
+		vm->poison = poison_scratch_page(obj);
 
 		vm->scratch[0] = obj;
 		vm->scratch_order = get_order(size);

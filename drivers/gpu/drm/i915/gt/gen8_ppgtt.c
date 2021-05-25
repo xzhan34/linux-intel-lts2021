@@ -788,6 +788,7 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 		for (i = 0; i <= vm->top; i++)
 			vm->scratch[i] = i915_gem_object_get(clone->scratch[i]);
 
+		vm->poison = clone->poison;
 		return 0;
 	}
 

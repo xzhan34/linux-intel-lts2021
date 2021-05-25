@@ -246,6 +246,9 @@ struct i915_address_space {
 	struct intel_gt *gt;
 	struct drm_i915_private *i915;
 	struct device *dma;
+
+	u32 poison; /* value used to fill the scratch page */
+
 	/*
 	 * Every address space belongs to a struct file - except for the global
 	 * GTT that is owned by the driver (and so @file is set to NULL). In

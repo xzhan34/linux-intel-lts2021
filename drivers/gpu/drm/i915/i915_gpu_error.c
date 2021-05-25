@@ -544,6 +544,7 @@ static void error_print_engine(struct drm_i915_error_state_buf *m,
 		   (u32)(ee->acthd>>32), (u32)ee->acthd);
 	err_printf(m, "  IPEIR: 0x%08x\n", ee->ipeir);
 	err_printf(m, "  IPEHR: 0x%08x\n", ee->ipehr);
+	err_printf(m, "  POISON: 0x%08x\n", ee->vm_poison);
 	err_printf(m, "  ESR:   0x%08x\n", ee->esr);
 
 	error_print_instdone(m, ee);
@@ -1495,6 +1496,7 @@ intel_engine_coredump_add_request(struct intel_engine_coredump *ee,
 	ee->rq_head = rq->head;
 	ee->rq_post = rq->postfix;
 	ee->rq_tail = rq->tail;
+	ee->vm_poison = rq->context->vm->poison;
 
 	return vma;
 }

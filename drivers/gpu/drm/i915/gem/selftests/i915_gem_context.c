@@ -1751,7 +1751,9 @@ out:
 	return err;
 }
 
-static int check_scratch_page(struct i915_gem_context *ctx, u32 *out)
+static int check_scratch_page(struct i915_gem_context *ctx,
+			      struct rnd_state *prng,
+			      u32 *out)
 {
 	struct i915_address_space *vm;
 	u32 *vaddr;
@@ -1768,12 +1770,15 @@ static int check_scratch_page(struct i915_gem_context *ctx, u32 *out)
 
 	vaddr = __px_vaddr(vm->scratch[0]);
 
-	memcpy(out, vaddr, sizeof(*out));
-	if (memchr_inv(vaddr, *out, PAGE_SIZE)) {
-		pr_err("Inconsistent initial state of scratch page!\n");
+	if (vaddr[0] != vm->poison ||
+	    vaddr[i915_prandom_u32_max_state(PAGE_SIZE / sizeof(u32), prng)] != vm->poison) {
+		pr_err("Inconsistent initial state of scratch page, expected poison:%08x!\n",
+		       vm->poison);
+		igt_hexdump(vaddr, PAGE_SIZE);
 		err = -EINVAL;
 	}
 
+	*out = vm->poison;
 	return err;
 }
 
@@ -1823,11 +1828,11 @@ static int igt_vm_isolation(void *arg)
 		goto out_file;
 
 	/* Read the initial state of the scratch page */
-	err = check_scratch_page(ctx_a, &expected);
+	err = check_scratch_page(ctx_a, &prng, &expected);
 	if (err)
 		goto out_file;
 
-	err = check_scratch_page(ctx_b, &expected);
+	err = check_scratch_page(ctx_b, &prng, &expected);
 	if (err)
 		goto out_file;
 

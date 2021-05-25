@@ -65,7 +65,7 @@ struct intel_engine_coredump {
 	u32 reset_count;
 
 	/* position of active request inside the ring */
-	u32 rq_head, rq_post, rq_tail;
+	u32 rq_head, rq_post, rq_tail, vm_poison;
 
 	/* Register state */
 	u32 ccid;
