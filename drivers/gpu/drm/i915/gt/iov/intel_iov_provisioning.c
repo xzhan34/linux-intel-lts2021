@@ -795,10 +795,12 @@ int intel_iov_provisioning_set_spare_dbs(struct intel_iov *iov, u16 spare)
 
 static bool pf_is_valid_config_dbs(struct intel_iov *iov, unsigned int id)
 {
+	struct intel_iov_config *config = &iov->pf.provisioning.configs[id];
+
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
 	lockdep_assert_held(pf_provisioning_mutex(iov));
 
-	return iov->pf.provisioning.configs[id].num_dbs;
+	return config->num_dbs || config->begin_db;
 }
 
 static unsigned long *pf_get_dbs_bitmap(struct intel_iov *iov)
@@ -1104,6 +1106,7 @@ static void pf_unprovision_config(struct intel_iov *iov, unsigned int id)
 {
 	pf_provision_ggtt(iov, id, 0);
 	pf_provision_ctxs(iov, id, 0);
+	pf_provision_dbs(iov, id, 0);
 }
 
 static void pf_unprovision_all(struct intel_iov *iov)
@@ -1186,6 +1189,33 @@ static int pf_auto_provision_ctxs(struct intel_iov *iov, unsigned int num_vfs)
 	return 0;
 }
 
+static int pf_auto_provision_dbs(struct intel_iov *iov, unsigned int num_vfs)
+{
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	u16 available, fair;
+	unsigned int n;
+	int err;
+
+	available = GUC_NUM_DOORBELLS - provisioning->configs[0].num_dbs;
+	fair = available / num_vfs;
+
+	IOV_DEBUG(iov, "doorbells available(%hu) fair(%u x %hu)\n",
+		  available, num_vfs, fair);
+	if (!fair)
+		return -ENOSPC;
+
+	for (n = 1; n <= num_vfs; n++) {
+		if (pf_is_valid_config_dbs(iov, n))
+			return -EUCLEAN;
+
+		err = pf_provision_dbs(iov, n, fair);
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
 static int pf_auto_provision(struct intel_iov *iov, unsigned int num_vfs)
 {
 	int err;
@@ -1206,6 +1236,10 @@ static int pf_auto_provision(struct intel_iov *iov, unsigned int num_vfs)
 		goto fail;
 
 	err = pf_auto_provision_ctxs(iov, num_vfs);
+	if (unlikely(err))
+		goto fail;
+
+	err = pf_auto_provision_dbs(iov, num_vfs);
 	if (unlikely(err))
 		goto fail;
 
@@ -1249,13 +1283,17 @@ static int pf_validate_config(struct intel_iov *iov, unsigned int id)
 {
 	bool valid_ggtt = pf_is_valid_config_ggtt(iov, id);
 	bool valid_ctxs = pf_is_valid_config_ctxs(iov, id);
-	bool valid_any = valid_ggtt || valid_ctxs;
+	bool valid_dbs = pf_is_valid_config_dbs(iov, id);
+	bool valid_any = valid_ggtt || valid_ctxs || valid_dbs;
 	bool valid_all = valid_ggtt && valid_ctxs;
 
+	/* we don't require doorbells, but will check if were assigned */
+
 	if (!valid_all) {
-		IOV_DEBUG(iov, "%u: invalid config: %s%s\n", id,
+		IOV_DEBUG(iov, "%u: invalid config: %s%s%s\n", id,
 			  valid_ggtt ? "" : "GGTT ",
-			  valid_ctxs ? "" : "contexts ");
+			  valid_ctxs ? "" : "contexts ",
+			  valid_dbs ? "" : "doorbells ");
 		return valid_any ? -ENOKEY : -ENODATA;
 	}
 
