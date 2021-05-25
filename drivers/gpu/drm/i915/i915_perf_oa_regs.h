@@ -154,6 +154,15 @@
 
 #define XEHPSDV_OAG_MMIOTRIGGER _MMIO(0xdb1c)
 
+/* Engine busyness counters
+ *
+ * This register are used to measures the total wall time of engine group
+ */
+#define GEN12_OAG_RENDER_BUSY_FREE		_MMIO(0xdbdc)
+#define GEN12_OAG_BLT_BUSY_FREE			_MMIO(0xdbbc)
+#define GEN12_OAG_ANY_MEDIA_FF_BUSY_FREE	_MMIO(0xdba0)
+#define GEN12_OAG_RC0_ANY_ENGINE_BUSY_FREE	_MMIO(0xdb80)
+
 #define GDT_CHICKEN_BITS    _MMIO(0x9840)
 #define   GT_NOA_ENABLE	    0x00000080
 

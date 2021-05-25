@@ -10,6 +10,7 @@
 #include "gt/intel_engine_pm.h"
 #include "gt/intel_engine_regs.h"
 #include "gt/intel_engine_user.h"
+#include "gt/intel_gt_clock_utils.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_gt_regs.h"
@@ -17,6 +18,7 @@
 #include "gt/intel_rps.h"
 
 #include "i915_drv.h"
+#include "i915_perf_oa_regs.h"
 #include "i915_pmu.h"
 #include "intel_pm.h"
 
@@ -314,6 +316,98 @@ add_sample_mult(struct i915_pmu *pmu, unsigned int gt_id, int sample, u32 val,
 							mul_u32_u32(val, mul);
 }
 
+static int engine_busyness_sample_type(u64 config)
+{
+	int type = 0;
+
+	switch (config) {
+	case PRELIM_I915_PMU_RENDER_GROUP_BUSY:
+		type =  __I915_SAMPLE_RENDER_GROUP_BUSY;
+		break;
+	case PRELIM_I915_PMU_COPY_GROUP_BUSY:
+		type = __I915_SAMPLE_RENDER_COPY_GROUP_BUSY;
+		break;
+	case PRELIM_I915_PMU_MEDIA_GROUP_BUSY:
+		type = __I915_SAMPLE_MEDIA_GROUP_BUSY;
+		break;
+	case PRELIM_I915_PMU_ANY_ENGINE_GROUP_BUSY:
+		type = __I915_SAMPLE_ANY_ENGINE_GROUP_BUSY;
+		break;
+	default:
+		MISSING_CASE(config);
+	}
+
+	return type;
+}
+
+static u64 __engine_group_busyness_read(struct intel_gt *gt, u64 config)
+{
+	u64 val = 0;
+
+	switch (config) {
+	case PRELIM_I915_PMU_RENDER_GROUP_BUSY:
+		val = intel_uncore_read(gt->uncore, GEN12_OAG_RENDER_BUSY_FREE);
+		break;
+	case PRELIM_I915_PMU_COPY_GROUP_BUSY:
+		val = intel_uncore_read(gt->uncore, GEN12_OAG_BLT_BUSY_FREE);
+		break;
+	case PRELIM_I915_PMU_MEDIA_GROUP_BUSY:
+		val = intel_uncore_read(gt->uncore,
+					GEN12_OAG_ANY_MEDIA_FF_BUSY_FREE);
+		break;
+	case PRELIM_I915_PMU_ANY_ENGINE_GROUP_BUSY:
+		val = intel_uncore_read(gt->uncore,
+					GEN12_OAG_RC0_ANY_ENGINE_BUSY_FREE);
+		break;
+	default:
+		MISSING_CASE(config);
+	}
+
+	return intel_gt_clock_interval_to_ns(gt, val * 16);
+}
+
+static u64 engine_group_busyness_read(struct intel_gt *gt, u64 config)
+{
+	int sample_type = engine_busyness_sample_type(config);
+	struct drm_i915_private *i915 = gt->i915;
+	const unsigned int gt_id = gt->info.id;
+	struct i915_pmu *pmu = &i915->pmu;
+	intel_wakeref_t wakeref;
+	unsigned long flags;
+	u64 val;
+
+	wakeref = intel_gt_pm_get_if_awake(gt);
+	if (wakeref) {
+		val = __engine_group_busyness_read(gt, config);
+		intel_gt_pm_put_async(gt, wakeref);
+	}
+
+	spin_lock_irqsave(&pmu->lock, flags);
+
+	if (wakeref)
+		store_sample(pmu, gt_id, sample_type, val);
+	else
+		val = read_sample(pmu, gt_id, sample_type);
+
+	spin_unlock_irqrestore(&pmu->lock, flags);
+
+	return val;
+}
+
+static void engine_group_busyness_store(struct intel_gt *gt)
+{
+	struct i915_pmu *pmu = &gt->i915->pmu;
+
+	store_sample(pmu, gt->info.id, __I915_SAMPLE_RENDER_GROUP_BUSY,
+		     __engine_group_busyness_read(gt, PRELIM_I915_PMU_RENDER_GROUP_BUSY));
+	store_sample(pmu, gt->info.id, __I915_SAMPLE_RENDER_COPY_GROUP_BUSY,
+		     __engine_group_busyness_read(gt, PRELIM_I915_PMU_COPY_GROUP_BUSY));
+	store_sample(pmu, gt->info.id, __I915_SAMPLE_MEDIA_GROUP_BUSY,
+		     __engine_group_busyness_read(gt, PRELIM_I915_PMU_MEDIA_GROUP_BUSY));
+	store_sample(pmu, gt->info.id, __I915_SAMPLE_ANY_ENGINE_GROUP_BUSY,
+		     __engine_group_busyness_read(gt, PRELIM_I915_PMU_ANY_ENGINE_GROUP_BUSY));
+}
+
 static u64 get_rc6(struct intel_gt *gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
@@ -355,7 +449,7 @@ static u64 get_rc6(struct intel_gt *gt)
 	return val;
 }
 
-static void init_rc6(struct i915_pmu *pmu)
+static void init_samples(struct i915_pmu *pmu)
 {
 	struct drm_i915_private *i915 = container_of(pmu, typeof(*i915), pmu);
 	struct intel_gt *gt;
@@ -371,6 +465,7 @@ static void init_rc6(struct i915_pmu *pmu)
 			store_sample(pmu, i, __I915_SAMPLE_RC6_LAST_REPORTED,
 				     val);
 			pmu->sleep_last[i] = ktime_get_raw();
+			engine_group_busyness_store(gt);
 		}
 	}
 }
@@ -404,6 +499,7 @@ void i915_pmu_gt_parked(struct intel_gt *gt)
 	spin_lock_irq(&pmu->lock);
 
 	park_rc6(gt);
+	engine_group_busyness_store(gt);
 
 	/*
 	 * Signal sampling timer to stop if only engine events are enabled and
@@ -756,6 +852,13 @@ config_status(struct drm_i915_private *i915, u64 config)
 	case PRELIM_I915_PMU_ENGINE_RESET_COUNT:
 	case PRELIM_I915_PMU_EU_ATTENTION_COUNT:
 		break;
+	case PRELIM_I915_PMU_RENDER_GROUP_BUSY:
+	case PRELIM_I915_PMU_COPY_GROUP_BUSY:
+	case PRELIM_I915_PMU_MEDIA_GROUP_BUSY:
+	case PRELIM_I915_PMU_ANY_ENGINE_GROUP_BUSY:
+		if (GRAPHICS_VER(i915) < 12)
+			return -ENOENT;
+		break;
 	default:
 		return -ENOENT;
 	}
@@ -903,6 +1006,13 @@ static u64 __i915_pmu_event_read(struct perf_event *event)
 			break;
 		case PRELIM_I915_PMU_EU_ATTENTION_COUNT:
 			val = atomic_read(&i915->gt[gt_id]->reset.eu_attention_count);
+			break;
+		case PRELIM_I915_PMU_RENDER_GROUP_BUSY:
+		case PRELIM_I915_PMU_COPY_GROUP_BUSY:
+		case PRELIM_I915_PMU_MEDIA_GROUP_BUSY:
+		case PRELIM_I915_PMU_ANY_ENGINE_GROUP_BUSY:
+			val = engine_group_busyness_read(i915->gt[gt_id],
+							 config);
 			break;
 		}
 	}
@@ -1244,6 +1354,10 @@ create_event_attributes(struct i915_pmu *pmu)
 		__event(4, "software-gt-awake-time", "ns"),
 		__error_event(5, "engine-reset", NULL),
 		__error_event(6, "eu-attention", NULL),
+		__event(7, "render-group-busy", "ns"),
+		__event(8, "copy-group-busy", "ns"),
+		__event(9, "media-group-busy", "ns"),
+		__event(10, "any-engine-group-busy", "ns"),
 	};
 	static const char *hw_error_events[] = {
 		[PRELIM_I915_PMU_GT_ERROR_CORRECTABLE_L3_SNG] = "correctable-l3-sng",
@@ -1700,7 +1814,7 @@ void i915_pmu_register(struct drm_i915_private *i915)
 	hrtimer_init(&pmu->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	pmu->timer.function = i915_sample;
 	pmu->cpuhp.cpu = -1;
-	init_rc6(pmu);
+	init_samples(pmu);
 
 	if (!is_igp(i915)) {
 		pmu->name = kasprintf(GFP_KERNEL,
