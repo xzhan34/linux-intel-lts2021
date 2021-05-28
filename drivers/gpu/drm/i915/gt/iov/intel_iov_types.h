@@ -81,14 +81,21 @@ struct intel_iov_provisioning {
 
 /**
  * struct intel_iov_data - Data related to one VF.
+ * @state: VF state bits
  */
 struct intel_iov_data {
+	unsigned long state;
+#define IOV_VF_FLR_IN_PROGRESS		0
+#define IOV_VF_NEEDS_FLR_START		1
+#define IOV_VF_FLR_FAILED		(BITS_PER_LONG - 1)
 };
 
 /**
  * struct intel_iov_state - Placeholder for all VFs data.
+ * @worker: event processing worker
  */
 struct intel_iov_state {
+	struct work_struct worker;
 	struct intel_iov_data *data;
 };
 

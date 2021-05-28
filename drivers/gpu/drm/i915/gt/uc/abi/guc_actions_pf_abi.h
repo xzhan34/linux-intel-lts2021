@@ -364,4 +364,56 @@
 #define   GUC_PF_NOTIFY_VF_PAUSE_DONE			3
 #define   GUC_PF_NOTIFY_VF_FIXUP_DONE			4
 
+/**
+ * DOC: PF2GUC_VF_CONTROL
+ *
+ * The PF2GUC_VF_CONTROL message is used by the PF to trigger VF state change
+ * maintained by the GuC.
+ *
+ * This H2G message must be sent as `CTB HXG Message`_.
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_HOST_                                |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_REQUEST_                                 |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:16 | DATA0 = MBZ                                                  |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  15:0 | ACTION = _`GUC_ACTION_PF2GUC_VF_CONTROL_CMD` = 0x5506        |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | DATA1 = **VFID** - VF identifier                             |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 2 |  31:0 | DATA2 = **COMMAND** - control command:                       |
+ *  |   |       |                                                              |
+ *  |   |       |   - _`GUC_PF_TRIGGER_VF_PAUSE` = 1                           |
+ *  |   |       |   - _`GUC_PF_TRIGGER_VF_RESUME` = 2                          |
+ *  |   |       |   - _`GUC_PF_TRIGGER_VF_STOP` = 3                            |
+ *  |   |       |   - _`GUC_PF_TRIGGER_VF_FLR_START` = 4                       |
+ *  |   |       |   - _`GUC_PF_TRIGGER_VF_FLR_FINISH` = 5                      |
+ *  +---+-------+--------------------------------------------------------------+
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_GUC_                                 |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_RESPONSE_SUCCESS_                        |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  27:0 | DATA0 = MBZ                                                  |
+ *  +---+-------+--------------------------------------------------------------+
+ */
+#define GUC_ACTION_PF2GUC_VF_CONTROL			0x5506
+
+#define PF2GUC_VF_CONTROL_REQUEST_MSG_LEN		(GUC_HXG_EVENT_MSG_MIN_LEN + 2u)
+#define PF2GUC_VF_CONTROL_REQUEST_MSG_0_MBZ		GUC_HXG_EVENT_MSG_0_DATA0
+#define PF2GUC_VF_CONTROL_REQUEST_MSG_1_VFID		GUC_HXG_EVENT_MSG_n_DATAn
+#define PF2GUC_VF_CONTROL_REQUEST_MSG_2_COMMAND		GUC_HXG_EVENT_MSG_n_DATAn
+#define   GUC_PF_TRIGGER_VF_PAUSE			1
+#define   GUC_PF_TRIGGER_VF_RESUME			2
+#define   GUC_PF_TRIGGER_VF_STOP			3
+#define   GUC_PF_TRIGGER_VF_FLR_START			4
+#define   GUC_PF_TRIGGER_VF_FLR_FINISH			5
+
 #endif /* __GUC_ACTIONS_PF_ABI_H__ */
