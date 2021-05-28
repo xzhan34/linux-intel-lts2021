@@ -15,6 +15,7 @@
 #include "gt/intel_pagefault.h"
 #include "gt/iov/intel_iov_relay.h"
 #include "gt/iov/intel_iov_service.h"
+#include "gt/iov/intel_iov_state.h"
 
 enum {
 	CT_DEAD_ALIVE = 0,
@@ -1140,6 +1141,9 @@ static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 		break;
 	case INTEL_GUC_ACTION_ENGINE_FAILURE_NOTIFICATION:
 		ret = intel_guc_engine_failure_process_msg(guc, payload, len);
+		break;
+	case GUC_ACTION_GUC2PF_VF_STATE_NOTIFY:
+		ret = intel_iov_state_process_guc2pf(iov, hxg, hxg_len);
 		break;
 	case GUC_ACTION_GUC2PF_RELAY_FROM_VF:
 		ret = intel_iov_relay_process_guc2pf(&iov->relay, hxg, hxg_len);

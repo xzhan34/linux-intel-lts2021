@@ -322,4 +322,46 @@
 #define PF2GUC_MMIO_RELAY_FAILURE_REQUEST_MSG_2_MAGIC	(0xf << 24)
 #define PF2GUC_MMIO_RELAY_FAILURE_REQUEST_MSG_2_FAULT	(0xff << 0)
 
+/**
+ * DOC: GUC2PF_VF_STATE_NOTIFY
+ *
+ * The GUC2PF_VF_STATE_NOTIFY message is used by the GuC to notify PF about change
+ * of the VF state.
+ *
+ * This G2H message must be sent as `CTB HXG Message`_.
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_GUC_                                 |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_EVENT_                                   |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:16 | DATA0 = MBZ                                                  |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  15:0 | ACTION = _`GUC_ACTION_GUC2PF_VF_STATE_NOTIFY` = 0x5106       |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | DATA1 = **VFID** - VF identifier                             |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 2 |  31:0 | DATA2 = **EVENT** - notification event:                      |
+ *  |   |       |                                                              |
+ *  |   |       |   - _`GUC_PF_NOTIFY_VF_ENABLE` = 1 (only if VFID = 0)        |
+ *  |   |       |   - _`GUC_PF_NOTIFY_VF_FLR` = 1                              |
+ *  |   |       |   - _`GUC_PF_NOTIFY_VF_FLR_DONE` = 2                         |
+ *  |   |       |   - _`GUC_PF_NOTIFY_VF_PAUSE_DONE` = 3                       |
+ *  |   |       |   - _`GUC_PF_NOTIFY_VF_FIXUP_DONE` = 4                       |
+ *  +---+-------+--------------------------------------------------------------+
+ */
+#define GUC_ACTION_GUC2PF_VF_STATE_NOTIFY		0x5106
+
+#define GUC2PF_VF_STATE_NOTIFY_EVENT_MSG_LEN		(GUC_HXG_EVENT_MSG_MIN_LEN + 2u)
+#define GUC2PF_VF_STATE_NOTIFY_EVENT_MSG_0_MBZ		GUC_HXG_EVENT_MSG_0_DATA0
+#define GUC2PF_VF_STATE_NOTIFY_EVENT_MSG_1_VFID		GUC_HXG_EVENT_MSG_n_DATAn
+#define GUC2PF_VF_STATE_NOTIFY_EVENT_MSG_2_EVENT	GUC_HXG_EVENT_MSG_n_DATAn
+#define   GUC_PF_NOTIFY_VF_ENABLE			1
+#define   GUC_PF_NOTIFY_VF_FLR				1
+#define   GUC_PF_NOTIFY_VF_FLR_DONE			2
+#define   GUC_PF_NOTIFY_VF_PAUSE_DONE			3
+#define   GUC_PF_NOTIFY_VF_FIXUP_DONE			4
+
 #endif /* __GUC_ACTIONS_PF_ABI_H__ */
