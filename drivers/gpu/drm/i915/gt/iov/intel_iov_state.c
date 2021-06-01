@@ -7,6 +7,7 @@
 #include "intel_iov_event.h"
 #include "intel_iov_state.h"
 #include "intel_iov_utils.h"
+#include "gem/i915_gem_lmem.h"
 #include "gt/uc/abi/guc_actions_pf_abi.h"
 
 static void pf_state_worker_func(struct work_struct *w);
@@ -155,6 +156,23 @@ static void pf_clear_vf_ggtt_entries(struct intel_iov *iov, u32 vfid)
 	i915_ggtt_set_space_owner(gt->ggtt, vfid, &config->ggtt_region);
 }
 
+static void pf_clear_vf_lmem_obj(struct intel_iov *iov, u32 vfid)
+{
+	struct drm_i915_gem_object *obj;
+	int err;
+
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	obj = iov->pf.provisioning.configs[vfid].lmem_obj;
+	if (!obj)
+		return;
+
+	err = i915_gem_object_clear_lmem(obj);
+	if (unlikely(err))
+		IOV_ERROR(iov, "Failed to clear VF%u LMEM (%pe)\n",
+			  vfid, ERR_PTR(err));
+}
+
 static bool pf_vfs_flr_enabled(struct intel_iov *iov, u32 vfid)
 {
 	return iov_to_i915(iov)->params.vfs_flr_mask & BIT(vfid);
@@ -172,6 +190,8 @@ static int pf_process_vf_flr_finish(struct intel_iov *iov, u32 vfid)
 
 	mutex_lock(pf_provisioning_mutex(iov));
 	pf_clear_vf_ggtt_entries(iov, vfid);
+	if (HAS_LMEM(iov_to_i915(iov)))
+		pf_clear_vf_lmem_obj(iov, vfid);
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 skip:
