@@ -230,6 +230,10 @@ static void vma_invalidate_tlb(struct i915_vma *vma)
 	 * flushed the TLBs upon release, perform a full invalidation.
 	 */
 	for_each_gt(gt, vm->i915, id) {
+		WRITE_ONCE(obj->mm.tlb[id], 0);
+		if (!atomic_read(&vm->active_contexts_gt[id]))
+			continue;
+
 		if (!intel_gt_invalidate_tlb_range(gt,
 						   i915_vma_offset(vma),
 						   i915_vma_size(vma)))

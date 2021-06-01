@@ -340,6 +340,8 @@ static void __intel_context_retire(struct i915_active *active)
 
 	set_bit(CONTEXT_VALID_BIT, &ce->flags);
 	intel_context_post_unpin(ce);
+
+	atomic_dec(&ce->vm->active_contexts_gt[ce->engine->gt->info.id]);
 	intel_context_put(ce);
 }
 
@@ -361,6 +363,7 @@ static int __intel_context_active(struct i915_active *active)
 		i915_vma_make_unshrinkable(ce->state);
 	}
 
+	atomic_inc(&ce->vm->active_contexts_gt[ce->engine->gt->info.id]);
 	return 0;
 }
 

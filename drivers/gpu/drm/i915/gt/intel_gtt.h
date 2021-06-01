@@ -386,6 +386,9 @@ struct i915_address_space {
 	I915_SELFTEST_DECLARE(bool scrub_64K);
 
 	struct i915_active active;
+
+	/* Per tile active users of this VM */
+	atomic_t active_contexts_gt[I915_MAX_GT];
 };
 
 /*
