@@ -1487,6 +1487,7 @@ i915_debugger_discover_contexts(struct i915_debugger *debugger,
 
 			i915_debugger_context_create(ctx);
 			i915_debugger_ctx_vm_create(debugger, ctx);
+			i915_debugger_context_param_engines(ctx);
 
 			rcu_read_lock();
 		}
@@ -2218,6 +2219,86 @@ void i915_debugger_context_param_vm(const struct i915_drm_client *client,
 
 	i915_debugger_ctx_vm_def(debugger, client, ctx->id, vm);
 	i915_debugger_put(debugger);
+}
+
+void i915_debugger_context_param_engines(struct i915_gem_context *ctx)
+{
+	struct i915_debugger *debugger;
+	struct i915_context_param_engines *e;
+	struct i915_gem_engines *gem_engines;
+	struct i915_debug_event_context_param *ctx_param;
+	struct i915_debug_event *event;
+	struct i915_drm_client *client = ctx->client;
+	size_t event_size, count, n;
+
+	/* Can land here during the i915_gem_context_create_ioctl twice:
+	 * during the extension phase and later on in gem_context_register.
+	 * In gem_context_register ctx->client will be set and previous
+	 * events were sent (context create, vm create, ...).
+	 */
+	if (!client)
+		return;
+
+	debugger = i915_debugger_get_for_client(client);
+	if (!debugger)
+		return;
+
+	gem_engines = i915_gem_context_engines_get(ctx, NULL);
+	if (!gem_engines) {
+		i915_debugger_put(debugger);
+		return;
+	}
+
+	count = gem_engines->num_engines;
+
+	if (!check_struct_size(e, engines, count, &event_size)) {
+		i915_gem_context_engines_put(gem_engines);
+		i915_debugger_put(debugger);
+		return;
+	}
+
+	/* param.value is like data[] thus don't count it */
+	event_size += (sizeof(*ctx_param) - sizeof(ctx_param->param.value));
+
+	event = i915_debugger_create_event(debugger,
+					   PRELIM_DRM_I915_DEBUG_EVENT_CONTEXT_PARAM,
+					   PRELIM_DRM_I915_DEBUG_EVENT_CREATE,
+					   event_size,
+					   GFP_KERNEL);
+	if (!event) {
+		i915_gem_context_engines_put(gem_engines);
+		i915_debugger_put(debugger);
+		return;
+	}
+
+	ctx_param = from_event(ctx_param, event);
+	ctx_param->client_handle = client->id;
+	ctx_param->ctx_handle = ctx->id;
+
+	ctx_param->param.ctx_id = ctx->id;
+	ctx_param->param.param = I915_CONTEXT_PARAM_ENGINES;
+	ctx_param->param.size = struct_size(e, engines, count);
+
+	e = (struct i915_context_param_engines *)&ctx_param->param.value;
+
+	for (n = 0; n < count; n++) {
+		struct i915_engine_class_instance *ci = &e->engines[n];
+
+		if (gem_engines->engines[n]) {
+			ci->engine_class =
+				gem_engines->engines[n]->engine->uabi_class;
+			ci->engine_instance =
+				gem_engines->engines[n]->engine->uabi_instance;
+		} else {
+			ci->engine_class = I915_ENGINE_CLASS_INVALID;
+			ci->engine_instance = I915_ENGINE_CLASS_INVALID_NONE;
+		}
+	}
+	i915_gem_context_engines_put(gem_engines);
+
+	i915_debugger_send_event(debugger, event);
+	i915_debugger_put(debugger);
+	kfree(ctx_param);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

@@ -1008,6 +1008,7 @@ static int gem_context_register(struct i915_gem_context *ctx,
 			i915_debugger_vm_create(client, vm);
 			i915_debugger_context_param_vm(client, ctx, vm);
 		}
+		i915_debugger_context_param_engines(ctx);
 	}
 	i915_gem_context_put(ctx);
 	if (!ret)
@@ -1905,6 +1906,7 @@ replace:
 	/* Keep track of old engine sets for kill_context() */
 	engines_idle_release(ctx, set.engines);
 
+	i915_debugger_context_param_engines(ctx);
 	return 0;
 }
 
@@ -2443,6 +2445,7 @@ int i915_gem_context_setparam_ioctl(struct drm_device *dev, void *data,
 	if (!ctx)
 		return -ENOENT;
 
+	i915_debugger_wait_on_discovery(file_priv->dev_priv);
 	ret = ctx_setparam(file_priv, ctx, args, false);
 
 	i915_gem_context_put(ctx);

@@ -54,6 +54,8 @@ void i915_debugger_context_param_vm(const struct i915_drm_client *client,
 				    struct i915_gem_context *ctx,
 				    struct i915_address_space *vm);
 
+void i915_debugger_context_param_engines(struct i915_gem_context *ctx);
+
 #else /* CONFIG_DRM_I915_DEBUGGER */
 
 static inline int i915_debugger_open_ioctl(struct drm_device *dev, void *data,
@@ -95,6 +97,8 @@ static inline void i915_debugger_vma_evict(struct i915_drm_client *client,
 static inline void i915_debugger_context_param_vm(const struct i915_drm_client *client,
 						  struct i915_gem_context *ctx,
 						  struct i915_address_space *vm) { }
+
+static inline void i915_debugger_context_param_engines(struct i915_gem_context *ctx) { }
 
 #endif /* CONFIG_DRM_I915_DEBUGGER */
 
