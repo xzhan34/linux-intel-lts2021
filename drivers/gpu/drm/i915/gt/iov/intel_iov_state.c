@@ -113,10 +113,24 @@ static int pf_trigger_vf_flr_finish(struct intel_iov *iov, u32 vfid)
 	return err;
 }
 
+static void pf_clear_vf_ggtt_entries(struct intel_iov *iov, u32 vfid)
+{
+	struct intel_iov_config *config = &iov->pf.provisioning.configs[vfid];
+	struct intel_gt *gt = iov_to_gt(iov);
+
+	GEM_BUG_ON(vfid > pf_get_totalvfs(iov));
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	if (!drm_mm_node_allocated(&config->ggtt_region))
+		return;
+
+	i915_ggtt_set_space_owner(gt->ggtt, vfid, &config->ggtt_region);
+}
+
 static int pf_process_vf_flr_finish(struct intel_iov *iov, u32 vfid)
 {
 	mutex_lock(pf_provisioning_mutex(iov));
-	/* XXX clear resources */
+	pf_clear_vf_ggtt_entries(iov, vfid);
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return pf_trigger_vf_flr_finish(iov, vfid);
