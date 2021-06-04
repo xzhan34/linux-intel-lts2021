@@ -25,6 +25,8 @@ static u64 rc6_residency(struct intel_rc6 *rc6)
 	if (HAS_RC6pp(rc6_to_i915(rc6)))
 		result += intel_rc6_residency_ns(rc6, GEN6_GT_GFX_RC6pp);
 
+	intel_uncore_forcewake_flush(rc6_to_uncore(rc6), FORCEWAKE_ALL);
+
 	return result;
 }
 
@@ -56,18 +58,19 @@ int live_rc6_manual(void *arg)
 
 	/* Force RC6 off for starters */
 	__intel_rc6_disable(rc6);
+	intel_uncore_forcewake_flush(rc6_to_uncore(rc6), FORCEWAKE_ALL);
 	msleep(1); /* wakeup is not immediate, takes about 100us on icl */
 
 	res[0] = rc6_residency(rc6);
 
 	dt = ktime_get();
 	rc0_power = librapl_energy_uJ(gt->i915);
-	msleep(250);
+	msleep(100);
 	rc0_power = librapl_energy_uJ(gt->i915) - rc0_power;
 	dt = ktime_sub(ktime_get(), dt);
 	res[1] = rc6_residency(rc6);
 	if ((res[1] - res[0]) >> 10) {
-		pr_err("RC6 residency increased by %lldus while disabled for 250ms!\n",
+		pr_err("RC6 residency increased by %lldus while disabled for 100ms!\n",
 		       (res[1] - res[0]) >> 10);
 		err = -EINVAL;
 		goto out_unlock;
@@ -87,7 +90,16 @@ int live_rc6_manual(void *arg)
 	intel_rc6_park(rc6);
 
 	res[0] = rc6_residency(rc6);
-	intel_uncore_forcewake_flush(rc6_to_uncore(rc6), FORCEWAKE_ALL);
+	if (wait_for((rc6_residency(rc6) > res[0]), 10)) {
+		pr_err("Did not enter RC6! RC6_STATE=%08x, RC6_CONTROL=%08x, residency=%lld\n",
+		       intel_uncore_read_fw(gt->uncore, GEN6_RC_STATE),
+		       intel_uncore_read_fw(gt->uncore, GEN6_RC_CONTROL),
+		       res[0]);
+		err = -EINVAL;
+		goto out_unpark;
+	}
+
+	res[0] = rc6_residency(rc6);
 	dt = ktime_get();
 	rc6_power = librapl_energy_uJ(gt->i915);
 	msleep(100);
@@ -108,13 +120,14 @@ int live_rc6_manual(void *arg)
 		pr_info("GPU consumed %llduW in RC0 and %llduW in RC6\n",
 			rc0_power, rc6_power);
 		if (2 * rc6_power > rc0_power) {
-			pr_err("GPU leaked energy while in RC6!\n");
-			err = -EINVAL;
-			goto out_unlock;
+			pr_info("GPU leaked energy while in RC6!\n");
+			err = -EINTR;
 		}
 	}
 
 	/* Restore what should have been the original state! */
+
+out_unpark:
 	intel_rc6_unpark(rc6);
 
 out_unlock:

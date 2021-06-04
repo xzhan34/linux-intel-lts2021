@@ -191,6 +191,16 @@ fw_domain_wait_ack_clear(const struct intel_uncore_forcewake_domain *d)
 	}
 }
 
+static inline void
+fw_domain_flush(const struct intel_uncore_forcewake_domain *d)
+{
+	if (fw_ack(d)) {
+		preempt_disable();
+		fw_domain_wait_ack_clear(d);
+		preempt_enable();
+	}
+}
+
 enum ack_type {
 	ACK_CLEAR = 0,
 	ACK_SET
@@ -823,6 +833,7 @@ void intel_uncore_forcewake_flush(struct intel_uncore *uncore,
 		WRITE_ONCE(domain->active, false);
 		if (hrtimer_cancel(&domain->timer))
 			intel_uncore_fw_release_timer(&domain->timer);
+		fw_domain_flush(domain);
 	}
 }
 
