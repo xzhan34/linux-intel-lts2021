@@ -204,6 +204,64 @@ u64 intel_iov_provisioning_get_spare_ggtt(struct intel_iov *iov)
 	return spare;
 }
 
+static u64 pf_get_free_ggtt(struct intel_iov *iov)
+{
+	struct i915_ggtt *ggtt = iov_to_gt(iov)->ggtt;
+	const struct drm_mm *mm = &ggtt->vm.mm;
+	const struct drm_mm_node *entry;
+	u64 alignment = pf_get_ggtt_alignment(iov);
+	u64 spare = pf_get_spare_ggtt(iov);
+	u64 hole_min_start = ggtt->pin_bias;
+	u64 hole_start, hole_end;
+	u64 free_ggtt = 0;
+
+	mutex_lock(&ggtt->vm.mutex);
+
+	drm_mm_for_each_hole(entry, mm, hole_start, hole_end) {
+		hole_start = max(hole_start, hole_min_start);
+		hole_start = ALIGN(hole_start, alignment);
+		hole_end = ALIGN_DOWN(hole_end, alignment);
+		if (hole_start >= hole_end)
+			continue;
+		free_ggtt += hole_end - hole_start;
+	}
+
+	mutex_unlock(&ggtt->vm.mutex);
+
+	return free_ggtt > spare ? free_ggtt - spare : 0;
+}
+
+static u64 pf_get_max_ggtt(struct intel_iov *iov)
+{
+	struct i915_ggtt *ggtt = iov_to_gt(iov)->ggtt;
+	const struct drm_mm *mm = &ggtt->vm.mm;
+	const struct drm_mm_node *entry;
+	u64 alignment = pf_get_ggtt_alignment(iov);
+	u64 spare = pf_get_spare_ggtt(iov);
+	u64 hole_min_start = ggtt->pin_bias;
+	u64 hole_start, hole_end, hole_size;
+	u64 max_hole = 0;
+
+	mutex_lock(&ggtt->vm.mutex);
+
+	drm_mm_for_each_hole(entry, mm, hole_start, hole_end) {
+		hole_start = max(hole_start, hole_min_start);
+		hole_start = ALIGN(hole_start, alignment);
+		hole_end = ALIGN_DOWN(hole_end, alignment);
+		if (hole_start >= hole_end)
+			continue;
+		hole_size = hole_end - hole_start;
+		IOV_DEBUG(iov, "start %llx size %lluK\n", hole_start, hole_size / SZ_1K);
+		spare -= min3(spare, hole_size, max_hole);
+		max_hole = max(max_hole, hole_size);
+	}
+
+	mutex_unlock(&ggtt->vm.mutex);
+
+	IOV_DEBUG(iov, "spare %lluK\n", spare / SZ_1K);
+	return max_hole > spare ? max_hole - spare : 0;
+}
+
 static bool pf_is_valid_config_ggtt(struct intel_iov *iov, unsigned int id)
 {
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
@@ -998,7 +1056,7 @@ static bool pf_is_auto_provisioning_enabled(struct intel_iov *iov)
 
 static void pf_unprovision_config(struct intel_iov *iov, unsigned int id)
 {
-	/* placeholder */
+	pf_provision_ggtt(iov, id, 0);
 }
 
 static void pf_unprovision_all(struct intel_iov *iov)
@@ -1018,6 +1076,41 @@ static void pf_auto_unprovision(struct intel_iov *iov)
 	pf_set_auto_provisioning(iov, false);
 }
 
+static int pf_auto_provision_ggtt(struct intel_iov *iov, unsigned int num_vfs)
+{
+	u64 __maybe_unused free = pf_get_free_ggtt(iov);
+	u64 available = pf_get_max_ggtt(iov);
+	u64 alignment = pf_get_ggtt_alignment(iov);
+	u64 fair;
+	unsigned int n;
+	int err;
+
+	/*
+	 * can't rely only on 'free_ggtt' as all VFs allocations must be continous
+	 * use 'max_ggtt' instead, on fresh/idle system those should be similar
+	 * and both already accounts for the spare GGTT
+	 */
+
+	fair = div_u64(available, num_vfs);
+	fair = ALIGN_DOWN(fair, alignment);
+
+	IOV_DEBUG(iov, "GGTT available(%llu/%llu) fair(%u x %llu)\n",
+		  available, free, num_vfs, fair);
+	if (!fair)
+		return -ENOSPC;
+
+	for (n = 1; n <= num_vfs; n++) {
+		if (pf_is_valid_config_ggtt(iov, n))
+			return -EUCLEAN;
+
+		err = pf_provision_ggtt(iov, n, fair);
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
 static int pf_auto_provision(struct intel_iov *iov, unsigned int num_vfs)
 {
 	int err;
@@ -1033,8 +1126,11 @@ static int pf_auto_provision(struct intel_iov *iov, unsigned int num_vfs)
 
 	pf_set_auto_provisioning(iov, true);
 
-	err = -EOPNOTSUPP; /* placeholder */
+	err = pf_auto_provision_ggtt(iov, num_vfs);
+	if (unlikely(err))
+		goto fail;
 
+	return 0;
 fail:
 	IOV_ERROR(iov, "Failed to auto provision %u VFs (%pe)",
 		  num_vfs, ERR_PTR(err));
