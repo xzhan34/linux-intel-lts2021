@@ -538,7 +538,7 @@ static void kill_context(struct i915_gem_context *ctx)
 		list_safe_reset_next(pos, next, link);
 		list_del_init(&pos->link); /* decouple from FENCE_COMPLETE */
 
-		i915_sw_fence_complete(&pos->fence);
+		i915_gem_context_engines_put(pos);
 	}
 	spin_unlock_irq(&ctx->stale.lock);
 }
@@ -798,16 +798,22 @@ err_free:
 	return ERR_PTR(err);
 }
 
-static inline struct i915_gem_engines *
-__context_engines_await(const struct i915_gem_context *ctx,
-			bool *user_engines)
+void i915_gem_context_engines_put(struct i915_gem_engines *e)
+{
+	i915_sw_fence_complete(&e->fence);
+}
+
+struct i915_gem_engines *
+i915_gem_context_engines_get(struct i915_gem_context *ctx,
+			     bool *user_engines)
 {
 	struct i915_gem_engines *engines;
 
 	rcu_read_lock();
 	do {
 		engines = rcu_dereference(ctx->engines);
-		GEM_BUG_ON(!engines);
+		if (!engines)
+			break;
 
 		if (user_engines)
 			*user_engines = i915_gem_context_user_engines(ctx);
@@ -819,7 +825,7 @@ __context_engines_await(const struct i915_gem_context *ctx,
 		if (likely(engines == rcu_access_pointer(ctx->engines)))
 			break;
 
-		i915_sw_fence_complete(&engines->fence);
+		i915_gem_context_engines_put(engines);
 	} while (1);
 	rcu_read_unlock();
 
@@ -835,10 +841,10 @@ context_apply_all(struct i915_gem_context *ctx,
 	struct i915_gem_engines *e;
 	struct intel_context *ce;
 
-	e = __context_engines_await(ctx, NULL);
+	e = i915_gem_context_engines_get(ctx, NULL);
 	for_each_gem_engine(ce, e, it)
 		fn(ce, data);
-	i915_sw_fence_complete(&e->fence);
+	i915_gem_context_engines_put(e);
 }
 
 static void __apply_ppgtt(struct intel_context *ce, void *vm)
@@ -1862,12 +1868,12 @@ get_engines(struct i915_gem_context *ctx,
 	bool user_engines;
 	int err = 0;
 
-	e = __context_engines_await(ctx, &user_engines);
+	e = i915_gem_context_engines_get(ctx, &user_engines);
 	if (!e)
 		return -ENOENT;
 
 	if (!user_engines) {
-		i915_sw_fence_complete(&e->fence);
+		i915_gem_context_engines_put(e);
 		args->size = 0;
 		return 0;
 	}
@@ -1920,7 +1926,7 @@ get_engines(struct i915_gem_context *ctx,
 	args->size = size;
 
 err_free:
-	i915_sw_fence_complete(&e->fence);
+	i915_gem_context_engines_put(e);
 	return err;
 }
 

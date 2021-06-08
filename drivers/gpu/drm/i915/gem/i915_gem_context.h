@@ -153,6 +153,9 @@ int i915_gem_context_setparam_ioctl(struct drm_device *dev, void *data,
 				    struct drm_file *file_priv);
 int i915_gem_context_reset_stats_ioctl(struct drm_device *dev, void *data,
 				       struct drm_file *file);
+struct i915_gem_engines *
+i915_gem_context_engines_get(struct i915_gem_context *ctx, bool *user_engines);
+void i915_gem_context_engines_put(struct i915_gem_engines *e);
 
 static inline struct i915_gem_context *
 i915_gem_context_get(struct i915_gem_context *ctx)
