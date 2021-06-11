@@ -99,6 +99,18 @@ i915_drm_client_get(struct i915_drm_client *client)
 	return client;
 }
 
+static inline struct i915_drm_client *
+i915_drm_client_get_rcu(struct i915_drm_client *client)
+{
+	RCU_LOCKDEP_WARN(!rcu_read_lock_held(),
+			 "suspicious i915_drm_client_get_rcu() usage");
+
+	if (client && !kref_get_unless_zero(&client->kref))
+		client = NULL;
+
+	return client;
+}
+
 void __i915_drm_client_free(struct kref *kref);
 
 static inline void i915_drm_client_put(struct i915_drm_client *client)

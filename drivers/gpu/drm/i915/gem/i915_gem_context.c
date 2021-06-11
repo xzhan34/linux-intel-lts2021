@@ -226,6 +226,10 @@ static void intel_context_set_gem(struct intel_context *ce,
 		ce->vm = vm;
 	}
 
+	GEM_BUG_ON(ce->client);
+	if (ctx->client)
+		ce->client = i915_drm_client_get(ctx->client);
+
 	if (ctx->sched.priority >= I915_PRIORITY_NORMAL &&
 	    intel_engine_has_timeslices(ce->engine) &&
 	    intel_engine_has_semaphores(ce->engine))
@@ -852,6 +856,11 @@ static void __apply_ppgtt(struct intel_context *ce, void *vm)
 	intel_context_reconfigure_vm(ce, vm);
 }
 
+static void __apply_client(struct intel_context *ce, void *client)
+{
+	ce->client = i915_drm_client_get(client);
+}
+
 static struct i915_address_space *
 __set_ppgtt(struct i915_gem_context *ctx, struct i915_address_space *vm)
 {
@@ -970,6 +979,8 @@ static int gem_context_register(struct i915_gem_context *ctx,
 	spin_lock(&client->ctx_lock);
 	list_add_tail_rcu(&ctx->client_link, &client->ctx_list);
 	spin_unlock(&client->ctx_lock);
+
+	context_apply_all(ctx, __apply_client, client);
 
 	spin_lock_irq(&i915->gem.contexts.lock);
 	list_add_tail_rcu(&ctx->link, &i915->gem.contexts.list);

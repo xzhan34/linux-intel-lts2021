@@ -425,6 +425,9 @@ void intel_context_fini(struct intel_context *ce)
 		intel_timeline_put(ce->timeline);
 	i915_vm_put(ce->vm);
 
+	if (ce->client)
+		i915_drm_client_put(ce->client);
+
 	/* Need to put the creation ref for the children */
 	if (intel_context_is_parent(ce))
 		for_each_child_safe(ce, child, next)

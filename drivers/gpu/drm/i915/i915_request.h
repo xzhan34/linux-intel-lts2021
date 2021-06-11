@@ -40,6 +40,7 @@
 #include "i915_scheduler.h"
 #include "i915_selftest.h"
 #include "i915_sw_fence.h"
+#include "i915_drm_client.h"
 
 #include <uapi/drm/i915_drm.h>
 
@@ -697,6 +698,25 @@ i915_request_active_seqno(const struct i915_request *rq)
 	 */
 
 	return hwsp_phys_base + hwsp_relative_offset;
+}
+
+static inline struct i915_drm_client *
+i915_request_get_active_client_rcu(const struct i915_request *rq)
+{
+	const struct intel_context *ce = READ_ONCE(rq->context);
+	struct i915_drm_client *client = NULL;
+
+	if (__i915_request_is_complete(rq))
+		return NULL;
+
+	client = i915_drm_client_get_rcu(ce->client);
+
+	if (client && READ_ONCE(rq->context) != ce) {
+		i915_drm_client_put(client);
+		client = NULL;
+	}
+
+	return client;
 }
 
 bool
