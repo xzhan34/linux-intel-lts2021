@@ -82,6 +82,8 @@ i915_gem_setup(struct drm_i915_gem_object *obj, u64 size)
 	if (size == 0)
 		return -EINVAL;
 
+	i915_gem_flush_free_objects(mr->i915);
+
 	/* For most of the ABI (e.g. mmap) we think in system pages */
 	GEM_BUG_ON(!IS_ALIGNED(size, PAGE_SIZE));
 
