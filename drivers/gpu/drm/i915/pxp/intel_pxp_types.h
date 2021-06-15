@@ -53,6 +53,11 @@ struct intel_pxp {
 	/** @tee_mutex: protects the tee channel binding and messaging. */
 	struct mutex tee_mutex;
 
+	struct {
+		struct drm_i915_gem_object *obj; /* contains PXP command memory */
+		void *vaddr; /* virtual memory for PXP command */
+	} stream_cmd;
+
 	/**
 	 * @hw_state_invalidated: if the HW perceives an attack on the integrity
 	 * of the encryption it will invalidate the keys and expect SW to
