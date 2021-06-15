@@ -850,12 +850,18 @@ struct prelim_drm_i915_engine_info {
 	/** Engine class and instance. */
 	struct i915_engine_class_instance engine;
 
-	/** Reserved field. */
-	__u32 rsvd0;
+	/**
+	 * SW defined id that identifies the OA unit associated with this
+	 * engine. A value of U32_MAX means engine is not supported by OA. All
+	 * other values are valid and can be used to group engines into the
+	 * associated OA unit.
+	 */
+	__u32 oa_unit_id;
 
 	/** Engine flags. */
 	__u64 flags;
 #define PRELIM_I915_ENGINE_INFO_HAS_LOGICAL_INSTANCE	(1ull << 62)
+#define PRELIM_I915_ENGINE_INFO_HAS_OA_UNIT_ID		(1ull << 61)
 
 	/** Capabilities of this engine. */
 	__u64 capabilities;

@@ -428,9 +428,12 @@ prelim_query_engine_info(struct drm_i915_private *i915,
 	for_each_uabi_engine(engine, i915) {
 		info.engine.engine_class = engine->uabi_class;
 		info.engine.engine_instance = engine->uabi_instance;
-		info.flags = PRELIM_I915_ENGINE_INFO_HAS_LOGICAL_INSTANCE;
+		info.flags = PRELIM_I915_ENGINE_INFO_HAS_LOGICAL_INSTANCE |
+			PRELIM_I915_ENGINE_INFO_HAS_OA_UNIT_ID;
 		info.capabilities = engine->uabi_capabilities;
 		info.logical_instance = ilog2(engine->logical_mask);
+		info.oa_unit_id = engine->oa_group && engine->oa_group->num_engines ?
+				  engine->oa_group->oa_unit_id : U32_MAX;
 
 		if (copy_to_user(info_ptr, &info, sizeof(info)))
 			return -EFAULT;
