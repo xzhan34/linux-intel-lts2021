@@ -8,6 +8,7 @@
 
 #include <linux/types.h>
 
+struct drm_printer;
 struct intel_iov;
 
 void intel_iov_provisioning_init_early(struct intel_iov *iov);
@@ -38,5 +39,9 @@ u32 intel_iov_provisioning_get_exec_quantum(struct intel_iov *iov, unsigned int 
 
 int intel_iov_provisioning_set_preempt_timeout(struct intel_iov *iov, unsigned int id, u32 preempt_timeout);
 u32 intel_iov_provisioning_get_preempt_timeout(struct intel_iov *iov, unsigned int id);
+
+int intel_iov_provisioning_print_ggtt(struct intel_iov *iov, struct drm_printer *p);
+int intel_iov_provisioning_print_ctxs(struct intel_iov *iov, struct drm_printer *p);
+int intel_iov_provisioning_print_dbs(struct intel_iov *iov, struct drm_printer *p);
 
 #endif /* __INTEL_IOV_PROVISIONING_H__ */

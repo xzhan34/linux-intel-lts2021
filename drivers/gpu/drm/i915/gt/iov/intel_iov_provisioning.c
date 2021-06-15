@@ -1418,3 +1418,111 @@ void intel_iov_provisioning_fini(struct intel_iov *iov)
 	pf_unprovision_all(iov);
 	mutex_unlock(pf_provisioning_mutex(iov));
 }
+
+/**
+ * intel_iov_provisioning_print_ggtt - Print GGTT provisioning data.
+ * @iov: the IOV struct
+ * @p: the DRM printer
+ *
+ * Print GGTT provisioning data for all VFs.
+ * VFs without GGTT provisioning are ignored.
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_print_ggtt(struct intel_iov *iov, struct drm_printer *p)
+{
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	unsigned int n, total_vfs = pf_get_totalvfs(iov);
+	const struct intel_iov_config *config;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (unlikely(!provisioning))
+		return -ENODATA;
+
+	for (n = 1; n <= total_vfs; n++) {
+		config = &provisioning->configs[n];
+		if (!drm_mm_node_allocated(&config->ggtt_region))
+			continue;
+
+		drm_printf(p, "VF%u:\t%#08llx-%#08llx\t(%lluK)\n",
+				n,
+				config->ggtt_region.start,
+				config->ggtt_region.start + config->ggtt_region.size - 1,
+				config->ggtt_region.size / SZ_1K);
+	}
+
+	return 0;
+}
+
+/**
+ * intel_iov_provisioning_print_ctxs - Print contexts provisioning data.
+ * @iov: the IOV struct
+ * @p: the DRM printer
+ *
+ * Print contexts provisioning data for all VFs.
+ * VFs without contexts provisioning are ignored.
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_print_ctxs(struct intel_iov *iov, struct drm_printer *p)
+{
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	unsigned int n, total_vfs = pf_get_totalvfs(iov);
+	const struct intel_iov_config *config;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (unlikely(!provisioning))
+		return -ENODATA;
+
+	for (n = 1; n <= total_vfs; n++) {
+		config = &provisioning->configs[n];
+		if (!config->num_ctxs)
+			continue;
+
+		drm_printf(p, "VF%u:\t%hu-%u\t(%hu)\n",
+				n,
+				config->begin_ctx,
+				config->begin_ctx + config->num_ctxs - 1,
+				config->num_ctxs);
+	}
+
+	return 0;
+}
+
+/**
+ * intel_iov_provisioning_print_dbs - Print doorbells provisioning data.
+ * @iov: the IOV struct
+ * @p: the DRM printer
+ *
+ * Print doorbells provisioning data for all VFs.
+ * VFs without doorbells provisioning are ignored.
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_print_dbs(struct intel_iov *iov, struct drm_printer *p)
+{
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	unsigned int n, total_vfs = pf_get_totalvfs(iov);
+	const struct intel_iov_config *config;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (unlikely(!provisioning))
+		return -ENODATA;
+
+	for (n = 1; n <= total_vfs; n++) {
+		config = &provisioning->configs[n];
+		if (!config->num_dbs)
+			continue;
+
+		drm_printf(p, "VF%u:\t%hu-%u\t(%hu)\n",
+				n,
+				config->begin_db,
+				config->begin_db + config->num_dbs - 1,
+				config->num_dbs);
+	}
+
+	return 0;
+}
