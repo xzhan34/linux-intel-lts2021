@@ -12,12 +12,20 @@
 #include "intel_iov_debugfs.h"
 #include "intel_iov_event.h"
 #include "intel_iov_provisioning.h"
+#include "intel_iov_query.h"
 
 static bool eval_is_pf(void *data)
 {
 	struct intel_iov *iov = &((struct intel_gt *)data)->iov;
 
 	return intel_iov_is_pf(iov);
+}
+
+static bool eval_is_vf(void *data)
+{
+	struct intel_iov *iov = &((struct intel_gt *)data)->iov;
+
+	return intel_iov_is_vf(iov);
 }
 
 static int ggtt_provisioning_show(struct seq_file *m, void *data)
@@ -65,6 +73,16 @@ static int adverse_events_show(struct seq_file *m, void *data)
 }
 DEFINE_INTEL_GT_DEBUGFS_ATTRIBUTE(adverse_events);
 
+static int vf_self_config_show(struct seq_file *m, void *data)
+{
+	struct intel_iov *iov = &((struct intel_gt *)m->private)->iov;
+	struct drm_printer p = drm_seq_file_printer(m);
+
+	intel_iov_query_print_config(iov, &p);
+	return 0;
+}
+DEFINE_INTEL_GT_DEBUGFS_ATTRIBUTE(vf_self_config);
+
 /**
  * intel_iov_debugfs_register - Register IOV specific entries in GT debugfs.
  * @iov: the IOV struct
@@ -80,6 +98,7 @@ void intel_iov_debugfs_register(struct intel_iov *iov, struct dentry *root)
 		{ "contexts_provisioning", &ctxs_provisioning_fops, eval_is_pf },
 		{ "doorbells_provisioning", &dbs_provisioning_fops, eval_is_pf },
 		{ "adverse_events", &adverse_events_fops, eval_is_pf },
+		{ "self_config", &vf_self_config_fops, eval_is_vf },
 	};
 	struct dentry *dir;
 

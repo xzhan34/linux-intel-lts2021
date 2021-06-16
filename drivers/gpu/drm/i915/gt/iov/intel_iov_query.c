@@ -3,6 +3,7 @@
  * Copyright © 2022 Intel Corporation
  */
 
+#include <drm/drm_print.h>
 #include <linux/bitfield.h>
 
 #include "gt/uc/abi/guc_actions_vf_abi.h"
@@ -291,4 +292,24 @@ int intel_iov_query_config(struct intel_iov *iov)
 		return err;
 
 	return 0;
+}
+
+/**
+ * intel_iov_query_print_config - Print queried VF config.
+ * @iov: the IOV struct
+ * @p: the DRM printer
+ *
+ * This function is for VF use only.
+ */
+void intel_iov_query_print_config(struct intel_iov *iov, struct drm_printer *p)
+{
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	drm_printf(p, "GGTT range:\t%#08llx-%#08llx\n",
+			iov->vf.config.ggtt_base,
+			iov->vf.config.ggtt_base + iov->vf.config.ggtt_size - 1);
+	drm_printf(p, "GGTT size:\t%lluK\n", iov->vf.config.ggtt_size / SZ_1K);
+
+	drm_printf(p, "contexts:\t%hu\n", iov->vf.config.num_ctxs);
+	drm_printf(p, "doorbells:\t%hu\n", iov->vf.config.num_dbs);
 }
