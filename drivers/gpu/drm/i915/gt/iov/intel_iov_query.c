@@ -787,6 +787,9 @@ void intel_iov_query_print_config(struct intel_iov *iov, struct drm_printer *p)
 			iov->vf.config.ggtt_base + iov->vf.config.ggtt_size - 1);
 	drm_printf(p, "GGTT size:\t%lluK\n", iov->vf.config.ggtt_size / SZ_1K);
 
+	if (HAS_LMEM(iov_to_i915(iov)))
+		drm_printf(p, "LMEM size:\t%lluM\n", iov->vf.config.lmem_size / SZ_1M);
+
 	drm_printf(p, "contexts:\t%hu\n", iov->vf.config.num_ctxs);
 	drm_printf(p, "doorbells:\t%hu\n", iov->vf.config.num_dbs);
 }
