@@ -1309,6 +1309,10 @@ static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		(struct intel_device_info *) ent->driver_data;
 	int err;
 
+	/* If we've already injected a fault into an earlier device, bail */
+	if (i915_error_injected() && !i915_modparams.inject_probe_failure)
+		return -ENODEV;
+
 	if (intel_info->require_force_probe &&
 	    !force_probe(pdev->device, i915_modparams.force_probe)) {
 		dev_info(&pdev->dev,
