@@ -850,6 +850,10 @@ void intel_iov_query_print_config(struct intel_iov *iov, struct drm_printer *p)
 {
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
 
+	/* tile_mask is valid on root GT only, report it once on primary GT */
+	if (HAS_REMOTE_TILES(iov_to_i915(iov)) && iov_to_gt(iov) == to_gt(iov_to_i915(iov)))
+		drm_printf(p, "tile mask:\t%#x\n", iov_get_root(iov)->vf.config.tile_mask);
+
 	drm_printf(p, "GGTT range:\t%#08llx-%#08llx\n",
 			iov->vf.config.ggtt_base,
 			iov->vf.config.ggtt_base + iov->vf.config.ggtt_size - 1);
