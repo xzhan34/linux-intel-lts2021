@@ -423,6 +423,8 @@ static bool uc_is_wopcm_locked(struct intel_uc *uc)
 
 static int __uc_check_hw(struct intel_uc *uc)
 {
+	struct drm_i915_private *i915 = uc_to_gt(uc)->i915;
+
 	if (!intel_uc_supports_guc(uc))
 		return 0;
 
@@ -431,8 +433,10 @@ static int __uc_check_hw(struct intel_uc *uc)
 	 * before on this system after reboot, otherwise we risk GPU hangs.
 	 * To check if GuC was loaded before we look at WOPCM registers.
 	 */
-	if (uc_is_wopcm_locked(uc))
+	if (uc_is_wopcm_locked(uc)) {
+		i915_probe_error(i915, "Can't run without GuC if GuC has previously been enabled\n");
 		return -EIO;
+	}
 
 	return 0;
 }
