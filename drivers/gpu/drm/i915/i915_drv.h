@@ -77,6 +77,7 @@
 #include "i915_request.h"
 #include "i915_scheduler.h"
 #include "i915_utils.h"
+#include "i915_virtualization.h"
 #include "i915_vma.h"
 #include "intel_device_info.h"
 #include "intel_memory_region.h"
@@ -484,6 +485,14 @@ struct drm_i915_private {
 
 	/* i915 device parameters */
 	struct i915_params params;
+
+	/* i915 virtualization mode, use IOV_MODE() to access */
+	enum i915_iov_mode __mode;
+#define IOV_MODE(i915) ({				\
+	BUILD_BUG_ON(!I915_IOV_MODE_NONE);		\
+	GEM_BUG_ON(!(i915)->__mode);			\
+	(i915)->__mode;					\
+})
 
 	const struct intel_device_info __info; /* Use INTEL_INFO() to access. */
 	struct intel_runtime_info __runtime; /* Use RUNTIME_INFO() to access. */

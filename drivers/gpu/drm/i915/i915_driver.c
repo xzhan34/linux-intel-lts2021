@@ -1392,6 +1392,23 @@ static void i915_sanitize_force_driver_flr(struct drm_i915_private *i915)
 		i915->params.force_driver_flr = 1;
 }
 
+static void i915_virtualization_probe(struct drm_i915_private *i915)
+{
+	GEM_BUG_ON(i915->__mode);
+
+	intel_vgpu_detect(i915);
+	if (intel_vgpu_active(i915))
+		i915->__mode = I915_IOV_MODE_GVT_VGPU;
+	else
+		i915->__mode = I915_IOV_MODE_NONE;
+
+	GEM_BUG_ON(!i915->__mode);
+
+	if (IS_IOV_ACTIVE(i915))
+		dev_info(i915->drm.dev, "Running in %s mode\n",
+			 i915_iov_mode_to_string(IOV_MODE(i915)));
+}
+
 /**
  * i915_driver_probe - setup chip and create an initial config
  * @pdev: PCI device
@@ -1423,6 +1440,9 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (ret)
 		goto out_fini;
 
+	/* This must be called before any calls to IS/IOV_MODE() macros */
+	i915_virtualization_probe(i915);
+
 	/*
 	 * GRAPHICS_VER() and DISPLAY_VER() will return 0 before this is
 	 * called, so we want to take care of this very early in the
@@ -1443,8 +1463,6 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	if (HAS_LMEM(i915))
 		i915_resize_lmem_bar(i915);
-
-	intel_vgpu_detect(i915);
 
 	if (i915->params.smem_access_control == I915_SMEM_ACCESS_CONTROL_DEFAULT) {
 		if (IS_XEHPSDV_GRAPHICS_STEP(i915, STEP_A0,  STEP_B0) ||
