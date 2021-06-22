@@ -41,6 +41,7 @@
 #include "gt/sysfs_engines.h"
 
 #include "i915_drv.h"
+#include "i915_sriov_sysfs.h"
 #include "i915_sysfs.h"
 #include "intel_pcode.h"
 #include "intel_pm.h"
@@ -951,6 +952,8 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 	if (ret)
 		drm_warn(&dev_priv->drm, "failed to create prelim_lmem/shared_alloc_limit sysfs entries\n");
 
+	i915_sriov_sysfs_setup(dev_priv);
+
 	i915_setup_error_capture(kdev);
 
 	i915_setup_error_counter(dev_priv);
@@ -977,6 +980,8 @@ void i915_teardown_sysfs(struct drm_i915_private *dev_priv)
 	sysfs_remove_file(&kdev->kobj, &dev_attr_prelim_uapi_version.attr.attr);
 
 	i915_teardown_error_capture(kdev);
+
+	i915_sriov_sysfs_teardown(dev_priv);
 
 	device_remove_bin_file(kdev,  &dev_attr_l3_parity_slice_1.attr);
 	device_remove_bin_file(kdev,  &dev_attr_l3_parity.attr);
