@@ -575,8 +575,6 @@ void intel_rc6_init(struct intel_rc6 *rc6)
 
 void intel_rc6_sanitize(struct intel_rc6 *rc6)
 {
-	memset(rc6->prev_hw_residency, 0, sizeof(rc6->prev_hw_residency));
-
 	if (rc6->enabled) { /* unbalanced suspend/resume */
 		rpm_get(rc6);
 		rc6->enabled = false;
@@ -673,6 +671,9 @@ void intel_rc6_disable(struct intel_rc6 *rc6)
 	rc6->enabled = false;
 
 	__intel_rc6_disable(rc6);
+
+	/* Reset our culmulative residency tracking over suspend */
+	memset(rc6->prev_hw_residency, 0, sizeof(rc6->prev_hw_residency));
 }
 
 void intel_rc6_fini(struct intel_rc6 *rc6)
