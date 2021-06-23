@@ -1335,6 +1335,8 @@ static void i915_welcome_messages(struct drm_i915_private *dev_priv)
 		i915_print_iommu_status(dev_priv, &p);
 		for_each_gt(gt, dev_priv, i)
 			intel_gt_info_print(&gt->info, &p);
+
+		drm_printf(&p, "mode: %s\n", i915_iov_mode_to_string(IOV_MODE(dev_priv)));
 	}
 
 	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG))
