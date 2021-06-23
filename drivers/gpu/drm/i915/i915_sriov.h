@@ -22,4 +22,9 @@ struct drm_i915_private;
 
 enum i915_iov_mode i915_sriov_probe(struct drm_i915_private *i915);
 
+/* PF only */
+void i915_sriov_pf_abort(struct drm_i915_private *i915, int err);
+bool i915_sriov_pf_aborted(struct drm_i915_private *i915);
+int i915_sriov_pf_status(struct drm_i915_private *i915);
+
 #endif /* __I915_SRIOV_H__ */

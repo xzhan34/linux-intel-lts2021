@@ -77,6 +77,7 @@
 #include "i915_request.h"
 #include "i915_scheduler.h"
 #include "i915_sriov.h"
+#include "i915_sriov_types.h"
 #include "i915_utils.h"
 #include "i915_virtualization.h"
 #include "i915_vma.h"
@@ -527,6 +528,7 @@ struct drm_i915_private {
 	struct intel_uncore uncore;
 	struct intel_uncore_mmio_debug mmio_debug;
 
+	struct i915_sriov sriov;
 	struct i915_virtual_gpu vgpu;
 
 	struct intel_gvt *gvt;

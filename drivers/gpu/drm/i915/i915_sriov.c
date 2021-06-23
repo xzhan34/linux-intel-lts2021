@@ -114,3 +114,63 @@ enum i915_iov_mode i915_sriov_probe(struct drm_i915_private *i915)
 
 	return I915_IOV_MODE_NONE;
 }
+
+static void pf_set_status(struct drm_i915_private *i915, int status)
+{
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	GEM_BUG_ON(!status);
+	GEM_WARN_ON(i915->sriov.pf.__status);
+
+	i915->sriov.pf.__status = status;
+}
+
+/**
+ * i915_sriov_pf_abort - Abort PF initialization.
+ * @i915: the i915 struct
+ *
+ * This function should be called by the PF when some of the necessary
+ * initialization steps failed and PF won't be able to manage VFs.
+ */
+void i915_sriov_pf_abort(struct drm_i915_private *i915, int err)
+{
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	GEM_BUG_ON(err >= 0);
+
+	__i915_printk(i915, KERN_NOTICE, "PF aborted (%pe) %pS\n",
+		      ERR_PTR(err), (void *)_RET_IP_);
+
+	pf_set_status(i915, err);
+}
+
+/**
+ * i915_sriov_pf_aborted - Check if PF initialization was aborted.
+ * @i915: the i915 struct
+ *
+ * This function may be called by the PF to check if any previous
+ * initialization step has failed.
+ *
+ * Return: true if already aborted
+ */
+bool i915_sriov_pf_aborted(struct drm_i915_private *i915)
+{
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	return i915->sriov.pf.__status < 0;
+}
+
+/**
+ * i915_sriov_pf_status - Status of the PF initialization.
+ * @i915: the i915 struct
+ *
+ * This function may be called by the PF to get its status.
+ *
+ * Return: number of supported VFs if PF is ready or
+ *         a negative error code on failure (-EBUSY if
+ *         PF initialization is still in progress).
+ */
+int i915_sriov_pf_status(struct drm_i915_private *i915)
+{
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	return i915->sriov.pf.__status ?: -EBUSY;
+}
