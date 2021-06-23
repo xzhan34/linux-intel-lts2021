@@ -262,5 +262,11 @@ void i915_sriov_print_info(struct drm_i915_private *i915, struct drm_printer *p)
 		drm_printf(p, "driver vfs: %u\n", i915_sriov_pf_get_totalvfs(i915));
 		drm_printf(p, "supported vfs: %u\n", pci_sriov_get_totalvfs(pdev));
 		drm_printf(p, "enabled vfs: %u\n", pci_num_vf(pdev));
+
+		/* XXX legacy igt */
+		drm_printf(p, "total_vfs: %d\n", pci_sriov_get_totalvfs(pdev));
 	}
+
+	/*XXX legacy igt */
+	drm_printf(p, "virtualization: %s\n", str_enabled_disabled(true));
 }
