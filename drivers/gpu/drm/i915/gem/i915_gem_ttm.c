@@ -604,7 +604,7 @@ static int i915_ttm_get_pages(struct drm_i915_gem_object *obj)
 	return ret;
 }
 
-static void i915_ttm_put_pages(struct drm_i915_gem_object *obj,
+static int i915_ttm_put_pages(struct drm_i915_gem_object *obj,
 			       struct sg_table *st)
 {
 	/*
@@ -616,6 +616,8 @@ static void i915_ttm_put_pages(struct drm_i915_gem_object *obj,
 	 */
 
 	i915_ttm_adjust_lru(obj);
+
+	return 0;
 }
 
 static void i915_ttm_adjust_lru(struct drm_i915_gem_object *obj)

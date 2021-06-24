@@ -333,6 +333,7 @@ __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj)
 int __i915_gem_object_put_pages(struct drm_i915_gem_object *obj)
 {
 	struct sg_table *pages;
+	int err = 0;
 
 	if (i915_gem_object_has_pinned_pages(obj))
 		return -EBUSY;
@@ -356,7 +357,12 @@ int __i915_gem_object_put_pages(struct drm_i915_gem_object *obj)
 	 * cancellation of the async task in a more uniform manner.
 	 */
 	if (!IS_ERR_OR_NULL(pages))
-		obj->ops->put_pages(obj, pages);
+		err = obj->ops->put_pages(obj, pages);
+	if (err) {
+		__i915_gem_object_set_pages(obj, pages,
+			obj->mm.page_sizes.phys);
+		return err;
+	}
 
 	if (obj->mm.madv != I915_MADV_WILLNEED)
 		i915_gem_object_truncate(obj);

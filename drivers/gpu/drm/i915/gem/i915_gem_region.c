@@ -10,7 +10,7 @@
 #include "i915_trace.h"
 #include "intel_memory_region.h"
 
-void
+int
 i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
 				struct sg_table *pages)
 {
@@ -20,6 +20,8 @@ i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
 
 	sg_free_table(pages);
 	kfree(pages);
+
+	return 0;
 }
 
 struct sg_table *

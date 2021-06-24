@@ -611,7 +611,7 @@ static int i915_gem_object_get_pages_stolen(struct drm_i915_gem_object *obj)
 	return 0;
 }
 
-static void i915_gem_object_put_pages_stolen(struct drm_i915_gem_object *obj,
+static int i915_gem_object_put_pages_stolen(struct drm_i915_gem_object *obj,
 					     struct sg_table *pages)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
@@ -624,6 +624,8 @@ static void i915_gem_object_put_pages_stolen(struct drm_i915_gem_object *obj,
 
 	sg_free_table(pages);
 	kfree(pages);
+
+	return 0;
 }
 
 static void

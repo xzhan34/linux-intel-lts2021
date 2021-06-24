@@ -148,7 +148,7 @@ err:
 	return -ENOMEM;
 }
 
-static void put_huge_pages(struct drm_i915_gem_object *obj,
+static int put_huge_pages(struct drm_i915_gem_object *obj,
 			   struct sg_table *pages)
 {
 	i915_gem_gtt_finish_pages(obj, pages);
@@ -157,6 +157,8 @@ static void put_huge_pages(struct drm_i915_gem_object *obj,
 	obj->mm.dirty = false;
 
 	__start_cpu_write(obj);
+
+	return 0;
 }
 
 static const struct drm_i915_gem_object_ops huge_page_ops = {
@@ -300,11 +302,13 @@ static void fake_free_huge_pages(struct drm_i915_gem_object *obj,
 	kfree(pages);
 }
 
-static void fake_put_huge_pages(struct drm_i915_gem_object *obj,
+static int fake_put_huge_pages(struct drm_i915_gem_object *obj,
 				struct sg_table *pages)
 {
 	fake_free_huge_pages(obj, pages);
 	obj->mm.dirty = false;
+
+	return 0;
 }
 
 static const struct drm_i915_gem_object_ops fake_ops = {

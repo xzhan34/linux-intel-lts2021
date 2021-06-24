@@ -352,7 +352,10 @@ lmem_swapout(struct drm_i915_gem_object *obj,
 			stat = &i915->mm.blt_swap_stats.out;
 	}
 
-	if (err && i915->params.enable_eviction != 2) {
+	if (err &&
+	    err != -ERESTARTSYS && err != -EINTR &&
+	    !swap_ccs &&
+	    i915->params.enable_eviction != 2) {
 		err = i915_gem_object_memcpy(dst, src);
 		if (!err)
 			stat = &i915->mm.memcpy_swap_stats.out;
@@ -417,7 +420,10 @@ lmem_swapin(struct drm_i915_gem_object *obj,
 			stat = &i915->mm.blt_swap_stats.in;
 	}
 
-	if (err && i915->params.enable_eviction != 2) {
+	if (err &&
+	    err != -ERESTARTSYS && err != -EINTR &&
+	    !swap_ccs &&
+	    i915->params.enable_eviction != 2) {
 		err = i915_gem_object_memcpy(dst, src);
 		if (!err)
 			stat = &i915->mm.memcpy_swap_stats.in;
@@ -734,17 +740,16 @@ static bool need_swap(const struct drm_i915_gem_object *obj)
 	return obj->mm.dirty;
 }
 
-static void
+static int
 lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 {
 	if (need_swap(obj)) {
 		unsigned int sizes = obj->mm.page_sizes.phys;
+		int err;
 
-		if (lmem_swapout(obj, pages, sizes)) {
-			/* swapout failed, keep the pages */
-			__i915_gem_object_set_pages(obj, pages, sizes);
-			return;
-		}
+		err = lmem_swapout(obj, pages, sizes);
+		if (err)
+			return err;
 	}
 
 	i915_gem_object_migrate_finish(obj);

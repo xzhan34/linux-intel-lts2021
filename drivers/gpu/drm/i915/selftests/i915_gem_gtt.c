@@ -96,11 +96,12 @@ static int fake_get_pages(struct drm_i915_gem_object *obj)
 #undef GFP
 }
 
-static void fake_put_pages(struct drm_i915_gem_object *obj,
+static int fake_put_pages(struct drm_i915_gem_object *obj,
 			   struct sg_table *pages)
 {
 	fake_free_pages(obj, pages);
 	obj->mm.dirty = false;
+	return 0;
 }
 
 static const struct drm_i915_gem_object_ops fake_ops = {

@@ -357,13 +357,15 @@ void i915_gem_object_put_pages_shmem(struct drm_i915_gem_object *obj, struct sg_
 	kfree(pages);
 }
 
-static void
+static int
 shmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 {
 	if (likely(i915_gem_object_has_struct_page(obj)))
 		i915_gem_object_put_pages_shmem(obj, pages);
 	else
 		i915_gem_object_put_pages_phys(obj, pages);
+
+	return 0;
 }
 
 static int

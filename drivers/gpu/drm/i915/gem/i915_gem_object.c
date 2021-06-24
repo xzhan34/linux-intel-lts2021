@@ -852,7 +852,7 @@ int i915_gem_object_memcpy(struct drm_i915_gem_object *dst,
 	if (ret)
 		goto finish_src;
 
-	npages = src->base.size / PAGE_SIZE;
+	npages = min(src->base.size, dst->base.size) / PAGE_SIZE;
 	for (i = 0; i < npages; i++) {
 		smap = sinfo.get_map(&sinfo, i);
 		dmap = dinfo.get_map(&dinfo, i);

@@ -54,8 +54,8 @@ struct drm_i915_gem_object_ops {
 	 * reap pages for the shrinker).
 	 */
 	int (*get_pages)(struct drm_i915_gem_object *obj);
-	void (*put_pages)(struct drm_i915_gem_object *obj,
-			  struct sg_table *pages);
+	int (*put_pages)(struct drm_i915_gem_object *obj,
+			 struct sg_table *pages);
 	void (*truncate)(struct drm_i915_gem_object *obj);
 	void (*writeback)(struct drm_i915_gem_object *obj);
 

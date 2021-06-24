@@ -125,7 +125,7 @@ out:
 
 }
 
-static void vgpu_gem_put_pages(struct drm_i915_gem_object *obj,
+static int vgpu_gem_put_pages(struct drm_i915_gem_object *obj,
 		struct sg_table *pages)
 {
 	struct scatterlist *sg;
@@ -143,6 +143,7 @@ static void vgpu_gem_put_pages(struct drm_i915_gem_object *obj,
 
 	sg_free_table(pages);
 	kfree(pages);
+	return 0;
 }
 
 static void dmabuf_gem_object_free(struct kref *kref)

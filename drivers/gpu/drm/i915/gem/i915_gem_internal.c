@@ -129,7 +129,7 @@ err:
 	return -ENOMEM;
 }
 
-static void i915_gem_object_put_pages_internal(struct drm_i915_gem_object *obj,
+static int i915_gem_object_put_pages_internal(struct drm_i915_gem_object *obj,
 					       struct sg_table *pages)
 {
 	i915_gem_gtt_finish_pages(obj, pages);
@@ -138,6 +138,8 @@ static void i915_gem_object_put_pages_internal(struct drm_i915_gem_object *obj,
 	obj->mm.dirty = false;
 
 	__start_cpu_write(obj);
+
+	return 0;
 }
 
 static const struct drm_i915_gem_object_ops i915_gem_object_internal_ops = {

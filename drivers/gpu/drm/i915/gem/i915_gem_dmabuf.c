@@ -409,11 +409,13 @@ static int i915_gem_object_get_pages_dmabuf(struct drm_i915_gem_object *obj)
 	return 0;
 }
 
-static void i915_gem_object_put_pages_dmabuf(struct drm_i915_gem_object *obj,
+static int i915_gem_object_put_pages_dmabuf(struct drm_i915_gem_object *obj,
 					     struct sg_table *sgt)
 {
 	dma_buf_unmap_attachment(obj->base.import_attach, sgt,
 				 DMA_BIDIRECTIONAL);
+
+	return 0;
 }
 
 static const struct drm_i915_gem_object_ops i915_gem_object_dmabuf_ops = {

@@ -272,7 +272,7 @@ err_free:
 	return ret;
 }
 
-static void
+static int
 i915_gem_userptr_put_pages(struct drm_i915_gem_object *obj,
 			   struct sg_table *pages)
 {
@@ -280,7 +280,7 @@ i915_gem_userptr_put_pages(struct drm_i915_gem_object *obj,
 	struct page *page;
 
 	if (!pages)
-		return;
+		return 0;
 
 	__i915_gem_object_release_shmem(obj, pages, true);
 	i915_gem_gtt_finish_pages(obj, pages);
@@ -325,6 +325,8 @@ i915_gem_userptr_put_pages(struct drm_i915_gem_object *obj,
 	kfree(pages);
 
 	i915_gem_object_userptr_drop_ref(obj);
+
+	return 0;
 }
 
 static int i915_gem_object_userptr_unbind(struct drm_i915_gem_object *obj,
