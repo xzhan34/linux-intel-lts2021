@@ -9,6 +9,8 @@
 #include "i915_sriov_sysfs_types.h"
 #include "i915_sysfs.h"
 
+#include "gt/iov/intel_iov_state.h"
+
 /*
  * /sys/class/drm/card*
  * └── iov/
@@ -99,7 +101,32 @@ static ssize_t id_sriov_ext_attr_show(struct drm_i915_private *i915,
 	return sysfs_emit(buf, "%u\n", id);
 }
 
+#define CONTROL_STOP "stop"
+#define CONTROL_PAUSE "pause"
+#define CONTROL_RESUME "resume"
+
+static ssize_t control_sriov_ext_attr_store(struct drm_i915_private *i915,
+					    unsigned int id,
+					    const char *buf, size_t count)
+{
+	struct intel_iov *iov = &to_gt(i915)->iov;
+	int err = -EPERM;
+
+	if (sysfs_streq(buf, CONTROL_STOP)) {
+		err = intel_iov_state_stop_vf(iov, id);
+	} else if (sysfs_streq(buf, CONTROL_PAUSE)) {
+		err = intel_iov_state_pause_vf(iov, id);
+	} else if (sysfs_streq(buf, CONTROL_RESUME)) {
+		err = intel_iov_state_resume_vf(iov, id);
+	} else {
+		err = -EINVAL;
+	}
+
+	return err ?: count;
+}
+
 I915_SRIOV_EXT_ATTR_RO(id);
+I915_SRIOV_EXT_ATTR_WO(control);
 
 static struct attribute *sriov_ext_attrs[] = {
 	NULL
@@ -132,6 +159,7 @@ static const struct attribute_group pf_ext_attr_group = {
 
 static struct attribute *vf_ext_attrs[] = {
 	&id_sriov_ext_attr.attr,
+	&control_sriov_ext_attr.attr,
 	NULL
 };
 

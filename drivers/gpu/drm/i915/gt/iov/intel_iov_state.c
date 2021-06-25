@@ -391,3 +391,45 @@ bool intel_iov_state_no_flr(struct intel_iov *iov, u32 vfid)
 
 	return !test_bit(IOV_VF_FLR_IN_PROGRESS, &iov->pf.state.data[vfid].state);
 }
+
+/**
+ * intel_iov_state_pause_vf - Pause VF.
+ * @iov: the IOV struct
+ * @vfid: VF identifier
+ *
+ * This function is for PF only.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_state_pause_vf(struct intel_iov *iov, u32 vfid)
+{
+	return pf_control_vf(iov, vfid, GUC_PF_TRIGGER_VF_PAUSE);
+}
+
+/**
+ * intel_iov_state_resume_vf - Resume VF.
+ * @iov: the IOV struct
+ * @vfid: VF identifier
+ *
+ * This function is for PF only.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_state_resume_vf(struct intel_iov *iov, u32 vfid)
+{
+	return pf_control_vf(iov, vfid, GUC_PF_TRIGGER_VF_RESUME);
+}
+
+/**
+ * intel_iov_state_stop_vf - Stop VF.
+ * @iov: the IOV struct
+ * @vfid: VF identifier
+ *
+ * This function is for PF only.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_state_stop_vf(struct intel_iov *iov, u32 vfid)
+{
+	return pf_control_vf(iov, vfid, GUC_PF_TRIGGER_VF_STOP);
+}
