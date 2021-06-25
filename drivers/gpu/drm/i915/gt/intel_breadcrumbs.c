@@ -401,7 +401,6 @@ static void insert_breadcrumb(struct i915_request *rq)
 	i915_request_get(rq);
 	list_add_rcu(&rq->signal_link, pos);
 	GEM_BUG_ON(!check_signal_order(ce, rq));
-	GEM_BUG_ON(test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &rq->fence.flags));
 	set_bit(I915_FENCE_FLAG_SIGNAL, &rq->fence.flags);
 
 	/*
@@ -416,7 +415,51 @@ bool i915_request_enable_breadcrumb(struct i915_request *rq)
 {
 	struct intel_context *ce = rq->context;
 
-	/* Serialises with i915_request_retire() using rq->lock */
+	/*
+	 * Serialises with i915_request_retire() using rq->lock or
+	 * engine->active.lock.
+	 *
+	 * - rq->lock (via dma_fence_enable_signaling):
+	 *
+	 * On the external i915_request_enable_breadcrumbs() path (from
+	 * dma_fence_enable_signaling) the caller holds a reference to
+	 * the fence. However, the request does not hold a reference
+	 * directly on the context nor on the engine/breadcrumbs.
+	 * The context and engine/breadcrumbs is only kept alive by
+	 * an active reference that is released when the context is
+	 * unpinned during i915_request_retire(). Therefore we must
+	 * make sure that i915_request_retire() does not complete
+	 * before we have finish inserting the breadrumb.
+	 *
+	 * As we hold rq->lock at this point, and we know that
+	 * dma_fence_enable_signaling() does not call us with an already
+	 * signaled request, we know that i915_request_retire() must
+	 * take the rq->lock in order to signal the fence which is does
+	 * prior to unpinning the context. Therefore if we are here
+	 * under rq->lock with an incomplete request, an unsignaled fence,
+	 * we know that i915_request_retire() has not been called yet
+	 * and cannot unpin the context until after
+	 * i915_request_enable_breadcrumbs() completes, and so we can
+	 * safely use rq->context and the engine->breadcrumbs.
+	 *
+	 * - engine->active.local (via i915_request_submit):
+	 *
+	 * During i915_request_enable_breadcrumb on the submission, the
+	 * reference to the request is owned by the submission path and
+	 * released during i915_request_retire(). Therefore we need to make
+	 * sure that we have serialised acquisition of the reference for the
+	 * use by the breadcrumb signaling prior to releasing the reference
+	 * during retire. The synchonisation lock used for this is the
+	 * engine->active.lock, being held by the submission to insert the
+	 * request onto the engine's queue, and then taken by retire to remove
+	 * the signaled request from that queue. (Notably this is taken by
+	 * i915_request_retire() after it has called dma_fence_signal, so
+	 * during the insert_breadcrumbs, the signaled-bit may be set.)
+	 * Ergo retire has to wait for the completion of the request's
+	 * submission before it can release the reference, and so we can
+	 * safely acquire a new reference on both the request and
+	 * context for the breadcrumb.
+	 */
 	if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &rq->fence.flags))
 		return true;
 
