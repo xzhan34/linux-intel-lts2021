@@ -22,6 +22,7 @@
 #define SRIOV_KOBJ_HOME_NAME SRIOV_PRELIMINARY "iov"
 #define SRIOV_EXT_KOBJ_PF_NAME "pf"
 #define SRIOV_EXT_KOBJ_VFn_NAME "vf%u"
+#define SRIOV_DEVICE_LINK_NAME "device"
 
 struct drm_i915_private *sriov_kobj_to_i915(struct i915_sriov_kobj *kobj)
 {
@@ -355,6 +356,34 @@ static void pf_teardown_tree(struct drm_i915_private *i915)
 	kfree(kobjs);
 }
 
+static int pf_setup_device_link(struct drm_i915_private *i915)
+{
+	struct i915_sriov_pf *pf = &i915->sriov.pf;
+	struct i915_sriov_ext_kobj **kobjs = pf->sysfs.kobjs;
+	int err;
+
+	err = i915_inject_probe_error(i915, -EEXIST);
+	if (unlikely(err))
+		goto failed;
+
+	err = sysfs_create_link(&kobjs[0]->base, &i915->drm.dev->kobj, SRIOV_DEVICE_LINK_NAME);
+	if (unlikely(err))
+		goto failed;
+
+	return 0;
+
+failed:
+	return pf_setup_failed(i915, err, "link");
+}
+
+static void pf_teardown_device_link(struct drm_i915_private *i915)
+{
+	struct i915_sriov_pf *pf = &i915->sriov.pf;
+	struct i915_sriov_ext_kobj **kobjs = pf->sysfs.kobjs;
+
+	sysfs_remove_link(&kobjs[0]->base, SRIOV_DEVICE_LINK_NAME);
+}
+
 static void pf_welcome(struct drm_i915_private *i915)
 {
 #if IS_ENABLED(CONFIG_DRM_I915_DEBUG)
@@ -364,6 +393,7 @@ static void pf_welcome(struct drm_i915_private *i915)
 	drm_dbg(&i915->drm, "SR-IOV sysfs available at /sys%s\n", path);
 	kfree(path);
 #endif
+	GEM_BUG_ON(!i915->sriov.pf.sysfs.kobjs);
 }
 
 static void pf_goodbye(struct drm_i915_private *i915)
@@ -406,9 +436,15 @@ int i915_sriov_sysfs_setup(struct drm_i915_private *i915)
 	if (unlikely(err))
 		goto failed_tree;
 
+	err = pf_setup_device_link(i915);
+	if (unlikely(err))
+		goto failed_link;
+
 	pf_welcome(i915);
 	return 0;
 
+failed_link:
+	pf_teardown_tree(i915);
 failed_tree:
 	pf_teardown_home(i915);
 failed:
@@ -429,6 +465,7 @@ void i915_sriov_sysfs_teardown(struct drm_i915_private *i915)
 	if (!pf_initialized(i915))
 		return;
 
+	pf_teardown_device_link(i915);
 	pf_teardown_tree(i915);
 	pf_teardown_home(i915);
 	pf_goodbye(i915);
