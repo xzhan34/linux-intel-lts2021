@@ -43,7 +43,15 @@ static inline bool sriov_ext_kobj_is_pf(struct i915_sriov_ext_kobj *kobj)
 
 /* core SR-IOV attributes */
 
+static ssize_t mode_sriov_attr_show(struct drm_i915_private *i915, char *buf)
+{
+	return sysfs_emit(buf, "%s\n", i915_iov_mode_to_string(IOV_MODE(i915)));
+}
+
+I915_SRIOV_ATTR_RO(mode);
+
 static struct attribute *sriov_attrs[] = {
+	&mode_sriov_attr.attr,
 	NULL
 };
 
