@@ -12,15 +12,24 @@
 /*
  * /sys/class/drm/card*
  * └── iov
- *     ├── pf/
- *     │   └── gt/
- *     │       └── ...
- *     ├── vf1/
- *     │   └── gt/
- *     │       └── ...
+ *     ├── pf/          _
+ *     │   ├── gt/       \_ single tile platforms
+ *     │   │   └── ...  _/
+ *     │   ├── gt0/      \
+ *     │   │   └── ...    \_ multi tile platforms
+ *     │   └── gt1/       /
+ *     │       └── ...  _/
+ *     ├── vf1/         _
+ *     │   ├── gt/       \_ single tile platforms
+ *     │   │   └── ...  _/
+ *     │   ├── gt0/      \
+ *     │   │   └── ...    \_ multi tile platforms
+ *     │   └── gt1/       /
+ *     │       └── ...  _/
  */
 
 #define IOV_KOBJ_GT_NAME "gt"
+#define IOV_KOBJ_GTn_NAME "gt%u"
 
 struct iov_kobj {
 	struct kobject base;
@@ -740,7 +749,12 @@ static int pf_setup_provisioning(struct intel_iov *iov)
 
 		parent = &parents[n]->base;
 
-		err = kobject_init_and_add(kobj, &iov_ktype, parent, IOV_KOBJ_GT_NAME);
+		if (HAS_REMOTE_TILES(iov_to_i915(iov))) {
+			err = kobject_init_and_add(kobj, &iov_ktype, parent, IOV_KOBJ_GTn_NAME,
+						   iov_to_gt(iov)->info.id);
+		} else {
+			err = kobject_init_and_add(kobj, &iov_ktype, parent, IOV_KOBJ_GT_NAME);
+		}
 		if (unlikely(err))
 			goto failed_kobj_n;
 
