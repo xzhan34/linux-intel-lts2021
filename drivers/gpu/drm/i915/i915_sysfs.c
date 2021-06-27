@@ -39,7 +39,7 @@
 #include "i915_sysfs.h"
 #include "intel_pm.h"
 
-static inline struct drm_i915_private *kdev_minor_to_i915(struct device *kdev)
+struct drm_i915_private *kdev_minor_to_i915(struct device *kdev)
 {
 	struct drm_minor *minor = dev_get_drvdata(kdev);
 	return to_i915(minor->dev);
