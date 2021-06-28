@@ -63,6 +63,7 @@ void intel_iov_state_release(struct intel_iov *iov)
 static void pf_reset_vf_state(struct intel_iov *iov, u32 vfid)
 {
 	iov->pf.state.data[vfid].state = 0;
+	iov->pf.state.data[vfid].paused = false;
 }
 
 /**
@@ -278,6 +279,7 @@ static void pf_handle_vf_flr(struct intel_iov *iov, u32 vfid)
 {
 	struct device *dev = iov_to_dev(iov);
 
+	iov->pf.state.data[vfid].paused = false;
 	dev_info(dev, "VF%u FLR\n", vfid);
 	pf_init_vf_flr(iov, vfid);
 }
@@ -290,6 +292,14 @@ static void pf_handle_vf_flr_done(struct intel_iov *iov, u32 vfid)
 	pf_queue_worker(iov);
 }
 
+static void pf_handle_vf_pause_done(struct intel_iov *iov, u32 vfid)
+{
+	struct device *dev = iov_to_dev(iov);
+
+	iov->pf.state.data[vfid].paused = true;
+	dev_info(dev, "VF%u %s\n", vfid, "paused");
+}
+
 static int pf_handle_vf_event(struct intel_iov *iov, u32 vfid, u32 eventid)
 {
 	switch (eventid) {
@@ -298,6 +308,9 @@ static int pf_handle_vf_event(struct intel_iov *iov, u32 vfid, u32 eventid)
 		break;
 	case GUC_PF_NOTIFY_VF_FLR_DONE:
 		pf_handle_vf_flr_done(iov, vfid);
+		break;
+	case GUC_PF_NOTIFY_VF_PAUSE_DONE:
+		pf_handle_vf_pause_done(iov, vfid);
 		break;
 	default:
 		return -ENOPKG;
@@ -417,7 +430,13 @@ int intel_iov_state_pause_vf(struct intel_iov *iov, u32 vfid)
  */
 int intel_iov_state_resume_vf(struct intel_iov *iov, u32 vfid)
 {
-	return pf_control_vf(iov, vfid, GUC_PF_TRIGGER_VF_RESUME);
+	int err = pf_control_vf(iov, vfid, GUC_PF_TRIGGER_VF_RESUME);
+
+	if (err < 0)
+		return err;
+
+	iov->pf.state.data[vfid].paused = false;
+	return 0;
 }
 
 /**

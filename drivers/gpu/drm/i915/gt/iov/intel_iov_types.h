@@ -96,6 +96,7 @@ struct intel_iov_data {
 #define IOV_VF_FLR_DONE_RECEIVED	2
 #define IOV_VF_NEEDS_FLR_FINISH		3
 #define IOV_VF_FLR_FAILED		(BITS_PER_LONG - 1)
+	bool paused;
 };
 
 /**
