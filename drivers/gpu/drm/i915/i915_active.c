@@ -1011,8 +1011,6 @@ __i915_active_fence_set(struct i915_active_fence *active,
 	if (fence == rcu_access_pointer(active->fence))
 		return fence;
 
-	GEM_BUG_ON(test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags));
-
 	/*
 	 * Consider that we have two threads arriving (A and B), with
 	 * C already resident as the active->fence.
@@ -1034,6 +1032,11 @@ __i915_active_fence_set(struct i915_active_fence *active,
 	 * older lock.
 	 */
 	spin_lock_irqsave(fence->lock, flags);
+	if (unlikely(test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))) {
+		prev = fence;
+		goto unlock;
+	}
+
 	prev = xchg(__active_fence_slot(active), fence);
 	if (!IS_ERR_OR_NULL(prev)) {
 		GEM_BUG_ON(prev == fence);
@@ -1044,6 +1047,8 @@ __i915_active_fence_set(struct i915_active_fence *active,
 		prev = NULL;
 	}
 	list_add_tail(&active->cb.node, &fence->cb_list);
+
+unlock:
 	spin_unlock_irqrestore(fence->lock, flags);
 
 	return prev;
