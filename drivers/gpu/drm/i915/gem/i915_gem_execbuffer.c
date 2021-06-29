@@ -468,7 +468,7 @@ eb_pin_vma(struct i915_execbuffer *eb,
 
 	/* Attempt to reuse the current location if available */
 	err = i915_vma_pin_ww(vma, &eb->ww, 0, 0, pin_flags);
-	if (err == -EDEADLK)
+	if (err == -EDEADLK || err == -EINTR || err == -ERESTARTSYS)
 		return err;
 
 	if (unlikely(err)) {
@@ -1187,8 +1187,11 @@ static int eb_validate_vmas(struct i915_execbuffer *eb)
 		struct eb_vma *ev = &eb->vma[i];
 		struct i915_vma *vma = ev->vma;
 
+		if (signal_pending(current))
+			return -EINTR;
+
 		err = eb_pin_vma(eb, entry, ev);
-		if (err == -EDEADLK)
+		if (err == -EDEADLK || err == -EINTR || err == -ERESTARTSYS)
 			return err;
 
 		if (!err) {
@@ -1829,10 +1832,8 @@ static int __reloc_entry_gpu(struct i915_execbuffer *eb,
 		len = 3;
 
 	batch = reloc_gpu(eb, vma, len);
-	if (batch == ERR_PTR(-EDEADLK))
-		return -EDEADLK;
-	else if (IS_ERR(batch))
-		return false;
+	if (IS_ERR(batch))
+		return (batch != ERR_PTR(-ENODEV)) ? PTR_ERR(batch) : 0;
 
 	addr = gen8_canonical_addr(i915_vma_offset(vma) + offset);
 	if (ver >= 8) {
@@ -2376,7 +2377,7 @@ repeat_validate:
 		}
 	}
 
-	if (err == -EDEADLK)
+	if (err == -EDEADLK || err == -EINTR || err == -ERESTARTSYS)
 		goto err;
 
 	if (err && !have_copy)

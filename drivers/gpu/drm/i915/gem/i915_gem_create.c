@@ -441,6 +441,7 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 	obj->flags |= ext_data.flags;
 
 	return i915_gem_publish(obj, file, &args->size, &args->handle);
+
 vm_put:
 	if (obj->vm)
 		i915_vm_put(obj->vm);
@@ -655,6 +656,7 @@ i915_gem_create_ext_ioctl(struct drm_device *dev, void *data,
 	obj->flags |= ext_data.flags;
 
 	return i915_gem_publish(obj, file, &args->size, &args->handle);
+
 vm_put:
 	if (obj->vm)
 		i915_vm_put(obj->vm);
