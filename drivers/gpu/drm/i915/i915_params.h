@@ -94,6 +94,8 @@ struct drm_printer;
 	param(bool, enable_fake_int_wa, true, 0400) \
 	param(bool, enable_pagefault, false, 0600) \
 	param(bool, enable_iaf, true, 0400) \
+	param(bool, address_translation_services, false, IS_ENABLED(CONFIG_DRM_I915_ATS) ? 0400 : 0) \
+	param(bool, enable_secure_batch, false, 0400) \
 	param(bool, enable_hw_throttle_blt, false, 0400) \
 	param(bool, enable_rc6, true, 0400) \
 	param(bool, rc6_ignore_steppings, false, 0400) \
