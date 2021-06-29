@@ -93,6 +93,14 @@ static ssize_t auto_provisioning_sriov_ext_attr_store(struct drm_i915_private *i
 
 I915_SRIOV_EXT_ATTR(auto_provisioning);
 
+static ssize_t id_sriov_ext_attr_show(struct drm_i915_private *i915,
+				      unsigned int id, char *buf)
+{
+	return sysfs_emit(buf, "%u\n", id);
+}
+
+I915_SRIOV_EXT_ATTR_RO(id);
+
 static struct attribute *sriov_ext_attrs[] = {
 	NULL
 };
@@ -123,6 +131,7 @@ static const struct attribute_group pf_ext_attr_group = {
 };
 
 static struct attribute *vf_ext_attrs[] = {
+	&id_sriov_ext_attr.attr,
 	NULL
 };
 
