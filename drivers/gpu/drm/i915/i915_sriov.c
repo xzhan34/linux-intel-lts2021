@@ -4,6 +4,7 @@
  */
 
 #include "i915_sriov.h"
+#include "i915_sriov_sysfs.h"
 #include "i915_drv.h"
 #include "i915_pci.h"
 #include "intel_pci_config.h"
@@ -416,6 +417,8 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 	if (err < 0)
 		goto fail_guc;
 
+	i915_sriov_sysfs_update_links(i915, true);
+
 	dev_info(dev, "Enabled %u VFs\n", num_vfs);
 	return num_vfs;
 
@@ -485,6 +488,8 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 
 	if (!num_vfs)
 		return 0;
+
+	i915_sriov_sysfs_update_links(i915, false);
 
 	pci_disable_sriov(pdev);
 

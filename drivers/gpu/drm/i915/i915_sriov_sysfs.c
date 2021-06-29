@@ -4,6 +4,7 @@
  */
 
 #include "i915_drv.h"
+#include "i915_pci.h"
 #include "i915_sriov_sysfs.h"
 #include "i915_sriov_sysfs_types.h"
 #include "i915_sysfs.h"
@@ -469,4 +470,91 @@ void i915_sriov_sysfs_teardown(struct drm_i915_private *i915)
 	pf_teardown_tree(i915);
 	pf_teardown_home(i915);
 	pf_goodbye(i915);
+}
+
+static int pf_add_vfs_device_links(struct drm_i915_private *i915)
+{
+	struct i915_sriov_pf *pf = &i915->sriov.pf;
+	struct i915_sriov_ext_kobj **kobjs = pf->sysfs.kobjs;
+	struct pci_dev *pf_pdev = to_pci_dev(i915->drm.dev);
+	struct pci_dev *vf_pdev = NULL;
+	unsigned int numvfs = pci_num_vf(pf_pdev);
+	unsigned int n;
+	int err;
+
+	if (!kobjs)
+		return 0;
+
+	GEM_BUG_ON(numvfs > pf_nodes_count(i915));
+
+	for (n = 1; n <= numvfs; n++) {
+
+		err = i915_inject_probe_error(i915, -ENODEV);
+		if (unlikely(err)) {
+			vf_pdev = NULL;
+			goto failed_n;
+		}
+
+		vf_pdev = i915_pci_pf_get_vf_dev(pf_pdev, n);
+		if (unlikely(!vf_pdev)) {
+			err = -ENODEV;
+			goto failed_n;
+		}
+
+		err = i915_inject_probe_error(i915, -EEXIST);
+		if (unlikely(err))
+			goto failed_n;
+
+		err = sysfs_create_link(&kobjs[n]->base, &vf_pdev->dev.kobj,
+					SRIOV_DEVICE_LINK_NAME);
+		if (unlikely(err))
+			goto failed_n;
+
+		/* balance i915_pci_pf_get_vf_dev */
+		pci_dev_put(vf_pdev);
+	}
+
+	return 0;
+
+failed_n:
+	if (vf_pdev)
+		pci_dev_put(vf_pdev);
+	while (n-- > 1)
+		sysfs_remove_link(&kobjs[n]->base, SRIOV_DEVICE_LINK_NAME);
+
+	return pf_setup_failed(i915, err, "links");
+}
+
+static void pf_remove_vfs_device_links(struct drm_i915_private *i915)
+{
+	struct i915_sriov_pf *pf = &i915->sriov.pf;
+	struct i915_sriov_ext_kobj **kobjs = pf->sysfs.kobjs;
+	struct pci_dev *pf_pdev = to_pci_dev(i915->drm.dev);
+	unsigned int numvfs = pci_num_vf(pf_pdev);
+	unsigned int n;
+
+	if (!kobjs)
+		return;
+
+	GEM_BUG_ON(numvfs > pf_nodes_count(i915));
+
+	for (n = 1; n <= numvfs; n++)
+		sysfs_remove_link(&kobjs[n]->base, SRIOV_DEVICE_LINK_NAME);
+}
+
+/**
+ * i915_sriov_sysfs_update_links - Update links in SR-IOV sysfs tree.
+ * @i915: the i915 struct
+ *
+ * On PF this function will add or remove PCI device links from VFs.
+ */
+void i915_sriov_sysfs_update_links(struct drm_i915_private* i915, bool add)
+{
+	if (!IS_SRIOV_PF(i915))
+		return;
+
+	if (add)
+		pf_add_vfs_device_links(i915);
+	else
+		pf_remove_vfs_device_links(i915);
 }
