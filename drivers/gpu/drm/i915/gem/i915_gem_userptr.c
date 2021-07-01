@@ -85,7 +85,9 @@ restart:
 		return 0;
 
 	if (vm) {
+		atomic_inc(&vm->invalidations);
 		ret = i915_vm_sync(vm);
+		atomic_dec(&vm->invalidations);
 		i915_vm_put(vm);
 		vm = NULL;
 	} else {

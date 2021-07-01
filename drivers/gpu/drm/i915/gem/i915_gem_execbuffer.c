@@ -4412,6 +4412,10 @@ static int revalidate_transaction(struct i915_execbuffer *eb)
 		kfree(sfence);
 	}
 
+	/* Wait till all invalidations on VM are complete */
+	while (atomic_read(&ce->vm->invalidations))
+		udelay(1);
+
 	/*
 	 * From now on, we can't retry locally, but need to wait
 	 * on the new suspend_fence to trigger yet another rerun.
