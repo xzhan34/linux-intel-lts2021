@@ -326,21 +326,24 @@ int intel_memory_regions_hw_probe(struct drm_i915_private *i915)
 		}
 
 		if (IS_ERR(mem)) {
-			err = PTR_ERR(mem);
 			drm_err(&i915->drm,
-				"Failed to setup region(%d) type=%d\n",
-				err, type);
-			goto out_cleanup;
+				"Failed to setup region %d (type=%d:%d), error %ld\n",
+				i, type, instance, PTR_ERR(mem));
+			continue;
 		}
 
 		mem->id = i;
 		i915->mm.regions[i] = mem;
 	}
 
-	return 0;
+	err = 0;
+	if (!intel_memory_region_by_type(i915, INTEL_MEMORY_SYSTEM)) {
+		drm_err(&i915->drm,
+			"Failed to setup system memory, unable to continue\n");
+		intel_memory_regions_driver_release(i915);
+		err = -ENODEV;
+	}
 
-out_cleanup:
-	intel_memory_regions_driver_release(i915);
 	return err;
 }
 
