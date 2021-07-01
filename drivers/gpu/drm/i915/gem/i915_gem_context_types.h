@@ -168,6 +168,7 @@ struct i915_gem_context {
 #define UCONTEXT_PERSISTENCE		4
 #define UCONTEXT_SIP			5
 #define UCONTEXT_LR			6
+#define UCONTEXT_RUNALONE		7
 
 	/**
 	 * @flags: small set of booleans

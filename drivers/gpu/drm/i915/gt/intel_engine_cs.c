@@ -504,6 +504,10 @@ static int intel_engine_setup(struct intel_gt *gt, enum intel_engine_id id,
 	if (engine->class == RENDER_CLASS || engine->class == COMPUTE_CLASS) {
 		engine->flags |= I915_ENGINE_HAS_RCS_REG_STATE;
 		engine->flags |= I915_ENGINE_HAS_EU_PRIORITY;
+
+		/* we only care about run alone on platforms that have a CCS */
+		if (CCS_MASK(gt))
+			engine->flags |= I915_ENGINE_HAS_RUN_ALONE_MODE;
 	}
 
 	engine->props.heartbeat_interval_ms =

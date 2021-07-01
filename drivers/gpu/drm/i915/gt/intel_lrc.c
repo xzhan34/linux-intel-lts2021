@@ -860,6 +860,11 @@ static void init_common_regs(u32 * const regs,
 	if (GRAPHICS_VER(engine->i915) < 11)
 		ctl |= _MASKED_BIT_DISABLE(CTX_CTRL_ENGINE_CTX_SAVE_INHIBIT |
 					   CTX_CTRL_RS_CTX_ENABLE);
+	if (engine->flags & I915_ENGINE_HAS_RUN_ALONE_MODE) {
+		ctl |= _MASKED_BIT_DISABLE(CTX_CTRL_RUN_ALONE);
+		if (test_bit(CONTEXT_RUNALONE, &ce->flags))
+			ctl |= CTX_CTRL_RUN_ALONE;
+	}
 	regs[CTX_CONTEXT_CONTROL] = ctl;
 
 	regs[CTX_TIMESTAMP] = ce->stats.runtime.last;

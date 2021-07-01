@@ -572,6 +572,7 @@ struct intel_engine_cs {
 #define I915_ENGINE_FIRST_RENDER_COMPUTE BIT(12)
 #define I915_ENGINE_USES_WA_HOLD_CCS_SWITCHOUT BIT(13)
 #define I915_ENGINE_HAS_EU_ATTENTION   BIT(14)
+#define I915_ENGINE_HAS_RUN_ALONE_MODE BIT(15)
 	unsigned int flags;
 
 	/*

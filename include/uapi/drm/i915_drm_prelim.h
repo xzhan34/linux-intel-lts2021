@@ -466,6 +466,13 @@ struct prelim_drm_i915_gem_context_create_ext {
 	(~(PRELIM_I915_CONTEXT_CREATE_FLAGS_LONG_RUNNING | ~I915_CONTEXT_CREATE_FLAGS_UNKNOWN))
 };
 
+/*
+ *  PRELIM_I915_CONTEXT_PARAM_RUNALONE:
+ *
+ *  Enable runalone mode on a context, disabled by default.
+ */
+#define PRELIM_I915_CONTEXT_PARAM_RUNALONE      (PRELIM_I915_CONTEXT_PARAM | 0xf)
+
 /* Downstream PRELIM properties */
 enum prelim_drm_i915_perf_property_id {
 	PRELIM_DRM_I915_PERF_PROP = (1 << 16),

@@ -251,6 +251,9 @@ static void intel_context_set_gem(struct intel_context *ce,
 
 	/* XXX this should be set only with context that have sip */
 	ce->dbg_id.gem_context_id = ctx->id;
+
+	if (test_bit(UCONTEXT_RUNALONE, &ctx->user_flags))
+		__set_bit(CONTEXT_RUNALONE, &ce->flags);
 }
 
 static void __unpin_engines(struct i915_gem_engines *e, unsigned int count)
@@ -2209,6 +2212,17 @@ static int get_debug_flags(struct i915_gem_context *ctx,
 	return 0;
 }
 
+static int set_runalone(struct i915_gem_context *ctx,
+			struct drm_i915_gem_context_param *args)
+{
+	if (!CCS_MASK(to_gt(ctx->i915)))
+		return -ENODEV;
+
+	set_bit(UCONTEXT_RUNALONE, &ctx->user_flags);
+
+	return 0;
+}
+
 static int ctx_setparam(struct drm_i915_file_private *fpriv,
 			struct i915_gem_context *ctx,
 			struct drm_i915_gem_context_param *args,
@@ -2252,6 +2266,13 @@ static int ctx_setparam(struct drm_i915_file_private *fpriv,
 
 	case I915_CONTEXT_PARAM_PRIORITY:
 		ret = set_priority(ctx, args);
+		break;
+
+	case PRELIM_I915_CONTEXT_PARAM_RUNALONE:
+		if (is_ctx_create)
+			ret = set_runalone(ctx, args);
+		else
+			return -EPERM;
 		break;
 
 	case I915_CONTEXT_PARAM_SSEU:

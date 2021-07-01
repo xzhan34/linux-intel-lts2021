@@ -137,6 +137,7 @@ struct intel_context {
 #define CONTEXT_GUC_INIT		10
 #define CONTEXT_PERMA_PIN		11
 #define CONTEXT_DEBUG			12
+#define CONTEXT_RUNALONE		13
 
 	struct {
 		u64 timeout_us;
