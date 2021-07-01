@@ -5,6 +5,8 @@
 
 #include "i915_sriov.h"
 #include "i915_drv.h"
+#include "i915_pci.h"
+#include "intel_pci_config.h"
 
 /* safe for use before register access via uncore is completed */
 static u32 pci_peek_mmio_read32(struct pci_dev *pdev, i915_reg_t reg)
@@ -41,6 +43,50 @@ static bool gen12_pci_capability_is_vf(struct pci_dev *pdev)
 	return value & GEN12_VF;
 }
 
+#ifdef CONFIG_PCI_IOV
+
+static int pf_reduce_totalvfs(struct drm_i915_private *i915, int limit)
+{
+	int err;
+
+	err = pci_sriov_set_totalvfs(to_pci_dev(i915->drm.dev), limit);
+	drm_WARN(&i915->drm, err, "Failed to set number of VFs to %d (%pe)\n",
+		 limit, ERR_PTR(err));
+	return err;
+}
+
+static bool pf_has_valid_vf_bars(struct drm_i915_private *i915)
+{
+	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
+
+	if (!i915_pci_resource_valid(pdev, GEN12_VF_GTTMMADR_BAR))
+		return false;
+
+	if (HAS_LMEM(i915) && !i915_pci_resource_valid(pdev, GEN12_VF_LMEM_BAR))
+		return false;
+
+	return true;
+}
+
+static bool pf_continue_as_native(struct drm_i915_private *i915, const char *why)
+{
+#if IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM)
+	drm_dbg(&i915->drm, "PF: %s, continuing as native\n", why);
+#endif
+	pf_reduce_totalvfs(i915, 0);
+	return false;
+}
+
+static bool pf_verify_readiness(struct drm_i915_private *i915)
+{
+	if (!pf_has_valid_vf_bars(i915))
+		return pf_continue_as_native(i915, "VFs BAR not ready");
+
+	return true;
+}
+
+#endif
+
 /**
  * i915_sriov_probe - Probe I/O Virtualization mode.
  * @i915: the i915 struct
@@ -62,7 +108,7 @@ enum i915_iov_mode i915_sriov_probe(struct drm_i915_private *i915)
 		return I915_IOV_MODE_SRIOV_VF;
 
 #ifdef CONFIG_PCI_IOV
-	if (dev_is_pf(dev))
+	if (dev_is_pf(dev) && pf_verify_readiness(i915))
 		return I915_IOV_MODE_SRIOV_PF;
 #endif
 
