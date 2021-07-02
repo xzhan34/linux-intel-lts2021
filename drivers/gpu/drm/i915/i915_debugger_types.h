@@ -12,6 +12,7 @@
 #include <linux/completion.h>
 #include <linux/wait.h>
 #include <linux/xarray.h>
+#include <linux/rbtree.h>
 
 struct task_struct;
 struct drm_i915_private;
@@ -20,7 +21,10 @@ struct i915_debug_event {
 	u32 type;
 	u32 flags;
 	u64 seqno;
-	u64 size;
+	union {
+		void *ack_data;
+		u64 size;
+	};
 	u8 data[0];
 } __packed;
 
@@ -100,6 +104,11 @@ struct i915_debug_vm_open {
 	u64 flags;
 };
 
+struct i915_debug_ack {
+	struct rb_node rb_node;
+	struct i915_debug_event event;
+};
+
 struct i915_debugger {
 	struct kref ref;
 	struct rcu_head rcu;
@@ -117,6 +126,9 @@ struct i915_debugger {
 	atomic_long_t event_seqno;
 
 	rwlock_t eu_lock;
+
+	spinlock_t ack_lock;
+	struct rb_root ack_tree;
 
 	const struct i915_debug_event *event;
 };

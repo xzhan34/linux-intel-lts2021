@@ -384,6 +384,7 @@ struct prelim_drm_i915_vm_bind_ext_uuid {
 #define PRELIM_I915_DEBUG_IOCTL_READ_UUID  _IOWR('j', 0x1, struct prelim_drm_i915_debug_read_uuid)
 #define PRELIM_I915_DEBUG_IOCTL_VM_OPEN  _IOW('j', 0x2, struct prelim_drm_i915_debug_vm_open)
 #define PRELIM_I915_DEBUG_IOCTL_EU_CONTROL _IOWR('j', 0x3, struct prelim_drm_i915_debug_eu_control)
+#define PRELIM_I915_DEBUG_IOCTL_ACK_EVENT _IOW('j', 0x4, struct prelim_drm_i915_debug_event_ack)
 
 struct prelim_drm_i915_debug_event {
 	__u32 type;
@@ -403,6 +404,7 @@ struct prelim_drm_i915_debug_event {
 #define PRELIM_DRM_I915_DEBUG_EVENT_CREATE	(1 << 31)
 #define PRELIM_DRM_I915_DEBUG_EVENT_DESTROY	(1 << 30)
 #define PRELIM_DRM_I915_DEBUG_EVENT_STATE_CHANGE (1 << 29)
+#define PRELIM_DRM_I915_DEBUG_EVENT_NEED_ACK	(1 << 28)
 	__u64 seqno;
 	__u64 size;
 } __attribute__((packed));
@@ -555,6 +557,12 @@ struct prelim_drm_i915_debug_eu_control {
 	 * 'pair' instead of individual EUs.
 	 */
 	__u64 bitmask_ptr;
+} __attribute__((packed));
+
+struct prelim_drm_i915_debug_event_ack {
+	__u32 type;
+	__u32 flags; /* MBZ */
+	__u64 seqno;
 } __attribute__((packed));
 
 enum prelim_drm_i915_gem_memory_class {
