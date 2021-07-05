@@ -1403,3 +1403,18 @@ int intel_iov_provisioning_verify(struct intel_iov *iov, unsigned int num_vfs)
 
 	return 0;
 }
+
+/**
+ * intel_iov_provisioning_fini - Unprovision all resources.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+void intel_iov_provisioning_fini(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	pf_unprovision_all(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+}

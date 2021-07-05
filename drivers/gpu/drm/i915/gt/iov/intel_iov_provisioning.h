@@ -13,6 +13,8 @@ struct intel_iov;
 void intel_iov_provisioning_init_early(struct intel_iov *iov);
 void intel_iov_provisioning_release(struct intel_iov *iov);
 void intel_iov_provisioning_init(struct intel_iov *iov);
+void intel_iov_provisioning_fini(struct intel_iov *iov);
+
 int intel_iov_provisioning_auto(struct intel_iov *iov, unsigned int num_vfs);
 int intel_iov_provisioning_verify(struct intel_iov *iov, unsigned int num_vfs);
 

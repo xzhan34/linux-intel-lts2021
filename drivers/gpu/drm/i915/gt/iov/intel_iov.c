@@ -57,4 +57,6 @@ int intel_iov_init(struct intel_iov *iov)
  */
 void intel_iov_fini(struct intel_iov *iov)
 {
+	if (intel_iov_is_pf(iov))
+		intel_iov_provisioning_fini(iov);
 }
