@@ -25,6 +25,8 @@
 #include "intel_hdcp.h"
 #include "intel_hdcp_regs.h"
 #include "intel_pcode.h"
+#include "intel_connector.h"
+#include "display/intel_hdcp_gsc.h"
 
 #define KEY_LOAD_TRIES	5
 #define HDCP2_LC_RETRY_CNT			3
@@ -181,13 +183,20 @@ bool intel_hdcp2_capable(struct intel_connector *connector)
 	struct intel_digital_port *dig_port = intel_attached_dig_port(connector);
 	struct drm_i915_private *dev_priv = to_i915(connector->base.dev);
 	struct intel_hdcp *hdcp = &connector->hdcp;
+	struct intel_gt *gt = dev_priv->media_gt;
+	struct intel_gsc_uc *gsc = &gt->uc.gsc;
 	bool capable = false;
 
 	/* I915 support for HDCP2.2 */
-	if (!hdcp->hdcp2_supported)
+	if (!gt || !hdcp->hdcp2_supported)
 		return false;
 
-	/* MEI interface is solid */
+	/* If MTL+ make sure gsc is loaded and proxy is setup */
+	if (DISPLAY_VER(dev_priv) >= 14)
+		if (!intel_uc_fw_is_running(&gsc->fw))
+			return false;
+
+	/* MEI/GSC interface is solid depending on which is used */
 	mutex_lock(&dev_priv->hdcp_comp_mutex);
 	if (!dev_priv->hdcp_comp_added ||  !dev_priv->hdcp_master) {
 		mutex_unlock(&dev_priv->hdcp_comp_mutex);
@@ -2213,7 +2222,7 @@ static int initialize_hdcp_port_data(struct intel_connector *connector,
 
 static bool is_hdcp2_supported(struct drm_i915_private *dev_priv)
 {
-	if (!IS_ENABLED(CONFIG_INTEL_MEI_HDCP))
+	if (DISPLAY_VER(dev_priv) < 14 && !IS_ENABLED(CONFIG_INTEL_MEI_HDCP))
 		return false;
 
 	return (DISPLAY_VER(dev_priv) >= 10 ||
@@ -2234,10 +2243,14 @@ void intel_hdcp_component_init(struct drm_i915_private *dev_priv)
 
 	dev_priv->hdcp_comp_added = true;
 	mutex_unlock(&dev_priv->hdcp_comp_mutex);
-	ret = component_add_typed(dev_priv->drm.dev, &i915_hdcp_component_ops,
-				  I915_COMPONENT_HDCP);
+
+	if (DISPLAY_VER(dev_priv) >= 14)
+		ret = intel_gsc_hdcp_init(dev_priv);
+	else
+		ret = component_add_typed(dev_priv->drm.dev, &i915_hdcp_component_ops,
+					  I915_COMPONENT_HDCP);
 	if (ret < 0) {
-		drm_dbg_kms(&dev_priv->drm, "Failed at component add(%d)\n",
+		drm_dbg_kms(&dev_priv->drm, "Failed at fw component add(%d)\n",
 			    ret);
 		mutex_lock(&dev_priv->hdcp_comp_mutex);
 		dev_priv->hdcp_comp_added = false;
@@ -2463,7 +2476,10 @@ void intel_hdcp_component_fini(struct drm_i915_private *dev_priv)
 	dev_priv->hdcp_comp_added = false;
 	mutex_unlock(&dev_priv->hdcp_comp_mutex);
 
-	component_del(dev_priv->drm.dev, &i915_hdcp_component_ops);
+	if (DISPLAY_VER(dev_priv) >= 14)
+		intel_gsc_hdcp_fini(dev_priv);
+	else
+		component_del(dev_priv->drm.dev, &i915_hdcp_component_ops);
 }
 
 void intel_hdcp_cleanup(struct intel_connector *connector)
