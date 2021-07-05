@@ -41,38 +41,38 @@ enum hdcp_wired_protocol {
 	HDCP_PROTOCOL_DP
 };
 
-enum mei_fw_ddi {
-	MEI_DDI_INVALID_PORT = 0x0,
+enum cp_fw_ddi {
+	FW_DDI_INVALID_PORT = 0x0,
 
-	MEI_DDI_B = 1,
-	MEI_DDI_C,
-	MEI_DDI_D,
-	MEI_DDI_E,
-	MEI_DDI_F,
-	MEI_DDI_A = 7,
-	MEI_DDI_RANGE_END = MEI_DDI_A,
+	FW_DDI_B = 1,
+	FW_DDI_C,
+	FW_DDI_D,
+	FW_DDI_E,
+	FW_DDI_F,
+	FW_DDI_A = 7,
+	FW_DDI_RANGE_END = FW_DDI_A,
 };
 
 /**
  * enum mei_fw_tc - ME Firmware defined index for transcoders
- * @MEI_INVALID_TRANSCODER: Index for Invalid transcoder
- * @MEI_TRANSCODER_EDP: Index for EDP Transcoder
- * @MEI_TRANSCODER_DSI0: Index for DSI0 Transcoder
- * @MEI_TRANSCODER_DSI1: Index for DSI1 Transcoder
- * @MEI_TRANSCODER_A: Index for Transcoder A
- * @MEI_TRANSCODER_B: Index for Transcoder B
- * @MEI_TRANSCODER_C: Index for Transcoder C
- * @MEI_TRANSCODER_D: Index for Transcoder D
+ * @FW_INVALID_TRANSCODER: Index for Invalid transcoder
+ * @FW_TRANSCODER_EDP: Index for EDP Transcoder
+ * @FW_TRANSCODER_DSI0: Index for DSI0 Transcoder
+ * @FW_TRANSCODER_DSI1: Index for DSI1 Transcoder
+ * @FW_TRANSCODER_A: Index for Transcoder A
+ * @FW_TRANSCODER_B: Index for Transcoder B
+ * @FW_TRANSCODER_C: Index for Transcoder C
+ * @FW_TRANSCODER_D: Index for Transcoder D
  */
-enum mei_fw_tc {
-	MEI_INVALID_TRANSCODER = 0x00,
-	MEI_TRANSCODER_EDP,
-	MEI_TRANSCODER_DSI0,
-	MEI_TRANSCODER_DSI1,
-	MEI_TRANSCODER_A = 0x10,
-	MEI_TRANSCODER_B,
-	MEI_TRANSCODER_C,
-	MEI_TRANSCODER_D
+enum cp_fw_tc {
+	FW_INVALID_TRANSCODER = 0x00,
+	FW_TRANSCODER_EDP,
+	FW_TRANSCODER_DSI0,
+	FW_TRANSCODER_DSI1,
+	FW_TRANSCODER_A = 0x10,
+	FW_TRANSCODER_B,
+	FW_TRANSCODER_C,
+	FW_TRANSCODER_D
 };
 
 /**
@@ -90,8 +90,8 @@ enum mei_fw_tc {
  *	     streams
  */
 struct hdcp_port_data {
-	enum mei_fw_ddi fw_ddi;
-	enum mei_fw_tc fw_tc;
+	enum cp_fw_ddi fw_ddi;
+	enum cp_fw_tc fw_tc;
 	u8 port_type;
 	u8 protocol;
 	u16 k;
@@ -119,7 +119,7 @@ struct hdcp_port_data {
  * @close_hdcp_session: Close the Wired HDCP Tx session per port.
  *			This also disables the authenticated state of the port.
  */
-struct i915_hdcp_component_ops {
+struct i915_hdcp_fw_ops {
 	/**
 	 * @owner: mei_hdcp module
 	 */
@@ -168,14 +168,14 @@ struct i915_hdcp_component_ops {
 };
 
 /**
- * struct i915_hdcp_component_master - Used for communication between i915
- * and mei_hdcp drivers for the HDCP2.2 services
- * @mei_dev: device that provide the HDCP2.2 service from MEI Bus.
+ * struct i915_hdcp_fw_master - Used for communication between i915
+ * and cp fw hdcp intf driver like mei_hdcp for the HDCP2.2 services
+ * @fw_dev: device that provide the HDCP2.2 service from CP FW interface.
  * @hdcp_ops: Ops implemented by mei_hdcp driver, used by i915 driver.
  */
-struct i915_hdcp_comp_master {
-	struct device *mei_dev;
-	const struct i915_hdcp_component_ops *ops;
+struct i915_hdcp_fw_master {
+	struct device *fw_dev;
+	const struct i915_hdcp_fw_ops *ops;
 
 	/* To protect the above members. */
 	struct mutex mutex;

@@ -908,7 +908,7 @@ struct drm_i915_private {
 	} debuggers;
 #endif
 
-	struct i915_hdcp_comp_master *hdcp_master;
+	struct i915_hdcp_fw_master *hdcp_master;
 	bool hdcp_comp_added;
 
 	/* Mutex to protect the above hdcp component related values. */

@@ -715,7 +715,7 @@ mei_hdcp_close_session(struct device *dev, struct hdcp_port_data *data)
 	return 0;
 }
 
-static const struct i915_hdcp_component_ops mei_hdcp_ops = {
+static const struct i915_hdcp_fw_ops mei_hdcp_ops = {
 	.owner = THIS_MODULE,
 	.initiate_hdcp2_session = mei_hdcp_initiate_session,
 	.verify_receiver_cert_prepare_km =
@@ -735,13 +735,13 @@ static const struct i915_hdcp_component_ops mei_hdcp_ops = {
 static int mei_component_master_bind(struct device *dev)
 {
 	struct mei_cl_device *cldev = to_mei_cl_device(dev);
-	struct i915_hdcp_comp_master *comp_master =
+	struct i915_hdcp_fw_master *comp_master =
 						mei_cldev_get_drvdata(cldev);
 	int ret;
 
 	dev_dbg(dev, "%s\n", __func__);
 	comp_master->ops = &mei_hdcp_ops;
-	comp_master->mei_dev = dev;
+	comp_master->fw_dev = dev;
 	ret = component_bind_all(dev, comp_master);
 	if (ret < 0)
 		return ret;
@@ -752,7 +752,7 @@ static int mei_component_master_bind(struct device *dev)
 static void mei_component_master_unbind(struct device *dev)
 {
 	struct mei_cl_device *cldev = to_mei_cl_device(dev);
-	struct i915_hdcp_comp_master *comp_master =
+	struct i915_hdcp_fw_master *comp_master =
 						mei_cldev_get_drvdata(cldev);
 
 	dev_dbg(dev, "%s\n", __func__);
@@ -801,7 +801,7 @@ static int mei_hdcp_component_match(struct device *dev, int subcomponent,
 static int mei_hdcp_probe(struct mei_cl_device *cldev,
 			  const struct mei_cl_device_id *id)
 {
-	struct i915_hdcp_comp_master *comp_master;
+	struct i915_hdcp_fw_master *comp_master;
 	struct component_match *master_match;
 	int ret;
 
@@ -846,7 +846,7 @@ enable_err_exit:
 
 static void mei_hdcp_remove(struct mei_cl_device *cldev)
 {
-	struct i915_hdcp_comp_master *comp_master =
+	struct i915_hdcp_fw_master *comp_master =
 						mei_cldev_get_drvdata(cldev);
 	int ret;
 
