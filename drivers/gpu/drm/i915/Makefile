@@ -93,6 +93,7 @@ gt-y += \
 	gt/intel_breadcrumbs.o \
 	gt/intel_context.o \
 	gt/intel_context_sseu.o \
+	gt/intel_context_vm.o \
 	gt/intel_engine_cs.o \
 	gt/intel_engine_heartbeat.o \
 	gt/intel_engine_pm.o \

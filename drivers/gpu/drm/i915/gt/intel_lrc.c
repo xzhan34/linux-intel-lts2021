@@ -888,22 +888,6 @@ static void init_wa_bb_regs(u32 * const regs,
 	}
 }
 
-static void init_ppgtt_regs(u32 *regs, const struct i915_ppgtt *ppgtt)
-{
-	if (i915_vm_is_4lvl(&ppgtt->vm)) {
-		/* 64b PPGTT (48bit canonical)
-		 * PDP0_DESCRIPTOR contains the base address to PML4 and
-		 * other PDP Descriptors are ignored.
-		 */
-		ASSIGN_CTX_PML4(ppgtt, regs);
-	} else {
-		ASSIGN_CTX_PDP(ppgtt, regs, 3);
-		ASSIGN_CTX_PDP(ppgtt, regs, 2);
-		ASSIGN_CTX_PDP(ppgtt, regs, 1);
-		ASSIGN_CTX_PDP(ppgtt, regs, 0);
-	}
-}
-
 static struct i915_ppgtt *vm_alias(struct i915_address_space *vm)
 {
 	if (i915_is_ggtt(vm))
@@ -945,8 +929,6 @@ static void __lrc_init_regs(u32 *regs,
 	set_offsets(regs, reg_offsets(engine), engine, inhibit);
 
 	init_common_regs(regs, ce, engine, inhibit);
-	init_ppgtt_regs(regs, vm_alias(ce->vm));
-
 	init_wa_bb_regs(regs, engine);
 
 	__reset_stop_ring(regs, engine);
@@ -1531,6 +1513,22 @@ static u32 lrc_descriptor(const struct intel_context *ce)
 	return i915_ggtt_offset(ce->state) | desc;
 }
 
+static void set_ppgtt_regs(u32 *regs, const struct i915_ppgtt *ppgtt)
+{
+	if (i915_vm_is_4lvl(&ppgtt->vm)) {
+		/* 64b PPGTT (48bit canonical)
+		 * PDP0_DESCRIPTOR contains the base address to PML4 and
+		 * other PDP Descriptors are ignored.
+		 */
+		ASSIGN_CTX_PML4(ppgtt, regs);
+	} else {
+		ASSIGN_CTX_PDP(ppgtt, regs, 3);
+		ASSIGN_CTX_PDP(ppgtt, regs, 2);
+		ASSIGN_CTX_PDP(ppgtt, regs, 1);
+		ASSIGN_CTX_PDP(ppgtt, regs, 0);
+	}
+}
+
 u32 lrc_update_regs(const struct intel_context *ce,
 		    const struct intel_engine_cs *engine,
 		    u32 head)
@@ -1545,6 +1543,8 @@ u32 lrc_update_regs(const struct intel_context *ce,
 	regs[CTX_RING_HEAD] = head;
 	regs[CTX_RING_TAIL] = ring->tail;
 	regs[CTX_RING_CTL] = RING_CTL_SIZE(ring->size) | RING_VALID;
+
+	set_ppgtt_regs(regs, vm_alias(ce->vm));
 
 	/* RPCS */
 	if (engine->class == RENDER_CLASS) {

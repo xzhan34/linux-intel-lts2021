@@ -25,6 +25,7 @@
 		     ##__VA_ARGS__);					\
 } while (0)
 
+struct i915_address_space;
 struct i915_gem_ww_ctx;
 
 void intel_context_init(struct intel_context *ce,
@@ -43,6 +44,8 @@ void intel_context_free(struct intel_context *ce);
 
 int intel_context_reconfigure_sseu(struct intel_context *ce,
 				   const struct intel_sseu sseu);
+int intel_context_reconfigure_vm(struct intel_context *ce,
+				 struct i915_address_space *vm);
 
 #define PARENT_SCRATCH_SIZE	PAGE_SIZE
 
