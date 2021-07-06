@@ -477,6 +477,17 @@ static u16 __encode_ctxs_start(u16 start_ctx, bool first)
 	return (!first) ? (start_ctx + CTXS_DELTA) / CTXS_GRANULARITY : 0;
 }
 
+static u16 __decode_ctxs_count(u16 num_bits, bool first)
+{
+	return (!first) ? num_bits * CTXS_GRANULARITY :
+			  num_bits * CTXS_GRANULARITY - CTXS_DELTA;
+}
+
+static u16 decode_vf_ctxs_count(u16 num_bits)
+{
+	return __decode_ctxs_count(num_bits, false);
+}
+
 static u16 __decode_ctxs_start(u16 start_bit, bool first)
 {
 	GEM_BUG_ON(first && start_bit);
@@ -687,6 +698,41 @@ u16 intel_iov_provisioning_get_ctxs(struct intel_iov *iov, unsigned int id)
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return num_ctxs;
+}
+
+static u16 pf_reserved_ctxs(struct intel_iov *iov)
+{
+	u16 used = intel_guc_submission_ids_in_use(iov_to_guc(iov));
+	u16 quota = pf_get_ctxs_quota(iov, PFID);
+	u16 spare = pf_get_spare_ctxs(iov);
+	u16 avail = quota - used;
+
+	GEM_BUG_ON(quota < used);
+	if (spare < avail)
+		return 0;
+
+	return align_ctxs(!PFID, spare - avail);
+}
+
+static u16 pf_get_ctxs_free(struct intel_iov *iov)
+{
+	u16 reserved = encode_vf_ctxs_count(pf_reserved_ctxs(iov));
+	unsigned long *ctxs_bitmap = pf_get_ctxs_bitmap(iov);
+	unsigned int rs, re;
+	u16 sum = 0;
+
+	if (unlikely(!ctxs_bitmap))
+		return 0;
+
+	bitmap_for_each_clear_region(ctxs_bitmap, rs, re, 0, ctxs_bitmap_total_bits()) {
+		IOV_DEBUG(iov, "ctxs hole %u-%u (%u)\n", decode_vf_ctxs_start(rs),
+			  decode_vf_ctxs_start(re) - 1, decode_vf_ctxs_count(re - rs));
+		sum += re - rs;
+	}
+	bitmap_free(ctxs_bitmap);
+
+	sum = sum > reserved ? sum - reserved : 0;
+	return decode_vf_ctxs_count(sum);
 }
 
 static u16 pf_get_min_spare_dbs(struct intel_iov *iov)
@@ -1057,6 +1103,7 @@ static bool pf_is_auto_provisioning_enabled(struct intel_iov *iov)
 static void pf_unprovision_config(struct intel_iov *iov, unsigned int id)
 {
 	pf_provision_ggtt(iov, id, 0);
+	pf_provision_ctxs(iov, id, 0);
 }
 
 static void pf_unprovision_all(struct intel_iov *iov)
@@ -1111,6 +1158,34 @@ static int pf_auto_provision_ggtt(struct intel_iov *iov, unsigned int num_vfs)
 	return 0;
 }
 
+static int pf_auto_provision_ctxs(struct intel_iov *iov, unsigned int num_vfs)
+{
+	u16 n, fair;
+	u16 available;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	available = pf_get_ctxs_free(iov);
+	fair = ALIGN_DOWN(available / num_vfs, CTXS_GRANULARITY);
+
+	if (!fair)
+		return -ENOSPC;
+
+	IOV_DEBUG(iov, "contexts available(%hu) fair(%u x %hu)\n", available, num_vfs, fair);
+
+	for (n = 1; n <= num_vfs; n++) {
+		if (pf_is_valid_config_ctxs(iov, n))
+			return -EUCLEAN;
+
+		err = pf_provision_ctxs(iov, n, fair);
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
 static int pf_auto_provision(struct intel_iov *iov, unsigned int num_vfs)
 {
 	int err;
@@ -1127,6 +1202,10 @@ static int pf_auto_provision(struct intel_iov *iov, unsigned int num_vfs)
 	pf_set_auto_provisioning(iov, true);
 
 	err = pf_auto_provision_ggtt(iov, num_vfs);
+	if (unlikely(err))
+		goto fail;
+
+	err = pf_auto_provision_ctxs(iov, num_vfs);
 	if (unlikely(err))
 		goto fail;
 
