@@ -30,6 +30,8 @@ int intel_iov_provisioning_set_ctxs(struct intel_iov *iov, unsigned int id, u16 
 u16 intel_iov_provisioning_get_ctxs(struct intel_iov *iov, unsigned int id);
 int intel_iov_provisioning_set_spare_ctxs(struct intel_iov *iov, u16 spare);
 u16 intel_iov_provisioning_get_spare_ctxs(struct intel_iov *iov);
+u16 intel_iov_provisioning_query_max_ctxs(struct intel_iov *iov);
+u16 intel_iov_provisioning_query_free_ctxs(struct intel_iov *iov);
 
 int intel_iov_provisioning_set_dbs(struct intel_iov *iov, unsigned int id, u16 num_dbs);
 u16 intel_iov_provisioning_get_dbs(struct intel_iov *iov, unsigned int id);

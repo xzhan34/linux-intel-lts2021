@@ -781,6 +781,66 @@ static u16 pf_get_ctxs_free(struct intel_iov *iov)
 	return decode_vf_ctxs_count(sum);
 }
 
+/**
+ * intel_iov_provisioning_query_free_ctxs - Get number of total unused contexts.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u16 intel_iov_provisioning_query_free_ctxs(struct intel_iov *iov)
+{
+	u16 num_ctxs;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	num_ctxs = pf_get_ctxs_free(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return num_ctxs;
+}
+
+static u16 pf_get_ctxs_max_quota(struct intel_iov *iov)
+{
+	u16 reserved = encode_vf_ctxs_count(pf_reserved_ctxs(iov));
+	unsigned long *ctxs_bitmap = pf_get_ctxs_bitmap(iov);
+	unsigned int rs, re;
+	u16 max = 0;
+
+	if (unlikely(!ctxs_bitmap))
+		return 0;
+
+	bitmap_for_each_clear_region(ctxs_bitmap, rs, re, 0, ctxs_bitmap_total_bits()) {
+		IOV_DEBUG(iov, "ctxs hole %u-%u (%u)\n", decode_vf_ctxs_start(rs),
+			  decode_vf_ctxs_start(re) - 1, decode_vf_ctxs_count(re - rs));
+		reserved -= min3(reserved, (u16)(re - rs), max);
+		max = max_t(u16, max, re - rs);
+	}
+	bitmap_free(ctxs_bitmap);
+
+	max = max > reserved ? max - reserved : 0;
+	return decode_vf_ctxs_count(max);
+}
+
+/**
+ * intel_iov_provisioning_query_max_ctxs - Get maximum available contexts quota.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u16 intel_iov_provisioning_query_max_ctxs(struct intel_iov *iov)
+{
+	u16 num_ctxs;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	num_ctxs = pf_get_ctxs_max_quota(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return num_ctxs;
+}
+
 static u16 pf_get_min_spare_dbs(struct intel_iov *iov)
 {
 	/* we don't use doorbells yet */
