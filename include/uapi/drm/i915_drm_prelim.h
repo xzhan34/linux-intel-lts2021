@@ -20,6 +20,7 @@
 struct prelim_i915_user_extension {
 #define PRELIM_I915_USER_EXT		(1 << 16)
 #define PRELIM_I915_USER_EXT_MASK(x)	(x & 0xffff)
+#define PRELIM_I915_CONTEXT_ENGINES_EXT_PARALLEL2_SUBMIT (PRELIM_I915_USER_EXT | 3)
 };
 
 /* This API has been removed.  On the off chance someone somewhere has

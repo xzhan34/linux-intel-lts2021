@@ -1733,6 +1733,8 @@ static const i915_user_extension_fn set_engines__extensions[] = {
 	[I915_CONTEXT_ENGINES_EXT_BOND] = set_engines__bond,
 	[I915_CONTEXT_ENGINES_EXT_PARALLEL_SUBMIT] =
 		set_engines__parallel_submit,
+        [PRELIM_I915_USER_EXT_MASK(PRELIM_I915_CONTEXT_ENGINES_EXT_PARALLEL2_SUBMIT)] =
+                set_engines__parallel_submit,
 };
 
 static int
