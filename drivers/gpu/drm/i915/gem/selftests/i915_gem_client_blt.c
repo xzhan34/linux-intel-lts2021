@@ -331,6 +331,10 @@ static int tiled_blits_create_buffers(struct tiled_blits *t,
 			t->buffers[i].tiling = CLIENT_TILING_4;
 		else if (!HAS_4TILE(i915) && t->buffers[i].tiling == CLIENT_TILING_4)
 			t->buffers[i].tiling = CLIENT_TILING_Y;
+
+		/* PVC also does not support X-tile */
+		if (IS_PONTEVECCHIO(i915) && t->buffers[i].tiling == CLIENT_TILING_X)
+			t->buffers[i].tiling = CLIENT_TILING_4;
 	}
 
 	return 0;
