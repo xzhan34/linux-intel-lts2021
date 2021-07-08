@@ -2059,11 +2059,15 @@ void i915_error_state_store(struct i915_gpu_coredump *error)
 	i915 = error->i915;
 	drm_info(&i915->drm, "%s\n", error_msg(error));
 
-	if (error->simulated ||
-	    cmpxchg(&i915->gpu_error.first_error, NULL, error))
-		return;
-
 	i915_gpu_coredump_get(error);
+
+	if (error->simulated ||
+	    cmpxchg(&i915->gpu_error.first_error, NULL, error)) {
+		i915_gpu_coredump_put(error);
+		return;
+	}
+
+	sysfs_notify(&i915->drm.primary->kdev->kobj, NULL, "error");
 
 	if (!xchg(&warned, true) &&
 	    ktime_get_real_seconds() - DRIVER_TIMESTAMP < DAY_AS_SECONDS(180)) {
