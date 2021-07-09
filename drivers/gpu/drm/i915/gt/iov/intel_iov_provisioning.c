@@ -291,6 +291,22 @@ static void pf_set_auto_provisioning(struct intel_iov *iov, bool value)
 	iov->pf.provisioning.auto_mode = value;
 }
 
+static bool pf_is_vf_enabled(struct intel_iov *iov, unsigned int id)
+{
+	return id <= pf_get_numvfs(iov);
+}
+
+static bool pf_is_config_pushed(struct intel_iov *iov, unsigned int id)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	return id <= iov->pf.provisioning.num_pushed;
+}
+
+static bool pf_needs_push_config(struct intel_iov *iov, unsigned int id)
+{
+	return id != PFID && pf_is_vf_enabled(iov, id) && pf_is_config_pushed(iov, id);
+}
+
 /*
  * Return: number of klvs that were successfully parsed and saved,
  *         negative error code on failure.
@@ -327,6 +343,36 @@ static int guc_update_vf_klv32(struct intel_guc *guc, u32 vfid, u16 key, u32 val
 
 	*cfg++ = FIELD_PREP(GUC_KLV_0_KEY, key) | FIELD_PREP(GUC_KLV_0_LEN, len);
 	*cfg++ = value;
+
+	ret = guc_action_update_vf_cfg(guc, vfid, intel_guc_ggtt_offset(guc, vma), cfg_size);
+
+	i915_vma_unpin_and_release(&vma, I915_VMA_RELEASE_MAP);
+
+	if (unlikely(ret < 0))
+		return ret;
+	if (unlikely(!ret))
+		return -ENOKEY;
+	if (unlikely(ret > 1))
+		return -EPROTO;
+
+	return 0;
+}
+
+static int guc_update_vf_klv64(struct intel_guc *guc, u32 vfid, u16 key, u64 value)
+{
+	const u32 len = 2; /* 64bit value fits into 2 klv dwords */
+	const u32 cfg_size = (GUC_KLV_LEN_MIN + len);
+	struct i915_vma *vma;
+	u32 *cfg;
+	int ret;
+
+	ret = intel_guc_allocate_and_map_vma(guc, cfg_size * sizeof(u32), &vma, (void **)&cfg);
+	if (unlikely(ret))
+		return ret;
+
+	*cfg++ = FIELD_PREP(GUC_KLV_0_KEY, key) | FIELD_PREP(GUC_KLV_0_LEN, len);
+	*cfg++ = lower_32_bits(value);
+	*cfg++ = upper_32_bits(value);
 
 	ret = guc_action_update_vf_cfg(guc, vfid, intel_guc_ggtt_offset(guc, vma), cfg_size);
 
@@ -472,6 +518,25 @@ static bool pf_is_valid_config_ggtt(struct intel_iov *iov, unsigned int id)
 	return drm_mm_node_allocated(&iov->pf.provisioning.configs[id].ggtt_region);
 }
 
+static int pf_push_config_ggtt(struct intel_iov *iov, unsigned int id, u64 start, u64 size)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	int err;
+
+	if (!pf_needs_push_config(iov, id))
+		return 0;
+
+	err = guc_update_vf_klv64(guc, id, GUC_KLV_VF_CFG_GGTT_SIZE_KEY, size);
+	if (unlikely(err))
+		return err;
+
+	err = guc_update_vf_klv64(guc, id, GUC_KLV_VF_CFG_GGTT_START_KEY, start);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
 static int pf_provision_ggtt(struct intel_iov *iov, unsigned int id, u64 size)
 {
 	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
@@ -488,11 +553,16 @@ static int pf_provision_ggtt(struct intel_iov *iov, unsigned int id, u64 size)
 		if (size == node->size)
 			return 0;
 
+		err = pf_push_config_ggtt(iov, id, 0, 0);
+release:
 		i915_ggtt_set_space_owner(ggtt, 0, node);
 
 		mutex_lock(&ggtt->vm.mutex);
 		drm_mm_remove_node(node);
 		mutex_unlock(&ggtt->vm.mutex);
+
+		if (unlikely(err))
+			return err;
 	}
 	GEM_BUG_ON(drm_mm_node_allocated(node));
 
@@ -515,6 +585,10 @@ static int pf_provision_ggtt(struct intel_iov *iov, unsigned int id, u64 size)
 		return err;
 
 	i915_ggtt_set_space_owner(ggtt, id, node);
+
+	err = pf_push_config_ggtt(iov, id, node->start, node->size);
+	if (unlikely(err))
+		goto release;
 
 	IOV_DEBUG(iov, "VF%u provisioned GGTT %llx-%llx (%lluK)\n",
 		  id, node->start, node->start + node->size - 1, node->size / SZ_1K);
