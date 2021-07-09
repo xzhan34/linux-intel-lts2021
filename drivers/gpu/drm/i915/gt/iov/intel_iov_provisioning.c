@@ -758,6 +758,25 @@ static bool pf_is_valid_config_ctxs(struct intel_iov *iov, unsigned int id)
 	return iov->pf.provisioning.configs[id].num_ctxs;
 }
 
+static int pf_push_config_ctxs(struct intel_iov *iov, unsigned int id, u16 begin, u16 num)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	int err;
+
+	if (!pf_needs_push_config(iov, id))
+		return 0;
+
+	err = guc_update_vf_klv32(guc, id, GUC_KLV_VF_CFG_BEGIN_CONTEXT_ID_KEY, begin);
+	if (unlikely(err))
+		return err;
+
+	err = guc_update_vf_klv32(guc, id, GUC_KLV_VF_CFG_NUM_CONTEXTS_KEY, num);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
 /*
  * To facilitate the implementation of dynamic context provisioning, we introduced
  * the concept of granularity of contexts. For this purpose, we divided all contexts
@@ -938,7 +957,15 @@ static int __pf_provision_vf_ctxs(struct intel_iov *iov, unsigned int id, u16 st
 
 static int __pf_provision_ctxs(struct intel_iov *iov, unsigned int id, u16 start_ctx, u16 num_ctxs)
 {
+	int err;
+
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	err = pf_push_config_ctxs(iov, id, start_ctx, num_ctxs);
+	if (unlikely(err)) {
+		__pf_provision_vf_ctxs(iov, id, 0, 0);
+		return err;
+	}
 
 	return __pf_provision_vf_ctxs(iov, id, start_ctx, num_ctxs);
 }
