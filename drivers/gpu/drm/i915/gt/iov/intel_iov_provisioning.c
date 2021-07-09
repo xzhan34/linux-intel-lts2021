@@ -1269,11 +1269,30 @@ static int pf_alloc_dbs_range(struct intel_iov *iov, u16 num_dbs)
 	return index;
 }
 
+static int pf_push_config_dbs(struct intel_iov *iov, unsigned int id, u16 begin, u16 num)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	int err;
+
+	if (!pf_needs_push_config(iov, id))
+		return 0;
+
+	err = guc_update_vf_klv32(guc, id, GUC_KLV_VF_CFG_BEGIN_DOORBELL_ID_KEY, begin);
+	if (unlikely(err))
+		return err;
+
+	err = guc_update_vf_klv32(guc, id, GUC_KLV_VF_CFG_NUM_DOORBELLS_KEY, num);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
 static int pf_provision_dbs(struct intel_iov *iov, unsigned int id, u16 num_dbs)
 {
 	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
 	struct intel_iov_config *config = &provisioning->configs[id];
-	int ret;
+	int err, ret;
 
 	lockdep_assert_held(pf_provisioning_mutex(iov));
 
@@ -1285,6 +1304,10 @@ static int pf_provision_dbs(struct intel_iov *iov, unsigned int id, u16 num_dbs)
 	if (config->num_dbs) {
 		config->begin_db = 0;
 		config->num_dbs = 0;
+
+		err = pf_push_config_dbs(iov, id, 0, 0);
+		if (unlikely(err))
+			return err;
 	}
 
 	if (!num_dbs)
@@ -1293,6 +1316,10 @@ static int pf_provision_dbs(struct intel_iov *iov, unsigned int id, u16 num_dbs)
 	ret = pf_alloc_dbs_range(iov, num_dbs);
 	if (unlikely(ret < 0))
 		return ret;
+
+	err = pf_push_config_dbs(iov, id, ret, num_dbs);
+	if (unlikely(err))
+		return err;
 
 	config->begin_db = ret;
 	config->num_dbs = num_dbs;
