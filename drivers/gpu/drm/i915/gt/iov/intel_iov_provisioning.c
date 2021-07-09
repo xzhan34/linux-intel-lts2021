@@ -1774,6 +1774,21 @@ int intel_iov_provisioning_set_spare_lmem(struct intel_iov *iov, u64 size)
 
 static u64 pf_query_max_lmem(struct intel_iov *iov);
 
+static int pf_push_config_lmem(struct intel_iov *iov, unsigned int id, u64 size)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	int err;
+
+	if (!pf_needs_push_config(iov, id))
+		return 0;
+
+	err = guc_update_vf_klv64(guc, id, GUC_KLV_VF_CFG_LMEM_SIZE_KEY, size);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
 static int pf_update_lmtt(struct intel_iov *iov, unsigned int id)
 {
 	struct intel_gt *gt = iov_to_gt(iov);
@@ -1804,8 +1819,13 @@ static int pf_provision_lmem(struct intel_iov *iov, unsigned int id, u64 size)
 			return 0;
 		}
 
+		err = pf_push_config_lmem(iov, id, 0);
+
 		i915_gem_object_unpin_pages(obj);
 		i915_gem_object_put(obj);
+
+		if (unlikely(err))
+			goto finish;
 	}
 
 	if (!size) {
@@ -1833,6 +1853,10 @@ static int pf_provision_lmem(struct intel_iov *iov, unsigned int id, u64 size)
 		goto err_put;
 
 	err = i915_gem_object_migrate_sync(obj);
+	if (unlikely(err))
+		goto err_unpin;
+
+	err = pf_push_config_lmem(iov, id, obj->base.size);
 	if (unlikely(err))
 		goto err_unpin;
 
