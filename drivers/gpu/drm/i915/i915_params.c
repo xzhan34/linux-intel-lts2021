@@ -280,6 +280,10 @@ i915_param_named_unsafe(smem_access_control, int, 0600,
 			"bit-1 stall gpu before ppgtt updates, "
 			"bit-2 Update ppgtt and ggtt using blitter commands");
 
+i915_param_named_unsafe(page_sz_mask, uint, 0600,
+			"mask to force the huge page sizes\n"
+			"bit0 4K page, bit1 64K page bit2 2M page, bit3 1G page size");
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,
