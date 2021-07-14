@@ -13,6 +13,7 @@ struct intel_iov;
 
 int intel_iov_query_bootstrap(struct intel_iov *iov);
 int intel_iov_query_config(struct intel_iov *iov);
+int intel_iov_query_version(struct intel_iov *iov);
 int intel_iov_query_runtime(struct intel_iov *iov, bool early);
 void intel_iov_query_fini(struct intel_iov *iov);
 

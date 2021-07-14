@@ -299,6 +299,85 @@ int intel_iov_query_config(struct intel_iov *iov)
 	return 0;
 }
 
+static int iov_action_handshake(struct intel_iov *iov, u32 *major, u32 *minor)
+{
+	u32 request[VF2PF_HANDSHAKE_REQUEST_MSG_LEN] = {
+		FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, IOV_ACTION_VF2PF_HANDSHAKE),
+		FIELD_PREP(VF2PF_HANDSHAKE_REQUEST_MSG_1_MAJOR, *major) |
+		FIELD_PREP(VF2PF_HANDSHAKE_REQUEST_MSG_1_MINOR, *minor),
+	};
+	u32 response[VF2PF_HANDSHAKE_RESPONSE_MSG_LEN];
+	int ret;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	ret = intel_iov_relay_send_to_pf(&iov->relay,
+					 request, ARRAY_SIZE(request),
+					 response, ARRAY_SIZE(response));
+	if (unlikely(ret < 0))
+		return ret;
+
+	if (unlikely(ret != VF2PF_HANDSHAKE_RESPONSE_MSG_LEN))
+		return -EPROTO;
+
+	if (unlikely(FIELD_GET(VF2PF_HANDSHAKE_RESPONSE_MSG_0_MBZ, response[0])))
+		return -EPROTO;
+
+	*major = FIELD_GET(VF2PF_HANDSHAKE_RESPONSE_MSG_1_MAJOR, response[1]);
+	*minor = FIELD_GET(VF2PF_HANDSHAKE_RESPONSE_MSG_1_MINOR, response[1]);
+
+	return 0;
+}
+
+static int vf_handshake_with_pf(struct intel_iov *iov)
+{
+	u32 major_wanted = IOV_VERSION_LATEST_MAJOR;
+	u32 minor_wanted = IOV_VERSION_LATEST_MINOR;
+	u32 major = major_wanted, minor = minor_wanted;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	err = iov_action_handshake(iov, &major, &minor);
+	if (unlikely(err))
+		goto failed;
+
+	IOV_DEBUG(iov, "Using ABI %u.%02u\n", major, minor);
+	return 0;
+
+failed:
+	IOV_PROBE_ERROR(iov, "Unable to confirm ABI version %u.%02u (%pe)\n",
+			major, minor, ERR_PTR(err));
+	return err;
+}
+
+/**
+ * intel_iov_query_version - Query IOV version info.
+ * @iov: the IOV struct
+ *
+ * This function is for VF use only.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_query_version(struct intel_iov *iov)
+{
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	err = vf_handshake_with_pf(iov);
+	if (unlikely(err))
+		goto failed;
+
+	return 0;
+
+failed:
+	IOV_PROBE_ERROR(iov, "Failed to get version info (%pe)\n", ERR_PTR(err));
+	return err;
+}
+
 static const i915_reg_t tgl_early_regs[] = {
 	RPM_CONFIG0,			/* _MMIO(0x0D00) */
 	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */

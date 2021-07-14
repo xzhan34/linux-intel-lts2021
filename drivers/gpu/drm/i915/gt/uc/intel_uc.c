@@ -722,6 +722,10 @@ static int __vf_uc_init_hw(struct intel_uc *uc)
 	if (unlikely(err))
 		goto err_out;
 
+	err = intel_iov_query_version(&gt->iov);
+	if (unlikely(err))
+		goto err_out;
+
 	/*
 	 * pretend that HuC is running if it is supported
 	 * for status rely on runtime reg shared by PF
