@@ -102,6 +102,7 @@ void intel_gt_common_init_early(struct intel_gt *gt)
 	intel_gt_init_tlb(gt);
 	intel_gt_pm_init_early(gt);
 
+	intel_wopcm_init_early(&gt->wopcm);
 	intel_flat_ppgtt_pool_init_early(&gt->fpp);
 	intel_uc_init_early(&gt->uc);
 	intel_rps_init_early(&gt->rps);

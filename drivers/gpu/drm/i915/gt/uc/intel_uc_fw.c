@@ -410,7 +410,8 @@ static void __uc_fw_user_override(struct drm_i915_private *i915, struct intel_uc
 void intel_uc_fw_init_early(struct intel_uc_fw *uc_fw,
 			    enum intel_uc_fw_type type)
 {
-	struct drm_i915_private *i915 = ____uc_fw_to_gt(uc_fw, type)->i915;
+	struct intel_gt *gt = ____uc_fw_to_gt(uc_fw, type);
+	struct drm_i915_private *i915 = gt->i915;
 
 	/*
 	 * we use FIRMWARE_UNINITIALIZED to detect checks against uc_fw->status
@@ -540,10 +541,11 @@ static void guc_read_css_info(struct intel_uc_fw *uc_fw, struct uc_css_header *c
 	uc_fw->private_data_size = css->private_data_size;
 }
 
-static int check_ccs_header(struct drm_i915_private *i915,
+static int check_ccs_header(struct intel_gt *gt,
 			    const struct firmware *fw,
 			    struct intel_uc_fw *uc_fw)
 {
+	struct drm_i915_private *i915 = gt->i915;
 	struct uc_css_header *css;
 	size_t size;
 
@@ -585,10 +587,10 @@ static int check_ccs_header(struct drm_i915_private *i915,
 
 	/* Sanity check whether this fw is not larger than whole WOPCM memory */
 	size = __intel_uc_fw_get_upload_size(uc_fw);
-	if (unlikely(size >= i915->wopcm.size)) {
+	if (unlikely(size >= gt->wopcm.size)) {
 		drm_warn(&i915->drm, "%s firmware %s: invalid size: %zu > %zu\n",
 			 intel_uc_fw_type_repr(uc_fw->type), uc_fw->file_selected.path,
-			 size, (size_t)i915->wopcm.size);
+			 size, (size_t)gt->wopcm.size);
 		return -E2BIG;
 	}
 
@@ -655,7 +657,7 @@ int intel_uc_fw_fetch(struct intel_uc_fw *uc_fw)
 	bool old_ver = false;
 	int err;
 
-	GEM_BUG_ON(!i915->wopcm.size);
+	GEM_BUG_ON(!gt->wopcm.size);
 	GEM_BUG_ON(!intel_uc_fw_is_enabled(uc_fw));
 
 	err = i915_inject_probe_error(i915, -ENXIO);
@@ -697,7 +699,7 @@ int intel_uc_fw_fetch(struct intel_uc_fw *uc_fw)
 	if (uc_fw->loaded_via_gsc)
 		err = check_gsc_manifest(fw, uc_fw);
 	else
-		err = check_ccs_header(i915, fw, uc_fw);
+		err = check_ccs_header(gt, fw, uc_fw);
 	if (err)
 		goto fail;
 
@@ -922,7 +924,7 @@ static inline bool uc_fw_need_rsa_in_memory(struct intel_uc_fw *uc_fw)
 static int uc_fw_rsa_data_create(struct intel_uc_fw *uc_fw)
 {
 	struct intel_gt *gt = __uc_fw_to_gt(uc_fw);
-	struct intel_wopcm *wopcm = &gt->i915->wopcm;
+	struct intel_wopcm *wopcm = &gt->wopcm;
 	struct i915_vma *vma;
 	size_t copied;
 	void *vaddr;

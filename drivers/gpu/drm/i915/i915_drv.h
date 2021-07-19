@@ -84,7 +84,6 @@
 #include "intel_runtime_pm.h"
 #include "intel_step.h"
 #include "intel_uncore.h"
-#include "intel_wopcm.h"
 #include "i915_addr_trans_svc.h"
 
 struct dpll;
@@ -520,8 +519,6 @@ struct drm_i915_private {
 	struct i915_virtual_gpu vgpu;
 
 	struct intel_gvt *gvt;
-
-	struct intel_wopcm wopcm;
 
 	struct intel_dmc dmc;
 
