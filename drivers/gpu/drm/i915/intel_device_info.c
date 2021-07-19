@@ -426,6 +426,14 @@ void intel_device_info_runtime_init(struct drm_i915_private *dev_priv)
 		memset(runtime->num_sprites, 0, sizeof(runtime->num_sprites));
 		memset(runtime->num_scalers, 0, sizeof(runtime->num_scalers));
 	}
+
+	/*
+	 * Early PVC steppings don't have the GuC depriv feature. We can't
+	 * rely on the fuse on those platforms because the meaning of the
+	 * fuse bit is inverted on platforms that do have the feature.
+	 */
+	if (IS_PVC_BD_STEP(dev_priv, STEP_A0, STEP_B0))
+		info->has_guc_deprivilege = 0;
 }
 
 void intel_driver_caps_print(const struct intel_driver_caps *caps,
