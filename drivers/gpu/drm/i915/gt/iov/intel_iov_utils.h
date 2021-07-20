@@ -58,6 +58,13 @@ static inline int pf_get_status(struct intel_iov *iov)
 #define IOV_PROBE_ERROR(_iov, _fmt, ...) \
 	i915_probe_error(iov_to_i915(_iov), "IOV: " _fmt, ##__VA_ARGS__)
 
+#ifdef CONFIG_DRM_I915_DEBUG_IOV
+#define IOV_DEBUG(_iov, _fmt, ...) \
+	drm_dbg(&iov_to_i915(_iov)->drm, "IOV: " _fmt, ##__VA_ARGS__)
+#else
+#define IOV_DEBUG(_iov, _fmt, ...) typecheck(struct intel_iov *, _iov)
+#endif
+
 static inline void pf_update_status(struct intel_iov *iov, int status, const char *reason)
 {
 	GEM_BUG_ON(status >= 0);
