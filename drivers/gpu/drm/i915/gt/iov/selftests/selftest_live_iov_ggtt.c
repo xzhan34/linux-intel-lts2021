@@ -101,7 +101,12 @@ pte_is_value_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_
 static bool
 pte_gpa_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, gen8_pte_t *out)
 {
-	return pte_is_value_modifiable(iov, pte_addr, ggtt_addr, GEN12_GGTT_PTE_ADDR_MASK, out);
+	if (IS_ALDERLAKE_P(iov_to_i915(iov)))
+		return pte_is_value_modifiable(iov, pte_addr, ggtt_addr, ADL_GGTT_PTE_ADDR_MASK,
+					       out);
+	else
+		return pte_is_value_modifiable(iov, pte_addr, ggtt_addr, GEN12_GGTT_PTE_ADDR_MASK,
+					       out);
 }
 
 static bool
