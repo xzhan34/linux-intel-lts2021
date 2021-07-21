@@ -94,10 +94,20 @@ typedef u64 gen8_pte_t;
  * +==========+=========+=========+==============+=========+
  * |  Ignored | Address | Ignored | Local Memory | Present |
  * +----------+---------+---------+--------------+---------+
+ *
+ * ADL-P/S:
+ * +----------+--------------+-------------------+---------+---------+----------+--------+---------+
+ * |    63:46 |        45:42 |             41:39 |   38:12 |   11:5  |      4:2 |      1 |       0 |
+ * +==========+==============+===================+=========+=========+==========+========+=========+
+ * |  Ignored | MKTME key ID | 2LM Far Memory    | Address | Ignored | Function | Local  | Present |
+ * |          |              | address extension |         |         | Number   | Memory |         |
+ * +----------+--------------+-------------------+---------+---------+----------+--------+---------+
+ *
  */
 
 #define GEN12_GGTT_PTE_LM		BIT_ULL(1)
 #define GEN12_GGTT_PTE_ADDR_MASK	GENMASK_ULL(45, 12)
+#define ADL_GGTT_PTE_ADDR_MASK		GENMASK_ULL(38, 12)
 
 #define GEN12_PDE_64K BIT(6)
 
