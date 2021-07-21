@@ -49,8 +49,10 @@ enum intel_region_id {
 #define REGION_STOLEN_SMEM   BIT(INTEL_REGION_STOLEN_SMEM)
 #define REGION_STOLEN_LMEM   BIT(INTEL_REGION_STOLEN_LMEM)
 
-#define I915_ALLOC_MIN_PAGE_SIZE  BIT(0)
-#define I915_ALLOC_CONTIGUOUS     BIT(1)
+#define I915_ALLOC_CHUNK_MIN_PAGE_SIZE  BIT(0)
+#define I915_ALLOC_CONTIGUOUS		BIT(3)
+#define I915_ALLOC_CHUNK_4K		BIT(5)
+#define I915_ALLOC_CHUNK_1G		BIT(6)
 
 #define for_each_memory_region(mr, i915, id) \
 	for (id = 0; id < ARRAY_SIZE((i915)->mm.regions); id++) \

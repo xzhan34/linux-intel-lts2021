@@ -66,6 +66,28 @@ static u64 object_limit(struct drm_i915_gem_object *obj)
 	return min_region_size;
 }
 
+static u64 object_size_align(struct intel_memory_region *mr, u64 size, u32 *flags)
+{
+	unsigned long page_sz_mask = mr->i915->params.page_sz_mask;
+	u32 alloc_flags = 0;
+
+	if (mr->type == INTEL_MEMORY_LOCAL && page_sz_mask) {
+		unsigned long alignment = 0;
+
+		if (page_sz_mask & BIT(0)) {
+			alloc_flags |= I915_BO_ALLOC_CHUNK_4K;
+			alignment = SZ_4K;
+		} else if (page_sz_mask & BIT(3)) {
+			alloc_flags |= I915_BO_ALLOC_CHUNK_1G;
+			alignment = SZ_1G;
+		}
+		size = round_up(size, alignment);
+	}
+
+	*flags |= alloc_flags;
+	return size;
+}
+
 static int i915_gem_publish(struct drm_i915_gem_object *obj,
 			    struct drm_file *file,
 			    u64 *size_p,
@@ -105,6 +127,8 @@ setup_object(struct drm_i915_gem_object *obj, u64 size)
 
 	alloc_flags = i915_modparams.force_alloc_contig & ALLOC_CONTIGUOUS_LMEM ?
 		I915_BO_ALLOC_CONTIGUOUS : 0;
+
+	size = object_size_align(mr, size, &alloc_flags);
 	ret = mr->ops->init_object(mr, obj, size, alloc_flags | I915_BO_ALLOC_USER);
 	if (ret)
 		return ret;

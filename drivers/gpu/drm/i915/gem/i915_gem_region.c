@@ -58,9 +58,13 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 	}
 
 	flags = 0;
-	if (!(obj->flags & I915_BO_ALLOC_IGNORE_MIN_PAGE_SIZE))
-		flags |= I915_ALLOC_MIN_PAGE_SIZE;
-
+	if (obj->flags & I915_BO_ALLOC_CHUNK_1G) {
+		flags = I915_ALLOC_CHUNK_1G;
+	} else if (obj->flags & I915_BO_ALLOC_CHUNK_4K) {
+		flags = I915_ALLOC_CHUNK_4K;
+	} else if (!(obj->flags & I915_BO_ALLOC_IGNORE_MIN_PAGE_SIZE)) {
+		flags = I915_ALLOC_CHUNK_MIN_PAGE_SIZE;
+	}
 	if (obj->flags & I915_BO_ALLOC_CONTIGUOUS)
 		flags |= I915_ALLOC_CONTIGUOUS;
 

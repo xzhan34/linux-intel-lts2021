@@ -517,10 +517,16 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 	GEM_BUG_ON(!IS_ALIGNED(size, mem->mm.chunk_size));
 	GEM_BUG_ON(!list_empty(blocks));
 
-	if (flags & I915_ALLOC_MIN_PAGE_SIZE) {
-		min_order = ilog2(mem->min_page_size) -
-			    ilog2(mem->mm.chunk_size);
-	}
+	GEM_BUG_ON((flags &
+		   (I915_ALLOC_CHUNK_4K |
+		    I915_ALLOC_CHUNK_1G)) && (flags & I915_ALLOC_CHUNK_MIN_PAGE_SIZE));
+
+	if (flags & I915_ALLOC_CHUNK_1G)
+		min_order = ilog2(SZ_1G) - ilog2(mem->mm.chunk_size);
+	else if (flags & I915_ALLOC_CHUNK_4K)
+		min_order = ilog2(SZ_4K) - ilog2(mem->mm.chunk_size);
+	else if (flags & I915_ALLOC_CHUNK_MIN_PAGE_SIZE)
+		min_order = ilog2(mem->min_page_size) - ilog2(mem->mm.chunk_size);
 
 	if (flags & I915_ALLOC_CONTIGUOUS) {
 		size = roundup_pow_of_two(size);
