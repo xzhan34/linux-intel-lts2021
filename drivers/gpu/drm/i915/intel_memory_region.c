@@ -225,8 +225,7 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 		struct i915_buddy_block *block;
 		unsigned int order;
 
-		order = fls(n_pages) - 1;
-		GEM_BUG_ON(order > mem->mm.max_order);
+		order = min_t(unsigned int, __fls(n_pages), mem->mm.max_order);
 		GEM_BUG_ON(order < min_order);
 
 		do {
