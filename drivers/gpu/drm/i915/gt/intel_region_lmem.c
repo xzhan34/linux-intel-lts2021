@@ -237,8 +237,32 @@ static struct intel_memory_region *setup_lmem(struct intel_gt *gt)
 		u64 actual_flat_ccs_size, expected_flat_ccs_size, bgsm;
 
 		bgsm = intel_uncore_read64(uncore, GEN12_GSMBASE);
-		flat_ccs_base_addr_reg = intel_gt_mcr_read_any_fw(gt, XEHP_FLAT_CCS_BASE_ADDR);
-		flat_ccs_base = (flat_ccs_base_addr_reg >> XEHP_CCS_BASE_SHIFT) * SZ_64K;
+
+		if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 60)) {
+			u32 pvc_flat_ccs_base_addr_low, pvc_flat_ccs_base_addr_high;
+			u8 meml3_mask, hbm_count;
+
+			meml3_mask = intel_uncore_read(uncore, GEN10_MIRROR_FUSE3) &
+					GEN12_MEML3_EN_MASK;
+			hbm_count = hweight8(meml3_mask);
+
+			pvc_flat_ccs_base_addr_low = intel_gt_mcr_read_any(gt, PVC_FLAT_CCS_BASE_ADDR_LOWER);
+			pvc_flat_ccs_base_addr_high = intel_gt_mcr_read_any(gt, PVC_FLAT_CCS_BASE_ADDR_UPPER);
+			flat_ccs_base_addr_reg = pvc_flat_ccs_base_addr_high &
+							PVC_FLAT_CCS_BASE_UPPER_ADDR_MASK;
+			flat_ccs_base_addr_reg = flat_ccs_base_addr_reg << 32;
+			flat_ccs_base_addr_reg |= pvc_flat_ccs_base_addr_low &
+							PVC_FLAT_CCS_BASE_LOWER_ADDR_MASK;
+			/*
+			 * In PVC, flat ccs base address register holds the flat ccs
+			 * base address per CC at tile level. Each HBM stack has 2 CC units.
+			 * Convert this address relative to tile for SW use
+			 */
+			flat_ccs_base = flat_ccs_base_addr_reg * (2 * hbm_count);
+		} else {
+			flat_ccs_base_addr_reg = intel_gt_mcr_read_any(gt, XEHP_FLAT_CCS_BASE_ADDR);
+			flat_ccs_base = (flat_ccs_base_addr_reg >> XEHP_CCS_BASE_SHIFT) * SZ_64K;
+		}
 
 		/* CCS to LMEM size ratio is 1:256 */
 		expected_flat_ccs_size = lmem_size / 256;
