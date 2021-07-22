@@ -508,12 +508,18 @@ static int wait_for_ct_request_update(struct intel_guc_ct *ct, struct ct_request
 	(!(ct_enabled = intel_guc_ct_enabled(ct)) || \
 	 FIELD_GET(GUC_HXG_MSG_0_ORIGIN, READ_ONCE(req->status)) == \
 	 GUC_HXG_ORIGIN_GUC)
+	intel_boost_fake_int_timer(ct_to_gt(ct), true);
 	err = wait_for_us(done, GUC_CTB_RESPONSE_TIMEOUT_SHORT_MS);
 	if (err)
 		err = wait_for(done, GUC_CTB_RESPONSE_TIMEOUT_LONG_MS);
 #undef done
 	if (!ct_enabled)
 		err = -ENODEV;
+
+	if (unlikely(err))
+		DRM_ERROR("CT: fence %u err %d\n", req->fence, err);
+
+	intel_boost_fake_int_timer(ct_to_gt(ct), false);
 
 	*status = req->status;
 	return err;

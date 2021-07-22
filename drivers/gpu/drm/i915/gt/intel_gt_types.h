@@ -147,6 +147,15 @@ struct intel_gt {
 		struct work_struct work;
 	} watchdog;
 
+	struct {
+		bool enabled;
+		struct hrtimer timer;
+		atomic_t boost;
+		u32 delay;
+		u32 delay_fast, delay_slow;
+		bool int_enabled;
+	} fake_int;
+
 	struct intel_wakeref wakeref;
 	atomic_t user_wakeref;
 

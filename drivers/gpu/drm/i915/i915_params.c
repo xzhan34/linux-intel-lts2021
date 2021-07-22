@@ -261,6 +261,9 @@ i915_param_named_unsafe(debugger_log_level, int, 0600,
 i915_param_named_unsafe(enable_hw_throttle_blt, bool, 0400,
 	"Enable hardware throttling BLT on XEHPSDV A0. (default: yes)");
 
+i915_param_named_unsafe(enable_fake_int_wa, bool, 0400,
+			"Enable fake interrupts via polling timer w/a for multi-tile platforms. (default: true)");
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,

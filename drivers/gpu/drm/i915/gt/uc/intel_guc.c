@@ -137,6 +137,55 @@ static void gen11_reset_guc_interrupts(struct intel_guc *guc)
 	spin_unlock_irq(gt->irq_lock);
 }
 
+/* Wa:16014207253 */
+static void fake_int_timer_start(struct intel_gt *gt)
+{
+	if (atomic_read(&gt->fake_int.boost))
+		gt->fake_int.delay = gt->fake_int.delay_fast;
+	else
+		gt->fake_int.delay = gt->fake_int.delay_slow;
+
+	hrtimer_start(&gt->fake_int.timer, ns_to_ktime(gt->fake_int.delay), HRTIMER_MODE_REL);
+}
+
+static void fake_int_timer_stop(struct intel_gt *gt)
+{
+	gt->fake_int.delay = 0;
+	hrtimer_cancel(&gt->fake_int.timer);
+}
+
+static void gen11_enable_fake_interrupts(struct intel_guc *guc)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+
+	spin_lock_irq(gt->irq_lock);
+	WARN_ON_ONCE(gen11_gt_reset_one_iir(gt, 0, GEN11_GUC));
+
+	/* FIXME: Connect timer to GT PM */
+	fake_int_timer_start(gt);
+	spin_unlock_irq(gt->irq_lock);
+}
+
+static void gen11_disable_fake_interrupts(struct intel_guc *guc)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+
+	spin_lock_irq(gt->irq_lock);
+
+	fake_int_timer_stop(gt);
+
+	spin_unlock_irq(gt->irq_lock);
+	intel_synchronize_irq(gt->i915);
+
+	gen11_reset_guc_interrupts(guc);
+}
+
+void intel_guc_init_fake_interrupts(struct intel_guc *guc)
+{
+	guc->interrupts.enable = gen11_enable_fake_interrupts;
+	guc->interrupts.disable = gen11_disable_fake_interrupts;
+}
+
 static void gen11_enable_guc_interrupts(struct intel_guc *guc)
 {
 	struct intel_gt *gt = guc_to_gt(guc);
@@ -168,7 +217,8 @@ static void gen11_disable_guc_interrupts(struct intel_guc *guc)
 
 void intel_guc_init_early(struct intel_guc *guc)
 {
-	struct drm_i915_private *i915 = guc_to_gt(guc)->i915;
+	struct intel_gt *gt = guc_to_gt(guc);
+	struct drm_i915_private *i915 = gt->i915;
 
 	intel_uc_fw_init_early(&guc->fw, INTEL_UC_FW_TYPE_GUC);
 	intel_guc_ct_init_early(&guc->ct);
@@ -187,7 +237,6 @@ void intel_guc_init_early(struct intel_guc *guc)
 		guc->send_regs.base =
 			i915_mmio_reg_offset(GEN11_SOFT_SCRATCH(0));
 		guc->send_regs.count = GEN11_SOFT_SCRATCH_COUNT;
-
 	} else {
 		guc->notify_reg = GUC_SEND_INTERRUPT;
 		guc->interrupts.reset = gen9_reset_guc_interrupts;
@@ -842,6 +891,8 @@ int intel_guc_auth_huc(struct intel_guc *guc, u32 rsa_offset)
  */
 int intel_guc_suspend(struct intel_guc *guc)
 {
+	struct intel_gt *gt = guc_to_gt(guc);
+	bool fake_int = false;
 	int ret;
 	u32 action[] = {
 		INTEL_GUC_ACTION_CLIENT_SOFT_RESET,
@@ -849,6 +900,17 @@ int intel_guc_suspend(struct intel_guc *guc)
 
 	if (!intel_guc_is_ready(guc))
 		return 0;
+
+	/* Wa:16014207253 */
+	if (gt->fake_int.enabled && gt->fake_int.delay) {
+		/*
+		 * Prevent the fake interrupt timer from causing the CTB
+		 * code to complain about GUC_CTB_STATUS_UNUSED being set
+		 * while apparently receiving G2H interrupts.
+		 */
+		fake_int = true;
+		fake_int_timer_stop(gt);
+	}
 
 	if (intel_guc_submission_is_used(guc)) {
 		/*
@@ -869,6 +931,9 @@ int intel_guc_suspend(struct intel_guc *guc)
 
 	/* Signal that the GuC isn't running. */
 	intel_guc_sanitize(guc);
+
+	if (fake_int)
+		fake_int_timer_start(gt);
 
 	return 0;
 }
@@ -1157,6 +1222,9 @@ static int guc_send_invalidate_tlb(struct intel_guc *guc, u32 *action, u32 size)
 		 */
 		goto out;
 	}
+
+	intel_boost_fake_int_timer(guc_to_gt(guc), true);
+
 /*
  * GuC has a timeout of 1ms for a tlb invalidation response from GAM. On a
  * timeout GuC drops the request and has no mechanism to notify the host about
@@ -1178,6 +1246,8 @@ out:
 	remove_wait_queue(&wq->wq, &wait);
 	if (seqno != guc->serial_slot)
 		xa_erase_irq(&guc->tlb_lookup, seqno);
+
+	intel_boost_fake_int_timer(guc_to_gt(guc), false);
 
 	return err;
 }

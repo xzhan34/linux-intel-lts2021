@@ -100,4 +100,6 @@ void intel_gt_info_print(const struct intel_gt_info *info,
 
 void intel_gt_watchdog_work(struct work_struct *work);
 
+void intel_boost_fake_int_timer(struct intel_gt *gt, bool on_off);
+
 #endif /* __INTEL_GT_H__ */

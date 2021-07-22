@@ -588,10 +588,18 @@ static inline void clr_ctx_id_mapping(struct intel_guc *guc, u32 id)
 	xa_unlock_irqrestore(&guc->context_lookup, flags);
 }
 
-static void decr_outstanding_submission_g2h(struct intel_guc *guc)
+static void incr_outstanding_submission_g2h(struct intel_guc *guc)
 {
-	if (atomic_dec_and_test(&guc->outstanding_submission_g2h))
+	atomic_inc(&guc->outstanding_submission_g2h);
+	intel_boost_fake_int_timer(guc_to_gt(guc), true);
+}
+
+static void decr_outstanding_submission_g2h(struct intel_guc *guc, bool wake)
+{
+	if (atomic_dec_and_test(&guc->outstanding_submission_g2h) && wake)
 		wake_up_all(&guc->ct.wq);
+
+	intel_boost_fake_int_timer(guc_to_gt(guc), false);
 }
 
 static int guc_submission_send_busy_loop(struct intel_guc *guc,
@@ -608,7 +616,7 @@ static int guc_submission_send_busy_loop(struct intel_guc *guc,
 	GEM_BUG_ON(g2h_len_dw && !loop);
 
 	if (g2h_len_dw)
-		atomic_inc(&guc->outstanding_submission_g2h);
+		incr_outstanding_submission_g2h(guc);
 
 	return intel_guc_send_busy_loop(guc, action, len, g2h_len_dw, loop);
 }
@@ -631,6 +639,7 @@ int intel_guc_wait_for_pending_msg(struct intel_guc *guc,
 	if (!timeout)
 		return -ETIME;
 
+	intel_boost_fake_int_timer(guc_to_gt(guc), true);
 	for (;;) {
 		prepare_to_wait(&guc->ct.wq, &wait, state);
 
@@ -650,6 +659,7 @@ int intel_guc_wait_for_pending_msg(struct intel_guc *guc,
 		timeout = io_schedule_timeout(timeout);
 	}
 	finish_wait(&guc->ct.wq, &wait);
+	intel_boost_fake_int_timer(guc_to_gt(guc), false);
 
 	return (timeout < 0) ? timeout : 0;
 }
@@ -724,7 +734,7 @@ static int __guc_add_request(struct intel_guc *guc, struct i915_request *rq)
 	err = intel_guc_send_nb(guc, action, len, g2h_len_dw);
 	if (!enabled && !err) {
 		trace_intel_context_sched_enable(ce);
-		atomic_inc(&guc->outstanding_submission_g2h);
+		incr_outstanding_submission_g2h(guc);
 		set_context_enabled(ce);
 
 		/*
@@ -1097,7 +1107,7 @@ static void scrub_guc_desc_for_outstanding_g2h(struct intel_guc *guc)
 		spin_unlock(&ce->guc_state.lock);
 
 		if (pending_enable || destroyed || deregister) {
-			decr_outstanding_submission_g2h(guc);
+			decr_outstanding_submission_g2h(guc, false);
 			if (deregister)
 				guc_signal_context_fence(ce);
 			if (destroyed) {
@@ -1117,7 +1127,7 @@ static void scrub_guc_desc_for_outstanding_g2h(struct intel_guc *guc)
 				intel_engine_signal_breadcrumbs(ce->engine);
 			}
 			intel_context_sched_disable_unpin(ce);
-			decr_outstanding_submission_g2h(guc);
+			decr_outstanding_submission_g2h(guc, false);
 
 			spin_lock(&ce->guc_state.lock);
 			guc_blocked_fence_complete(ce);
@@ -1967,7 +1977,8 @@ void intel_guc_submission_reset_finish(struct intel_guc *guc)
 	 * machine.
 	 */
 	GEM_WARN_ON(atomic_read(&guc->outstanding_submission_g2h));
-	atomic_set(&guc->outstanding_submission_g2h, 0);
+	while (atomic_read(&guc->outstanding_submission_g2h) > 0)
+		decr_outstanding_submission_g2h(guc, false);
 
 	intel_guc_global_policies_update(guc);
 	enable_submission(guc);
@@ -4369,6 +4380,30 @@ static void virtual_guc_bump_serial(struct intel_engine_cs *engine)
 		e->serial++;
 }
 
+static void guc_fake_irq_enable(struct intel_engine_cs *engine)
+{
+	struct intel_gt *gt = engine->gt;
+
+	lockdep_assert_held(gt->irq_lock);
+
+	if (!gt->fake_int.int_enabled) {
+		gt->fake_int.int_enabled = true;
+		intel_boost_fake_int_timer(gt, true);
+	}
+}
+
+static void guc_fake_irq_disable(struct intel_engine_cs *engine)
+{
+	struct intel_gt *gt = engine->gt;
+
+	lockdep_assert_held(gt->irq_lock);
+
+	if (gt->fake_int.int_enabled) {
+		gt->fake_int.int_enabled = false;
+		intel_boost_fake_int_timer(gt, false);
+	}
+}
+
 static void guc_default_vfuncs(struct intel_engine_cs *engine)
 {
 	/* Default vfuncs which can be overridden by each engine. */
@@ -4393,6 +4428,12 @@ static void guc_default_vfuncs(struct intel_engine_cs *engine)
 	}
 	engine->set_default_submission = guc_set_default_submission;
 	engine->busyness = guc_engine_busyness;
+
+	/* Wa:16014207253 */
+	if (engine->gt->fake_int.enabled) {
+		engine->irq_enable = guc_fake_irq_enable;
+		engine->irq_disable = guc_fake_irq_disable;
+	}
 
 	engine->flags |= I915_ENGINE_HAS_SCHEDULER;
 	engine->flags |= I915_ENGINE_HAS_PREEMPTION;
@@ -4794,7 +4835,7 @@ int intel_guc_deregister_done_process_msg(struct intel_guc *guc,
 		__guc_context_destroy(ce);
 	}
 
-	decr_outstanding_submission_g2h(guc);
+	decr_outstanding_submission_g2h(guc, true);
 
 	return 0;
 }
@@ -4872,7 +4913,7 @@ int intel_guc_sched_done_process_msg(struct intel_guc *guc,
 		}
 	}
 
-	decr_outstanding_submission_g2h(guc);
+	decr_outstanding_submission_g2h(guc, true);
 	intel_context_put(ce);
 
 	return 0;

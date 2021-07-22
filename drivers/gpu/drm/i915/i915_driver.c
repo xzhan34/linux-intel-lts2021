@@ -609,6 +609,52 @@ static void i915_driver_late_release(struct drm_i915_private *dev_priv)
 	i915_params_free(&dev_priv->params);
 }
 
+/* Wa:16014207253 */
+static enum hrtimer_restart fake_int_timer_callback(struct hrtimer *hrtimer)
+{
+	struct intel_gt *gt = container_of(hrtimer, typeof(*gt), fake_int.timer);
+	struct intel_guc *guc = &gt->uc.guc;
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+
+	if (guc->ct.enabled)
+		intel_guc_to_host_event_handler(guc);
+
+	for_each_engine(engine, gt, id)
+		engine->irq_handler(engine, GT_RENDER_USER_INTERRUPT |
+				            GT_RENDER_PIPECTL_NOTIFY_INTERRUPT);
+
+	if (!gt->fake_int.delay)
+		return HRTIMER_NORESTART;
+
+	hrtimer_forward_now(hrtimer, ns_to_ktime(gt->fake_int.delay));
+	return HRTIMER_RESTART;
+}
+
+/* Wa:16014207253 */
+static void init_fake_interrupts(struct intel_gt *gt)
+{
+	if (!gt->i915->remote_tiles)
+		return;
+
+	if (!intel_uc_wants_guc_submission(&gt->uc))
+		return;
+
+	if (!gt->i915->params.enable_fake_int_wa)
+		return;
+
+	if (IS_XEHPSDV(gt->i915)) {
+		gt->fake_int.delay_slow = 1000 * 1000 * 100;	/* 100ms */
+		gt->fake_int.delay_fast = 1000 * 100;		/* 100us */
+		gt->fake_int.enabled = 1;
+		hrtimer_init(&gt->fake_int.timer, CLOCK_MONOTONIC,
+			     HRTIMER_MODE_REL);
+		gt->fake_int.timer.function = fake_int_timer_callback;
+
+		intel_guc_init_fake_interrupts(&gt->uc.guc);
+	}
+}
+
 /**
  * i915_driver_mmio_probe - setup device MMIO
  * @dev_priv: device private
@@ -650,6 +696,8 @@ static int i915_driver_mmio_probe(struct drm_i915_private *dev_priv)
 		ret = intel_gt_init_mmio(gt);
 		if (ret)
 			goto err_uncore;
+
+		init_fake_interrupts(gt);
 	}
 
 	/* As early as possible, scrub existing GPU state before clobbering */

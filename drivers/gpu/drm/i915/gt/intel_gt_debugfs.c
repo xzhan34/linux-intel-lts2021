@@ -71,11 +71,63 @@ static int steering_show(struct seq_file *m, void *data)
 }
 DEFINE_INTEL_GT_DEBUGFS_ATTRIBUTE(steering);
 
+static int fake_int_slow_get(void *data, u64 *val)
+{
+	struct intel_gt *gt = data;
+
+	if (!gt->fake_int.enabled)
+		return -ENODEV;
+
+	*val = gt->fake_int.delay_slow;
+
+	return 0;
+}
+
+static int fake_int_slow_set(void *data, u64 val)
+{
+	struct intel_gt *gt = data;
+
+	if (!gt->fake_int.enabled)
+		return -ENODEV;
+
+	gt->fake_int.delay_slow = val;
+
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(fake_int_slow_fops, fake_int_slow_get, fake_int_slow_set, "%llu\n");
+
+static int fake_int_fast_get(void *data, u64 *val)
+{
+	struct intel_gt *gt = data;
+
+	if (!gt->fake_int.enabled)
+		return -ENODEV;
+
+	*val = gt->fake_int.delay_fast;
+
+	return 0;
+}
+
+static int fake_int_fast_set(void *data, u64 val)
+{
+	struct intel_gt *gt = data;
+
+	if (!gt->fake_int.enabled)
+		return -ENODEV;
+
+	gt->fake_int.delay_fast = val;
+
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(fake_int_fast_fops, fake_int_fast_get, fake_int_fast_set, "%llu\n");
+
 static void gt_debugfs_register(struct intel_gt *gt, struct dentry *root)
 {
 	static const struct intel_gt_debugfs_file files[] = {
 		{ "reset", &reset_fops, NULL },
 		{ "steering", &steering_fops },
+		{ "fake_int_slow_ns", &fake_int_slow_fops, NULL },
+		{ "fake_int_fast_ns", &fake_int_fast_fops, NULL },
 	};
 
 	intel_gt_debugfs_register_files(root, files, ARRAY_SIZE(files), gt);

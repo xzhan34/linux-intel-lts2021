@@ -504,4 +504,6 @@ void intel_guc_dump_time_info(struct intel_guc *guc, struct drm_printer *p);
 
 int intel_guc_sched_disable_gucid_threshold_max(struct intel_guc *guc);
 
+void intel_guc_init_fake_interrupts(struct intel_guc *guc);
+
 #endif
