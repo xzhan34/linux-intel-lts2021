@@ -772,7 +772,10 @@ static enum hrtimer_restart fake_int_timer_callback(struct hrtimer *hrtimer)
 	return HRTIMER_RESTART;
 }
 
-/* Wa:16014207253 */
+/*
+ * Wa:16014207253,xehpsdv
+ * Wa:16014202112,pvc
+ */
 static void init_fake_interrupts(struct intel_gt *gt)
 {
 	if (!gt->i915->remote_tiles)
@@ -784,9 +787,18 @@ static void init_fake_interrupts(struct intel_gt *gt)
 	if (!gt->i915->params.enable_fake_int_wa)
 		return;
 
-	if (IS_XEHPSDV(gt->i915)) {
+	if (IS_XEHPSDV(gt->i915) || IS_PVC_BD_STEP(gt->i915, STEP_A0, STEP_B1)) {
 		gt->fake_int.delay_slow = 1000 * 1000 * 100;	/* 100ms */
 		gt->fake_int.delay_fast = 1000 * 100;		/* 100us */
+
+		/*XXX:On faultable platforms, interrupts can arrive as long as
+		 * there are active requests. Currently we only boost the
+		 * frquencey when there is outstanding g2h. Until we extend
+		 * this to outstanding requests, always use boosted freq
+		 */
+		if (HAS_RECOVERABLE_PAGE_FAULT(gt->i915))
+			gt->fake_int.delay_slow = gt->fake_int.delay_fast;
+
 		gt->fake_int.enabled = 1;
 		hrtimer_init(&gt->fake_int.timer, CLOCK_MONOTONIC,
 			     HRTIMER_MODE_REL);
