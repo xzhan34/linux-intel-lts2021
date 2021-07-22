@@ -630,6 +630,60 @@ static const struct attribute *freq_attrs[] = {
 };
 
 /*
+ * Mem Frequency query interface -
+ * sysfs files under directory <dev>/gt/gt<i>/
+ */
+
+static ssize_t mem_RP0_freq_mhz_show(struct device *dev,
+				      struct device_attribute *attr,
+				      char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	u32 val;
+	int err;
+
+	err = snb_pcode_read_p(gt->uncore, XEHPSDV_PCODE_FREQUENCY_CONFIG,
+			       PCODE_MBOX_FC_SC_READ_FUSED_P0,
+			       PCODE_MBOX_DOMAIN_HBM, &val);
+	if (err)
+		return err;
+
+	/* data_out - Fused P0 for domain ID in units of 50 MHz */
+	val *= GT_FREQUENCY_MULTIPLIER;
+
+	return sysfs_emit(buff, "%u\n", val);
+}
+
+static ssize_t mem_RPn_freq_mhz_show(struct device *dev,
+				      struct device_attribute *attr,
+				      char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	u32 val;
+	int err;
+
+	err = snb_pcode_read_p(gt->uncore, XEHPSDV_PCODE_FREQUENCY_CONFIG,
+			       PCODE_MBOX_FC_SC_READ_FUSED_PN,
+			       PCODE_MBOX_DOMAIN_HBM, &val);
+	if (err)
+		return err;
+
+	/* data_out - Fused P0 for domain ID in units of 50 MHz */
+	val *= GT_FREQUENCY_MULTIPLIER;
+
+	return sysfs_emit(buff, "%u\n", val);
+}
+
+static DEVICE_ATTR_RO(mem_RP0_freq_mhz);
+static DEVICE_ATTR_RO(mem_RPn_freq_mhz);
+
+static const struct attribute *mem_freq_attrs[] = {
+	&dev_attr_mem_RP0_freq_mhz.attr,
+	&dev_attr_mem_RPn_freq_mhz.attr,
+	NULL
+};
+
+/*
  * PVC Performance control/query interface -
  * sysfs files under directory <dev>/gt/gt<i>/
  */
@@ -1042,6 +1096,12 @@ static int intel_sysfs_rps_init_gt(struct intel_gt *gt, struct kobject *kobj)
 
 	if (IS_DGFX(gt->i915)) {
 		ret = sysfs_create_file(kobj, &dev_attr_rapl_PL1_freq_mhz.attr);
+		if (ret)
+			return ret;
+	}
+
+	if (IS_DGFX(gt->i915) && !IS_DG1(gt->i915) && !IS_DG2(gt->i915)) {
+		ret = sysfs_create_files(kobj, mem_freq_attrs);
 		if (ret)
 			return ret;
 	}
