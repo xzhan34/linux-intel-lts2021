@@ -226,6 +226,7 @@ vm_fault_t i915_error_to_vmf_fault(int err)
 	case -EFAULT: /* purged object */
 	case -ENODEV: /* bad object, how did you get here! */
 	case -ENXIO: /* unable to access backing store (on device) */
+	case -E2BIG: /* object does not fit in backing store */
 		return VM_FAULT_SIGBUS;
 
 	case -ENOMEM: /* our allocation failure */
