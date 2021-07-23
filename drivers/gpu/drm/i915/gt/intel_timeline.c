@@ -337,6 +337,8 @@ __intel_timeline_get_seqno(struct intel_timeline *tl,
 	if (TIMELINE_SEQNO_BYTES <= BIT(5) && (next_ofs & BIT(5)))
 		next_ofs = offset_in_page(next_ofs + BIT(5));
 
+	synchronize_rcu(); /* flush intel_timeline_unpin() */
+
 	tl->hwsp_offset = i915_ggtt_offset(tl->hwsp_ggtt) + next_ofs;
 	tl->hwsp_seqno = tl->hwsp_map + next_ofs;
 	intel_timeline_reset_seqno(tl);
@@ -404,11 +406,13 @@ out:
 void intel_timeline_unpin(struct intel_timeline *tl)
 {
 	GEM_BUG_ON(!atomic_read(&tl->pin_count));
-	if (!atomic_dec_and_test(&tl->pin_count))
-		return;
 
-	i915_active_release(&tl->active);
-	__i915_vma_unpin(tl->hwsp_ggtt);
+	rcu_read_lock();
+	if (atomic_dec_and_test(&tl->pin_count)) {
+		i915_active_release(&tl->active);
+		__i915_vma_unpin(tl->hwsp_ggtt);
+	}
+	rcu_read_unlock();
 }
 
 void __intel_timeline_free(struct kref *kref)
