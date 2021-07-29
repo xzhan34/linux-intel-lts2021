@@ -463,7 +463,7 @@ static int guc_update_vf_klv64(struct intel_guc *guc, u32 vfid, u16 key, u64 val
 static u64 pf_get_ggtt_alignment(struct intel_iov *iov)
 {
 	/* this might be platform dependent */
-	return SZ_4K;
+	return HAS_64K_PAGES(iov_to_i915(iov)) ? SZ_64K : SZ_4K;
 }
 
 static u64 pf_get_min_spare_ggtt(struct intel_iov *iov)
