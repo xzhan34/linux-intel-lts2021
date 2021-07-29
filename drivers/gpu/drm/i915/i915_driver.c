@@ -1472,8 +1472,9 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	disable_rpm_wakeref_asserts(&i915->runtime_pm);
 
-	/* XXX find better place */
-	intel_iov_init_early(&to_gt(i915)->iov);
+	ret = i915_sriov_early_tweaks(i915);
+	if (ret < 0)
+		goto out_driver_late_release;
 
 	/* XXX: Can't run in VF mode yet - more stuff is needed */
 	if (IS_SRIOV_VF(i915)) {

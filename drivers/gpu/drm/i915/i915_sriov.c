@@ -173,6 +173,36 @@ enum i915_iov_mode i915_sriov_probe(struct drm_i915_private *i915)
 	return I915_IOV_MODE_NONE;
 }
 
+static int vf_check_guc_submission_support(struct drm_i915_private *i915)
+{
+	if (!intel_guc_submission_is_wanted(&to_gt(i915)->uc.guc)) {
+		drm_err(&i915->drm, "GuC submission disabled\n");
+		return -ENODEV;
+	}
+
+	return 0;
+}
+
+/**
+ * i915_sriov_early_tweaks - Perform early tweaks needed for SR-IOV.
+ * @i915: the i915 struct
+ *
+ * This function should be called once and as soon as possible during
+ * driver probe to perform early checks.
+ */
+int i915_sriov_early_tweaks(struct drm_i915_private *i915)
+{
+	int err;
+
+	if (IS_SRIOV_VF(i915)) {
+		err = vf_check_guc_submission_support(i915);
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
 int i915_sriov_pf_get_device_totalvfs(struct drm_i915_private *i915)
 {
 	GEM_BUG_ON(!IS_SRIOV_PF(i915));

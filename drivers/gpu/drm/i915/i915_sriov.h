@@ -22,6 +22,7 @@ struct drm_printer;
 #define IS_SRIOV(i915) (IS_SRIOV_PF(i915) || IS_SRIOV_VF(i915))
 
 enum i915_iov_mode i915_sriov_probe(struct drm_i915_private *i915);
+int i915_sriov_early_tweaks(struct drm_i915_private *i915);
 void i915_sriov_print_info(struct drm_i915_private *i915, struct drm_printer *p);
 
 /* PF only */
