@@ -620,6 +620,47 @@ insert_mmo(struct drm_i915_gem_object *obj, struct i915_mmap_offset *mmo)
 	return mmo;
 }
 
+static int
+vma_node_allow_once(struct drm_vma_offset_node *node, struct drm_file *tag)
+{
+        struct rb_node **iter;
+        struct rb_node *parent = NULL;
+        struct drm_vma_offset_file *new, *entry;
+        int ret = 0;
+
+        new = kmalloc(sizeof(*entry), GFP_KERNEL);
+        write_lock(&node->vm_lock);
+
+        iter = &node->vm_files.rb_node;
+        while (likely(*iter)) {
+                parent = *iter;
+                entry = rb_entry(*iter, struct drm_vma_offset_file, vm_rb);
+
+                if (tag == entry->vm_tag)
+                        goto unlock;
+                else if (tag > entry->vm_tag)
+                        iter = &parent->rb_right;
+                else
+                        iter = &parent->rb_left;
+        }
+
+        if (!new) {
+                ret = -ENOMEM;
+                goto unlock;
+        }
+
+        new->vm_tag = tag;
+        new->vm_count = 1;
+        rb_link_node(&new->vm_rb, parent, iter);
+        rb_insert_color(&new->vm_rb, &node->vm_files);
+        new = NULL;
+
+unlock:
+        write_unlock(&node->vm_lock);
+        kfree(new);
+        return ret;
+}
+
 static struct i915_mmap_offset *
 mmap_offset_attach(struct drm_i915_gem_object *obj,
 		   enum i915_mmap_type mmap_type,
@@ -664,8 +705,12 @@ insert:
 	mmo = insert_mmo(obj, mmo);
 	GEM_BUG_ON(lookup_mmo(obj, mmap_type) != mmo);
 out:
-	if (file)
-		drm_vma_node_allow(&mmo->vma_node, file);
+	if (file) {
+		err = vma_node_allow_once(&mmo->vma_node, file);
+		if (err)
+			return ERR_PTR(err);
+	}
+
 	return mmo;
 
 err:

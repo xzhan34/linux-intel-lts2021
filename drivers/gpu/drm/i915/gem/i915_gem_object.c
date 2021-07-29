@@ -213,6 +213,19 @@ void __i915_gem_free_object_rcu(struct rcu_head *head)
 	atomic_dec(&i915->mm.free_count);
 }
 
+static void vma_offset_revoke_all(struct drm_vma_offset_node *node)
+{
+	struct drm_vma_offset_file *it, *n;
+
+	write_lock(&node->vm_lock);
+
+	rbtree_postorder_for_each_entry_safe(it, n, &node->vm_files, vm_rb)
+		kfree(it);
+	node->vm_files = RB_ROOT;
+
+	write_unlock(&node->vm_lock);
+}
+
 static void __i915_gem_object_free_mmaps(struct drm_i915_gem_object *obj)
 {
 	/* Skip serialisation and waking the device if known to be not used. */
@@ -228,6 +241,7 @@ static void __i915_gem_object_free_mmaps(struct drm_i915_gem_object *obj)
 		rbtree_postorder_for_each_entry_safe(mmo, mn,
 						     &obj->mmo.offsets,
 						     offset) {
+			vma_offset_revoke_all(&mmo->vma_node);
 			drm_vma_offset_remove(obj->base.dev->vma_offset_manager,
 					      &mmo->vma_node);
 			kfree(mmo);
