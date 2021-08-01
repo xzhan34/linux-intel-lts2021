@@ -6,12 +6,18 @@
 #ifndef __I915_SRIOV_TYPES_H__
 #define __I915_SRIOV_TYPES_H__
 
+#include <linux/types.h>
+
 /**
  * struct i915_sriov_pf - i915 SR-IOV PF data.
  * @__status: Status of the PF. Don't access directly!
+ * @device_vfs: Number of VFs supported by the device.
+ * @driver_vfs: Number of VFs supported by the driver.
  */
 struct i915_sriov_pf {
 	int __status;
+	u16 device_vfs;
+	u16 driver_vfs;
 };
 
 /**

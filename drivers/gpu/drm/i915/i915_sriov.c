@@ -45,6 +45,11 @@ static bool gen12_pci_capability_is_vf(struct pci_dev *pdev)
 
 #ifdef CONFIG_PCI_IOV
 
+static unsigned int wanted_max_vfs(struct drm_i915_private *i915)
+{
+	return i915->params.max_vfs;
+}
+
 static int pf_reduce_totalvfs(struct drm_i915_private *i915, int limit)
 {
 	int err;
@@ -79,8 +84,24 @@ static bool pf_continue_as_native(struct drm_i915_private *i915, const char *why
 
 static bool pf_verify_readiness(struct drm_i915_private *i915)
 {
+	struct device *dev = i915->drm.dev;
+	struct pci_dev *pdev = to_pci_dev(dev);
+	int totalvfs = pci_sriov_get_totalvfs(pdev);
+	int newlimit = min_t(u16, wanted_max_vfs(i915), totalvfs);
+
+	GEM_BUG_ON(!dev_is_pf(dev));
+	GEM_WARN_ON(totalvfs > U16_MAX);
+
+	if (!newlimit)
+		return pf_continue_as_native(i915, "all VFs disabled");
+
 	if (!pf_has_valid_vf_bars(i915))
 		return pf_continue_as_native(i915, "VFs BAR not ready");
+
+	pf_reduce_totalvfs(i915, newlimit);
+
+	i915->sriov.pf.device_vfs = totalvfs;
+	i915->sriov.pf.driver_vfs = newlimit;
 
 	return true;
 }
@@ -113,6 +134,18 @@ enum i915_iov_mode i915_sriov_probe(struct drm_i915_private *i915)
 #endif
 
 	return I915_IOV_MODE_NONE;
+}
+
+int i915_sriov_pf_get_device_totalvfs(struct drm_i915_private *i915)
+{
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	return i915->sriov.pf.device_vfs;
+}
+
+int i915_sriov_pf_get_totalvfs(struct drm_i915_private *i915)
+{
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	return i915->sriov.pf.driver_vfs;
 }
 
 static void pf_set_status(struct drm_i915_private *i915, int status)
