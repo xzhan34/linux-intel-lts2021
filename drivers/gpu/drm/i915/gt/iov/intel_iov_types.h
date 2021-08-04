@@ -72,6 +72,7 @@ struct intel_iov_policies {
 struct intel_iov_provisioning {
 	bool auto_mode;
 	unsigned int num_pushed;
+	struct work_struct worker;
 	struct intel_iov_policies policies;
 	struct intel_iov_spare_config spare;
 	struct intel_iov_config *configs;

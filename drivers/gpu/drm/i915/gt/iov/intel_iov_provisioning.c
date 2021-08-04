@@ -13,6 +13,10 @@
 	(FIELD_PREP(GUC_KLV_0_KEY, GUC_KLV_##__K##_KEY) | \
 	 FIELD_PREP(GUC_KLV_0_LEN, GUC_KLV_##__K##_LEN))
 
+static void pf_init_reprovisioning_worker(struct intel_iov *iov);
+static void pf_start_reprovisioning_worker(struct intel_iov *iov);
+static void pf_fini_reprovisioning_worker(struct intel_iov *iov);
+
 /*
  * Resource configuration for VFs provisioning is maintained in the
  * flexible array where:
@@ -53,6 +57,7 @@ void intel_iov_provisioning_init_early(struct intel_iov *iov)
 
 	iov->pf.provisioning.configs = configs;
 	mutex_init(&iov->pf.provisioning.lock);
+	pf_init_reprovisioning_worker(iov);
 }
 
 /**
@@ -1942,6 +1947,8 @@ void intel_iov_provisioning_fini(struct intel_iov *iov)
 {
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
 
+	pf_fini_reprovisioning_worker(iov);
+
 	mutex_lock(pf_provisioning_mutex(iov));
 	pf_unprovision_all(iov);
 	mutex_unlock(pf_provisioning_mutex(iov));
@@ -1960,6 +1967,56 @@ void intel_iov_provisioning_restart(struct intel_iov *iov)
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
 
 	iov->pf.provisioning.num_pushed = 0;
+
+	if (pf_get_status(iov) > 0)
+		pf_start_reprovisioning_worker(iov);
+}
+
+/*
+ * pf_do_reprovisioning - Push again provisioning of the resources.
+ * @iov: the IOV struct from within the GT to be affected
+ */
+static void pf_do_reprovisioning(struct intel_iov *iov)
+{
+	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
+	unsigned int numvfs = pf_get_numvfs(iov);
+	intel_wakeref_t wakeref;
+
+	if (!numvfs)
+		return;
+
+	IOV_DEBUG(iov, "reprovisioning %u VFs\n", numvfs);
+	with_intel_runtime_pm(rpm, wakeref)
+		intel_iov_provisioning_push(iov, numvfs);
+}
+
+/*
+ * pf_reprovisioning_worker_func - Worker to re-push provisioning of the resources.
+ * @w: the worker struct from inside IOV struct
+ *
+ * After GuC reset, provisioning information within is lost. This worker function
+ * allows to schedule re-sending the provisioning outside of reset handler.
+ */
+static void pf_reprovisioning_worker_func(struct work_struct *w)
+{
+	struct intel_iov *iov = container_of(w, typeof(*iov), pf.provisioning.worker);
+
+	pf_do_reprovisioning(iov);
+}
+
+static void pf_init_reprovisioning_worker(struct intel_iov *iov)
+{
+	INIT_WORK(&iov->pf.provisioning.worker, pf_reprovisioning_worker_func);
+}
+
+static void pf_start_reprovisioning_worker(struct intel_iov *iov)
+{
+	queue_work(system_unbound_wq, &iov->pf.provisioning.worker);
+}
+
+static void pf_fini_reprovisioning_worker(struct intel_iov *iov)
+{
+	cancel_work_sync(&iov->pf.provisioning.worker);
 }
 
 /**
