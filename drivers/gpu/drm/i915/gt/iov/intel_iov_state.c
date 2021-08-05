@@ -303,6 +303,13 @@ static void pf_handle_vf_pause_done(struct intel_iov *iov, u32 vfid)
 	dev_info(dev, "VF%u %s\n", vfid, "paused");
 }
 
+static void pf_handle_vf_fixup_done(struct intel_iov *iov, u32 vfid)
+{
+	struct device *dev = iov_to_dev(iov);
+
+	dev_info(dev, "VF%u %s\n", vfid, "has completed migration");
+}
+
 static int pf_handle_vf_event(struct intel_iov *iov, u32 vfid, u32 eventid)
 {
 	switch (eventid) {
@@ -314,6 +321,9 @@ static int pf_handle_vf_event(struct intel_iov *iov, u32 vfid, u32 eventid)
 		break;
 	case GUC_PF_NOTIFY_VF_PAUSE_DONE:
 		pf_handle_vf_pause_done(iov, vfid);
+		break;
+	case GUC_PF_NOTIFY_VF_FIXUP_DONE:
+		pf_handle_vf_fixup_done(iov, vfid);
 		break;
 	default:
 		return -ENOPKG;
