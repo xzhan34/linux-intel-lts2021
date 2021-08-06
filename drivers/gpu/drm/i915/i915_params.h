@@ -86,6 +86,7 @@ struct drm_printer;
 	param(unsigned int, lmem_size, 0, 0400) \
 	param(unsigned int, enable_eviction, 3, 0600) \
 	param(unsigned int, max_vfs, 0, 0400) \
+	param(unsigned long, vfs_flr_mask, ~0, IS_ENABLED(CONFIG_DRM_I915_DEBUG_IOV) ? 0600 : 0) \
 	param(int, force_alloc_contig, 0, 0400) \
 	param(int, smem_access_control, I915_SMEM_ACCESS_CONTROL_DEFAULT, 0600) \
 	param(unsigned int, page_sz_mask, 0, 0600) \

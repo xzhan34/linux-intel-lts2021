@@ -155,14 +155,26 @@ static void pf_clear_vf_ggtt_entries(struct intel_iov *iov, u32 vfid)
 	i915_ggtt_set_space_owner(gt->ggtt, vfid, &config->ggtt_region);
 }
 
+static bool pf_vfs_flr_enabled(struct intel_iov *iov, u32 vfid)
+{
+	return iov_to_i915(iov)->params.vfs_flr_mask & BIT(vfid);
+}
+
 static int pf_process_vf_flr_finish(struct intel_iov *iov, u32 vfid)
 {
+	if (!pf_vfs_flr_enabled(iov, vfid)) {
+		IOV_DEBUG(iov, "VF%u FLR processing skipped\n", vfid);
+		goto skip;
+	}
+	IOV_DEBUG(iov, "processing VF%u FLR\n", vfid);
+
 	intel_iov_event_reset(iov, vfid);
 
 	mutex_lock(pf_provisioning_mutex(iov));
 	pf_clear_vf_ggtt_entries(iov, vfid);
 	mutex_unlock(pf_provisioning_mutex(iov));
 
+skip:
 	return pf_trigger_vf_flr_finish(iov, vfid);
 }
 

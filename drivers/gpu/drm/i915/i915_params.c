@@ -267,6 +267,13 @@ i915_param_named(max_vfs, uint, 0400,
 	"Limit number of virtual functions to allocate. "
 	"(0 = no VFs [default]; N = allow up to N VFs)");
 
+#if IS_ENABLED(CONFIG_DRM_I915_DEBUG_IOV)
+i915_param_named_unsafe(vfs_flr_mask, ulong, 0600,
+	"Bitmask to enable (1) or disable (0) cleaning by PF VF's resources "
+	"(GGTT and LMEM) after FLR (default: ~0 - cleaning enable for all VFs) "
+	"Bit number indicates VF number, e.g. bit 1 indicates VF1");
+#endif
+
 i915_param_named_unsafe(debug_eu, int, 0400,
 	"Enable EU debug capabilities (default: 0)");
 
