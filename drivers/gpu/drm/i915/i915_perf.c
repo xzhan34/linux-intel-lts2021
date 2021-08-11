@@ -5518,6 +5518,48 @@ static int oa_init_engine_groups(struct i915_perf *perf)
 	return 0;
 }
 
+static u16 oa_init_default_class(struct i915_perf *perf)
+{
+	bool has_vcs = false, has_vecs = false;
+	bool has_rcs = false, has_ccs = false;
+	struct intel_gt *gt;
+	int i, j;
+
+	for_each_gt(gt, perf->i915, i) {
+		for (j = 0; j < gt->perf.num_perf_groups; j++) {
+			struct i915_perf_group *g = &gt->perf.group[j];
+
+			if (!g->num_engines)
+				continue;
+
+			if (g->engine_mask & (RCS_MASK(gt) << RCS0))
+				has_rcs = true;
+			else if (g->engine_mask & (CCS_MASK(gt) << CCS0))
+				has_ccs = true;
+			else if (g->engine_mask & (VDBOX_MASK(gt) << VCS0))
+				has_vcs = true;
+			else if (g->engine_mask & (VEBOX_MASK(gt) << VECS0))
+				has_vecs = true;
+			else
+				drm_WARN(&gt->i915->drm, 1,
+					 "Invalid g->engine_mask\n");
+		}
+	}
+
+	if (has_rcs)
+		return I915_ENGINE_CLASS_RENDER;
+	else if (has_ccs)
+		return I915_ENGINE_CLASS_COMPUTE;
+	else if (has_vcs)
+		return I915_ENGINE_CLASS_VIDEO;
+	else if (has_vecs)
+		return I915_ENGINE_CLASS_VIDEO_ENHANCE;
+
+	drm_WARN(&perf->i915->drm, 1,
+		 "Failed to find default class for perf\n");
+	return 0;
+}
+
 static void oa_init_supported_formats(struct i915_perf *perf)
 {
 	struct drm_i915_private *i915 = perf->i915;
@@ -5582,7 +5624,6 @@ static void gen12_init_info(struct drm_i915_private *i915)
 
 	switch (platform) {
 	case INTEL_XEHPSDV:
-		perf->default_ci.engine_class = PRELIM_I915_ENGINE_CLASS_COMPUTE;
 		perf->ctx_pwr_clk_state_offset[PRELIM_I915_ENGINE_CLASS_COMPUTE] =
 			XEHPSDV_CTX_CCS_PWR_CLK_STATE;
 		break;
@@ -5762,6 +5803,7 @@ int i915_perf_init(struct drm_i915_private *i915)
 		}
 
 		oa_init_supported_formats(perf);
+		perf->default_ci.engine_class = oa_init_default_class(perf);
 	}
 
 	return 0;

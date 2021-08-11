@@ -159,26 +159,21 @@ static int live_sanitycheck(void *arg)
 	return 0;
 }
 
-static int write_timestamp(struct i915_request *rq, int slot)
+static int write_timestamp(struct i915_request *rq, u32 ggtt_offset)
 {
-	u32 *cs;
-	int len;
+	u32 *cs, cmd, base = rq->engine->mmio_base;
 
-	cs = intel_ring_begin(rq, 6);
+	cmd = MI_STORE_REGISTER_MEM | MI_SRM_LRM_GLOBAL_GTT;
+	if (GRAPHICS_VER(rq->engine->i915) >= 8)
+		cmd++;
+
+	cs = intel_ring_begin(rq, 4);
 	if (IS_ERR(cs))
 		return PTR_ERR(cs);
 
-	len = 5;
-	if (GRAPHICS_VER(rq->engine->i915) >= 8)
-		len++;
-
-	*cs++ = GFX_OP_PIPE_CONTROL(len);
-	*cs++ = PIPE_CONTROL_GLOBAL_GTT_IVB |
-		PIPE_CONTROL_STORE_DATA_INDEX |
-		PIPE_CONTROL_WRITE_TIMESTAMP;
-	*cs++ = slot * sizeof(u32);
-	*cs++ = 0;
-	*cs++ = 0;
+	*cs++ = cmd;
+	*cs++ = i915_mmio_reg_offset(RING_TIMESTAMP(base));
+	*cs++ = ggtt_offset;
 	*cs++ = 0;
 
 	intel_ring_advance(rq, cs);
@@ -200,9 +195,9 @@ static int live_noa_delay(void *arg)
 	struct drm_i915_private *i915 = arg;
 	struct i915_perf_stream *stream;
 	struct i915_request *rq;
+	u32 delay, ggtt_offset;
 	ktime_t t0, t1;
 	u64 expected;
-	u32 delay;
 	int err;
 	int i;
 
@@ -213,12 +208,6 @@ static int live_noa_delay(void *arg)
 		return -ENOMEM;
 
 	expected = atomic64_read(&stream->perf->noa_programming_delay);
-
-	if (stream->engine->class != RENDER_CLASS &&
-	    stream->engine->class != COMPUTE_CLASS) {
-		err = -ENODEV;
-		goto out;
-	}
 
 	for (i = 0; i < 4; i++)
 		intel_write_status_page(stream->engine, 0x100 + i, 0);
@@ -237,7 +226,8 @@ static int live_noa_delay(void *arg)
 		}
 	}
 
-	err = write_timestamp(rq, 0x100);
+	ggtt_offset = i915_ggtt_offset(stream->engine->status_page.vma);
+	err = write_timestamp(rq, ggtt_offset + (0x100 * sizeof(u32)));
 	if (err) {
 		i915_request_add(rq);
 		goto out;
@@ -251,7 +241,7 @@ static int live_noa_delay(void *arg)
 		goto out;
 	}
 
-	err = write_timestamp(rq, 0x102);
+	err = write_timestamp(rq, ggtt_offset + (0x102 * sizeof(u32)));
 	if (err) {
 		i915_request_add(rq);
 		goto out;
