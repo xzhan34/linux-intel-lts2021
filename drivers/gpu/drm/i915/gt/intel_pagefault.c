@@ -9,9 +9,11 @@
 #include "i915_drv.h"
 #include "i915_trace.h"
 
+#include "gen8_ppgtt.h"
 #include "intel_context.h"
 #include "intel_gt.h"
 #include "intel_gt_regs.h"
+#include "intel_tlb.h"
 #include "intel_pagefault.h"
 #include "uc/intel_guc.h"
 #include "uc/intel_guc_fwif.h"
@@ -315,8 +317,30 @@ handle_i915_mm_fault(struct intel_guc *guc,
 	vma = i915_find_vma(vm, info->page_addr);
 	if (vma)
 		vma = i915_vma_tryget(vma);
-	if (!vma)
-		return ERR_PTR( -ENOENT);
+	if (!vma) {
+		if (vm->has_scratch) {
+			/* Map the out-of-bound access to scratch page.
+			 *
+			 * Out-of-bound virtual address range is not tracked,
+			 * so whenever we bind a new vma we do not know if it
+			 * is replacing a scratch mapping, and so we must always
+			 * flush the TLB of the vma's address range so that the
+			 * next access will not load scratch. Set invalidate_tlb_scratch
+			 * flag so we know on next vm_bind.
+			 *
+			 * This is an exceptional path to ease userspace development.
+			 * Once user space fixes all the out-of-bound access, this
+			 * logic will be removed.
+			 */
+			gen12_init_fault_scratch(vm,
+						 info->page_addr,
+						 BIT(vm->scratch_order + PAGE_SHIFT),
+						 true);
+			return NULL;
+		}
+
+		return ERR_PTR(-ENOENT);
+	}
 
 	mark_engine_as_active(gt, info->engine_class, info->engine_instance);
 

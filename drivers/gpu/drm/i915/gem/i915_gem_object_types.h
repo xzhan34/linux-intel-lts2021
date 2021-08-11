@@ -639,6 +639,7 @@ struct drm_i915_gem_object {
 		struct drm_mm_node *stolen;
 
 		unsigned long scratch;
+		u64 fault_encode[2];
 		u64 encode;
 
 		void *gvt_info;

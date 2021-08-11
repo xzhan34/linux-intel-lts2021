@@ -164,6 +164,7 @@ typedef u64 gen8_pte_t;
 
 #define GEN8_PAGE_PRESENT		BIT_ULL(0)
 #define GEN8_PAGE_RW			BIT_ULL(1)
+#define PTE_NULL_PAGE			BIT_ULL(9)
 
 #define GEN8_PDE_IPS_64K BIT_ULL(11)
 #define GEN8_PDE_PS_2M   BIT_ULL(7)
@@ -353,6 +354,9 @@ struct i915_address_space {
 
 	/* Is address space enabled for recoverable page faults? */
 	bool page_fault_enabled:1;
+
+	/* Address space requires scratch page invalidation  on bind */
+	bool invalidate_tlb_scratch:1;
 
 	u8 top;
 	u8 pd_shift;

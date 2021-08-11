@@ -189,8 +189,17 @@ void ppgtt_bind_vma(struct i915_address_space *vm,
 {
 	u32 pte_flags;
 
-	if (!(flags & PIN_RESIDENT))
+	if (!(flags & PIN_RESIDENT)) {
+		/*
+		 * Force the next access to this vam to trigger a pagefault. This
+		 * only installs a NULL PTE, and will *not* populate TLB.
+		 */
+		gen12_init_fault_scratch(vm,
+					 i915_vma_offset(vma),
+					 i915_vma_size(vma),
+					 false);
 		return;
+	}
 
 	if (!test_bit(I915_VMA_ALLOC_BIT, __i915_vma_flags(vma))) {
 		GEM_BUG_ON(vma->size > i915_vma_size(vma));
@@ -211,6 +220,25 @@ void ppgtt_bind_vma(struct i915_address_space *vm,
 
 	/* Flush the PTE writes to memory */
 	i915_write_barrier(vm->i915);
+
+	/*
+	 * If there were virtual address range mapped to scratch page, all
+	 * the vm_bind after should invalid the scratch mapping, as this
+	 * range might have already been cached in TLB.
+	 */
+	if (vm->invalidate_tlb_scratch) {
+		struct intel_gt *gt;
+		int i;
+
+		for_each_gt(gt, vm->i915, i) {
+			if (!atomic_read(&vm->active_contexts_gt[i]))
+				continue;
+
+			intel_gt_invalidate_tlb_range(gt,
+						      i915_vma_offset(vma),
+						      i915_vma_size(vma));
+		}
+	}
 }
 
 static void ppgtt_bind_vma_wa(struct i915_address_space *vm,

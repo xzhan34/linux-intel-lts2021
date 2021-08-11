@@ -1479,15 +1479,12 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 		gen8_pte_encode(px_dma(vm->scratch[0]),
 				I915_CACHE_NONE, pte_flags);
 
-	if (!vm->has_scratch || i915_vm_page_fault_enabled(vm))
-		vm->scratch[0]->encode &= ~GEN8_PAGE_PRESENT;
-
 	wakeref = l4wa_pm_get(gt);
 	if (wakeref) {
 		bo = get_next_batch(&gt->fpp);
 		cmd = bo->cmd;
 	}
-retry:
+
 	for (i = 1; i <= vm->top; i++) {
 		struct drm_i915_gem_object *obj;
 
@@ -1503,18 +1500,36 @@ retry:
 			goto free_scratch;
 		}
 
-		if (!cmd)
-			fill_px(obj, vm->scratch[i - 1]->encode);
-		else
-			cmd = fill_page_blt(vm->gt, cmd, px_dma(obj),
-					    vm->scratch[i - 1]->encode);
-
 		obj->encode = gen8_pde_encode(px_dma(obj), I915_CACHE_NONE);
 
-		if (!vm->has_scratch || i915_vm_page_fault_enabled(vm))
-			obj->encode &= ~GEN8_PAGE_PRESENT;
-
 		vm->scratch[i] = obj;
+	}
+	/*
+	 * Irrespective of vm->has_scratch, for systems with recoverable
+	 * pagefaults enabled, we should not map the entire address space to
+	 * valid scratch while initializing the vm. Doing so, would  prevent from
+	 * generating any faults at all. On such platforms, mapping to scratch
+	 * page is handled in the page fault handler itself.
+	 */
+	if (!vm->has_scratch || i915_vm_page_fault_enabled(vm)) {
+		u64 invalid_pte;
+		memset(&invalid_pte, 0xAA, sizeof(u64));
+		for (i = 0; i <= vm->top; i++) {
+			vm->scratch[i]->fault_encode[1] = vm->scratch[i]->encode;
+			/* To use Null page for scratch leaf page to avoid TLB invalidation */
+			if ((i == 0) & i915_vm_page_fault_enabled(vm))
+				vm->scratch[i]->fault_encode[1] |= PTE_NULL_PAGE;
+			vm->scratch[i]->fault_encode[0] = invalid_pte;
+		}
+	}
+retry:
+
+	for (i = 1; i <= vm->top; i++) {
+		if (!cmd)
+			fill_px(vm->scratch[i], vm->scratch[i - 1]->encode);
+		else
+			cmd = fill_page_blt(vm->gt, cmd, px_dma(vm->scratch[i]),
+					    vm->scratch[i - 1]->encode);
 	}
 
 	if (cmd) {
@@ -1861,4 +1876,166 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt, u32 flags)
 err_put:
 	i915_vm_put(&ppgtt->vm);
 	return ERR_PTR(err);
+}
+
+static int __gen12_init_fault_scratch(struct i915_address_space * const vm,
+				      struct i915_page_directory * const pd,
+				      u64 * const start, const u64 end, int lvl,
+				      bool valid, u32 **cmd, int *nptes)
+{
+	const struct drm_i915_gem_object * const scratch = vm->scratch[lvl];
+	unsigned int idx, len;
+	int ret = 0;
+
+	GEM_BUG_ON(end > vm->total >> GEN8_PTE_SHIFT);
+
+	len = gen8_pd_range(*start, end, lvl--, &idx);
+
+	spin_lock(&pd->lock);
+	do {
+		struct i915_page_table *pt =  pd->entry[idx];
+
+		if (!pt) {
+			u64 *vaddr, mask;
+			int i;
+
+			if (!cmd) {
+				vaddr = px_vaddr(pd, NULL);
+				vaddr[idx] = scratch->fault_encode[valid];
+			} else {
+				*cmd = fill_cmd_pte(*cmd, px_dma(pd), idx,
+						    scratch->fault_encode[valid]);
+				*nptes += 1;
+			}
+
+			if (valid) {
+				for (i = lvl + 1; i; i--) {
+					unsigned int idx = gen8_pd_index(*start, i - 1);
+					if (!cmd) {
+						vaddr = px_vaddr(vm->scratch[i], NULL);
+						vaddr[idx] = vm->scratch[i -1]->fault_encode[valid];
+					} else {
+						*cmd = fill_cmd_pte(*cmd, px_dma(vm->scratch[i]), idx,
+								    vm->scratch[i -1]->fault_encode[valid]);
+						*nptes += 1;
+					}
+				}
+			}
+			mask = BIT_ULL(gen8_pd_shift(lvl + 1));
+			*start += mask;
+			*start &= -mask;
+		} else {
+			if (lvl) {
+				atomic_inc(&pt->used);
+				spin_unlock(&pd->lock);
+
+				ret =  __gen12_init_fault_scratch(vm, as_pd(pt),
+								  start, end, lvl, valid, cmd, nptes);
+				spin_lock(&pd->lock);
+				atomic_dec(&pt->used);
+			} else {
+				unsigned int pte = gen8_pd_index(*start, 0);
+				unsigned int num_ptes;
+
+				num_ptes = gen8_pt_count(*start, end);
+
+				if (!cmd) {
+					u64 *vaddr = px_vaddr(pt, NULL);
+					memset64(vaddr + pte, vm->scratch[0]->fault_encode[valid],
+						 num_ptes);
+				} else {
+					*cmd = fill_value_blt(vm->gt, *cmd, px_dma(pt),
+							      pte, num_ptes,
+							      vm->scratch[0]->fault_encode[valid]);
+					*nptes += 1;
+				}
+				*start += num_ptes;
+			}
+		}
+		if (cmd && *nptes >= INTEL_FLAT_PPGTT_MAX_FILL_PTE_ENTRIES) {
+			ret = -EAGAIN;
+			break;
+		}
+	} while (idx++, --len);
+	spin_unlock(&pd->lock);
+
+	return ret;
+}
+
+void gen12_init_fault_scratch(struct i915_address_space *vm, u64 start,
+			      u64 length, bool valid)
+{
+	struct i915_request *f = NULL;
+	struct intel_gt *gt = vm->gt;
+	intel_wakeref_t wakeref;
+	u64 begin, end;
+	int err;
+
+	GEM_BUG_ON(range_overflows(start, length, vm->total));
+	vm->invalidate_tlb_scratch |= valid;
+
+	start >>= GEN8_PTE_SHIFT;
+	length >>= GEN8_PTE_SHIFT;
+
+	end = start + length;
+
+	wakeref = l4wa_pm_get(gt);
+	if (!wakeref) {
+		__gen12_init_fault_scratch(vm, i915_vm_to_ppgtt(vm)->pd,
+					   &start, end, vm->top,
+					   valid, NULL, NULL);
+		return;
+	}
+
+	begin = start;
+
+	do {
+		struct intel_pte_bo *bo = get_next_batch(&gt->fpp);
+		struct i915_request *rq;
+		u32 *cmd = bo->cmd;
+		int count = 0;
+
+		rq = intel_flat_ppgtt_get_request(&gt->fpp);
+		if (IS_ERR(rq)) {
+			intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+			err = PTR_ERR(rq);
+			break;
+		}
+
+		err = __gen12_init_fault_scratch(vm, i915_vm_to_ppgtt(vm)->pd,
+						 &begin, end, vm->top,
+						 valid, &cmd, &count);
+		if (err == -EAGAIN)
+			err = 0;
+		if (err || !count) {
+			intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+			if (err)
+				i915_request_set_error_once(rq, err);
+			i915_request_add(rq);
+			break;
+		}
+
+		GEM_BUG_ON(cmd >= bo->cmd + bo->vma->size / sizeof(*bo->cmd));
+		*cmd++ = MI_BATCH_BUFFER_END;
+
+		bo->wait = __flat_ppgtt_submit(bo->vma, rq);
+		if (IS_ERR(bo->wait)) {
+			intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+			err = PTR_ERR(bo->wait);
+			break;
+		}
+
+		i915_request_put(f);
+		f = i915_request_get(bo->wait);
+		intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
+	} while (begin < end);
+
+	pte_sync(&f);
+	intel_gt_pm_put_async_l4(gt, wakeref);
+
+	if (unlikely(err)) {
+		__gen12_init_fault_scratch(vm, i915_vm_to_ppgtt(vm)->pd,
+					   &start, end, vm->top,
+					   valid, NULL, NULL);
+	}
 }

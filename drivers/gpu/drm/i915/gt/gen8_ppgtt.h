@@ -22,5 +22,7 @@ int intel_flat_lmem_ppgtt_init(struct i915_address_space *vm,
 			 struct drm_mm_node *node);
 void intel_flat_lmem_ppgtt_fini(struct i915_address_space *vm,
 			  struct drm_mm_node *node);
+void gen12_init_fault_scratch(struct i915_address_space *vm, u64 start, u64 length,
+			      bool valid);
 
 #endif
