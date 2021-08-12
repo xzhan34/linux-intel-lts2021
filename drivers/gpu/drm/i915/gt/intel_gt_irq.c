@@ -93,36 +93,27 @@ gen11_other_irq_handler(struct intel_gt *gt, const u8 instance,
 				  instance, iir);
 }
 
-static void
-gen11_engine_irq_handler(struct intel_gt *gt, const u8 class,
-			 const u8 instance, const u16 iir)
+static struct intel_gt *pick_gt(struct intel_gt *gt, u8 class, u8 instance)
 {
-	struct intel_engine_cs *engine;
+	struct intel_gt *media_gt = gt->i915->media_gt;
 
-	/*
-	 * Platforms with standalone media have their media engines in another
-	 * GT.
-	 */
-	if (MEDIA_VER(gt->i915) >= 13 &&
-	    (class == VIDEO_DECODE_CLASS || class == VIDEO_ENHANCEMENT_CLASS)) {
-		if (!gt->i915->media_gt)
-			goto err;
+	/* we expect the non-media gt to be passed in */
+	GEM_BUG_ON(gt == media_gt);
 
-		gt = gt->i915->media_gt;
+	if (!media_gt)
+		return gt;
+
+	switch (class) {
+	case VIDEO_DECODE_CLASS:
+	case VIDEO_ENHANCEMENT_CLASS:
+		return media_gt;
+	case OTHER_CLASS:
+		if (instance == OTHER_GSC_INSTANCE && HAS_ENGINE(media_gt, GSC0))
+			return media_gt;
+		fallthrough;
+	default:
+		return gt;
 	}
-
-	if (instance <= MAX_ENGINE_INSTANCE)
-		engine = gt->engine_class[class][instance];
-	else
-		engine = NULL;
-
-	if (likely(engine))
-		return intel_engine_cs_irq(engine, iir);
-
-err:
-	intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
-				  "unhandled engine interrupt class=0x%x, instance=0x%x\n",
-				  class, instance);
 }
 
 static void
@@ -131,12 +122,24 @@ gen11_gt_identity_handler(struct intel_gt *gt, const u32 identity)
 	const u8 class = GEN11_INTR_ENGINE_CLASS(identity);
 	const u8 instance = GEN11_INTR_ENGINE_INSTANCE(identity);
 	const u16 intr = GEN11_INTR_ENGINE_INTR(identity);
+	struct intel_engine_cs *engine;
 
 	if (unlikely(!intr))
 		return;
 
-	if (class <= COPY_ENGINE_CLASS || class == COMPUTE_CLASS)
-		return gen11_engine_irq_handler(gt, class, instance, intr);
+	/*
+	 * Platforms with standalone media have the media and GSC engines in
+	 * another GT.
+	 */
+	gt = pick_gt(gt, class, instance);
+
+	if (class <= MAX_ENGINE_CLASS && instance <= MAX_ENGINE_INSTANCE)
+		engine = gt->engine_class[class][instance];
+	else
+		engine = NULL;
+
+	if (engine)
+		return intel_engine_cs_irq(engine, intr);
 
 	if (class == OTHER_CLASS)
 		return gen11_other_irq_handler(gt, instance, intr);
@@ -222,7 +225,7 @@ void gen11_gt_irq_reset(struct intel_gt *gt)
 	intel_uncore_write(uncore, GEN11_VCS_VECS_INTR_ENABLE,	  0);
 	if (CCS_MASK(gt))
 		intel_uncore_write(uncore, GEN12_CCS_RSVD_INTR_ENABLE, 0);
-	if (HAS_HECI_GSC(gt->i915))
+	if (HAS_HECI_GSC(gt->i915) || HAS_ENGINE(gt, GSC0))
 		intel_uncore_write(uncore, GEN11_GUNIT_CSME_INTR_ENABLE, 0);
 
 	/* Restore masks irqs on RCS, BCS, VCS and VECS engines. */
@@ -249,7 +252,7 @@ void gen11_gt_irq_reset(struct intel_gt *gt)
 		intel_uncore_write(uncore, GEN12_CCS0_CCS1_INTR_MASK, ~0);
 	if (HAS_ENGINE(gt, CCS2) || HAS_ENGINE(gt, CCS3))
 		intel_uncore_write(uncore, GEN12_CCS2_CCS3_INTR_MASK, ~0);
-	if (HAS_HECI_GSC(gt->i915))
+	if (HAS_HECI_GSC(gt->i915) || HAS_ENGINE(gt, GSC0))
 		intel_uncore_write(uncore, GEN11_GUNIT_CSME_INTR_MASK, ~0);
 
 	intel_uncore_write(uncore, GEN11_GPM_WGBOXPERF_INTR_ENABLE, 0);
@@ -274,7 +277,7 @@ void gen11_gt_irq_postinstall(struct intel_gt *gt)
 	u32 irqs = GT_RENDER_USER_INTERRUPT |
 		   GT_RENDER_PIPECTL_NOTIFY_INTERRUPT;
 	u32 guc_mask = intel_uc_wants_guc(&gt->uc) ? GUC_INTR_GUC2HOST : 0;
-	const u32 gsc_mask = GSC_IRQ_INTF(0) | GSC_IRQ_INTF(1);
+	u32 gsc_mask = 0;
 	u32 dmask;
 	u32 smask;
 
@@ -295,6 +298,11 @@ void gen11_gt_irq_postinstall(struct intel_gt *gt)
 	dmask = irqs << 16 | irqs;
 	smask = irqs << 16;
 
+	if (HAS_ENGINE(gt, GSC0))
+		gsc_mask = irqs;
+	else if (HAS_HECI_GSC(gt->i915))
+		gsc_mask = GSC_IRQ_INTF(0) | GSC_IRQ_INTF(1);
+
 	BUILD_BUG_ON(irqs & 0xffff0000);
 
 	/* Enable RCS, BCS, VCS and VECS class interrupts. */
@@ -302,9 +310,8 @@ void gen11_gt_irq_postinstall(struct intel_gt *gt)
 	intel_uncore_write(uncore, GEN11_VCS_VECS_INTR_ENABLE, dmask);
 	if (CCS_MASK(gt))
 		intel_uncore_write(uncore, GEN12_CCS_RSVD_INTR_ENABLE, smask);
-	if (HAS_HECI_GSC(gt->i915))
-		intel_uncore_write(uncore, GEN11_GUNIT_CSME_INTR_ENABLE,
-				   gsc_mask);
+	if (gsc_mask)
+		intel_uncore_write(uncore, GEN11_GUNIT_CSME_INTR_ENABLE, gsc_mask);
 
 	/* Unmask irqs on RCS, BCS, VCS and VECS engines. */
 	intel_uncore_write(uncore, GEN11_RCS0_RSVD_INTR_MASK, ~smask);
@@ -330,7 +337,7 @@ void gen11_gt_irq_postinstall(struct intel_gt *gt)
 		intel_uncore_write(uncore, GEN12_CCS0_CCS1_INTR_MASK, ~dmask);
 	if (HAS_ENGINE(gt, CCS2) || HAS_ENGINE(gt, CCS3))
 		intel_uncore_write(uncore, GEN12_CCS2_CCS3_INTR_MASK, ~dmask);
-	if (HAS_HECI_GSC(gt->i915))
+	if (gsc_mask)
 		intel_uncore_write(uncore, GEN11_GUNIT_CSME_INTR_MASK, ~gsc_mask);
 
 	if (guc_mask) {
