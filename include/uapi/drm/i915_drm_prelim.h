@@ -196,6 +196,13 @@ struct prelim_drm_i915_query_item {
  */
 #define   PRELIM_I915_SCHEDULER_CAP_STATIC_PRIORITY_MAP	(1ul << 31)
 
+enum prelim_drm_i915_gem_engine_class {
+#define	PRELIM_I915_ENGINE_CLASS		(1 << 8)
+#define	PRELIM_I915_ENGINE_CLASS_MASK(x)	(x & 0xff)
+
+	PRELIM_I915_ENGINE_CLASS_COMPUTE = 4,
+};
+
 struct prelim_i915_context_param_engines {
 #define PRELIM_I915_CONTEXT_ENGINES_EXT_PARALLEL_SUBMIT (PRELIM_I915_USER_EXT | 2) /* see prelim_i915_context_engines_parallel_submit */
 };
