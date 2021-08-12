@@ -249,6 +249,13 @@ static const struct engine_info intel_engines[] = {
 			{ .graphics_ver = 12, .base = GEN12_COMPUTE3_RING_BASE }
 		}
 	},
+	[GSC0] = {
+		.class = OTHER_CLASS,
+		.instance = OTHER_GSC_INSTANCE,
+		.mmio_bases = {
+			{ .graphics_ver = 12, .base = GEN12_GSC_RING_BASE }
+		}
+	},
 };
 
 /**
@@ -325,6 +332,9 @@ u32 intel_engine_context_size(struct intel_gt *gt, u8 class)
 		break;
 	default:
 		MISSING_CASE(class);
+		fallthrough;
+	case OTHER_CLASS:
+		GEM_BUG_ON(!HAS_ENGINE(gt, GSC0));
 		fallthrough;
 	case VIDEO_DECODE_CLASS:
 	case VIDEO_ENHANCEMENT_CLASS:
