@@ -2546,4 +2546,5 @@ intel_engine_reset_failed_uevent(struct intel_engine_cs *engine)
 #include "mock_engine.c"
 #include "selftest_engine.c"
 #include "selftest_engine_cs.c"
+#include "selftest_engine_mi.c"
 #endif

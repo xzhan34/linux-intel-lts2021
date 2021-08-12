@@ -1571,7 +1571,7 @@ void i915_vma_revoke_mmap(struct i915_vma *vma)
 		list_del(&vma->obj->userfault_link);
 }
 
-static int __i915_vma_move_to_active(struct i915_vma *vma, struct i915_request *rq)
+int __i915_vma_move_to_active(struct i915_vma *vma, struct i915_request *rq)
 {
 	int err;
 
