@@ -836,8 +836,10 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 	end = vma->vm->total;
 	if (flags & PIN_MAPPABLE)
 		end = min_t(u64, end, i915_vm_to_ggtt(vma->vm)->mappable_end);
-	if (flags & PIN_ZONE_4G)
-		end = min_t(u64, end, (1ULL << 32) - I915_GTT_PAGE_SIZE);
+	if (flags & PIN_ZONE_32)
+		end = min_t(u64, end, BIT_ULL(32) - I915_GTT_PAGE_SIZE);
+	if (flags & PIN_ZONE_48)
+		end = min_t(u64, end, BIT_ULL(48) - I915_GTT_PAGE_SIZE);
 	GEM_BUG_ON(!IS_ALIGNED(end, I915_GTT_PAGE_SIZE));
 	GEM_BUG_ON(2 * guard > end);
 

@@ -435,7 +435,7 @@ static u64 eb_pin_flags(const struct drm_i915_gem_exec_object2 *entry,
 	 * limit address to the first 4GBs for unflagged objects.
 	 */
 	if (!(exec_flags & EXEC_OBJECT_SUPPORTS_48B_ADDRESS))
-		pin_flags |= PIN_ZONE_4G;
+		pin_flags |= PIN_ZONE_32;
 
 	if (exec_flags & __EXEC_OBJECT_NEEDS_MAP)
 		pin_flags |= PIN_MAPPABLE;
@@ -1671,7 +1671,7 @@ static int __reloc_gpu_alloc(struct i915_execbuffer *eb,
 		goto err_unmap;
 	}
 
-	err = i915_vma_pin_ww(batch, &eb->ww, 0, 0, PIN_USER | PIN_NONBLOCK);
+	err = i915_vma_pin_ww(batch, &eb->ww, 0, 0, PIN_USER | PIN_ZONE_48 | PIN_NONBLOCK);
 	if (err)
 		goto err_unmap;
 
@@ -1750,9 +1750,16 @@ err_pool:
 	return err;
 }
 
-static bool reloc_can_use_engine(const struct intel_engine_cs *engine)
+static bool reloc_can_use_engine(const struct intel_engine_cs *engine,
+				 const struct i915_vma *vma)
 {
-	return engine->class != VIDEO_DECODE_CLASS || GRAPHICS_VER(engine->i915) != 6;
+	if (GRAPHICS_VER(engine->i915) == 6)
+		return engine->class != VIDEO_DECODE_CLASS; /* dysfunctional */
+
+	if ((vma->vm->total - 1) >> engine->ppgtt_size)
+		return false;
+
+	return true;
 }
 
 static u32 *reloc_gpu(struct i915_execbuffer *eb,
@@ -1773,11 +1780,12 @@ static u32 *reloc_gpu(struct i915_execbuffer *eb,
 		if (eb_use_cmdparser(eb))
 			return ERR_PTR(-EWOULDBLOCK);
 
-		if (!reloc_can_use_engine(engine) ||
+		if (!reloc_can_use_engine(engine, vma) ||
 		    intel_context_is_parallel(eb->context)) {
 			engine = engine->gt->engine_class[COPY_ENGINE_CLASS][0];
 			if (!engine)
 				return ERR_PTR(-ENODEV);
+			GEM_BUG_ON(!reloc_can_use_engine(engine, vma));
 		}
 
 		err = __reloc_gpu_alloc(eb, engine, vma, len);

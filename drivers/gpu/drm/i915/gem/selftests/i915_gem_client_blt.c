@@ -509,7 +509,7 @@ tiled_blit(struct tiled_blits *t,
 		goto err_src;
 	}
 
-	err = i915_vma_pin(t->batch, 0, 0, PIN_USER | PIN_HIGH);
+	err = i915_vma_pin(t->batch, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err) {
 		pr_err("cannot pin batch\n");
 		goto err_dst;

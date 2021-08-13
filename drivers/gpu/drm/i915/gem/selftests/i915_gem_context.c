@@ -428,6 +428,7 @@ static int gpu_fill(struct intel_context *ce,
 		    unsigned int dw)
 {
 	struct i915_vma *vma;
+	unsigned int flags;
 	int err;
 
 	GEM_BUG_ON(obj->base.size > ce->vm->total);
@@ -437,7 +438,11 @@ static int gpu_fill(struct intel_context *ce,
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 
-	err = i915_vma_pin(vma, 0, 0, PIN_HIGH | PIN_USER);
+	flags = PIN_USER | PIN_HIGH;
+	if ((ce->vm->total - 1) >> ce->engine->ppgtt_size)
+		flags |= PIN_ZONE_48;
+
+	err = i915_vma_pin(vma, 0, 0, flags);
 	if (err)
 		return err;
 
@@ -969,7 +974,7 @@ retry:
 	if (err)
 		goto err_put;
 
-	err = i915_vma_pin_ww(batch, &ww, 0, 0, PIN_USER);
+	err = i915_vma_pin_ww(batch, &ww, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err_vma;
 
@@ -1840,6 +1845,7 @@ static int igt_vm_isolation(void *arg)
 
 	vm_total = ctx_vm(ctx_a)->total;
 	GEM_BUG_ON(ctx_vm(ctx_b)->total != vm_total);
+	vm_total = min(vm_total, BIT_ULL(48)); /* restrict batches to 48b */
 
 	count = 0;
 	num_engines = 0;

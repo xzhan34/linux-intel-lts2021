@@ -84,7 +84,7 @@ create_spin_counter(struct intel_engine_cs *engine,
 		goto err_put;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err_unlock;
 

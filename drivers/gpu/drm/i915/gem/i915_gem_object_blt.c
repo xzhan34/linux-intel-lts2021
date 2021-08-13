@@ -198,7 +198,7 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 		goto out_put;
 	}
 
-	err = i915_vma_pin_ww(batch, ww, 0, 0, PIN_USER);
+	err = i915_vma_pin_ww(batch, ww, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (unlikely(err))
 		goto out_put;
 
@@ -523,7 +523,7 @@ struct i915_vma *intel_emit_vma_copy_blt(struct intel_context *ce,
 		goto out_put;
 	}
 
-	err = i915_vma_pin_ww(batch, ww, 0, 0, PIN_USER);
+	err = i915_vma_pin_ww(batch, ww, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (unlikely(err))
 		goto out_put;
 
@@ -695,7 +695,7 @@ prepare_compressed_copy_cmd_buf(struct intel_context *ce,
 		goto out_put;
 	}
 
-	err = i915_vma_pin_ww(batch, ww, 0, 0, PIN_USER);
+	err = i915_vma_pin_ww(batch, ww, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (unlikely(err))
 		goto out_put;
 		/* we pinned the pool, mark it as such */

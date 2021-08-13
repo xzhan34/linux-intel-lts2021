@@ -64,9 +64,9 @@ static void *igt_spinner_pin_obj(struct intel_context *ce,
 		return vaddr;
 
 	if (ww)
-		ret = i915_vma_pin_ww(*vma, ww, 0, 0, PIN_USER);
+		ret = i915_vma_pin_ww(*vma, ww, 0, 0, PIN_USER | PIN_ZONE_48);
 	else
-		ret = i915_vma_pin(*vma, 0, 0, PIN_USER);
+		ret = i915_vma_pin(*vma, 0, 0, PIN_USER | PIN_ZONE_48);
 
 	if (ret) {
 		i915_gem_object_unpin_map(obj);

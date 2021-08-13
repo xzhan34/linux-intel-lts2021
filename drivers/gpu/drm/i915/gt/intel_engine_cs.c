@@ -495,6 +495,10 @@ static int intel_engine_setup(struct intel_gt *gt, enum intel_engine_id id,
 	engine->logical_mask = BIT(logical_instance);
 	__sprint_engine_name(engine);
 
+	engine->ppgtt_size = INTEL_INFO(i915)->ppgtt_size;
+	if (IS_PONTEVECCHIO(i915) && engine->class == VIDEO_DECODE_CLASS)
+		engine->ppgtt_size = min_t(u8, engine->ppgtt_size, 48);
+
 	if ((engine->class == COMPUTE_CLASS && !RCS_MASK(engine->gt) &&
 	     __ffs(CCS_MASK(engine->gt)) == engine->instance) ||
 	     engine->class == RENDER_CLASS)

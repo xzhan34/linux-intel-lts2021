@@ -425,7 +425,7 @@ static struct i915_vma *create_batch(struct i915_address_space *vm)
 		goto err_obj;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err_obj;
 

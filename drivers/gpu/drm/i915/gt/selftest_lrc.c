@@ -944,7 +944,7 @@ create_user_vma(struct i915_address_space *vm, unsigned long size)
 		return vma;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err) {
 		i915_gem_object_put(obj);
 		return ERR_PTR(err);

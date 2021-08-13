@@ -178,7 +178,8 @@ retry:
 	if (err)
 		goto err_context;
 
-	err = i915_vma_pin_ww(so->vma, &so->ww, 0, 0, PIN_GLOBAL | PIN_HIGH);
+	err = i915_vma_pin_ww(so->vma, &so->ww, 0, 0,
+			      PIN_GLOBAL | PIN_HIGH | PIN_ZONE_48);
 	if (err)
 		goto err_context;
 

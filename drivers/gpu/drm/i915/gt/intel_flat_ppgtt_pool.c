@@ -353,7 +353,7 @@ int intel_flat_ppgtt_pool_init(struct intel_flat_ppgtt_pool *fpp,
 			goto err_obj;
 		}
 
-		ret = i915_vma_pin(item->vma, 0, 0, PIN_USER);
+		ret = i915_vma_pin(item->vma, 0, 0, PIN_USER | PIN_ZONE_48);
 		if (ret)
 			goto err_map;
 

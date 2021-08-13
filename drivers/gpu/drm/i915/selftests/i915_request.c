@@ -855,7 +855,7 @@ static struct i915_vma *empty_batch(struct intel_gt *gt)
 		goto err;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err;
 
@@ -1007,7 +1007,7 @@ static struct i915_vma *recursive_batch(struct intel_gt *gt)
 		goto err;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err;
 

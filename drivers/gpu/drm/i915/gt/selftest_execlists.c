@@ -2718,7 +2718,7 @@ static int create_gang(struct intel_engine_cs *engine,
 		goto err_obj;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err_obj;
 
@@ -3060,7 +3060,7 @@ create_gpr_user(struct intel_engine_cs *engine,
 		return vma;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err) {
 		i915_vma_put(vma);
 		return ERR_PTR(err);
@@ -3510,7 +3510,7 @@ static int smoke_submit(struct preempt_smoke *smoke,
 		if (IS_ERR(vma))
 			return PTR_ERR(vma);
 
-		err = i915_vma_pin(vma, 0, 0, PIN_USER);
+		err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 		if (err)
 			return err;
 	}

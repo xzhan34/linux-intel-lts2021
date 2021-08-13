@@ -1232,7 +1232,7 @@ static int gen7_ctx_switch_bb_init(struct intel_engine_cs *engine,
 {
 	int err;
 
-	err = i915_vma_pin_ww(vma, ww, 0, 0, PIN_USER | PIN_HIGH);
+	err = i915_vma_pin_ww(vma, ww, 0, 0, PIN_USER | PIN_ZONE_48 | PIN_HIGH);
 	if (err)
 		return err;
 

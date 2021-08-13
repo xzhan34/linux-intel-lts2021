@@ -118,6 +118,17 @@ __mi_store_dw__ppgtt(struct intel_context *ce,
 	return i915_vma_unbind(vma);
 }
 
+static int address_limit(struct intel_context *ce, bool bb_start)
+{
+	int limit = fls64(ce->vm->total);
+
+	limit = min_t(int, ce->engine->ppgtt_size, limit);
+	if (bb_start)
+		limit = min(limit, 48);
+
+	return limit;
+}
+
 static int mi_store_dw__ppgtt(void *arg)
 {
 	struct intel_gt *gt = arg;
@@ -156,7 +167,7 @@ static int mi_store_dw__ppgtt(void *arg)
 
 	for_each_engine(engine, gt, id) {
 		struct intel_context *ce;
-		int bit;
+		int bit, max;
 
 		if (!intel_engine_can_store_dword(engine))
 			continue;
@@ -170,7 +181,8 @@ static int mi_store_dw__ppgtt(void *arg)
 		i915_vm_put(ce->vm);
 		ce->vm = i915_vm_get(&ppgtt->vm);
 
-		for (bit = __ffs(vma->size); bit < fls64(ce->vm->total); bit++) {
+		max = address_limit(ce, false);
+		for (bit = __ffs(vma->size); bit < max; bit++) {
 			u64 addr = BIT_ULL(bit);
 
 			if (addr + vma->size <= ce->vm->total) {
@@ -302,7 +314,7 @@ static int mi_bb_start__ppgtt(void *arg)
 
 	for_each_engine(engine, gt, id) {
 		struct intel_context *ce;
-		int bit;
+		int bit, max;
 
 		if (!intel_engine_can_store_dword(engine))
 			continue;
@@ -316,7 +328,8 @@ static int mi_bb_start__ppgtt(void *arg)
 		i915_vm_put(ce->vm);
 		ce->vm = i915_vm_get(&ppgtt->vm);
 
-		for (bit = __ffs(vma->size); bit < fls64(ce->vm->total); bit++) {
+		max = address_limit(ce, true);
+		for (bit = __ffs(vma->size); bit < max; bit++) {
 			u64 addr = BIT_ULL(bit);
 
 			if (addr + vma->size <= ce->vm->total) {

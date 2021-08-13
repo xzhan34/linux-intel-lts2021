@@ -55,7 +55,7 @@ pte_tlbinv(struct intel_context *ce,
 		goto out;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto out;
 
@@ -63,7 +63,8 @@ pte_tlbinv(struct intel_context *ce,
 	do {
 		addr = igt_random_offset(prng,
 					 i915_vma_offset(vma),
-					 ce->vm->total,
+					 /* upper limit for MI_BB_START */
+					 min(ce->vm->total, BIT_ULL(48)),
 					 va->size, 4);
 
 		err = i915_vma_pin(va,  0, 0, (addr & -align) | PIN_OFFSET_FIXED | PIN_USER);

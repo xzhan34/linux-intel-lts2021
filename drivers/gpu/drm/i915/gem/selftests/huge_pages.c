@@ -1014,6 +1014,7 @@ static int igt_write_huge(struct drm_i915_private *i915,
 			continue;
 
 		max = min(max, ce->vm->total);
+		max = min(max, BIT_ULL(ce->engine->ppgtt_size));
 		n++;
 	}
 	i915_gem_context_unlock_engines(ctx);

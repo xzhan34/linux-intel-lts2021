@@ -97,7 +97,7 @@ igt_emit_store_dw(struct i915_vma *vma,
 		goto err;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err;
 

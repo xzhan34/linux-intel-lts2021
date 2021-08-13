@@ -93,7 +93,7 @@ static struct i915_vma *create_empty_batch(struct intel_context *ce)
 		goto err_unpin;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err_unpin;
 
@@ -231,7 +231,7 @@ static struct i915_vma *create_nop_batch(struct intel_context *ce)
 		goto err_unpin;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err_unpin;
 

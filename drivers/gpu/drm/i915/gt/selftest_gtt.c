@@ -479,7 +479,7 @@ pte_write_tearing(struct intel_context *ce,
 		goto out;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto out;
 
