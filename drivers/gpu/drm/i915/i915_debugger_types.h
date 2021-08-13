@@ -68,10 +68,24 @@ struct i915_debug_event_context_param {
 	struct drm_i915_gem_context_param param;
 } __packed;
 
+struct i915_debug_engine_info {
+	struct i915_engine_class_instance engine;
+	u64 lrc_handle;
+} __packed;
+
+struct i915_debug_event_engines {
+	struct i915_debug_event base;
+	u64 client_handle;
+	u64 ctx_handle;
+	u64 num_engines;
+	struct i915_debug_engine_info engines[0];
+} __packed;
+
 struct i915_debug_event_eu_attention {
 	struct i915_debug_event base;
 	u64 client_handle;
 	u64 ctx_handle;
+	u64 lrc_handle;
 
 	u32 flags;
 	struct i915_engine_class_instance ci;

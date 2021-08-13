@@ -396,7 +396,8 @@ struct prelim_drm_i915_debug_event {
 #define PRELIM_DRM_I915_DEBUG_EVENT_VM_BIND  6
 #define PRELIM_DRM_I915_DEBUG_EVENT_CONTEXT_PARAM 7
 #define PRELIM_DRM_I915_DEBUG_EVENT_EU_ATTENTION 8
-#define PRELIM_DRM_I915_DEBUG_EVENT_MAX_EVENT PRELIM_DRM_I915_DEBUG_EVENT_EU_ATTENTION
+#define PRELIM_DRM_I915_DEBUG_EVENT_ENGINES 9
+#define PRELIM_DRM_I915_DEBUG_EVENT_MAX_EVENT PRELIM_DRM_I915_DEBUG_EVENT_ENGINES
 
 	__u32 flags;
 #define PRELIM_DRM_I915_DEBUG_EVENT_CREATE	(1 << 31)
@@ -467,6 +468,8 @@ struct prelim_drm_i915_debug_event_vm_bind {
 struct prelim_drm_i915_debug_event_eu_attention {
 	struct prelim_drm_i915_debug_event base;
 	__u64 client_handle;
+	__u64 ctx_handle;
+	__u64 lrc_handle;
 
 	__u32 flags;
 
@@ -503,6 +506,19 @@ struct prelim_drm_i915_debug_event_context_param {
 	__u64 client_handle;
 	__u64 ctx_handle;
 	struct drm_i915_gem_context_param param;
+} __attribute__((packed));
+
+struct prelim_drm_i915_debug_engine_info {
+	struct i915_engine_class_instance engine;
+	__u64 lrc_handle;
+} __attribute__((packed));
+
+struct prelim_drm_i915_debug_event_engines {
+	struct prelim_drm_i915_debug_event base;
+	__u64 client_handle;
+	__u64 ctx_handle;
+	__u64 num_engines;
+	struct prelim_drm_i915_debug_engine_info engines[0];
 } __attribute__((packed));
 
 struct prelim_drm_i915_debug_vm_open {

@@ -14,6 +14,7 @@
 #include "gem/i915_gem_context.h"
 #include "gem/i915_gem_mman.h"
 #include "gem/i915_gem_vm_bind.h"
+#include "gt/intel_engine.h"
 #include "gt/intel_engine_pm.h"
 #include "gt/intel_engine_regs.h"
 #include "gt/intel_engine_user.h"
@@ -105,6 +106,7 @@ static const char *event_type_to_str(u32 type)
 		"vm-bind",
 		"context-param",
 		"eu-attention",
+		"engines",
 		"unknown",
 	};
 
@@ -235,6 +237,7 @@ static void event_printer_eu_attention(const struct i915_debugger * const debugg
 
 	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, eu_attention, client_handle);
 	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, eu_attention, ctx_handle);
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, eu_attention, lrc_handle);
 	EVENT_PRINT_MEMBER_U32X(debugger, prefix, eu_attention, flags);
 	EVENT_PRINT_MEMBER_U16(debugger, prefix, eu_attention_ci, engine_class);
 	EVENT_PRINT_MEMBER_U16(debugger, prefix, eu_attention_ci, engine_instance);
@@ -256,6 +259,26 @@ static void event_printer_eu_attention(const struct i915_debugger * const debugg
 	}
 }
 
+static void event_printer_engines(const struct i915_debugger * const debugger,
+				  const char * const prefix,
+				  const struct i915_debug_event * const event)
+{
+	const struct i915_debug_event_engines * const engines = from_event(engines, event);
+	u64 i;
+
+	EVENT_PRINT_MEMBER_HANDLE(debugger, prefix, engines, ctx_handle);
+	EVENT_PRINT_MEMBER_U64(debugger, prefix, engines, num_engines);
+
+	for (i = 0; i < engines->num_engines; i++) {
+		const struct i915_debug_engine_info * const ei = &engines->engines[i];
+
+		i915_debugger_print(debugger, DD_DEBUG_LEVEL_INFO, prefix,
+				    "  engines->engines[%llu] = engine_class=%hu, engine_instance=%hu, lrc_handle = %llu",
+				    i, ei->engine.engine_class,
+				    ei->engine.engine_instance, ei->lrc_handle);
+	}
+}
+
 static void i915_debugger_print_event(const struct i915_debugger * const debugger,
 				      const char * const prefix,
 				      const struct i915_debug_event * const event)
@@ -270,6 +293,7 @@ static void i915_debugger_print_event(const struct i915_debugger * const debugge
 		event_printer_vma,
 		event_printer_context_param,
 		event_printer_eu_attention,
+		event_printer_engines,
 	};
 	debug_event_printer_t event_printer = NULL;
 
@@ -2635,6 +2659,8 @@ static int send_engine_attentions(struct i915_debugger *debugger,
 	ea->ci.engine_class = engine->uabi_class;
 	ea->ci.engine_instance = engine->uabi_instance;
 	ea->bitmask_size = intel_gt_eu_attention_bitmap_size(engine->gt);
+	ea->ctx_handle = ce->dbg_id.gem_context_id;
+	ea->lrc_handle = ce->dbg_id.lrc_id;
 
 	read_lock(&debugger->eu_lock);
 	intel_gt_eu_attention_bitmap(engine->gt, &ea->bitmask[0], ea->bitmask_size);
@@ -3064,7 +3090,8 @@ void i915_debugger_context_param_engines(struct i915_gem_context *ctx)
 	struct i915_debugger *debugger;
 	struct i915_context_param_engines *e;
 	struct i915_gem_engines *gem_engines;
-	struct i915_debug_event_context_param *ctx_param;
+	struct i915_debug_event_engines *event_engine;
+	struct i915_debug_event_context_param *event_param;
 	struct i915_debug_event *event;
 	struct i915_drm_client *client = ctx->client;
 	size_t event_size, count, n;
@@ -3096,7 +3123,7 @@ void i915_debugger_context_param_engines(struct i915_gem_context *ctx)
 	}
 
 	/* param.value is like data[] thus don't count it */
-	event_size += (sizeof(*ctx_param) - sizeof(ctx_param->param.value));
+	event_size += (sizeof(*event_param) - sizeof(event_param->param.value));
 
 	event = i915_debugger_create_event(debugger,
 					   PRELIM_DRM_I915_DEBUG_EVENT_CONTEXT_PARAM,
@@ -3109,24 +3136,55 @@ void i915_debugger_context_param_engines(struct i915_gem_context *ctx)
 		return;
 	}
 
-	ctx_param = from_event(ctx_param, event);
-	ctx_param->client_handle = client->id;
-	ctx_param->ctx_handle = ctx->id;
+	event_param = from_event(event_param, event);
+	event_param->client_handle = client->id;
+	event_param->ctx_handle = ctx->id;
 
-	ctx_param->param.ctx_id = ctx->id;
-	ctx_param->param.param = I915_CONTEXT_PARAM_ENGINES;
-	ctx_param->param.size = struct_size(e, engines, count);
+	event_param->param.ctx_id = ctx->id;
+	event_param->param.param = I915_CONTEXT_PARAM_ENGINES;
+	event_param->param.size = struct_size(e, engines, count);
 
-	e = (struct i915_context_param_engines *)&ctx_param->param.value;
+	if (count) {
+		event_size = sizeof(*event_engine) +
+			     count * sizeof(struct i915_debug_engine_info);
+
+		event = i915_debugger_create_event(debugger,
+						   PRELIM_DRM_I915_DEBUG_EVENT_ENGINES,
+						   PRELIM_DRM_I915_DEBUG_EVENT_CREATE,
+						   event_size,
+						   GFP_KERNEL);
+		if (!event) {
+			i915_gem_context_engines_put(gem_engines);
+			i915_debugger_put(debugger);
+			kfree(event_param);
+
+			return;
+		}
+
+		event_engine = from_event(event_engine, event);
+		event_engine->client_handle = client->id;
+		event_engine->ctx_handle    = ctx->id;
+		event_engine->num_engines   = count;
+	} else {
+		event_engine = NULL;
+	}
+
+	e = (struct i915_context_param_engines *)&event_param->param.value;
 
 	for (n = 0; n < count; n++) {
 		struct i915_engine_class_instance *ci = &e->engines[n];
+		struct i915_debug_engine_info *engines =
+			&event_engine->engines[n];
 
 		if (gem_engines->engines[n]) {
 			ci->engine_class =
 				gem_engines->engines[n]->engine->uabi_class;
 			ci->engine_instance =
 				gem_engines->engines[n]->engine->uabi_instance;
+
+			engines->engine.engine_class = ci->engine_class;
+			engines->engine.engine_instance = ci->engine_instance;
+			engines->lrc_handle = gem_engines->engines[n]->dbg_id.lrc_id;
 		} else {
 			ci->engine_class = I915_ENGINE_CLASS_INVALID;
 			ci->engine_instance = I915_ENGINE_CLASS_INVALID_NONE;
@@ -3134,9 +3192,15 @@ void i915_debugger_context_param_engines(struct i915_gem_context *ctx)
 	}
 	i915_gem_context_engines_put(gem_engines);
 
-	i915_debugger_send_event(debugger, event);
+	i915_debugger_send_event(debugger, to_event(event_param));
+
+	if (event_engine)
+		i915_debugger_send_event(debugger, to_event(event_engine));
+
 	i915_debugger_put(debugger);
-	kfree(ctx_param);
+
+	kfree(event_engine);
+	kfree(event_param);
 }
 
 int i915_debugger_handle_engine_attention(struct intel_engine_cs *engine)

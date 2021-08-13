@@ -146,6 +146,11 @@ struct intel_context {
 	} lrc;
 	u32 tag; /* cookie passed to HW to track this context on submission */
 
+	struct {
+		u64 lrc_id;
+		u64 gem_context_id;
+	} dbg_id;
+
 	/** stats: Context GPU engine busyness tracking. */
 	struct intel_context_stats {
 		u64 active;

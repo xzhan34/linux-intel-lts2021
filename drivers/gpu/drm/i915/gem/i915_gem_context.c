@@ -246,6 +246,9 @@ static void intel_context_set_gem(struct intel_context *ce,
 
 	if (i915_gem_context_has_sip(ctx))
 		__set_bit(CONTEXT_DEBUG, &ce->flags);
+
+	/* XXX this should be set only with context that have sip */
+	ce->dbg_id.gem_context_id = ctx->id;
 }
 
 static void __unpin_engines(struct i915_gem_engines *e, unsigned int count)
