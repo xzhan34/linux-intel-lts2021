@@ -1079,6 +1079,7 @@ __lrc_alloc_state(struct intel_context *ce, struct intel_engine_cs *engine)
 
 	if (GRAPHICS_VER(engine->i915) >= 12) {
 		ce->wa_bb_page = context_size / PAGE_SIZE;
+		GEM_BUG_ON(context_wa_bb_offset(ce) != context_size);
 		context_size += PAGE_SIZE;
 	}
 
