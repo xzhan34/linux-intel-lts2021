@@ -93,6 +93,7 @@ static const struct intel_step_info adls_revids[] = {
 	[0x4] = { COMMON_GT_MEDIA_STEP(B0), .display_step = STEP_B0 },
 	[0x8] = { COMMON_GT_MEDIA_STEP(C0), .display_step = STEP_B0 },
 	[0xC] = { COMMON_GT_MEDIA_STEP(D0), .display_step = STEP_C0 },
+	[0x10] = { COMMON_GT_MEDIA_STEP(D0), .display_step = STEP_D0 },
 };
 
 static const struct intel_step_info adlp_revids[] = {
@@ -100,6 +101,7 @@ static const struct intel_step_info adlp_revids[] = {
 	[0x4] = { COMMON_GT_MEDIA_STEP(B0), .display_step = STEP_B0 },
 	[0x8] = { COMMON_GT_MEDIA_STEP(C0), .display_step = STEP_C0 },
 	[0xC] = { COMMON_GT_MEDIA_STEP(C0), .display_step = STEP_D0 },
+	[0x10] = { COMMON_GT_MEDIA_STEP(C0), .display_step = STEP_E0 },
 };
 
 static const struct intel_step_info xehpsdv_revids[] = {
