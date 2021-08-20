@@ -869,6 +869,8 @@ struct drm_i915_private {
 		struct mutex mutex;
 		struct i915_debugger __rcu *debugger;
 		u64 session_count;
+
+		struct mutex eu_flush_lock;
 	} debug;
 #endif
 
