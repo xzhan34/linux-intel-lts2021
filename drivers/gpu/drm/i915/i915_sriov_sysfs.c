@@ -9,9 +9,6 @@
 #include "i915_sriov_sysfs_types.h"
 #include "i915_sysfs.h"
 
-#include "gt/iov/intel_iov_provisioning.h"
-#include "gt/iov/intel_iov_state.h"
-
 /*
  * /sys/class/drm/card*
  * └── iov/
@@ -111,17 +108,16 @@ static ssize_t control_sriov_ext_attr_store(struct drm_i915_private *i915,
 					    unsigned int id,
 					    const char *buf, size_t count)
 {
-	struct intel_iov *iov = &to_gt(i915)->iov;
 	int err = -EPERM;
 
 	if (sysfs_streq(buf, CONTROL_STOP)) {
-		err = intel_iov_state_stop_vf(iov, id);
+		err = i915_sriov_pf_stop_vf(i915, id);
 	} else if (sysfs_streq(buf, CONTROL_PAUSE)) {
-		err = intel_iov_state_pause_vf(iov, id);
+		err = i915_sriov_pf_pause_vf(i915, id);
 	} else if (sysfs_streq(buf, CONTROL_RESUME)) {
-		err = intel_iov_state_resume_vf(iov, id);
+		err = i915_sriov_pf_resume_vf(i915, id);
 	} else if (sysfs_streq(buf, CONTROL_CLEAR)) {
-		err = intel_iov_provisioning_clear(iov, id);
+		err = i915_sriov_pf_clear_vf(i915, id);
 	} else {
 		err = -EINVAL;
 	}

@@ -678,6 +678,130 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 }
 
 /**
+ * i915_sriov_pf_stop_vf - Stop VF.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ *
+ * This function will stop VF on all tiles.
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int i915_sriov_pf_stop_vf(struct drm_i915_private *i915, unsigned int vfid)
+{
+	struct device *dev = i915->drm.dev;
+	struct intel_gt *gt;
+	unsigned int id;
+	int result = 0;
+	int err;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	for_each_gt(gt, i915, id) {
+		err = intel_iov_state_stop_vf(&gt->iov, vfid);
+		if (unlikely(err)) {
+			dev_warn(dev, "Failed to stop VF%u on gt%u (%pe)\n",
+				 vfid, id, ERR_PTR(err));
+			result = result ?: err;
+		}
+	}
+
+	return result;
+}
+
+/**
+ * i915_sriov_pf_pause_vf - Pause VF.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ *
+ * This function will pause VF on all tiles.
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int i915_sriov_pf_pause_vf(struct drm_i915_private *i915, unsigned int vfid)
+{
+	struct device *dev = i915->drm.dev;
+	struct intel_gt *gt;
+	unsigned int id;
+	int result = 0;
+	int err;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	for_each_gt(gt, i915, id) {
+		err = intel_iov_state_pause_vf(&gt->iov, vfid);
+		if (unlikely(err)) {
+			dev_warn(dev, "Failed to pause VF%u on gt%u (%pe)\n",
+				 vfid, id, ERR_PTR(err));
+			result = result ?: err;
+		}
+	}
+
+	return result;
+}
+
+/**
+ * i915_sriov_pf_resume_vf - Resume VF.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ *
+ * This function will resume VF on all tiles.
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int i915_sriov_pf_resume_vf(struct drm_i915_private *i915, unsigned int vfid)
+{
+	struct device *dev = i915->drm.dev;
+	struct intel_gt *gt;
+	unsigned int id;
+	int result = 0;
+	int err;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	for_each_gt(gt, i915, id) {
+		err = intel_iov_state_resume_vf(&gt->iov, vfid);
+		if (unlikely(err)) {
+			dev_warn(dev, "Failed to resume VF%u on gt%u (%pe)\n",
+				 vfid, id, ERR_PTR(err));
+			result = result ?: err;
+		}
+	}
+
+	return result;
+}
+
+/**
+ * i915_sriov_pf_clear_vf - Unprovision VF.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ *
+ * This function will uprovision VF on all tiles.
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int i915_sriov_pf_clear_vf(struct drm_i915_private *i915, unsigned int vfid)
+{
+	struct device *dev = i915->drm.dev;
+	struct intel_gt *gt;
+	unsigned int id;
+	int result = 0;
+	int err;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	for_each_gt(gt, i915, id) {
+		err = intel_iov_provisioning_clear(&gt->iov, vfid);
+		if (unlikely(err)) {
+			dev_warn(dev, "Failed to unprovision VF%u on gt%u (%pe)\n",
+				 vfid, id, ERR_PTR(err));
+			result = result ?: err;
+		}
+	}
+
+	return result;
+}
+
+/**
  * i915_sriov_suspend_late - Suspend late SR-IOV.
  * @i915: the i915 struct
  *
