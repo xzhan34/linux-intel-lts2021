@@ -622,6 +622,10 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 	for_each_gt(gt, i915, id)
 		intel_gt_pm_get_untracked(gt);
 
+	/* Wa:16014207253 */
+	for_each_gt(gt, i915, id)
+		intel_boost_fake_int_timer(gt, true);
+
 	for_each_gt(gt, i915, id) {
 		err = intel_iov_provisioning_verify(&gt->iov, num_vfs);
 		if (err == -ENODATA) {
@@ -657,6 +661,7 @@ fail_guc:
 fail_pm:
 	for_each_gt(gt, i915, id) {
 		intel_iov_provisioning_auto(&gt->iov, 0);
+		intel_boost_fake_int_timer(gt, false);
 		intel_gt_pm_put_untracked(gt);
 	}
 	i915_debugger_allow(i915);
@@ -737,6 +742,10 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 		pf_update_guc_clients(&gt->iov, 0);
 		intel_iov_provisioning_auto(&gt->iov, 0);
 	}
+
+	/* Wa:16014207253 */
+	for_each_gt(gt, i915, id)
+		intel_boost_fake_int_timer(gt, false);
 
 	for_each_gt(gt, i915, id)
 		intel_gt_pm_put_untracked(gt);
