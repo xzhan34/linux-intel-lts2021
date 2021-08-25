@@ -457,6 +457,55 @@ int i915_gem_object_prepare_move(struct drm_i915_gem_object *obj)
 				      I915_GEM_OBJECT_UNBIND_ACTIVE);
 }
 
+/**
+ * i915_gem_object_can_migrate - Whether an object likely can be migrated
+ *
+ * @obj: The object to migrate
+ * @id: The region intended to migrate to
+ *
+ * Check whether the object backend supports migration to the
+ * given region. Note that pinning may affect the ability to migrate as
+ * returned by this function.
+ *
+ * This function is primarily intended as a helper for checking the
+ * possibility to migrate objects and might be slightly less permissive
+ * than i915_gem_object_migrate() when it comes to objects with the
+ * I915_BO_ALLOC_USER flag set.
+ *
+ * Return: true if migration is possible, false otherwise.
+ */
+bool i915_gem_object_can_migrate(struct drm_i915_gem_object *obj,
+				 enum intel_region_id id)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	unsigned int num_allowed = obj->mm.n_placements;
+	struct intel_memory_region *mr;
+	unsigned int i;
+
+	GEM_BUG_ON(id >= INTEL_REGION_UNKNOWN);
+	GEM_BUG_ON(obj->mm.madv != I915_MADV_WILLNEED);
+
+	mr = i915->mm.regions[id];
+	if (!mr)
+		return false;
+
+	if (obj->mm.region == mr)
+		return true;
+
+	if (num_allowed <= 1)
+		return false;
+
+	if (!i915_gem_object_evictable(obj))
+		return false;
+
+	for (i = 0; i < num_allowed; ++i) {
+		if (mr == obj->mm.placements[i])
+			return true;
+	}
+
+	return false;
+}
+
 static void lists_swap(struct list_head *a, struct list_head *b)
 {
 	struct list_head tmp;
