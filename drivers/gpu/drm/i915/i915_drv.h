@@ -1496,6 +1496,11 @@ int i915_gem_object_unbind(struct drm_i915_gem_object *obj,
 
 void i915_gem_runtime_suspend(struct drm_i915_private *dev_priv);
 
+struct drm_i915_gem_object *
+i915_gem_object_create_user(struct drm_i915_private *i915, u64 size,
+			    struct intel_memory_region **placements,
+			    unsigned int n_placements);
+
 int __must_check i915_gem_set_global_seqno(struct drm_device *dev, u32 seqno);
 
 int __must_check i915_gem_init(struct drm_i915_private *dev_priv);

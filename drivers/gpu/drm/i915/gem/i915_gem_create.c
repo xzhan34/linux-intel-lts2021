@@ -86,7 +86,7 @@ static int i915_gem_publish(struct drm_i915_gem_object *obj,
 }
 
 static int
-i915_gem_setup(struct drm_i915_gem_object *obj, u64 size)
+setup_object(struct drm_i915_gem_object *obj, u64 size)
 {
 	struct intel_memory_region *mr = obj->mm.placements[0];
 	int ret;
@@ -163,7 +163,7 @@ i915_gem_dumb_create(struct drm_file *file,
 	mr = intel_memory_region_by_type(to_i915(dev), mem_type);
 	object_set_placements(obj, &mr, 1);
 
-	ret = i915_gem_setup(obj, args->size);
+	ret = setup_object(obj, args->size);
 	if (ret)
 		goto object_free;
 
@@ -376,7 +376,7 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 		object_set_placements(obj, stack, 1);
 	}
 
-	ret = i915_gem_setup(obj, args->size);
+	ret = setup_object(obj, args->size);
 	if (ret)
 		goto object_free;
 
@@ -573,7 +573,7 @@ i915_gem_create_ext_ioctl(struct drm_device *dev, void *data,
 		object_set_placements(obj, &mr, 1);
 	}
 
-	ret = i915_gem_setup(obj, args->size);
+	ret = setup_object(obj, args->size);
 	if (ret)
 		goto object_free;
 
@@ -587,4 +587,53 @@ object_free:
 		kfree(placements_ext);
 	i915_gem_object_free(obj);
 	return ret;
+}
+
+/*
+ * Creates a new object using the similar path as DRM_I915_GEM_CREATE_EXT.
+ * This function is exposed primarily for selftests
+ * It is assumed that the set of placement regions has already been verified
+ * to be valid.
+ */
+struct drm_i915_gem_object *
+i915_gem_object_create_user(struct drm_i915_private *i915, u64 size,
+			    struct intel_memory_region **placements,
+			    unsigned int n_placements)
+{
+	struct drm_i915_gem_object *obj;
+	int ret;
+
+	i915_gem_flush_free_objects(i915);
+
+	obj = i915_gem_object_alloc();
+	if (!obj)
+		return ERR_PTR(-ENOMEM);
+
+	if (n_placements > 1) {
+		struct intel_memory_region **tmp;
+
+		tmp = kmalloc_array(n_placements, sizeof(*tmp), GFP_KERNEL);
+		if (!tmp) {
+			ret = -ENOMEM;
+			goto object_free;
+		}
+
+		memcpy(tmp, placements, sizeof(*tmp) * n_placements);
+		placements = tmp;
+	}
+
+	object_set_placements(obj, placements, n_placements);
+	ret = setup_object(obj, size);
+	if (ret)
+		goto placement_free;
+
+	return obj;
+
+placement_free:
+	if (n_placements > 1)
+		kfree(placements);
+
+object_free:
+	i915_gem_object_free(obj);
+	return ERR_PTR(ret);
 }
