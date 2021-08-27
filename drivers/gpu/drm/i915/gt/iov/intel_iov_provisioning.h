@@ -21,6 +21,8 @@ int intel_iov_provisioning_set_sched_if_idle(struct intel_iov *iov, bool enable)
 bool intel_iov_provisioning_get_sched_if_idle(struct intel_iov *iov);
 int intel_iov_provisioning_set_reset_engine(struct intel_iov *iov, bool enable);
 bool intel_iov_provisioning_get_reset_engine(struct intel_iov *iov);
+int intel_iov_provisioning_set_sample_period(struct intel_iov *iov, u32 value);
+u32 intel_iov_provisioning_get_sample_period(struct intel_iov *iov);
 
 void intel_iov_provisioning_restart(struct intel_iov *iov);
 int intel_iov_provisioning_auto(struct intel_iov *iov, unsigned int num_vfs);

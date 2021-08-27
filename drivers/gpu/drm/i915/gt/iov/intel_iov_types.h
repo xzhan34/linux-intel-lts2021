@@ -83,10 +83,12 @@ struct intel_iov_sysfs {
  * struct intel_iov_policies - IOV policies.
  * @sched_if_idle: controls strict scheduling.
  * @reset_engine: controls engines reset on VF switch.
+ * @sample_period: sample period of adverse events in milliseconds.
  */
 struct intel_iov_policies {
 	bool sched_if_idle;
 	bool reset_engine;
+	u32 sample_period;
 };
 
 /**

@@ -118,6 +118,14 @@ enum {
  *      :0: don't schedule idle (default)
  *      :1: schedule if idle
  *
+ * _`GUC_KLV_VGT_POLICY_ADVERSE_SAMPLE_PERIOD` : 0x8002
+ *      This config sets the sample period for tracking adverse event counters.
+ *       A sample period is the period in millisecs during which events are counted.
+ *       This is applicable for all the VFs.
+ *
+ *      :0: adverse events are not counted (default)
+ *      :n: sample period in milliseconds
+ *
  * _`GUC_KLV_VGT_POLICY_RESET_AFTER_VF_SWITCH` : 0x8D00
  *      This enum is to reset utilized HW engine after VF Switch (i.e to clean
  *      up Stale HW register left behind by previous VF)
@@ -128,6 +136,9 @@ enum {
 
 #define GUC_KLV_VGT_POLICY_SCHED_IF_IDLE_KEY		0x8001
 #define GUC_KLV_VGT_POLICY_SCHED_IF_IDLE_LEN		1u
+
+#define GUC_KLV_VGT_POLICY_ADVERSE_SAMPLE_PERIOD_KEY	0x8002
+#define GUC_KLV_VGT_POLICY_ADVERSE_SAMPLE_PERIOD_LEN	1u
 
 #define GUC_KLV_VGT_POLICY_RESET_AFTER_VF_SWITCH_KEY	0x8D00
 #define GUC_KLV_VGT_POLICY_RESET_AFTER_VF_SWITCH_LEN	1u

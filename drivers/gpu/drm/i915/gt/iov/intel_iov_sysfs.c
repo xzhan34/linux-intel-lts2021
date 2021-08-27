@@ -276,6 +276,29 @@ static ssize_t engine_reset_iov_attr_store(struct intel_iov *iov,
 	return err ?: count;
 }
 
+static ssize_t sample_period_ms_iov_attr_show(struct intel_iov *iov,
+					      unsigned int id, char *buf)
+{
+	u32 value = intel_iov_provisioning_get_sample_period(iov);
+
+	return sysfs_emit(buf, "%u\n", value);
+}
+
+static ssize_t sample_period_ms_iov_attr_store(struct intel_iov *iov,
+					       unsigned int id,
+					       const char *buf, size_t count)
+{
+	u32 value;
+	int err;
+
+	err = kstrtou32(buf, 0, &value);
+	if (err)
+		return err;
+
+	err = intel_iov_provisioning_set_sample_period(iov, value);
+	return err ?: count;
+}
+
 IOV_ATTR(ggtt_spare);
 IOV_ATTR(contexts_spare);
 IOV_ATTR(doorbells_spare);
@@ -289,6 +312,7 @@ IOV_ATTR_RO(doorbells_max_quota);
 
 IOV_ATTR(sched_if_idle);
 IOV_ATTR(engine_reset);
+IOV_ATTR(sample_period_ms);
 
 static struct attribute *pf_attrs[] = {
 	&ggtt_spare_iov_attr.attr,
@@ -319,6 +343,7 @@ static const struct attribute_group pf_available_attr_group = {
 static struct attribute *pf_policies_attrs[] = {
 	&sched_if_idle_iov_attr.attr,
 	&engine_reset_iov_attr.attr,
+	&sample_period_ms_iov_attr.attr,
 	NULL
 };
 

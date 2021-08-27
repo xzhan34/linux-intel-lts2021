@@ -129,6 +129,8 @@ static const char *policy_key_to_string(u16 key)
 	switch (key) {
 	case GUC_KLV_VGT_POLICY_SCHED_IF_IDLE_KEY:
 		return "sched_if_idle";
+	case GUC_KLV_VGT_POLICY_ADVERSE_SAMPLE_PERIOD_KEY:
+		return "sample_period";
 	case GUC_KLV_VGT_POLICY_RESET_AFTER_VF_SWITCH_KEY:
 		return "reset_engine";
 	default:
@@ -157,6 +159,30 @@ static int pf_update_bool_policy(struct intel_iov *iov, u16 key, bool *policy, b
 failed:
 	IOV_ERROR(iov, "Failed to %s '%s' policy (%pe)\n",
 		  str_enable_disable(value), name, ERR_PTR(err));
+	return err;
+}
+
+static int pf_update_policy_u32(struct intel_iov *iov, u16 key, u32 *policy, u32 value)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	const char *name = policy_key_to_string(key);
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	IOV_DEBUG(iov, "updating policy %#04x (%s) %u -> %u\n",
+		  key, name, *policy, value);
+
+	err = guc_update_policy_klv32(guc, key, value);
+	if (unlikely(err))
+		goto failed;
+
+	*policy = value;
+	return 0;
+
+failed:
+	IOV_ERROR(iov, "Failed to update policy '%s=%u' (%pe)\n",
+		  name, value, ERR_PTR(err));
 	return err;
 }
 
@@ -272,6 +298,45 @@ bool intel_iov_provisioning_get_reset_engine(struct intel_iov *iov)
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return enable;
+}
+
+static int pf_provision_sample_period(struct intel_iov *iov, u32 value)
+{
+	return pf_update_policy_u32(iov, GUC_KLV_VGT_POLICY_ADVERSE_SAMPLE_PERIOD_KEY,
+				    &iov->pf.provisioning.policies.sample_period, value);
+}
+
+/**
+ * intel_iov_provisioning_set_sample_period - Set 'sample_period' policy.
+ * @iov: the IOV struct
+ * @value: sample period in milliseconds
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_set_sample_period(struct intel_iov *iov, u32 value)
+{
+	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
+	intel_wakeref_t wakeref;
+	int err = -ENONET;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	with_intel_runtime_pm(rpm, wakeref)
+		err = pf_provision_sample_period(iov, value);
+
+	return err;
+}
+
+/**
+ * intel_iov_provisioning_get_sample_period - Get 'sample_period' policy.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u32 intel_iov_provisioning_get_sample_period(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	return iov->pf.provisioning.policies.sample_period;
 }
 
 static inline bool pf_is_auto_provisioned(struct intel_iov *iov)
