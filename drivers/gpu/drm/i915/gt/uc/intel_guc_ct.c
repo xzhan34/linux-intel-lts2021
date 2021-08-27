@@ -13,6 +13,7 @@
 #include "intel_guc_ct.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_pagefault.h"
+#include "gt/iov/intel_iov_event.h"
 #include "gt/iov/intel_iov_relay.h"
 #include "gt/iov/intel_iov_service.h"
 #include "gt/iov/intel_iov_state.h"
@@ -1144,6 +1145,9 @@ static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 		break;
 	case GUC_ACTION_GUC2PF_VF_STATE_NOTIFY:
 		ret = intel_iov_state_process_guc2pf(iov, hxg, hxg_len);
+		break;
+	case GUC_ACTION_GUC2PF_ADVERSE_EVENT:
+		ret = intel_iov_event_process_guc2pf(iov, hxg, hxg_len);
 		break;
 	case GUC_ACTION_GUC2PF_RELAY_FROM_VF:
 		ret = intel_iov_relay_process_guc2pf(&iov->relay, hxg, hxg_len);

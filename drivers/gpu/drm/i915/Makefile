@@ -244,6 +244,7 @@ iov-y += \
 	i915_sriov_sysfs.o \
 	gt/iov/intel_iov.o \
 	gt/iov/intel_iov_debugfs.o \
+	gt/iov/intel_iov_event.o \
 	gt/iov/intel_iov_provisioning.o \
 	gt/iov/intel_iov_relay.o \
 	gt/iov/intel_iov_service.o \
