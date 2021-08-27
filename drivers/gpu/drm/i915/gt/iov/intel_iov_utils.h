@@ -115,4 +115,15 @@ static inline int __intel_iov_live_teardown(int err, void *data)
 }
 #endif /* IS_ENABLED(CONFIG_DRM_I915_SELFTEST) */
 
+static inline const char *intel_iov_threshold_to_string(enum intel_iov_threshold threshold)
+{
+	switch (threshold) {
+#define __iov_threshold_to_string(K, N, ...) \
+	case IOV_THRESHOLD_##K: return #N;
+	IOV_THRESHOLDS(__iov_threshold_to_string)
+	}
+#undef __iov_threshold_to_string
+	return "<invalid>";
+}
+
 #endif /* __INTEL_IOV_UTILS_H__ */

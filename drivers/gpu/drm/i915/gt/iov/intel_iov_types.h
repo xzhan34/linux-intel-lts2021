@@ -13,6 +13,31 @@
 #include "i915_selftest.h"
 #include "intel_wakeref.h"
 
+/*
+ * Super macro that combines different names used with adverse events:
+ * threshold key name (used in code), friendly name (used in dmesg)
+ * and attribute name (used in sysfs):
+ *
+ *	threshold(Key, Name, Attribute)
+ */
+#define IOV_THRESHOLDS(threshold) \
+	threshold(CAT_ERR, cat_error, cat_error_count) \
+	threshold(ENGINE_RESET, engine_reset, engine_reset_count) \
+	threshold(PAGE_FAULT, page_fault, page_fault_count) \
+	threshold(H2G_STORM, guc_storm, h2g_time_us) \
+	threshold(IRQ_STORM, irq_storm, irq_time_us) \
+	threshold(DOORBELL_STORM, dbs_storm, doorbell_time_us) \
+	/*end*/
+
+enum intel_iov_threshold {
+#define __to_intel_iov_threshold_enum(K, ...) IOV_THRESHOLD_##K,
+IOV_THRESHOLDS(__to_intel_iov_threshold_enum)
+#undef __to_intel_iov_threshold_enum
+};
+
+#define __count_iov_thresholds(...) +1
+#define IOV_THRESHOLD_MAX (0 IOV_THRESHOLDS(__count_iov_thresholds))
+
 /**
  * struct intel_iov_config - IOV configuration data.
  * @ggtt_region: GGTT region.
@@ -31,6 +56,7 @@ struct intel_iov_config {
 	u16 begin_db;
 	u32 exec_quantum;
 	u32 preempt_timeout;
+	u32 thresholds[IOV_THRESHOLD_MAX];
 };
 
 /**

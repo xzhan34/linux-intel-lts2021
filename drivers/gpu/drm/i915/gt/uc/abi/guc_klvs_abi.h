@@ -191,6 +191,43 @@ enum {
  *
  *      :0: no preemption timeout (default)
  *
+ * _`GUC_KLV_VF_CFG_THRESHOLD_CAT_ERR` : 0x8A03
+ *      This config sets threshold for CAT errors caused by the VF.
+ *
+ *      :0: adverse events or error will not be reported (default)
+ *      :n: event occurrence count per sampling interval
+ *
+ * _`GUC_KLV_VF_CFG_THRESHOLD_ENGINE_RESET` : 0x8A04
+ *      This config sets threshold for engine reset caused by the VF.
+ *
+ *      :0: adverse events or error will not be reported (default)
+ *      :n: event occurrence count per sampling interval
+ *
+ * _`GUC_KLV_VF_CFG_THRESHOLD_PAGE_FAULT` : 0x8A05
+ *      This config sets threshold for page fault errors caused by the VF.
+ *
+ *      :0: adverse events or error will not be reported (default)
+ *      :n: event occurrence count per sampling interval
+ *
+ * _`GUC_KLV_VF_CFG_THRESHOLD_H2G_STORM` : 0x8A06
+ *      This config sets threshold for H2G interrupts triggered by the VF.
+ *
+ *      :0: adverse events or error will not be reported (default)
+ *      :n: time (us) per sampling interval
+ *
+ * _`GUC_KLV_VF_CFG_THRESHOLD_IRQ_STORM` : 0x8A07
+ *      This config sets threshold for GT interrupts triggered by the VF's
+ *      workloads.
+ *
+ *      :0: adverse events or error will not be reported (default)
+ *      :n: time (us) per sampling interval
+ *
+ * _`GUC_KLV_VF_CFG_THRESHOLD_DOORBELL_STORM` : 0x8A08
+ *      This config sets threshold for doorbell's ring triggered by the VF.
+ *
+ *      :0: adverse events or error will not be reported (default)
+ *      :n: time (us) per sampling interval
+ *
  * _`GUC_KLV_VF_CFG_BEGIN_DOORBELL_ID` : 0x8A0A
  *      Refers to the start index of doorbell assigned to this VF.
  *
@@ -221,6 +258,24 @@ enum {
 
 #define GUC_KLV_VF_CFG_PREEMPT_TIMEOUT_KEY	0x8a02
 #define GUC_KLV_VF_CFG_PREEMPT_TIMEOUT_LEN	1u
+
+#define GUC_KLV_VF_CFG_THRESHOLD_CAT_ERR_KEY		0x8a03
+#define GUC_KLV_VF_CFG_THRESHOLD_CAT_ERR_LEN		1u
+
+#define GUC_KLV_VF_CFG_THRESHOLD_ENGINE_RESET_KEY	0x8a04
+#define GUC_KLV_VF_CFG_THRESHOLD_ENGINE_RESET_LEN	1u
+
+#define GUC_KLV_VF_CFG_THRESHOLD_PAGE_FAULT_KEY		0x8a05
+#define GUC_KLV_VF_CFG_THRESHOLD_PAGE_FAULT_LEN		1u
+
+#define GUC_KLV_VF_CFG_THRESHOLD_H2G_STORM_KEY		0x8a06
+#define GUC_KLV_VF_CFG_THRESHOLD_H2G_STORM_LEN		1u
+
+#define GUC_KLV_VF_CFG_THRESHOLD_IRQ_STORM_KEY		0x8a07
+#define GUC_KLV_VF_CFG_THRESHOLD_IRQ_STORM_LEN		1u
+
+#define GUC_KLV_VF_CFG_THRESHOLD_DOORBELL_STORM_KEY	0x8a08
+#define GUC_KLV_VF_CFG_THRESHOLD_DOORBELL_STORM_LEN	1u
 
 #define GUC_KLV_VF_CFG_BEGIN_DOORBELL_ID_KEY	0x8a0a
 #define GUC_KLV_VF_CFG_BEGIN_DOORBELL_ID_LEN	1u

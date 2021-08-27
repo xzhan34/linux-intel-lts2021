@@ -1641,6 +1641,91 @@ u32 intel_iov_provisioning_get_preempt_timeout(struct intel_iov *iov, unsigned i
 	return preempt_timeout;
 }
 
+static u32 intel_iov_threshold_to_klv_key(enum intel_iov_threshold threshold)
+{
+	switch (threshold) {
+#define __iov_threshold_enum_to_klv(K, ...) \
+	case IOV_THRESHOLD_##K: return GUC_KLV_VF_CFG_THRESHOLD_##K##_KEY;
+	IOV_THRESHOLDS(__iov_threshold_enum_to_klv)
+#undef __iov_threshold_enum_to_klv
+	}
+	GEM_BUG_ON(true);
+	return 0; /* unreachable */
+}
+
+static int pf_provision_threshold(struct intel_iov *iov, unsigned int id,
+				  enum intel_iov_threshold threshold, u32 value)
+{
+	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
+	struct intel_iov_config *config = &provisioning->configs[id];
+	int err;
+
+	GEM_BUG_ON(threshold >= IOV_THRESHOLD_MAX);
+
+	if (value == config->thresholds[threshold])
+		return 0;
+
+	err = guc_update_vf_klv32(iov_to_guc(iov), id,
+				  intel_iov_threshold_to_klv_key(threshold), value);
+	if (unlikely(err))
+		return err;
+
+	config->thresholds[threshold] = value;
+
+	IOV_DEBUG(iov, "VF%u threshold %s=%u\n",
+		  id, intel_iov_threshold_to_string(threshold), value);
+	return 0;
+}
+
+/**
+ * intel_iov_provisioning_set_threshold - Set threshold for the VF.
+ * @iov: the IOV struct
+ * @id: VF identifier
+ * @threshold: threshold identifier
+ * @value: requested threshold value
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_set_threshold(struct intel_iov *iov, unsigned int id,
+					 enum intel_iov_threshold threshold, u32 value)
+{
+	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
+	intel_wakeref_t wakeref;
+	int err = -ENONET;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(id > pf_get_totalvfs(iov));
+
+	with_intel_runtime_pm(rpm, wakeref)
+		err = pf_provision_threshold(iov, id, threshold, value);
+
+	if (unlikely(err))
+		IOV_ERROR(iov, "Failed to set threshold %s=%u for VF%u (%pe)\n",
+			  intel_iov_threshold_to_string(threshold), value, id, ERR_PTR(err));
+	else if (value)
+		pf_mark_manual_provisioning(iov);
+
+	return err;
+}
+
+/**
+ * intel_iov_provisioning_get_threshold - Get threshold of the VF.
+ * @iov: the IOV struct
+ * @id: VF identifier
+ * @threshold: threshold identifier
+ *
+ * This function can only be called on PF.
+ */
+u32 intel_iov_provisioning_get_threshold(struct intel_iov *iov, unsigned int id,
+					 enum intel_iov_threshold threshold)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(id > pf_get_totalvfs(iov));
+	GEM_BUG_ON(threshold >= IOV_THRESHOLD_MAX);
+
+	return iov->pf.provisioning.configs[id].thresholds[threshold];
+}
+
 static void pf_assign_ctxs_for_pf(struct intel_iov *iov)
 {
 	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
