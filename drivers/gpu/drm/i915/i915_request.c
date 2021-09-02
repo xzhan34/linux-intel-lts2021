@@ -403,6 +403,7 @@ __engine_active(struct intel_engine_cs *engine)
 static bool __request_in_flight(const struct i915_request *signal)
 {
 	struct i915_request * const *port, *rq;
+	struct intel_engine_cs *engine;
 	bool inflight = false;
 
 	if (!i915_request_is_ready(signal))
@@ -444,11 +445,12 @@ static bool __request_in_flight(const struct i915_request *signal)
 	 * is valid. If instead we see ourselves being copied into *active,
 	 * we are inflight and may signal the callback.
 	 */
-	if (!intel_context_inflight(signal->context))
+	engine = intel_context_inflight(signal->context);
+	if (!engine)
 		return false;
 
 	rcu_read_lock();
-	for (port = __engine_active(signal->engine);
+	for (port = __engine_active(engine);
 	     (rq = READ_ONCE(*port)); /* may race with promotion of pending[] */
 	     port++) {
 		if (rq->context == signal->context) {
