@@ -938,6 +938,7 @@ out:
 
 	return ret;
 }
+ALLOW_ERROR_INJECTION(intel_guc_send_mmio, ERRNO);
 
 int intel_guc_to_host_process_recv_msg(struct intel_guc *guc,
 				       const u32 *payload, u32 len)

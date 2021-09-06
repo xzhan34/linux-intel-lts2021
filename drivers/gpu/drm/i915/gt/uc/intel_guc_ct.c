@@ -922,6 +922,7 @@ int intel_guc_ct_send(struct intel_guc_ct *ct, const u32 *action, u32 len,
 
 	return ret;
 }
+ALLOW_ERROR_INJECTION(intel_guc_ct_send, ERRNO);
 
 static struct ct_incoming_msg *ct_alloc_msg(u32 num_dwords)
 {
