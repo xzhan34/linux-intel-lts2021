@@ -27,6 +27,7 @@
  *
  */
 
+#include <linux/aer.h>
 #include <linux/acpi.h>
 #include <linux/device.h>
 #include <linux/module.h>
@@ -625,6 +626,60 @@ err_workqueues:
 	return ret;
 }
 
+#define PCI_SEC_ERR_MASK	0x6000
+
+static void i915_clear_errors_for_reg16(struct pci_dev *pdev, u32 offset, u16 mask)
+{
+	u16 reg16;
+
+	pci_read_config_word(pdev, offset, &reg16);
+
+	if (reg16 & mask) {
+		pci_warn(pdev, "Clearing %x from %x\n",
+			 reg16 & mask, offset);
+
+		pci_write_config_word(pdev, offset, reg16 & mask);
+	}
+}
+
+__maybe_unused
+static void i915_clear_errors_for_reg32(struct pci_dev *pdev,
+					u32 offset, u32 mask)
+{
+	u32 reg32;
+
+	pci_read_config_dword(pdev, offset, &reg32);
+
+	if (reg32 & mask) {
+		pci_warn(pdev, "Clearing %x from %x\n",
+			 reg32 & mask, offset);
+
+		pci_write_config_dword(pdev, offset, reg32 & mask);
+	}
+}
+
+static void i915_clear_pcie_errors(struct pci_dev *pdev)
+{
+	if (!pdev || pdev->is_virtfn)
+		return;
+
+	pci_disable_pcie_error_reporting(pdev);
+	i915_clear_errors_for_reg16(pdev, PCI_SEC_STATUS, PCI_SEC_ERR_MASK);
+	i915_clear_errors_for_reg16(pdev, pdev->pcie_cap + PCI_EXP_DEVSTA,
+				    (u16)~0);
+#if IS_ENABLED(CONFIG_PCIEAER)
+	if (pdev->aer_cap) {
+		i915_clear_errors_for_reg32(pdev,
+					    pdev->aer_cap + PCI_ERR_COR_STATUS,
+					    (u32)~0);
+		i915_clear_errors_for_reg32(pdev,
+					    pdev->aer_cap + PCI_ERR_UNCOR_STATUS,
+					    (u32)~0);
+	}
+#endif
+	pci_enable_pcie_error_reporting(pdev);
+}
+
 static int i915_driver_check_broken_features(struct drm_i915_private *dev_priv)
 {
 #ifdef CONFIG_PCI_ATS
@@ -658,6 +713,17 @@ static int i915_driver_check_broken_features(struct drm_i915_private *dev_priv)
 		}
 	}
 #endif /* CONFIG_PCI_ATS */
+
+	/* Wa_16014292289:pvc[bd_a0] */
+	if (IS_PVC_BD_STEP(dev_priv, STEP_A0, STEP_B0)) {
+		struct pci_bus *bus = to_pci_dev(dev_priv->drm.dev)->bus;
+		struct pci_dev *pdev;
+
+		/* Iterate through the uncore, each of the SoCs and SGunit */
+		i915_clear_pcie_errors(bus->self);
+		list_for_each_entry(pdev, &bus->devices, bus_list)
+			i915_clear_pcie_errors(pdev);
+	}
 
 	return 0;
 }
