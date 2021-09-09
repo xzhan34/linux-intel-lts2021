@@ -605,7 +605,8 @@ static int __igt_obj_window_blt_copy_with_ccs(struct drm_i915_private *i915,
 				     u64 size)
 {
 	struct drm_i915_gem_object *in, *src, *dst, *swap, *out;
-	struct intel_context *ce = to_gt(i915)->engine[BCS0]->evict_context;
+	struct intel_gt *gt = to_gt(i915);
+	struct intel_context *ce = gt->engine[gt->rsvd_bcs]->evict_context;
 	ktime_t t0, t1;
 	u32 *vaddr, i;
 	int err;
@@ -940,7 +941,7 @@ int i915_obj_window_blt_copy_live_selftests(struct drm_i915_private *i915)
 	if (intel_gt_is_wedged(to_gt(i915)))
 		return 0;
 
-	if (!HAS_ENGINE(to_gt(i915), BCS0))
+	if (!HAS_ENGINE(to_gt(i915), to_gt(i915)->rsvd_bcs))
 		return 0;
 
 	if (!HAS_LMEM(i915))

@@ -311,8 +311,9 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 				  struct dma_buf_attachment *attach)
 {
 	struct drm_i915_gem_object *obj = dma_buf_to_obj(dmabuf);
-	struct drm_i915_private *i915 = to_i915(obj->base.dev);
-	struct intel_context *ce = to_gt(i915)->engine[BCS0]->blitter_context;
+	struct intel_gt *gt = obj->mm.region.mem->gt;
+	enum intel_engine_id id = gt->rsvd_bcs;
+	struct intel_context *ce = gt->engine[id]->blitter_context;
 	struct i915_gem_ww_ctx ww;
 	int err, p2p_distance;
 

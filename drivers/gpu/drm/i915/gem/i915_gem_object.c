@@ -1209,12 +1209,13 @@ int i915_gem_object_migrate_region(struct drm_i915_gem_object *obj,
 				   int size)
 {
 	struct intel_gt *gt = obj->mm.region.mem->gt;
+	enum intel_engine_id id = gt->rsvd_bcs;
 	struct intel_context *ce;
 	int i, ret;
 
 	ce = NULL;
-	if (gt->engine[BCS0])
-		ce = gt->engine[BCS0]->blitter_context;
+	if (gt->engine[id])
+		ce = gt->engine[id]->blitter_context;
 	if (!ce)
 		return -ENODEV;
 
@@ -1312,7 +1313,8 @@ static struct i915_vma *
 i915_window_vma_init(struct drm_i915_private *i915,
 		     struct intel_memory_region *mem, u64 size)
 {
-	struct intel_context *ce = to_gt(i915)->engine[BCS0]->evict_context;
+	enum intel_engine_id id = to_gt(i915)->rsvd_bcs;
+	struct intel_context *ce = to_gt(i915)->engine[id]->evict_context;
 	struct i915_address_space *vm = ce->vm;
 	struct i915_vma *vma;
 	int ret;
@@ -1390,6 +1392,7 @@ static void i915_window_vma_teardown(struct i915_vma *vma)
 
 int i915_setup_blt_windows(struct drm_i915_private *i915)
 {
+	enum intel_engine_id id = to_gt(i915)->rsvd_bcs;
 	struct intel_memory_region *region;
 	unsigned int size = BLT_WINDOW_SZ;
 	struct i915_vma *vma;
@@ -1398,9 +1401,9 @@ int i915_setup_blt_windows(struct drm_i915_private *i915)
 	if (intel_gt_is_wedged(to_gt(i915)) || i915->params.enable_eviction < 2)
 		return 0;
 
-	if (!to_gt(i915)->engine[BCS0]) {
+	if (!to_gt(i915)->engine[id]) {
 		drm_dbg(&i915->drm,
-			"No BCS0 engine, hence blt evict is not setup\n");
+			"No blitter engine, hence blt evict is not setup\n");
 		return 0;
 	}
 
@@ -1581,7 +1584,8 @@ int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 			 struct drm_i915_gem_object *src, bool compressed)
 {
 	struct drm_i915_private *i915 = to_i915(src->base.dev);
-	struct intel_context *ce = to_gt(i915)->engine[BCS0]->evict_context;
+	enum intel_engine_id id = to_gt(i915)->rsvd_bcs;
+	struct intel_context *ce = to_gt(i915)->engine[id]->evict_context;
 	bool src_is_lmem = i915_gem_object_is_lmem(src);
 	bool dst_is_lmem = i915_gem_object_is_lmem(dst);
 	bool ccs_handling;

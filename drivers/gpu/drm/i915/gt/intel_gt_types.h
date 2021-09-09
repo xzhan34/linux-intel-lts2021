@@ -185,6 +185,7 @@ struct intel_gt {
 
 	struct intel_uc uc;
 	struct intel_gsc gsc;
+	enum intel_engine_id rsvd_bcs;
 
 	struct {
 		/* Serialize global tlb invalidations */

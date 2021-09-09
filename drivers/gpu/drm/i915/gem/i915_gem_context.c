@@ -671,7 +671,7 @@ static void context_close(struct i915_gem_context *ctx)
 		unsigned int i;
 
 		for_each_gt(gt, ctx->i915, i)
-			intel_engine_pm_put(gt->engine[BCS0]);
+			intel_engine_pm_put(gt->engine[gt->rsvd_bcs]);
 	}
 
 	/*
@@ -1024,6 +1024,10 @@ i915_gem_context_create_for_gt(struct intel_gt *gt, unsigned int flags)
 		 * PCIE L4 WA is enabled.
 		 * XXX: Optimize by disabling BCS0 PM only on required
 		 * tile (check for tiles in ctx->engines?).
+		 * XXX: On pvc, we are now using last instance of blitter
+		 * engine and not BCS0. This workaround may be absorbed in to a
+		 * general requirement that we need to hold fw whenever a client
+		 * access lmem.
 		 */
 		if (i915->params.ulls_bcs0_pm_wa &&
 		    i915_is_mem_wa_enabled(i915,
@@ -1032,9 +1036,9 @@ i915_gem_context_create_for_gt(struct intel_gt *gt, unsigned int flags)
 			unsigned int i;
 
 			drm_dbg(&i915->drm,
-				"BCS0 PM disabled on each tile for ULLS ctx\n");
+				"Disabling PM for reserved bcs on each tile for ULLS ctx\n");
 			for_each_gt(t, ctx->i915, i)
-				intel_engine_pm_get(t->engine[BCS0]);
+				intel_engine_pm_get(t->engine[t->rsvd_bcs]);
 
 			ctx->bcs0_pm_disabled = true;
 		}

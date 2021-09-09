@@ -179,6 +179,7 @@ static int migrate_to_lmem(struct drm_i915_gem_object *obj,
 			   enum intel_region_id lmem_id,
 			   struct i915_gem_ww_ctx *ww)
 {
+	enum intel_engine_id id = gt->rsvd_bcs;
 	struct intel_context *ce;
 	int ret;
 
@@ -187,10 +188,10 @@ static int migrate_to_lmem(struct drm_i915_gem_object *obj,
 	    obj->mm.region.mem->id == lmem_id)
 		return 0;
 
-	if (!gt->engine[BCS0])
+	if (!gt->engine[id])
 		return -ENODEV;
 
-	ce = gt->engine[BCS0]->blitter_context;
+	ce = gt->engine[id]->blitter_context;
 
 	/*
 	 * FIXME: Move this to BUG_ON later when uapi enforces object alignment

@@ -59,7 +59,7 @@ int intel_gtt_l4wa_live_selftests(struct drm_i915_private *i915)
 		if (!gt->lmem)
 			continue;
 
-		if (!gt->engine[BCS0]->bind_context) {
+		if (!gt->engine[gt->rsvd_bcs]->bind_context) {
 			drm_err(&i915->drm,
 				"L4WA not setup on gt%d, no bind contexts!\n",
 				gt->info.id);

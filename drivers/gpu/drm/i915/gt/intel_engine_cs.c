@@ -577,6 +577,10 @@ static int intel_engine_setup(struct intel_gt *gt, enum intel_engine_id id,
 	gt->engine_class[info->class][info->instance] = engine;
 	gt->engine[id] = engine;
 
+	/* Store last instance of copy engine */
+	if (engine->class == COPY_ENGINE_CLASS)
+		gt->rsvd_bcs = id;
+
 	return 0;
 }
 
@@ -1437,7 +1441,7 @@ static int engine_init_common(struct intel_engine_cs *engine)
 	if (engine->class == COPY_ENGINE_CLASS &&
 	    ce->timeline != engine->legacy.timeline) {
 		if (i915_is_mem_wa_enabled(engine->i915, I915_WA_USE_FLAT_PPGTT_UPDATE) &&
-		    engine->instance == 0) {
+		    engine->id == engine->gt->rsvd_bcs) {
 			ret = setup_flat_ppgtt(engine);
 			if (ret)
 				goto err_flat;
@@ -1509,6 +1513,13 @@ int intel_engines_init(struct intel_gt *gt)
 		err = engine_init_common(engine);
 		if (err)
 			return err;
+		/*
+		 * If we have only one instance of blitter engine then it will be
+		 * use for kernel operations as well as exposed to user.
+		 * If more instances are available do not expose it to use.
+		 */
+		if (engine->id == gt->rsvd_bcs && engine->instance)
+			continue;
 
 		intel_engine_add_user(engine);
 	}

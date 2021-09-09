@@ -106,7 +106,7 @@ get_blitter_context(const struct intel_gt *gt, int idx)
 
 static struct intel_context *get_clear_context(const struct intel_gt *gt)
 {
-	return get_blitter_context(gt, BCS0);
+	return get_blitter_context(gt, gt->rsvd_bcs);
 }
 
 void __iomem *
