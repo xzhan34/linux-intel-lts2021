@@ -14,6 +14,7 @@
 #include "intel_guc.h"
 #include "intel_guc_debugfs.h"
 #include "intel_guc_log_debugfs.h"
+#include "intel_runtime_pm.h"
 
 static int guc_info_show(struct seq_file *m, void *data)
 {
@@ -182,6 +183,65 @@ static int guc_stall_set(void *data, u64 val)
 }
 DEFINE_I915_GT_SIMPLE_ATTRIBUTE(guc_stall_fops, guc_stall_get, guc_stall_set, "%lld\n");
 
+#if IS_ENABLED(CONFIG_DRM_I915_DEBUG_GUC)
+static ssize_t guc_send_mmio_write(struct file *file, const char __user *user,
+				   size_t count, loff_t *ppos)
+{
+	struct intel_gt *gt = file->private_data;
+	struct intel_guc *guc = &gt->uc.guc;
+	struct intel_runtime_pm *rpm = guc_to_gt(guc)->uncore->rpm;
+	u32 request[GUC_MAX_MMIO_MSG_LEN];
+	u32 response[GUC_MAX_MMIO_MSG_LEN];
+	intel_wakeref_t wakeref;
+	int ret;
+
+	if (*ppos)
+		return 0;
+
+	ret = from_user_to_u32array(user, count, request, ARRAY_SIZE(request));
+	if (ret < 0)
+		return ret;
+
+	with_intel_runtime_pm(rpm, wakeref)
+		ret = intel_guc_send_mmio(guc, request, ret, response, ARRAY_SIZE(response));
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+DEFINE_I915_GT_RAW_ATTRIBUTE(guc_send_mmio_fops, simple_open, NULL,
+			     NULL, guc_send_mmio_write, default_llseek);
+
+static ssize_t guc_send_ctb_write(struct file *file, const char __user *user,
+				  size_t count, loff_t *ppos)
+{
+	struct intel_gt *gt = file->private_data;
+	struct intel_guc *guc = &gt->uc.guc;
+	struct intel_runtime_pm *rpm = guc_to_gt(guc)->uncore->rpm;
+	u32 request[32], response[8];	/* reasonable limits */
+	intel_wakeref_t wakeref;
+	int ret;
+
+	if (*ppos)
+		return 0;
+
+	ret = from_user_to_u32array(user, count, request, ARRAY_SIZE(request));
+	if (ret < 0)
+		return ret;
+
+	with_intel_runtime_pm(rpm, wakeref)
+		ret = intel_guc_send_and_receive(guc, request, ret, response, ARRAY_SIZE(response));
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+
+DEFINE_I915_GT_RAW_ATTRIBUTE(guc_send_ctb_fops, simple_open,
+			     NULL, NULL, guc_send_ctb_write, default_llseek);
+#endif
+
 void intel_guc_debugfs_register(struct intel_guc *guc, struct dentry *root)
 {
 	static const struct intel_gt_debugfs_file files[] = {
@@ -192,6 +252,10 @@ void intel_guc_debugfs_register(struct intel_guc *guc, struct dentry *root)
 		{ "guc_sched_disable_gucid_threshold", &guc_sched_disable_gucid_threshold_fops,
 		   NULL },
 		{ "guc_stall_ms", &guc_stall_fops, NULL },
+#if IS_ENABLED(CONFIG_DRM_I915_DEBUG_GUC)
+		{ "guc_send_mmio", &guc_send_mmio_fops, NULL },
+		{ "guc_send_ctb", &guc_send_ctb_fops, NULL },
+#endif
 	};
 
 	if (!intel_guc_is_supported(guc))
