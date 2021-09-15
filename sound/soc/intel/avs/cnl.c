@@ -10,7 +10,7 @@
 #include "avs.h"
 #include "messages.h"
 
-static irqreturn_t cnl_ipc_irq_thread(struct avs_dev *adev)
+irqreturn_t cnl_ipc_irq_thread(struct avs_dev *adev)
 {
 	union avs_reply_msg msg;
 	u32 hipctdr, hipctdd, hipctda;
