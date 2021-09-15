@@ -211,6 +211,66 @@ static struct snd_soc_acpi_mach avs_gml_i2s_machines[] = {
 	{},
 };
 
+static struct snd_soc_acpi_mach avs_cnl_i2s_machines[] = {
+	{
+		.id = "INT34C2",
+		.drv_name = "avs_rt274",
+		.mach_params = {
+			.i2s_link_mask = AVS_SSP(0),
+		},
+		.tplg_filename = "rt274-tplg.bin",
+	},
+	{
+		.id = "10EC5682",
+		.drv_name = "avs_rt5682",
+		.mach_params = {
+			.i2s_link_mask = AVS_SSP(0),
+		},
+		.tplg_filename = "rt5682-tplg.bin",
+	},
+	{},
+};
+
+static struct snd_soc_acpi_mach avs_icl_i2s_machines[] = {
+	{
+		.id = "INT343A",
+		.drv_name = "avs_rt298",
+		.mach_params = {
+			.i2s_link_mask = AVS_SSP(0),
+		},
+		.tplg_filename = "rt298-tplg.bin",
+	},
+	{
+		.id = "INT34C2",
+		.drv_name = "avs_rt274",
+		.mach_params = {
+			.i2s_link_mask = AVS_SSP(0),
+		},
+		.tplg_filename = "rt274-tplg.bin",
+	},
+	{},
+};
+
+static struct snd_soc_acpi_mach avs_tgl_i2s_machines[] = {
+	{
+		.id = "INT34C2",
+		.drv_name = "avs_rt274",
+		.mach_params = {
+			.i2s_link_mask = AVS_SSP(0),
+		},
+		.tplg_filename = "rt274-tplg.bin",
+	},
+	{
+		.id = "10EC1308",
+		.drv_name = "avs_rt1308",
+		.mach_params = {
+			.i2s_link_mask = AVS_SSP(1),
+		},
+		.tplg_filename = "rt1308-tplg.bin",
+	},
+	{},
+};
+
 static struct snd_soc_acpi_mach avs_test_i2s_machines[] = {
 	{
 		.drv_name = "avs_i2s_test",
@@ -271,6 +331,13 @@ static const struct avs_acpi_boards i2s_boards[] = {
 	AVS_MACH_ENTRY(0x9d71, avs_kbl_i2s_machines), /* KBL */
 	AVS_MACH_ENTRY(0x5a98, avs_apl_i2s_machines), /* APL */
 	AVS_MACH_ENTRY(0x3198, avs_gml_i2s_machines), /* GML */
+	AVS_MACH_ENTRY(0x9dc8, avs_cnl_i2s_machines), /* CNL */
+	AVS_MACH_ENTRY(0xa348, avs_cnl_i2s_machines), /* CFL */
+	AVS_MACH_ENTRY(0x02c8, avs_cnl_i2s_machines), /* CML-LP */
+	AVS_MACH_ENTRY(0x34c8, avs_icl_i2s_machines), /* ICL */
+	AVS_MACH_ENTRY(0xa0c8, avs_tgl_i2s_machines), /* TGL */
+	AVS_MACH_ENTRY(0x4b55, avs_tgl_i2s_machines), /* EHL */
+	AVS_MACH_ENTRY(0x51c8, avs_tgl_i2s_machines), /* ADL-P */
 	{},
 };
 
