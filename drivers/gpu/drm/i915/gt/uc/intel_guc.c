@@ -16,6 +16,13 @@
 #include "i915_drv.h"
 #include "i915_irq.h"
 
+#ifdef CONFIG_DRM_I915_DEBUG_GUC
+#define GUC_DEBUG(_guc, _fmt, ...) \
+	drm_dbg(&guc_to_gt(_guc)->i915->drm, "GUC: " _fmt, ##__VA_ARGS__)
+#else
+#define GUC_DEBUG(_guc, _fmt, ...) typecheck(struct intel_guc *, _guc)
+#endif
+
 /**
  * DOC: GuC
  *
@@ -496,6 +503,8 @@ int intel_guc_send_mmio(struct intel_guc *guc, const u32 *request, u32 len,
 	mutex_lock(&guc->send_mutex);
 	intel_uncore_forcewake_get(uncore, guc->send_regs.fw_domains);
 
+	GUC_DEBUG(guc, "mmio sending %*ph\n", len * 4, request);
+
 retry:
 	for (i = 0; i < len; i++)
 		intel_uncore_write(uncore, guc_send_reg(guc, i), request[i]);
@@ -571,10 +580,13 @@ proto:
 		for (i = 1; i < count; i++)
 			response_buf[i] = intel_uncore_read(uncore,
 							    guc_send_reg(guc, i));
+		GUC_DEBUG(guc, "mmio received %*ph\n", count * 4, response_buf);
 
 		/* Use number of copied dwords as our return value */
 		ret = count;
 	} else {
+		GUC_DEBUG(guc, "mmio received %*ph\n", 4, &header);
+
 		/* Use data from the GuC response as our return value */
 		ret = FIELD_GET(GUC_HXG_RESPONSE_MSG_0_DATA0, header);
 	}
