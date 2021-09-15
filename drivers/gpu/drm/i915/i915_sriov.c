@@ -142,6 +142,18 @@ static bool gen12_pci_capability_is_vf(struct pci_dev *pdev)
 
 #ifdef CONFIG_PCI_IOV
 
+static bool works_with_iaf(struct drm_i915_private *i915)
+{
+	if (!HAS_IAF(i915) || !i915->params.enable_iaf)
+		return true;
+
+	/* can't use IS_PLATFORM as RUNTIME_INFO is not ready yet */
+	if (INTEL_INFO(i915)->platform == INTEL_PONTEVECCHIO)
+		return false;
+
+	return true;
+}
+
 static bool wants_pf(struct drm_i915_private *i915)
 {
 #define ENABLE_GUC_SRIOV_PF		BIT(2)
@@ -216,6 +228,9 @@ static bool pf_verify_readiness(struct drm_i915_private *i915)
 
 	if (!pf_has_valid_vf_bars(i915))
 		return pf_continue_as_native(i915, "VFs BAR not ready");
+
+	if (!works_with_iaf(i915))
+		return pf_continue_as_native(i915, "can't work with IAF");
 
 	pf_reduce_totalvfs(i915, newlimit);
 
