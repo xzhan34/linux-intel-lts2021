@@ -731,13 +731,13 @@ int avs_ipc_peakvol_get_volume(struct avs_dev *adev, u16 module_id, u8 instance_
 	return 0;
 }
 
-#ifdef CONFIG_DEBUG_FS
 int avs_ipc_set_enable_logs(struct avs_dev *adev, u8 *log_info, size_t size)
 {
 	return avs_ipc_set_large_config(adev, AVS_BASEFW_MOD_ID, AVS_BASEFW_INST_ID,
 					AVS_BASEFW_ENABLE_LOGS, log_info, size);
 }
 
+#ifdef CONFIG_DEBUG_FS
 int avs_ipc_set_system_time(struct avs_dev *adev)
 {
 	struct avs_sys_time sys_time;
