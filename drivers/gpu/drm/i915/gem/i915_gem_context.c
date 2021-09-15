@@ -1176,7 +1176,8 @@ err_put:
 
 static int set_ppgtt(struct drm_i915_file_private *file_priv,
 		     struct i915_gem_context *ctx,
-		     struct drm_i915_gem_context_param *args)
+		     struct drm_i915_gem_context_param *args,
+		     bool is_ctx_create)
 {
 	struct i915_address_space *vm, *old;
 	int err;
@@ -2079,7 +2080,8 @@ static int get_debug_flags(struct i915_gem_context *ctx,
 
 static int ctx_setparam(struct drm_i915_file_private *fpriv,
 			struct i915_gem_context *ctx,
-			struct drm_i915_gem_context_param *args)
+			struct drm_i915_gem_context_param *args,
+			bool is_ctx_create)
 {
 	int ret = 0;
 
@@ -2126,7 +2128,7 @@ static int ctx_setparam(struct drm_i915_file_private *fpriv,
 		break;
 
 	case I915_CONTEXT_PARAM_VM:
-		ret = set_ppgtt(fpriv, ctx, args);
+		ret = set_ppgtt(fpriv, ctx, args, is_ctx_create);
 		break;
 
 	case I915_CONTEXT_PARAM_ENGINES:
@@ -2174,7 +2176,7 @@ static int create_setparam(struct i915_user_extension __user *ext, void *data)
 	if (local.param.ctx_id)
 		return -EINVAL;
 
-	return ctx_setparam(arg->fpriv, arg->ctx, &local.param);
+	return ctx_setparam(arg->fpriv, arg->ctx, &local.param, true);
 }
 
 static int invalid_ext(struct i915_user_extension __user *ext, void *data)
@@ -2422,7 +2424,7 @@ int i915_gem_context_setparam_ioctl(struct drm_device *dev, void *data,
 	if (!ctx)
 		return -ENOENT;
 
-	ret = ctx_setparam(file_priv, ctx, args);
+	ret = ctx_setparam(file_priv, ctx, args, false);
 
 	i915_gem_context_put(ctx);
 	return ret;
