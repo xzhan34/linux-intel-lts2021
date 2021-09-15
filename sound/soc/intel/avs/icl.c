@@ -10,8 +10,8 @@
 #include "avs.h"
 #include "messages.h"
 
-static int icl_enable_logs(struct avs_dev *adev, enum avs_log_enable enable, u32 aging_period,
-			   u32 fifo_full_period, unsigned long resource_mask, u32 *priorities)
+int icl_enable_logs(struct avs_dev *adev, enum avs_log_enable enable, u32 aging_period,
+		    u32 fifo_full_period, unsigned long resource_mask, u32 *priorities)
 {
 	struct icl_log_state_info *info;
 	u32 size, num_libs = adev->fw_cfg.max_libs_count;
@@ -88,7 +88,7 @@ static int icl_slot_offset(struct avs_dev *adev, union icl_memwnd2_slot_type slo
 	return -ENXIO;
 }
 
-static int icl_log_buffer_offset(struct avs_dev *adev, u32 core)
+int icl_log_buffer_offset(struct avs_dev *adev, u32 core)
 {
 	union icl_memwnd2_slot_type slot_type = ICL_SLOT_DEBUG_LOG;
 	int ret;
@@ -102,13 +102,13 @@ static int icl_log_buffer_offset(struct avs_dev *adev, u32 core)
 	return ret;
 }
 
-static bool icl_d0ix_toggle(struct avs_dev *adev, struct avs_ipc_msg *tx, bool wake)
+bool icl_d0ix_toggle(struct avs_dev *adev, struct avs_ipc_msg *tx, bool wake)
 {
 	/* payload-less IPCs do not take part in d0ix toggling */
 	return tx->size;
 }
 
-static int icl_set_d0ix(struct avs_dev *adev, bool enable)
+int icl_set_d0ix(struct avs_dev *adev, bool enable)
 {
 	int ret;
 
