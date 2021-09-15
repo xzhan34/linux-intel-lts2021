@@ -19,7 +19,7 @@
 
 #ifdef CONFIG_DRM_I915_DEBUG_GUC
 #define GUC_DEBUG(_guc, _fmt, ...) \
-	drm_dbg(&guc_to_gt(_guc)->i915->drm, "GUC: " _fmt, ##__VA_ARGS__)
+	drm_dbg(&guc_to_gt(_guc)->i915->drm, "GUC%u: " _fmt, guc_to_gt(_guc)->info.id, ##__VA_ARGS__)
 #else
 #define GUC_DEBUG(_guc, _fmt, ...) typecheck(struct intel_guc *, _guc)
 #endif
