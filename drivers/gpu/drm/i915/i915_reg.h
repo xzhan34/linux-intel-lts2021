@@ -1896,6 +1896,9 @@
 #define PVC_MEDIA_PERF_STATUS		_MMIO(0x28107c)
 #define   PVC_MEDIA_PERF_MEDIA_RATIO	REG_GENMASK(8, 0)
 
+#define PVC_GT0_PACKAGE_SYS_PWR_BAL_FACTOR	_MMIO(0x281074)
+#define   PVC_SYS_PWR_BAL_FACTOR_MASK		REG_GENMASK(5, 0)
+
 /* GEN9_RAPL_PL1_FREQ_LIMIT is a 64-bit register, accessed herein as two
  * 32-bit parts.
  */

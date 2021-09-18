@@ -899,6 +899,46 @@ static const struct attribute *media_perf_power_attrs[] = {
 	NULL
 };
 
+static ssize_t sys_pwr_balance_store(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	i915_reg_t rgadr = PVC_GT0_PACKAGE_SYS_PWR_BAL_FACTOR;
+	intel_wakeref_t wakeref;
+	ssize_t ret;
+	u32 val;
+
+	ret = kstrtou32(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	val = REG_FIELD_GET(PVC_SYS_PWR_BAL_FACTOR_MASK, val);
+
+	with_intel_runtime_pm(gt->uncore->rpm, wakeref)
+		intel_uncore_rmw(gt->uncore, rgadr,
+				 PVC_SYS_PWR_BAL_FACTOR_MASK, val);
+	return count;
+}
+
+static ssize_t sys_pwr_balance_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	i915_reg_t rgadr = PVC_GT0_PACKAGE_SYS_PWR_BAL_FACTOR;
+	u32 val = _with_pm_intel_dev_read(dev, attr, rgadr);
+
+	val = REG_FIELD_GET(PVC_SYS_PWR_BAL_FACTOR_MASK, val);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", val );
+}
+static DEVICE_ATTR_RW(sys_pwr_balance);
+
+/* sysfs file <dev>/sys_pwr_balance */
+static const struct attribute * const sys_pwr_balance_attrs[] = {
+	&dev_attr_sys_pwr_balance.attr,
+	NULL
+};
+
 static ssize_t
 default_min_freq_mhz_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
@@ -1041,6 +1081,10 @@ static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj)
 	if (is_object_gt(kobj)) {
 		/* attributes for only directory gt/gt<i> */
 		ret = intel_sysfs_rps_init_gt(gt, kobj);
+		if (ret)
+			return ret;
+	} else if (IS_PONTEVECCHIO(gt->i915)) {
+		ret = sysfs_create_files(kobj, sys_pwr_balance_attrs);
 		if (ret)
 			return ret;
 	}
