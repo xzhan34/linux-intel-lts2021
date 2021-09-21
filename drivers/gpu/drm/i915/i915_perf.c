@@ -1846,22 +1846,21 @@ static void gen12_init_oa_buffer(struct i915_perf_stream *stream)
 
 static int alloc_oa_buffer(struct i915_perf_stream *stream, int size_exponent)
 {
-	struct drm_i915_private *i915 = stream->perf->i915;
 	struct intel_gt *gt = stream->engine->gt;
 	struct drm_i915_gem_object *bo;
 	struct i915_vma *vma;
 	size_t size = 1U << size_exponent;
 	int ret;
 
-	if (drm_WARN_ON(&i915->drm, stream->oa_buffer.vma))
+	if (drm_WARN_ON(&gt->i915->drm, stream->oa_buffer.vma))
 		return -ENODEV;
 
-	if (WARN_ON(size < SZ_128K || size > max_oa_buffer_size(stream->perf->i915)))
+	if (WARN_ON(size < SZ_128K || size > max_oa_buffer_size(gt->i915)))
 		return -EINVAL;
 
-	bo = i915_gem_object_create_shmem(stream->perf->i915, size);
+	bo = i915_gem_object_create_shmem(gt->i915, size);
 	if (IS_ERR(bo)) {
-		drm_err(&i915->drm, "Failed to allocate OA buffer\n");
+		drm_err(&gt->i915->drm, "Failed to allocate OA buffer\n");
 		return PTR_ERR(bo);
 	}
 
@@ -1937,7 +1936,7 @@ static int alloc_noa_wait(struct i915_perf_stream *stream)
 	struct drm_i915_gem_object *bo;
 	struct i915_vma *vma;
 	const u64 delay_ticks = 0xffffffffffffffff -
-		intel_gt_ns_to_clock_interval(to_gt(stream->perf->i915),
+		intel_gt_ns_to_clock_interval(gt,
 		atomic64_read(&stream->perf->noa_programming_delay));
 	const u32 base = stream->engine->mmio_base;
 #define CS_GPR(x) GEN8_RING_CS_GPR(base, x)

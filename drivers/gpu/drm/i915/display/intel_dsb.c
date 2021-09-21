@@ -265,6 +265,7 @@ void intel_dsb_prepare(struct intel_crtc_state *crtc_state)
 {
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
 	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
+	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
 	struct intel_dsb *dsb;
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
@@ -292,7 +293,7 @@ void intel_dsb_prepare(struct intel_crtc_state *crtc_state)
 		goto out;
 	}
 
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, 0);
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0, 0);
 	if (IS_ERR(vma)) {
 		i915_gem_object_put(obj);
 		kfree(dsb);

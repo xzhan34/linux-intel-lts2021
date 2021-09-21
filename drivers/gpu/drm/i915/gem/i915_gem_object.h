@@ -614,8 +614,9 @@ i915_gem_object_set_to_cpu_domain(struct drm_i915_gem_object *obj, bool write);
 struct i915_vma * __must_check
 i915_gem_object_pin_to_display_plane(struct drm_i915_gem_object *obj,
 				     struct i915_gem_ww_ctx *ww,
-				     u32 alignment,
+				     struct i915_ggtt *ggtt,
 				     const struct i915_ggtt_view *view,
+				     u32 alignment,
 				     unsigned int flags);
 
 void i915_gem_object_make_unshrinkable(struct drm_i915_gem_object *obj);

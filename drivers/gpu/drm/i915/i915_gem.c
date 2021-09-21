@@ -366,7 +366,7 @@ retry:
 		goto err_ww;
 
 	if (!i915_gem_object_is_tiled(obj))
-		vma = i915_gem_object_ggtt_pin_ww(obj, &ww, NULL, 0, 0,
+		vma = i915_gem_object_ggtt_pin_ww(obj, &ww, ggtt, NULL, 0, 0,
 						  PIN_OFFSET_GUARD | SZ_4K |
 						  PIN_MAPPABLE |
 						  PIN_NONBLOCK /* NOWARN */ |
@@ -935,11 +935,10 @@ static void discard_ggtt_vma(struct i915_vma *vma)
 struct i915_vma *
 i915_gem_object_ggtt_pin_ww(struct drm_i915_gem_object *obj,
 			    struct i915_gem_ww_ctx *ww,
+			    struct i915_ggtt *ggtt,
 			    const struct i915_ggtt_view *view,
 			    u64 size, u64 alignment, u64 flags)
 {
-	struct drm_i915_private *i915 = to_i915(obj->base.dev);
-	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
 	struct i915_vma *vma;
 	int ret;
 

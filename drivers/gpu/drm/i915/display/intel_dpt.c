@@ -140,7 +140,7 @@ struct i915_vma *intel_dpt_pin(struct i915_address_space *vm)
 		if (err)
 			continue;
 
-		vma = i915_gem_object_ggtt_pin_ww(dpt->obj, &ww, NULL, 0, 4096,
+		vma = i915_gem_object_ggtt_pin_ww(dpt->obj, &ww, vm->gt->ggtt, NULL, 0, 4096,
 						  pin_flags);
 		if (IS_ERR(vma)) {
 			err = PTR_ERR(vma);

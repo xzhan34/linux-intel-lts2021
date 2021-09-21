@@ -1508,7 +1508,7 @@ static void *reloc_iomap(struct drm_i915_gem_object *obj,
 		vma = ERR_PTR(-ENODEV);
 		if (!i915_gem_object_is_tiled(obj))
 			vma = i915_gem_object_ggtt_pin_ww(obj, &eb->ww,
-							  NULL, 0, 0,
+							  ggtt, NULL, 0, 0,
 							  PIN_MAPPABLE |
 							  PIN_NONBLOCK /* NOWARN */ |
 							  PIN_NOEVICT);
@@ -2748,7 +2748,9 @@ static struct i915_vma *eb_dispatch_secure(struct i915_execbuffer *eb, struct i9
 	 * batch" bit. Hence we need to pin secure batches into the global gtt.
 	 * hsw should have this fixed, but bdw mucks it up again. */
 	if (eb->batch_flags & I915_DISPATCH_SECURE)
-		return i915_gem_object_ggtt_pin_ww(vma->obj, &eb->ww, NULL, 0, 0, 0);
+		return i915_gem_object_ggtt_pin_ww(vma->obj, &eb->ww,
+						   eb->context->engine->gt->ggtt,
+						   NULL, 0, 0, 0);
 
 	return NULL;
 }

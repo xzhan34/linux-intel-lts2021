@@ -840,7 +840,7 @@ static int setup_watcher(struct hwsp_watcher *w, struct intel_gt *gt)
 		return PTR_ERR(w->map);
 	}
 
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, 0);
+	vma = i915_gem_object_ggtt_pin(obj, gt->ggtt, NULL, 0, 0, 0);
 	if (IS_ERR(vma)) {
 		i915_gem_object_put(obj);
 		return PTR_ERR(vma);

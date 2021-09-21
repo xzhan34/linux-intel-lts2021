@@ -100,6 +100,7 @@ static int check_partial_mapping(struct drm_i915_gem_object *obj,
 {
 	const unsigned long npages = obj->base.size / PAGE_SIZE;
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
 	struct i915_ggtt_view view;
 	struct i915_vma *vma;
 	unsigned long offset;
@@ -134,7 +135,7 @@ static int check_partial_mapping(struct drm_i915_gem_object *obj,
 	} while (offset >= obj->base.size);
 
 	view = compute_partial_view(obj, page, MIN_CHUNK_PAGES);
-	vma = i915_gem_object_ggtt_pin(obj, &view, 0, 0, PIN_MAPPABLE);
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, &view, 0, 0, PIN_MAPPABLE);
 	if (IS_ERR(vma)) {
 		pr_err("Failed to pin partial view: offset=%lu; err=%d\n",
 		       page, (int)PTR_ERR(vma));
@@ -191,6 +192,7 @@ static int check_partial_mappings(struct drm_i915_gem_object *obj,
 	const unsigned int nreal = obj->scratch / PAGE_SIZE;
 	const unsigned long npages = obj->base.size / PAGE_SIZE;
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
 	struct i915_vma *vma;
 	unsigned long page;
 	int err;
@@ -225,7 +227,7 @@ static int check_partial_mappings(struct drm_i915_gem_object *obj,
 		GEM_BUG_ON(view.partial.size > nreal);
 		cond_resched();
 
-		vma = i915_gem_object_ggtt_pin(obj, &view, 0, 0, PIN_MAPPABLE);
+		vma = i915_gem_object_ggtt_pin(obj, ggtt, &view, 0, 0, PIN_MAPPABLE);
 		if (IS_ERR(vma)) {
 			pr_err("Failed to pin partial view: offset=%lu; err=%d\n",
 			       page, (int)PTR_ERR(vma));
@@ -757,12 +759,13 @@ err_obj:
 
 static int gtt_set(struct drm_i915_gem_object *obj)
 {
+	struct i915_ggtt *ggtt = to_gt(to_i915(obj->base.dev))->ggtt;
 	intel_wakeref_t wakeref;
 	struct i915_vma *vma;
 	void __iomem *map;
 	int err = 0;
 
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, PIN_MAPPABLE);
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0, PIN_MAPPABLE);
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 
@@ -784,12 +787,13 @@ out:
 
 static int gtt_check(struct drm_i915_gem_object *obj)
 {
+	struct i915_ggtt *ggtt = to_gt(to_i915(obj->base.dev))->ggtt;
 	intel_wakeref_t wakeref;
 	struct i915_vma *vma;
 	void __iomem *map;
 	int err = 0;
 
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, PIN_MAPPABLE);
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0, PIN_MAPPABLE);
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 

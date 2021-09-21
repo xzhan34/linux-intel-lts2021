@@ -522,6 +522,7 @@ static void release_shadow_batch_buffer(struct intel_vgpu_workload *workload);
 static int prepare_shadow_batch_buffer(struct intel_vgpu_workload *workload)
 {
 	struct intel_gvt *gvt = workload->vgpu->gvt;
+	struct i915_ggtt *ggtt = gvt->gt->ggtt;
 	const int gmadr_bytes = gvt->device_info.gmadr_bytes_in_cmd;
 	struct intel_vgpu_shadow_bb *bb;
 	struct i915_gem_ww_ctx ww;
@@ -554,7 +555,8 @@ retry:
 			i915_gem_object_lock(bb->obj, &ww);
 
 			bb->vma = i915_gem_object_ggtt_pin_ww(bb->obj, &ww,
-							      NULL, 0, 0, 0);
+							      ggtt, NULL,
+							      0, 0, 0);
 			if (IS_ERR(bb->vma)) {
 				ret = PTR_ERR(bb->vma);
 				if (ret == -EDEADLK) {
@@ -604,13 +606,14 @@ static void update_wa_ctx_2_shadow_ctx(struct intel_shadow_wa_ctx *wa_ctx)
 		(~INDIRECT_CTX_ADDR_MASK)) | wa_ctx->indirect_ctx.shadow_gma;
 }
 
-static int prepare_shadow_wa_ctx(struct intel_shadow_wa_ctx *wa_ctx)
+static int prepare_shadow_wa_ctx(struct intel_vgpu_workload *workload)
 {
-	struct i915_vma *vma;
+	struct intel_shadow_wa_ctx *wa_ctx = &workload->wa_ctx;
 	unsigned char *per_ctx_va =
 		(unsigned char *)wa_ctx->indirect_ctx.shadow_va +
 		wa_ctx->indirect_ctx.size;
 	struct i915_gem_ww_ctx ww;
+	struct i915_vma *vma;
 	int ret;
 
 	if (wa_ctx->indirect_ctx.size == 0)
@@ -620,7 +623,9 @@ static int prepare_shadow_wa_ctx(struct intel_shadow_wa_ctx *wa_ctx)
 retry:
 	i915_gem_object_lock(wa_ctx->indirect_ctx.obj, &ww);
 
-	vma = i915_gem_object_ggtt_pin_ww(wa_ctx->indirect_ctx.obj, &ww, NULL,
+	vma = i915_gem_object_ggtt_pin_ww(wa_ctx->indirect_ctx.obj, &ww,
+					  workload->vgpu->gvt->gt->ggtt,
+					  NULL,
 					  0, CACHELINE_BYTES, 0);
 	if (IS_ERR(vma)) {
 		ret = PTR_ERR(vma);
@@ -774,7 +779,7 @@ static int prepare_workload(struct intel_vgpu_workload *workload)
 		goto err_unpin_mm;
 	}
 
-	ret = prepare_shadow_wa_ctx(&workload->wa_ctx);
+	ret = prepare_shadow_wa_ctx(workload);
 	if (ret) {
 		gvt_vgpu_err("fail to prepare_shadow_wa_ctx\n");
 		goto err_shadow_batch;

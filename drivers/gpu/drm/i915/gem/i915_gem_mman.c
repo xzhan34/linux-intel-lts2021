@@ -339,7 +339,7 @@ retry:
 		goto err_pages;
 
 	/* Now pin it into the GTT as needed */
-	vma = i915_gem_object_ggtt_pin_ww(obj, &ww, NULL, 0, 0,
+	vma = i915_gem_object_ggtt_pin_ww(obj, &ww, ggtt, NULL, 0, 0,
 					  guard |
 					  PIN_MAPPABLE |
 					  PIN_NONBLOCK /* NOWARN */ |
@@ -359,12 +359,12 @@ retry:
 		 * all hope that the hardware is able to track future writes.
 		 */
 
-		vma = i915_gem_object_ggtt_pin_ww(obj, &ww, &view,
+		vma = i915_gem_object_ggtt_pin_ww(obj, &ww, ggtt, &view,
 						  0, 0, guard | flags);
 		if (IS_ERR(vma) && vma != ERR_PTR(-EDEADLK)) {
 			flags = PIN_MAPPABLE;
 			view.type = I915_GGTT_VIEW_PARTIAL;
-			vma = i915_gem_object_ggtt_pin_ww(obj, &ww, &view,
+			vma = i915_gem_object_ggtt_pin_ww(obj, &ww, ggtt, &view,
 							  0, 0, guard | flags);
 		}
 

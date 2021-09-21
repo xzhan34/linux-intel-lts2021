@@ -78,6 +78,7 @@ intel_pin_and_fence_fb_obj(struct drm_framebuffer *fb,
 	struct drm_device *dev = fb->dev;
 	struct drm_i915_private *dev_priv = to_i915(dev);
 	struct drm_i915_gem_object *obj = intel_fb_obj(fb);
+	struct i915_ggtt *ggtt = to_gt(dev_priv)->ggtt;
 	intel_wakeref_t wakeref;
 	struct i915_gem_ww_ctx ww;
 	struct i915_vma *vma;
@@ -137,8 +138,9 @@ retry:
 		goto err;
 
 	if (!ret) {
-		vma = i915_gem_object_pin_to_display_plane(obj, &ww, alignment,
-							   view, pinctl);
+		vma = i915_gem_object_pin_to_display_plane(obj, &ww,
+							   ggtt, view,
+							   alignment, pinctl);
 		if (IS_ERR(vma)) {
 			ret = PTR_ERR(vma);
 			goto err_unpin;

@@ -377,8 +377,9 @@ out:
 struct i915_vma *
 i915_gem_object_pin_to_display_plane(struct drm_i915_gem_object *obj,
 				     struct i915_gem_ww_ctx *ww,
-				     u32 alignment,
+				     struct i915_ggtt *ggtt,
 				     const struct i915_ggtt_view *view,
+				     u32 alignment,
 				     unsigned int flags)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
@@ -427,12 +428,16 @@ i915_gem_object_pin_to_display_plane(struct drm_i915_gem_object *obj,
 	vma = ERR_PTR(-ENOSPC);
 	if ((flags & PIN_MAPPABLE) == 0 &&
 	    (!view || view->type == I915_GGTT_VIEW_NORMAL))
-		vma = i915_gem_object_ggtt_pin_ww(obj, ww, view, 0, alignment,
+		vma = i915_gem_object_ggtt_pin_ww(obj, ww,
+						  ggtt, view,
+						  0, alignment,
 						  flags | PIN_MAPPABLE |
 						  PIN_NONBLOCK);
 	if (IS_ERR(vma) && vma != ERR_PTR(-EDEADLK))
-		vma = i915_gem_object_ggtt_pin_ww(obj, ww, view, 0,
-						  alignment, flags);
+		vma = i915_gem_object_ggtt_pin_ww(obj, ww,
+						  ggtt, view,
+						  0, alignment,
+						  flags);
 	if (IS_ERR(vma))
 		return vma;
 

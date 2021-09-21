@@ -89,7 +89,9 @@
 struct dpll;
 struct drm_i915_clock_gating_funcs;
 struct drm_i915_gem_object;
+struct drm_i915_gem_object;
 struct drm_i915_private;
+struct i915_ggtt;
 struct intel_atomic_state;
 struct intel_audio_funcs;
 struct intel_cdclk_config;
@@ -1527,15 +1529,18 @@ static inline void i915_gem_drain_workqueue(struct drm_i915_private *i915)
 struct i915_vma * __must_check
 i915_gem_object_ggtt_pin_ww(struct drm_i915_gem_object *obj,
 			    struct i915_gem_ww_ctx *ww,
+			    struct i915_ggtt *ggtt,
 			    const struct i915_ggtt_view *view,
 			    u64 size, u64 alignment, u64 flags);
 
 static inline struct i915_vma * __must_check
 i915_gem_object_ggtt_pin(struct drm_i915_gem_object *obj,
+			 struct i915_ggtt *ggtt,
 			 const struct i915_ggtt_view *view,
 			 u64 size, u64 alignment, u64 flags)
 {
-	return i915_gem_object_ggtt_pin_ww(obj, NULL, view, size, alignment, flags);
+	return i915_gem_object_ggtt_pin_ww(obj, NULL, ggtt, view,
+					   size, alignment, flags);
 }
 
 int i915_gem_object_unbind(struct drm_i915_gem_object *obj,
