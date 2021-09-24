@@ -1856,7 +1856,7 @@ static bool bo_has_valid_encryption(struct drm_i915_gem_object *obj)
 
 static bool pxp_is_borked(struct drm_i915_gem_object *obj)
 {
-	return false;
+	return i915_gem_object_is_protected(obj) && !bo_has_valid_encryption(obj);
 }
 
 static int skl_plane_check(struct intel_crtc_state *crtc_state,

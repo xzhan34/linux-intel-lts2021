@@ -71,8 +71,6 @@
 
 #include "gt/gen8_ppgtt.h"
 
-#include "pxp/intel_pxp.h"
-
 #include "g4x_dp.h"
 #include "g4x_hdmi.h"
 #include "hsw_ips.h"
