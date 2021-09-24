@@ -220,7 +220,8 @@ void intel_pxp_fini_hw(struct intel_pxp *pxp)
 }
 
 int intel_pxp_key_check(struct intel_pxp *pxp,
-			struct drm_i915_gem_object *obj)
+			struct drm_i915_gem_object *obj,
+			bool assign)
 {
 	if (!intel_pxp_is_active(pxp))
 		return -ENODEV;
@@ -236,9 +237,10 @@ int intel_pxp_key_check(struct intel_pxp *pxp,
 	 * as such. If the object is already encrypted, check instead if the
 	 * used key is still valid.
 	 */
-	if (!obj->pxp_key_instance)
+	if (!obj->pxp_key_instance && assign)
 		obj->pxp_key_instance = pxp->key_instance;
-	else if (obj->pxp_key_instance != pxp->key_instance)
+
+	if (obj->pxp_key_instance != pxp->key_instance)
 		return -ENOEXEC;
 
 	return 0;
