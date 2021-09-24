@@ -75,6 +75,7 @@ struct intel_pxp {
 	u32 session_events;
 #define PXP_TERMINATION_REQUEST  BIT(0)
 #define PXP_TERMINATION_COMPLETE BIT(1)
+#define PXP_INVAL_REQUIRED       BIT(2)
 };
 
 #endif /* __INTEL_PXP_TYPES_H__ */
