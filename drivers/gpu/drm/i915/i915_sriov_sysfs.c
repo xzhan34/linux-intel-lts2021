@@ -66,6 +66,31 @@ static const struct attribute_group *default_sriov_attr_groups[] = {
 
 /* extended (PF and VFs) SR-IOV attributes */
 
+static ssize_t auto_provisioning_sriov_ext_attr_show(struct drm_i915_private *i915,
+						     unsigned int id, char *buf)
+{
+	int value = i915_sriov_pf_is_auto_provisioning_enabled(i915);
+
+	return sysfs_emit(buf, "%d\n", value);
+}
+
+static ssize_t auto_provisioning_sriov_ext_attr_store(struct drm_i915_private *i915,
+						      unsigned int id,
+						      const char *buf, size_t count)
+{
+	bool value;
+	int err;
+
+	err = kstrtobool(buf, &value);
+	if (err)
+		return err;
+
+	err = i915_sriov_pf_set_auto_provisioning(i915, value);
+	return err ?: count;
+}
+
+I915_SRIOV_EXT_ATTR(auto_provisioning);
+
 static struct attribute *sriov_ext_attrs[] = {
 	NULL
 };
@@ -75,6 +100,7 @@ static const struct attribute_group sriov_ext_attr_group = {
 };
 
 static struct attribute *pf_ext_attrs[] = {
+	&auto_provisioning_sriov_ext_attr.attr,
 	NULL
 };
 

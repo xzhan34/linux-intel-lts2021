@@ -25,6 +25,9 @@ struct i915_sriov_pf {
 		struct i915_sriov_kobj *home;
 		struct i915_sriov_ext_kobj **kobjs;
 	} sysfs;
+
+	/** @disable_auto_provisioning: flag to control VFs auto-provisioning */
+	bool disable_auto_provisioning;
 };
 
 /**

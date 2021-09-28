@@ -233,6 +233,40 @@ int i915_sriov_pf_status(struct drm_i915_private *i915)
 	return i915->sriov.pf.__status ?: -EBUSY;
 }
 
+bool i915_sriov_pf_is_auto_provisioning_enabled(struct drm_i915_private *i915)
+{
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	return !i915->sriov.pf.disable_auto_provisioning;
+}
+
+int i915_sriov_pf_set_auto_provisioning(struct drm_i915_private *i915, bool enable)
+{
+	u16 num_vfs = i915_sriov_pf_get_totalvfs(i915);
+	int err;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	if (enable == i915_sriov_pf_is_auto_provisioning_enabled(i915))
+		return 0;
+
+	/* disabling is always allowed */
+	if (!enable)
+		goto set;
+
+	/* enabling is only allowed if all provisioning is empty */
+	err = intel_iov_provisioning_verify(&to_gt(i915)->iov, num_vfs);
+	if (err != -ENODATA)
+		return -ESTALE;
+
+set:
+	dev_info(i915->drm.dev, "VFs auto-provisioning was turned %s\n",
+		 str_on_off(enable));
+
+	i915->sriov.pf.disable_auto_provisioning = !enable;
+	return 0;
+}
+
 /**
  * i915_sriov_print_info - Print SR-IOV information.
  * @iov: the i915 struct
