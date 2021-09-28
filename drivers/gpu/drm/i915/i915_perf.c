@@ -3676,7 +3676,7 @@ static int i915_perf_oa_buffer_info_locked(struct i915_perf_stream *stream,
 					   unsigned int cmd,
 					   unsigned long arg)
 {
-	struct drm_i915_perf_oa_buffer_info info;
+	struct prelim_drm_i915_perf_oa_buffer_info info;
 	void __user *output = (void __user *)arg;
 
 	if (i915_perf_stream_paranoid && !perfmon_capable()) {
@@ -3724,7 +3724,7 @@ static long i915_perf_ioctl_locked(struct i915_perf_stream *stream,
 		return 0;
 	case I915_PERF_IOCTL_CONFIG:
 		return i915_perf_config_locked(stream, arg);
-	case I915_PERF_IOCTL_GET_OA_BUFFER_INFO:
+	case PRELIM_I915_PERF_IOCTL_GET_OA_BUFFER_INFO:
 		return i915_perf_oa_buffer_info_locked(stream, cmd, arg);
 	}
 
@@ -5224,11 +5224,11 @@ int i915_perf_ioctl_version(void)
 	 *    - OA buffer head/tail/status/buffer registers for read only
 	 *    - OA counters A18, A19, A20 for read/write
 	 *
-	 * 8: Added an option to map oa buffer at umd driver level and trigger
-	 *    oa reports within oa buffer from command buffer. See
-	 *    I915_PERF_IOCTL_GET_OA_BUFFER_INFO.
+	 * 1000: Added an option to map oa buffer at umd driver level and trigger
+	 *       oa reports within oa buffer from command buffer. See
+	 *       PRELIM_I915_PERF_IOCTL_GET_OA_BUFFER_INFO.
 	 */
-	return 8;
+	return 1000;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
