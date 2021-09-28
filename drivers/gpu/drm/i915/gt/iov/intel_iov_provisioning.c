@@ -2276,7 +2276,9 @@ static int pf_auto_provision_lmem(struct intel_iov *iov, unsigned int num_vfs)
 
 	/* for more VFs we shouldn't ignore sizes of LMTT and PPGTT */
 	if (num_vfs > 1) {
-		u64 lmtt_sz = intel_lmtt_estimate_pt_size(&iov->pf.lmtt, fair);
+		/* LMTT must cover allocations from all tiles, all likely of similar size */
+		u64 lmtt_sz = intel_lmtt_estimate_pt_size(&iov->pf.lmtt, fair *
+							  (iov_to_i915(iov)->remote_tiles + 1));
 		u64 pt_sz = i915_vm_estimate_pt_size(iov_to_gt(iov)->vm, fair);
 
 		fair = fair > lmtt_sz ? fair - lmtt_sz : 0;

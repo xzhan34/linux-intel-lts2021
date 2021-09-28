@@ -433,6 +433,8 @@ bool i915_sriov_pf_is_auto_provisioning_enabled(struct drm_i915_private *i915)
 int i915_sriov_pf_set_auto_provisioning(struct drm_i915_private *i915, bool enable)
 {
 	u16 num_vfs = i915_sriov_pf_get_totalvfs(i915);
+	struct intel_gt *gt;
+	unsigned int id;
 	int err;
 
 	GEM_BUG_ON(!IS_SRIOV_PF(i915));
@@ -445,9 +447,12 @@ int i915_sriov_pf_set_auto_provisioning(struct drm_i915_private *i915, bool enab
 		goto set;
 
 	/* enabling is only allowed if all provisioning is empty */
-	err = intel_iov_provisioning_verify(&to_gt(i915)->iov, num_vfs);
-	if (err != -ENODATA)
+	for_each_gt(gt, i915, id) {
+		err = intel_iov_provisioning_verify(&gt->iov, num_vfs);
+		if (err == -ENODATA)
+			continue;
 		return -ESTALE;
+	}
 
 set:
 	dev_info(i915->drm.dev, "VFs auto-provisioning was turned %s\n",
