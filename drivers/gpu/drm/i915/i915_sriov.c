@@ -402,6 +402,8 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 	if (err == -ENODATA) {
 		if (auto_provisioning)
 			err = intel_iov_provisioning_auto(&to_gt(i915)->iov, num_vfs);
+		else
+			err = 0; /* trust late provisioning */
 	}
 	if (unlikely(err))
 		goto fail_pm;
