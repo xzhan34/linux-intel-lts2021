@@ -77,6 +77,11 @@ static inline void pf_update_status(struct intel_iov *iov, int status, const cha
 	i915_sriov_pf_abort(iov_to_i915(iov), status);
 }
 
+static inline void pf_mark_manual_provisioning(struct intel_iov *iov)
+{
+	i915_sriov_pf_set_auto_provisioning(iov_to_i915(iov), false);
+}
+
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #define IOV_SELFTEST_ERROR(_iov, _fmt, ...) \
 	IOV_ERROR((_iov), "selftest/%s: " _fmt, __func__, ##__VA_ARGS__)

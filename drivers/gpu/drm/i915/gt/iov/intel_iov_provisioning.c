@@ -266,6 +266,7 @@ int intel_iov_provisioning_set_ggtt(struct intel_iov *iov, unsigned int id, u64 
 {
 	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
 	intel_wakeref_t wakeref;
+	bool reprovisioning;
 	int err = -ENONET;
 
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
@@ -274,12 +275,16 @@ int intel_iov_provisioning_set_ggtt(struct intel_iov *iov, unsigned int id, u64 
 
 	mutex_lock(pf_provisioning_mutex(iov));
 
+	reprovisioning = pf_is_valid_config_ggtt(iov, id) || size;
+
 	with_intel_runtime_pm(rpm, wakeref)
 		err = pf_provision_ggtt(iov, id, size);
 
 	if (unlikely(err))
 		IOV_ERROR(iov, "Failed to provision VF%u with %llu of GGTT (%pe)\n",
 			  id, size, ERR_PTR(err));
+	else if (reprovisioning)
+		pf_mark_manual_provisioning(iov);
 
 	mutex_unlock(pf_provisioning_mutex(iov));
 	return err;
@@ -582,6 +587,7 @@ int intel_iov_provisioning_set_ctxs(struct intel_iov *iov, unsigned int id, u16 
 {
 	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
 	intel_wakeref_t wakeref;
+	bool reprovisioning;
 	int err = -ENONET;
 
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
@@ -589,12 +595,16 @@ int intel_iov_provisioning_set_ctxs(struct intel_iov *iov, unsigned int id, u16 
 
 	mutex_lock(pf_provisioning_mutex(iov));
 
+	reprovisioning = pf_is_valid_config_ctxs(iov, id) || num_ctxs;
+
 	with_intel_runtime_pm(rpm, wakeref)
 		err = pf_provision_ctxs(iov, id, num_ctxs);
 
 	if (unlikely(err))
 		IOV_ERROR(iov, "Failed to provision VF%u with %hu contexts (%pe)\n",
 			  id, num_ctxs, ERR_PTR(err));
+	else if (reprovisioning && id != PFID)
+		pf_mark_manual_provisioning(iov);
 
 	mutex_unlock(pf_provisioning_mutex(iov));
 	return err;
@@ -677,6 +687,14 @@ int intel_iov_provisioning_set_spare_dbs(struct intel_iov *iov, u16 spare)
 	mutex_unlock(pf_provisioning_mutex(iov));
 
 	return 0;
+}
+
+static bool pf_is_valid_config_dbs(struct intel_iov *iov, unsigned int id)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	return iov->pf.provisioning.configs[id].num_dbs;
 }
 
 static unsigned long *pf_get_dbs_bitmap(struct intel_iov *iov)
@@ -765,6 +783,7 @@ int intel_iov_provisioning_set_dbs(struct intel_iov *iov, unsigned int id, u16 n
 {
 	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
 	intel_wakeref_t wakeref;
+	bool reprovisioning;
 	int err = -ENONET;
 
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
@@ -772,12 +791,16 @@ int intel_iov_provisioning_set_dbs(struct intel_iov *iov, unsigned int id, u16 n
 
 	mutex_lock(pf_provisioning_mutex(iov));
 
+	reprovisioning = pf_is_valid_config_dbs(iov, id) || num_dbs;
+
 	with_intel_runtime_pm(rpm, wakeref)
 		err = pf_provision_dbs(iov, id, num_dbs);
 
 	if (unlikely(err))
 		IOV_ERROR(iov, "Failed to provision VF%u with %hu doorbells (%pe)\n",
 			  id, num_dbs, ERR_PTR(err));
+	else if (reprovisioning && id != PFID)
+		pf_mark_manual_provisioning(iov);
 
 	mutex_unlock(pf_provisioning_mutex(iov));
 	return err;
@@ -859,6 +882,8 @@ int intel_iov_provisioning_set_exec_quantum(struct intel_iov *iov, unsigned int 
 	if (unlikely(err))
 		IOV_ERROR(iov, "Failed to provision VF%u with %u%s execution quantum (%pe)\n",
 			  id, exec_quantum, exec_quantum_unit(exec_quantum), ERR_PTR(err));
+	else if (exec_quantum && id != PFID)
+		pf_mark_manual_provisioning(iov);
 
 	mutex_unlock(pf_provisioning_mutex(iov));
 	return err;
@@ -938,6 +963,8 @@ int intel_iov_provisioning_set_preempt_timeout(struct intel_iov *iov, unsigned i
 	if (unlikely(err))
 		IOV_ERROR(iov, "Failed to provision VF%u with %u%s preemption timeout (%pe)\n",
 			  id, preempt_timeout, preempt_timeout_unit(preempt_timeout), ERR_PTR(err));
+	else if (preempt_timeout && id != PFID)
+		pf_mark_manual_provisioning(iov);
 
 	mutex_unlock(pf_provisioning_mutex(iov));
 	return err;
