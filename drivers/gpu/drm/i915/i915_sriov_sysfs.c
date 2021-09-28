@@ -9,6 +9,7 @@
 #include "i915_sriov_sysfs_types.h"
 #include "i915_sysfs.h"
 
+#include "gt/iov/intel_iov_provisioning.h"
 #include "gt/iov/intel_iov_state.h"
 
 /*
@@ -104,6 +105,7 @@ static ssize_t id_sriov_ext_attr_show(struct drm_i915_private *i915,
 #define CONTROL_STOP "stop"
 #define CONTROL_PAUSE "pause"
 #define CONTROL_RESUME "resume"
+#define CONTROL_CLEAR "clear"
 
 static ssize_t control_sriov_ext_attr_store(struct drm_i915_private *i915,
 					    unsigned int id,
@@ -118,6 +120,8 @@ static ssize_t control_sriov_ext_attr_store(struct drm_i915_private *i915,
 		err = intel_iov_state_pause_vf(iov, id);
 	} else if (sysfs_streq(buf, CONTROL_RESUME)) {
 		err = intel_iov_state_resume_vf(iov, id);
+	} else if (sysfs_streq(buf, CONTROL_CLEAR)) {
+		err = intel_iov_provisioning_clear(iov, id);
 	} else {
 		err = -EINVAL;
 	}

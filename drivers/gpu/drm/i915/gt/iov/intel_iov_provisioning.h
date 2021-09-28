@@ -61,6 +61,8 @@ int intel_iov_provisioning_set_threshold(struct intel_iov *iov, unsigned int id,
 u32 intel_iov_provisioning_get_threshold(struct intel_iov *iov, unsigned int id,
 					 enum intel_iov_threshold threshold);
 
+int intel_iov_provisioning_clear(struct intel_iov *iov, unsigned int id);
+
 int intel_iov_provisioning_print_ggtt(struct intel_iov *iov, struct drm_printer *p);
 int intel_iov_provisioning_print_ctxs(struct intel_iov *iov, struct drm_printer *p);
 int intel_iov_provisioning_print_dbs(struct intel_iov *iov, struct drm_printer *p);

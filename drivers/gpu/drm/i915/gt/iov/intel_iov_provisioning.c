@@ -2392,6 +2392,41 @@ static void pf_fini_reprovisioning_worker(struct intel_iov *iov)
 }
 
 /**
+ * intel_iov_provisioning_clear - Clear VF provisioning data.
+ * @iov: the IOV struct
+ * @id: VF identifier
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_clear(struct intel_iov *iov, unsigned int id)
+{
+	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
+	struct intel_guc *guc = iov_to_guc(iov);
+	intel_wakeref_t wakeref;
+	int err = -ENONET;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(id > pf_get_totalvfs(iov));
+	GEM_BUG_ON(id == PFID);
+
+	mutex_lock(pf_provisioning_mutex(iov));
+
+	with_intel_runtime_pm(rpm, wakeref) {
+		err = guc_action_update_vf_cfg(guc, id, 0, 0);
+		if (!err)
+			pf_unprovision_config(iov, id);
+	}
+
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	if (unlikely(err))
+		IOV_ERROR(iov, "Failed to unprovision VF%u (%pe)\n",
+			  id, ERR_PTR(err));
+
+	return err;
+}
+
+/**
  * intel_iov_provisioning_print_ggtt - Print GGTT provisioning data.
  * @iov: the IOV struct
  * @p: the DRM printer
