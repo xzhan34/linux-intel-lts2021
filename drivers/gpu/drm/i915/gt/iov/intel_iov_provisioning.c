@@ -298,6 +298,9 @@ static int pf_provision_ggtt(struct intel_iov *iov, unsigned int id, u64 size)
 	if (size > ggtt->vm.total)
 		return -E2BIG;
 
+	if (size > pf_get_max_ggtt(iov))
+		return -EDQUOT;
+
 	mutex_lock(&ggtt->vm.mutex);
 	err = i915_gem_gtt_insert(&ggtt->vm, node, size, alignment,
 		I915_COLOR_UNEVICTABLE,
