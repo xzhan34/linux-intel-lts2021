@@ -570,7 +570,7 @@ void intel_runtime_pm_enable(struct intel_runtime_pm *rpm)
 	 */
 	dev_pm_set_driver_flags(kdev, DPM_FLAG_NO_DIRECT_COMPLETE);
 
-	pm_runtime_set_autosuspend_delay(kdev, 10000); /* 10s */
+	pm_runtime_set_autosuspend_delay(kdev, 5000); /* 5s */
 	pm_runtime_mark_last_busy(kdev);
 
 	/*
