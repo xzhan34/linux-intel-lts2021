@@ -1798,6 +1798,13 @@ u32 intel_iov_provisioning_get_threshold(struct intel_iov *iov, unsigned int id,
 	return iov->pf.provisioning.configs[id].thresholds[threshold];
 }
 
+static void pf_unprovision_thresholds(struct intel_iov *iov, unsigned int id)
+{
+#define __iov_threshold_unprovision(K, ...) pf_provision_threshold(iov, id, IOV_THRESHOLD_##K, 0);
+	IOV_THRESHOLDS(__iov_threshold_unprovision)
+#undef __iov_threshold_unprovision
+}
+
 static void pf_assign_ctxs_for_pf(struct intel_iov *iov)
 {
 	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
@@ -1860,6 +1867,8 @@ static void pf_unprovision_config(struct intel_iov *iov, unsigned int id)
 	pf_provision_ggtt(iov, id, 0);
 	pf_provision_ctxs(iov, id, 0);
 	pf_provision_dbs(iov, id, 0);
+
+	pf_unprovision_thresholds(iov, id);
 }
 
 static void pf_unprovision_all(struct intel_iov *iov)
