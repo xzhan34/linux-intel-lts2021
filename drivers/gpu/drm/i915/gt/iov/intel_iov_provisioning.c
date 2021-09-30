@@ -1771,6 +1771,8 @@ int intel_iov_provisioning_set_spare_lmem(struct intel_iov *iov, u64 size)
 	return 0;
 }
 
+static u64 pf_query_max_lmem(struct intel_iov *iov);
+
 static int pf_provision_lmem(struct intel_iov *iov, unsigned int id, u64 size)
 {
 	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
@@ -1792,8 +1794,8 @@ static int pf_provision_lmem(struct intel_iov *iov, unsigned int id, u64 size)
 	if (!size)
 		return 0;
 
-	if (size > iov_to_i915(iov)->mm.regions[INTEL_REGION_LMEM_0]->avail)
-		return -E2BIG;
+	if (size > pf_query_max_lmem(iov))
+		return -EDQUOT;
 
 	obj = i915_gem_object_create_lmem(iov_to_gt(iov)->i915, size,
 					  I915_BO_ALLOC_USER | /* must clear */
