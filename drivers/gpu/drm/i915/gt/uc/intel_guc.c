@@ -804,11 +804,19 @@ timeout:
 	}
 
 	if (FIELD_GET(GUC_HXG_MSG_0_TYPE, header) == GUC_HXG_TYPE_NO_RESPONSE_BUSY) {
+		int loop = IS_SRIOV_VF(i915) ? 20 : 1;
+
 #define done ({ header = intel_uncore_read(uncore, guc_send_reg(guc, 0)); \
 		FIELD_GET(GUC_HXG_MSG_0_ORIGIN, header) != GUC_HXG_ORIGIN_GUC || \
 		FIELD_GET(GUC_HXG_MSG_0_TYPE, header) != GUC_HXG_TYPE_NO_RESPONSE_BUSY; })
 
+busy_loop:
 		ret = wait_for(done, 1000);
+		if (unlikely(ret && --loop)) {
+			drm_dbg(&i915->drm, "mmio request %#x: still busy, countdown %u\n",
+				request[0], loop);
+			goto busy_loop;
+		}
 		if (unlikely(ret))
 			goto timeout;
 		if (unlikely(FIELD_GET(GUC_HXG_MSG_0_ORIGIN, header) !=
