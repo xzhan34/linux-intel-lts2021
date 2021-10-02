@@ -408,6 +408,10 @@ void intel_runtime_pm_enable(struct intel_runtime_pm *rpm)
 	if (!IS_DGFX(i915))
 		pm_runtime_allow(kdev);
 
+	/* Enable by default only for client platforms for now */
+	if (IS_XEHPSDV(i915) || IS_PONTEVECCHIO(i915))
+		pm_runtime_forbid(kdev);
+
 	/*
 	 * The core calls the driver load handler with an RPM reference held.
 	 * We drop that here and will reacquire it during unloading in
