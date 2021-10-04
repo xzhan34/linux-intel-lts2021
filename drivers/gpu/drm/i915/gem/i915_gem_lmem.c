@@ -944,8 +944,7 @@ i915_gem_object_create_lmem(struct drm_i915_private *i915,
 			    resource_size_t size,
 			    unsigned int flags)
 {
-	return i915_gem_object_create_region(i915->mm.regions[INTEL_REGION_LMEM_0],
-					     size, flags);
+	return i915_gem_object_create_region(to_gt(i915)->lmem, size, flags);
 }
 
 int __i915_gem_lmem_object_init(struct intel_memory_region *mem,
