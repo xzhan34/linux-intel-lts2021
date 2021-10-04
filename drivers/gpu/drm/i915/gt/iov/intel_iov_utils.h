@@ -30,7 +30,7 @@ static inline struct device *iov_to_dev(struct intel_iov *iov)
 
 static inline struct intel_iov *iov_get_root(struct intel_iov *iov)
 {
-	return &to_gt(iov_to_i915(iov))->iov;
+	return &to_root_gt(iov_to_i915(iov))->iov;
 }
 
 static inline bool iov_is_root(struct intel_iov *iov)

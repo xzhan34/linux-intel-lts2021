@@ -357,6 +357,16 @@ static int vf_get_submission_cfg(struct intel_iov *iov)
 	return iov->vf.config.num_ctxs ? 0 : -ENODATA;
 }
 
+static bool vf_in_tile_mask(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	if (!HAS_REMOTE_TILES(iov_to_i915(iov)))
+		return true;
+
+	return iov_get_root(iov)->vf.config.tile_mask & BIT(iov_to_gt(iov)->info.id);
+}
+
 /**
  * intel_iov_query_config - Query IOV config data over MMIO.
  * @iov: the IOV struct
@@ -375,7 +385,11 @@ int intel_iov_query_config(struct intel_iov *iov)
 		err = vf_get_tiles(iov);
 		if (unlikely(err))
 			return err;
+
+		if (!vf_in_tile_mask(iov))
+			return 0;
 	}
+
 
 	err = vf_get_ggtt_info(iov);
 	if (unlikely(err))
@@ -786,6 +800,9 @@ int intel_iov_query_runtime(struct intel_iov *iov, bool early)
 	int err;
 
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	if (!vf_in_tile_mask(iov))
+		return 0;
 
 	if (early) {
 		err = vf_handshake_with_pf_mmio(iov);
