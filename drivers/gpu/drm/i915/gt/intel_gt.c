@@ -1304,9 +1304,15 @@ static unsigned int gt_count(struct drm_i915_private *i915)
 	 * But they only care about tiles where they were assigned.
 	 */
 	if (IS_SRIOV_VF(i915)) {
-		u32 tile_mask = i915->gt[0]->iov.vf.config.tile_mask;
+		u32 tile_mask = to_root_gt(i915)->iov.vf.config.tile_mask;
 
-		if (GEM_WARN_ON(!tile_mask))
+		/*
+		 * On XE_LPM+ platforms media engines are designed into separate tile
+		 */
+		if (MEDIA_VER(i915) >= 13)
+			return 2;
+
+		if (!HAS_REMOTE_TILES(i915) || GEM_WARN_ON(!tile_mask))
 			return 1;
 
 		return fls(tile_mask);
@@ -1360,6 +1366,8 @@ static unsigned int gt_mask(struct drm_i915_private *i915)
 
 	if (!HAS_EXTRA_GT_LIST(i915))
 		mask = BIT(0);
+	else if (IS_SRIOV_VF(i915))
+		mask = to_root_gt(i915)->iov.vf.config.tile_mask;
 	else
 		mask = GENMASK(gt_count(i915) - 1, 0);
 
@@ -1369,11 +1377,11 @@ static unsigned int gt_mask(struct drm_i915_private *i915)
 int intel_gt_probe_all(struct drm_i915_private *i915)
 {
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
-	struct intel_gt *gt = &i915->gt0;
+	struct intel_gt *gt = to_root_gt(i915);
 	const struct intel_gt_definition *gtdef;
 	phys_addr_t phys_addr;
 	unsigned int mmio_bar;
-	unsigned int i, num_gt;
+	unsigned int i, num_gt, num_enabled_gt;
 	unsigned long enabled_gt_mask;
 	int ret;
 
@@ -1395,10 +1403,12 @@ int intel_gt_probe_all(struct drm_i915_private *i915)
 		return ret;
 
 	enabled_gt_mask = gt_mask(i915);
-	i915->gt[0] = gt;
+	if (enabled_gt_mask & BIT(0))
+		i915->gt[0] = gt;
 
 	num_gt = gt_count(i915);
-	drm_info(&i915->drm, "GT count: %u\n", num_gt);
+	num_enabled_gt = hweight_long(enabled_gt_mask);
+	drm_info(&i915->drm, "GT count: %u, enabled: %d\n", num_gt, num_enabled_gt);
 
 	i = 1;
 	for_each_set_bit_from(i, &enabled_gt_mask, I915_MAX_GT) {
@@ -1467,7 +1477,7 @@ int intel_gt_tiles_init(struct drm_i915_private *i915)
 	int ret;
 
 	for_each_gt(gt, i915, id) {
-		if (id > i915->remote_tiles)
+		if (!i915->gt[id])
 			break;
 
 		if (GRAPHICS_VER(i915) >= 8)
