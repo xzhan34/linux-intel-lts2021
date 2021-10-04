@@ -552,7 +552,7 @@ static int guc_g2g_create(struct intel_guc *guc)
 		return 0;
 
 	if (gt->info.id != 0) {
-		struct intel_guc *root_guc = &gt->i915->gt[0]->uc.guc;
+		struct intel_guc *root_guc = &to_root_gt(gt->i915)->uc.guc;
 		struct i915_vma *vma;
 
 		vma = guc_vma_from_obj(guc, root_guc->g2g.obj, 0);

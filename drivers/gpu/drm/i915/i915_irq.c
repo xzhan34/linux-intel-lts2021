@@ -5586,7 +5586,7 @@ void intel_hpd_irq_setup(struct drm_i915_private *i915)
 void intel_irq_init(struct drm_i915_private *dev_priv)
 {
 	struct drm_device *dev = &dev_priv->drm;
-	struct intel_gt *gt = to_gt(dev_priv);
+	struct intel_gt *gt = to_root_gt(dev_priv);
 	int i;
 
 	INIT_WORK(&dev_priv->l3_parity.error_work, ivb_parity_work);

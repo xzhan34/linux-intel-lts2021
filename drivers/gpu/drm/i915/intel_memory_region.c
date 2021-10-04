@@ -806,7 +806,7 @@ int intel_memory_regions_hw_probe(struct drm_i915_private *i915)
 
 		type = intel_region_map[i].class;
 		instance = intel_region_map[i].instance;
-		gt = to_gt(i915);
+		gt = to_root_gt(i915);
 
 		switch (type) {
 		case INTEL_MEMORY_SYSTEM:

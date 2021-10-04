@@ -1011,11 +1011,6 @@ static inline struct drm_i915_private *pdev_to_i915(struct pci_dev *pdev)
 	return pci_get_drvdata(pdev);
 }
 
-static inline struct intel_gt *to_gt(struct drm_i915_private *i915)
-{
-	return &i915->gt0;
-}
-
 #define PRELIM_DRM_IOCTL_DEF_DRV(ioctl, _func, _flags)			\
 	[DRM_IOCTL_NR(PRELIM_DRM_IOCTL_##ioctl) - DRM_COMMAND_BASE] = {	\
 		.cmd = PRELIM_DRM_IOCTL_##ioctl,			\
@@ -1630,6 +1625,19 @@ static inline bool i915_has_svm(struct drm_i915_private *dev_priv)
 #else
 	return false;
 #endif
+}
+
+static inline struct intel_gt *to_root_gt(struct drm_i915_private *i915)
+{
+	return &i915->gt0;
+}
+
+static inline struct intel_gt *to_gt(struct drm_i915_private *i915)
+{
+	if (HAS_REMOTE_TILES(i915) && IOV_MODE(i915) == I915_IOV_MODE_SRIOV_VF)
+		return i915->gt[__ffs(to_root_gt(i915)->iov.vf.config.tile_mask)];
+
+	return &i915->gt0;
 }
 
 static inline bool

@@ -266,7 +266,7 @@ static void vf_init_early(struct drm_i915_private *i915)
 
 static int vf_check_guc_submission_support(struct drm_i915_private *i915)
 {
-	if (!intel_guc_submission_is_wanted(&to_gt(i915)->uc.guc)) {
+	if (!intel_guc_submission_is_wanted(&to_root_gt(i915)->uc.guc)) {
 		drm_err(&i915->drm, "GuC submission disabled\n");
 		return -ENODEV;
 	}
