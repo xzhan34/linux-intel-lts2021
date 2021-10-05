@@ -1282,6 +1282,13 @@ static struct i915_debugfs_file i915_debugfs_list[] = {
 	{"sharedmem_alloc_limit_info", &sharedmem_alloc_limit_info_fops, NULL},
 };
 
+static struct i915_debugfs_file i915_vf_debugfs_list[] = {
+	{"i915_capabilities", &i915_capabilities_fops, NULL},
+	{"i915_gem_objects", &i915_gem_object_info_fops, NULL},
+	{"i915_engine_info", &i915_engine_info_fops, NULL},
+	{"i915_sriov_info", &sriov_info_fops, NULL},
+};
+
 static struct i915_debugfs_file i915_debugfs_files[] = {
 	{"i915_perf_noa_delay", &i915_perf_noa_delay_fops},
 	{"i915_wedged", &i915_wedged_fops},
@@ -1290,6 +1297,11 @@ static struct i915_debugfs_file i915_debugfs_files[] = {
 	{"i915_error_state", &i915_error_state_fops},
 	{"i915_gpu_info", &i915_gpu_info_fops},
 #endif
+};
+
+static const struct i915_debugfs_file i915_vf_debugfs_files[] = {
+	{"i915_wedged", &i915_wedged_fops},
+	{"i915_gem_drop_caches", &i915_drop_caches_fops},
 };
 
 void i915_register_debugfs_show_files(struct dentry *root,
@@ -1310,6 +1322,8 @@ void i915_debugfs_register(struct drm_i915_private *dev_priv)
 {
 	struct drm_minor *minor = dev_priv->drm.primary;
 	const struct i915_debugfs_file *debugfs_list = i915_debugfs_list;
+	const struct i915_debugfs_file *debugfs_files = i915_debugfs_files;
+	size_t debugfs_files_size = ARRAY_SIZE(i915_debugfs_files);
 	size_t debugfs_list_size = ARRAY_SIZE(i915_debugfs_list);
 	size_t i;
 
@@ -1317,12 +1331,21 @@ void i915_debugfs_register(struct drm_i915_private *dev_priv)
 
 	debugfs_create_file("i915_forcewake_user", S_IRUSR, minor->debugfs_root,
 			    to_i915(minor->dev), &i915_forcewake_fops);
-	for (i = 0; i < ARRAY_SIZE(i915_debugfs_files); i++) {
-		debugfs_create_file(i915_debugfs_files[i].name,
+
+	if (IS_SRIOV_VF(dev_priv)) {
+		debugfs_files = i915_vf_debugfs_files;
+		debugfs_list = i915_vf_debugfs_list;
+
+		debugfs_files_size = ARRAY_SIZE(i915_vf_debugfs_files);
+		debugfs_list_size = ARRAY_SIZE(i915_vf_debugfs_list);
+	}
+
+	for (i = 0; i < debugfs_files_size; i++) {
+		debugfs_create_file(debugfs_files[i].name,
 				    S_IRUGO | S_IWUSR,
 				    minor->debugfs_root,
 				    to_i915(minor->dev),
-				    i915_debugfs_files[i].fops);
+				    debugfs_files[i].fops);
 	}
 
 	i915_register_debugfs_show_files(minor->debugfs_root, debugfs_list,
