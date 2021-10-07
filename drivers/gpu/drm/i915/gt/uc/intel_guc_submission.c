@@ -1622,13 +1622,14 @@ void intel_guc_submission_reset_prepare(struct intel_guc *guc)
 	guc_flush_destroyed_contexts(guc);
 
 	/*
-	 * Handle any outstanding G2Hs before reset. Call IRQ handler directly
-	 * each pass as interrupt have been disabled. We always scrub for
-	 * outstanding G2H as it is possible for outstanding_submission_g2h to
-	 * be incremented after the context state update.
+	 * Handle any outstanding G2Hs before reset. Call the CT handler
+	 * function directly each pass as interrupt have been disabled.
+	 * We always scrub for outstanding G2H as it is possible for
+	 * outstanding_submission_g2h to be incremented after the context state
+	 * update.
 	 */
 	for (i = 0; i < 4 && atomic_read(&guc->outstanding_submission_g2h); ++i) {
-		intel_guc_to_host_event_handler(guc);
+		intel_guc_ct_event_handler(&guc->ct);
 #define wait_for_reset(guc, wait_var) \
 		intel_guc_wait_for_pending_msg(guc, wait_var, false, (HZ / 20))
 		do {

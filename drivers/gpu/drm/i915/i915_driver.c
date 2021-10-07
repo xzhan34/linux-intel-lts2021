@@ -809,7 +809,7 @@ static enum hrtimer_restart fake_int_timer_callback(struct hrtimer *hrtimer)
 	enum intel_engine_id id;
 
 	if (guc->ct.enabled)
-		intel_guc_to_host_event_handler(guc);
+		intel_guc_ct_event_handler(&guc->ct);
 
 	for_each_engine(engine, gt, id)
 		engine->irq_handler(engine, GT_RENDER_USER_INTERRUPT |
