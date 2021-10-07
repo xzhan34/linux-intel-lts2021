@@ -1517,8 +1517,10 @@ __lrc_isolation(struct intel_engine_cs *engine, u32 poison, bool relative)
 	}
 
 	if (i915_request_wait(rq, 0, HZ / 2) < 0) {
+		pr_err("%s(%s): wait for reference results timed out\n",
+		       __func__, engine->name);
 		i915_request_put(rq);
-		err = -ETIME;
+		err = -EIO;
 		goto err_ref1;
 	}
 	i915_request_put(rq);
@@ -1541,6 +1543,17 @@ __lrc_isolation(struct intel_engine_cs *engine, u32 poison, bool relative)
 		goto err_result1;
 	}
 
+	/* Wait until we record the register state before allowing preemption */
+	if (wait_for_submit(engine, rq, HZ / 5)) {
+		pr_err("%s(%s): wait for submission timed out\n",
+		       __func__, engine->name);
+		i915_request_put(rq);
+		err = -EIO;
+		goto err_result1;
+	}
+	while (READ_ONCE(*sema.va) && !signal_pending(current))
+		usleep_range(100, 500);
+
 	err = poison_registers(B, engine, poison, relative, &sema);
 	if (err) {
 		WRITE_ONCE(*sema.va, -1);
@@ -1549,6 +1562,8 @@ __lrc_isolation(struct intel_engine_cs *engine, u32 poison, bool relative)
 	}
 
 	if (i915_request_wait(rq, 0, HZ / 2) < 0) {
+		pr_err("%s(%s): wait for results timed out\n",
+		       __func__, engine->name);
 		i915_request_put(rq);
 		err = -ETIME;
 		goto err_result1;
