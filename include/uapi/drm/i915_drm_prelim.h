@@ -28,6 +28,20 @@ struct prelim_i915_user_extension {
 
 #define PRELIM_I915_CONTEXT_CREATE_EXT_CLONE	(PRELIM_I915_USER_EXT | 1)
 
+/*
+ * PRELIM UAPI VERSION - /sys/<...>/drm/card<n>/prelim_uapi_version
+ * MAJOR - to be incremented right after a major public Production branch
+ *         release containing PRELIM uAPIs
+ *         PROD_DG1_201210.0 released so starting with major = 2, although
+ *         it didn't have the proper prelim api infrastructure yet.
+ * MINOR - Reset to 0 when MAJOR is bumped.
+ *         Bumped as needed when some kind of API incompatibility is identified.
+ *         This patch, which introduces this, should be the only patch in
+ *         the pile that is changing this number.
+ */
+#define PRELIM_UAPI_MAJOR	2
+#define PRELIM_UAPI_MINOR	1
+
 #define PRELIM_PERF_VERSION	(1000)
 
 /**

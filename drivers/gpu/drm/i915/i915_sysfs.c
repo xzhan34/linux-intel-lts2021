@@ -487,10 +487,22 @@ static void i915_setup_error_capture(struct device *kdev) {}
 static void i915_teardown_error_capture(struct device *kdev) {}
 #endif
 
+static ssize_t prelim_uapi_version_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	return sysfs_emit(buf, "%d.%d\n", PRELIM_UAPI_MAJOR, PRELIM_UAPI_MINOR);
+}
+
+static DEVICE_ATTR_RO(prelim_uapi_version);
+
 void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 {
 	struct device *kdev = dev_priv->drm.primary->kdev;
 	int ret;
+
+	if (sysfs_create_file(&kdev->kobj, &dev_attr_prelim_uapi_version.attr))
+		dev_err(kdev, "Failed adding prelim_uapi_version to sysfs\n");
 
 	dev_priv->clients.root =
 		kobject_create_and_add("clients", &kdev->kobj);
@@ -551,6 +563,8 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 void i915_teardown_sysfs(struct drm_i915_private *dev_priv)
 {
 	struct device *kdev = dev_priv->drm.primary->kdev;
+
+	sysfs_remove_file(&kdev->kobj, &dev_attr_prelim_uapi_version.attr);
 
 	i915_teardown_error_capture(kdev);
 
