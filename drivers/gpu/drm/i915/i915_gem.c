@@ -118,8 +118,8 @@ int i915_gem_object_unbind(struct drm_i915_gem_object *obj,
 			   unsigned long flags)
 {
 	struct intel_runtime_pm *rpm = &to_i915(obj->base.dev)->runtime_pm;
+	intel_wakeref_t wakeref = 0;
 	LIST_HEAD(still_in_list);
-	intel_wakeref_t wakeref;
 	struct i915_vma *vma;
 	int ret;
 
@@ -132,7 +132,8 @@ int i915_gem_object_unbind(struct drm_i915_gem_object *obj,
 	 * as they are required by the shrinker. Ergo, we wake the device up
 	 * first just in case.
 	 */
-	wakeref = intel_runtime_pm_get(rpm);
+	if (!(flags & I915_GEM_OBJECT_UNBIND_TEST))
+		wakeref = intel_runtime_pm_get(rpm);
 
 try_again:
 	ret = 0;
@@ -189,7 +190,8 @@ try_again:
 		goto try_again;
 	}
 
-	intel_runtime_pm_put(rpm, wakeref);
+	if (wakeref)
+		intel_runtime_pm_put(rpm, wakeref);
 
 	return ret;
 }
