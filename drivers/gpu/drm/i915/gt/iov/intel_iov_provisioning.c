@@ -464,6 +464,39 @@ static int guc_update_vf_klv64(struct intel_guc *guc, u32 vfid, u16 key, u64 val
 	return 0;
 }
 
+static int pf_push_config_tile_mask(struct intel_iov *iov, unsigned int id, u32 tile_mask)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	int err;
+
+	GEM_BUG_ON(iov_is_remote(iov));
+
+	if (!pf_needs_push_config(iov, id))
+		return 0;
+
+	err = guc_update_vf_klv32(guc, id, GUC_KLV_VF_CFG_TILE_MASK_KEY, tile_mask);
+	if (unlikely(err))
+		return err;
+
+	return 0;
+}
+
+static u32 pf_get_vf_tile_mask(struct intel_iov *iov, unsigned int id);
+
+static int pf_finish_config_change(struct intel_iov *iov, unsigned int id)
+{
+	int err = 0;
+
+	if (HAS_REMOTE_TILES(iov_to_i915(iov))) {
+		struct intel_iov *root = iov_get_root(iov);
+		u32 tile_mask = pf_get_vf_tile_mask(root, id);
+
+		err = pf_push_config_tile_mask(root, id, tile_mask);
+	}
+
+	return err;
+}
+
 static u64 pf_get_ggtt_alignment(struct intel_iov *iov)
 {
 	/* this might be platform dependent */
@@ -1886,6 +1919,8 @@ err_put:
 	i915_gem_object_put(obj);
 finish:
 	ret = pf_update_all_lmtt(iov_to_i915(iov), id);
+	err = err ?: ret;
+	ret = pf_finish_config_change(iov, id);
 	return err ?: ret;
 }
 
