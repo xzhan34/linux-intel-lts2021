@@ -1074,17 +1074,20 @@ static int __pf_provision_vf_ctxs(struct intel_iov *iov, unsigned int id, u16 st
 
 static int __pf_provision_ctxs(struct intel_iov *iov, unsigned int id, u16 start_ctx, u16 num_ctxs)
 {
-	int err;
+	int err, ret;
 
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
 
 	err = pf_push_config_ctxs(iov, id, start_ctx, num_ctxs);
 	if (unlikely(err)) {
 		__pf_provision_vf_ctxs(iov, id, 0, 0);
-		return err;
+		ret = pf_finish_config_change(iov, id);
+		return err ?: ret;
 	}
 
-	return __pf_provision_vf_ctxs(iov, id, start_ctx, num_ctxs);
+	__pf_provision_vf_ctxs(iov, id, start_ctx, num_ctxs);
+	ret = pf_finish_config_change(iov, id);
+	return ret;
 }
 
 static u16 pf_get_ctxs_max_quota(struct intel_iov *iov);
