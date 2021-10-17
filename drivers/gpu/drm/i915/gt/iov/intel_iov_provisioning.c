@@ -653,7 +653,7 @@ static int pf_provision_ggtt(struct intel_iov *iov, unsigned int id, u64 size)
 	struct drm_mm_node *node = &config->ggtt_region;
 	struct i915_ggtt *ggtt = iov_to_gt(iov)->ggtt;
 	u64 alignment = pf_get_ggtt_alignment(iov);
-	int err;
+	int err, ret;
 
 	if (check_round_up_overflow(size, alignment, &size))
 		return -EOVERFLOW;
@@ -671,18 +671,24 @@ release:
 		mutex_unlock(&ggtt->vm.mutex);
 
 		if (unlikely(err))
-			return err;
+			goto finish;
 	}
 	GEM_BUG_ON(drm_mm_node_allocated(node));
 
-	if (!size)
-		return 0;
+	if (!size) {
+		err = 0;
+		goto finish;
+	}
 
-	if (size > ggtt->vm.total)
-		return -E2BIG;
+	if (size > ggtt->vm.total) {
+		err = -E2BIG;
+		goto finish;
+	}
 
-	if (size > pf_get_max_ggtt(iov))
-		return -EDQUOT;
+	if (size > pf_get_max_ggtt(iov)) {
+		err = -EDQUOT;
+		goto finish;
+	}
 
 	mutex_lock(&ggtt->vm.mutex);
 	err = i915_gem_gtt_insert(&ggtt->vm, node, size, alignment,
@@ -691,7 +697,7 @@ release:
 		PIN_HIGH);
 	mutex_unlock(&ggtt->vm.mutex);
 	if (unlikely(err))
-		return err;
+		goto finish;
 
 	i915_ggtt_set_space_owner(ggtt, id, node);
 
@@ -701,7 +707,9 @@ release:
 
 	IOV_DEBUG(iov, "VF%u provisioned GGTT %llx-%llx (%lluK)\n",
 		  id, node->start, node->start + node->size - 1, node->size / SZ_1K);
-	return 0;
+finish:
+	ret = pf_finish_config_change(iov, id);
+	return err ?: ret;
 }
 
 /**
