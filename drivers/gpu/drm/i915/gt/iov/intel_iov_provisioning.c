@@ -1427,24 +1427,30 @@ static int pf_provision_dbs(struct intel_iov *iov, unsigned int id, u16 num_dbs)
 
 		err = pf_push_config_dbs(iov, id, 0, 0);
 		if (unlikely(err))
-			return err;
+			goto finish;
 	}
 
-	if (!num_dbs)
-		return 0;
+	if (!num_dbs) {
+		err = 0;
+		goto finish;
+	}
 
 	ret = pf_alloc_dbs_range(iov, num_dbs);
-	if (unlikely(ret < 0))
-		return ret;
+	if (unlikely(ret < 0)) {
+		err = ret;
+		goto finish;
+	}
 
 	err = pf_push_config_dbs(iov, id, ret, num_dbs);
 	if (unlikely(err))
-		return err;
+		goto finish;
 
 	config->begin_db = ret;
 	config->num_dbs = num_dbs;
 
-	return 0;
+finish:
+	ret = pf_finish_config_change(iov, id);
+	return err ?: ret;
 }
 
 /**
