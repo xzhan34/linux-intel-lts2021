@@ -1803,6 +1803,21 @@ static int pf_update_lmtt(struct intel_iov *iov, unsigned int id)
 	return ret;
 }
 
+static int pf_update_all_lmtt(struct drm_i915_private *i915, unsigned int vfid)
+{
+	struct intel_gt *gt;
+	unsigned int gtid;
+	int err;
+
+	for_each_gt(gt, i915, gtid) {
+		err = pf_update_lmtt(&gt->iov, vfid);
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
 static int pf_provision_lmem(struct intel_iov *iov, unsigned int id, u64 size)
 {
 	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
@@ -1870,7 +1885,7 @@ err_unpin:
 err_put:
 	i915_gem_object_put(obj);
 finish:
-	ret = pf_update_lmtt(iov, id);
+	ret = pf_update_all_lmtt(iov_to_i915(iov), id);
 	return err ?: ret;
 }
 
