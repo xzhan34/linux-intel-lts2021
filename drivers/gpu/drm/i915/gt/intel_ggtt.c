@@ -755,6 +755,7 @@ void i915_ggtt_driver_late_release(struct drm_i915_private *i915)
 
 	GEM_WARN_ON(kref_read(&ggtt->vm.resv_ref) != 1);
 	dma_resv_fini(&ggtt->vm._resv);
+	kfree(ggtt);
 }
 
 static unsigned int gen6_get_total_gtt_size(u16 snb_gmch_ctl)
@@ -1142,16 +1143,43 @@ static int ggtt_probe_hw(struct i915_ggtt *ggtt, struct intel_gt *gt)
  */
 int i915_ggtt_probe_hw(struct drm_i915_private *i915)
 {
-	int ret;
+	struct intel_gt *gt = to_gt(i915);
+	struct i915_ggtt *ggtt;
+	int ret, i;
 
-	ret = ggtt_probe_hw(to_gt(i915)->ggtt, to_gt(i915));
-	if (ret)
-		return ret;
+	for_each_gt(gt, i915, i) {
+		/*
+		 * Media GT shares primary GT's GGTT
+		 */
+		if (gt->type == GT_MEDIA) {
+			gt->ggtt = to_gt(i915)->ggtt;
+			list_add_tail(&gt->ggtt_link, &gt->ggtt->gt_list);
+			continue;
+		}
+
+		ggtt = kzalloc(sizeof(*ggtt), GFP_KERNEL);
+		if (!ggtt) {
+			ret = -ENOMEM;
+			goto err;
+		}
+
+		ret = ggtt_probe_hw(ggtt, gt);
+		if (ret)
+			goto err_free;
+
+		gt->ggtt = ggtt;
+		list_add_tail(&gt->ggtt_link, &ggtt->gt_list);
+	}
 
 	if (i915_vtd_active(i915))
 		drm_info(&i915->drm, "VT-d active for gfx access\n");
 
 	return 0;
+
+err_free:
+	kfree(ggtt);
+err:
+	return ret;
 }
 
 int i915_ggtt_enable_hw(struct drm_i915_private *i915)

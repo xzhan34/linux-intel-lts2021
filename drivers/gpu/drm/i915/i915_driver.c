@@ -633,8 +633,7 @@ static int i915_driver_hw_probe(struct drm_i915_private *dev_priv)
 {
 	struct pci_dev *pdev = to_pci_dev(dev_priv->drm.dev);
 	struct pci_dev *root_pdev;
-	struct intel_gt *gt;
-	int ret, i;
+	int ret;
 
 	if (i915_inject_probe_failure(dev_priv))
 		return -ENODEV;
@@ -672,12 +671,6 @@ static int i915_driver_hw_probe(struct drm_i915_private *dev_priv)
 		return ret;
 
 	i915_perf_init(dev_priv);
-
-	for_each_gt(gt, dev_priv, i) {
-		ret = intel_gt_assign_ggtt(gt);
-		if (ret)
-			goto err_perf;
-	}
 
 	ret = i915_ggtt_probe_hw(dev_priv);
 	if (ret)

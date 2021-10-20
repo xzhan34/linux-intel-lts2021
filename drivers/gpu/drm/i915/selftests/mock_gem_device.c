@@ -124,6 +124,7 @@ struct drm_i915_private *mock_gem_device(void)
 	static struct dev_iommu fake_iommu = { .priv = (void *)-1 };
 #endif
 	struct drm_i915_private *i915;
+	struct i915_ggtt *ggtt;
 	struct pci_dev *pdev;
 	int ret;
 
@@ -201,10 +202,11 @@ struct drm_i915_private *mock_gem_device(void)
 
 	mock_init_contexts(i915);
 
-	/* allocate the ggtt */
-	ret = intel_gt_assign_ggtt(to_gt(i915));
-	if (ret)
+	ggtt = drmm_kzalloc(&i915->drm, sizeof(*ggtt), GFP_KERNEL);
+	if (!ggtt)
 		goto err_unlock;
+	
+	to_gt(i915)->ggtt = ggtt;
 
 	mock_init_ggtt(to_gt(i915));
 	to_gt(i915)->vm = i915_vm_get(&to_gt(i915)->ggtt->vm);
