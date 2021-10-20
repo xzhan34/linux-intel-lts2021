@@ -45,6 +45,26 @@ static void pf_update_event_counter(struct intel_iov *iov, u32 vfid,
 	++iov->pf.state.data[vfid].adverse_events[e];
 }
 
+#define I915_UEVENT_THRESHOLD_EXCEEDED	"THRESHOLD_EXCEEDED"
+#define I915_UEVENT_THRESHOLD_ID	"THRESHOLD_ID"
+#define I915_UEVENT_VFID		"VF_ID"
+
+static void pf_emit_threshold_uevent(struct intel_iov *iov, u32 vfid, u32 threshold)
+{
+	struct kobject *kobj = &iov_to_i915(iov)->drm.primary->kdev->kobj;
+	char *envp[] = {
+		I915_UEVENT_THRESHOLD_EXCEEDED"=1",
+		kasprintf(GFP_KERNEL, I915_UEVENT_THRESHOLD_ID"=%#x", threshold),
+		kasprintf(GFP_KERNEL, I915_UEVENT_VFID"=%u", vfid),
+		NULL,
+	};
+
+	kobject_uevent_env(kobj, KOBJ_CHANGE, envp);
+
+	kfree(envp[1]);
+	kfree(envp[2]);
+}
+
 static int pf_handle_vf_threshold_event(struct intel_iov *iov, u32 vfid, u32 threshold)
 {
 	int e = threshold_key_to_enum(threshold);
@@ -58,6 +78,10 @@ static int pf_handle_vf_threshold_event(struct intel_iov *iov, u32 vfid, u32 thr
 	IOV_DEBUG(iov, "VF%u threshold %04x\n", vfid, threshold);
 
 	pf_update_event_counter(iov, vfid, e);
+
+	if (IS_ENABLED(CONFIG_DRM_I915_SELFTEST))
+		pf_emit_threshold_uevent(iov, vfid, threshold);
+
 
 	return 0;
 }
