@@ -219,6 +219,9 @@ struct prelim_i915_user_extension {
 /* VM_BIND feature availability */
 #define PRELIM_I915_PARAM_HAS_VM_BIND	(PRELIM_I915_PARAM | 6)
 
+/* Recoverable pagefault support */
+#define PRELIM_I915_PARAM_HAS_PAGE_FAULT	(PRELIM_I915_PARAM | 7)
+
 /* EU Debugger support */
 #define PRELIM_I915_PARAM_EU_DEBUGGER_VERSION  (PRELIM_I915_PARAM | 9)
 
