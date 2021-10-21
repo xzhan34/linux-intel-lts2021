@@ -350,6 +350,9 @@ struct i915_address_space {
 	/* Does address space maps to a valid scratch page */
 	bool has_scratch:1;
 
+	/* Is address space enabled for recoverable page faults? */
+	bool page_fault_enabled:1;
+
 	u8 top;
 	u8 pd_shift;
 	u8 scratch_order;
@@ -501,6 +504,12 @@ static inline bool
 i915_vm_has_memory_coloring(struct i915_address_space *vm)
 {
        return !i915_is_ggtt(vm) && vm->mm.color_adjust;
+}
+
+static inline bool
+i915_vm_page_fault_enabled(struct i915_address_space *vm)
+{
+	return vm->page_fault_enabled;
 }
 
 static inline struct i915_ggtt *

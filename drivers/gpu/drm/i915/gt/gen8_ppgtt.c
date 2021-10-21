@@ -1831,6 +1831,8 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt, u32 flags)
 
 	if (flags & PRELIM_I915_VM_CREATE_FLAGS_DISABLE_SCRATCH)
 		ppgtt->vm.has_scratch = false;
+	if (flags & PRELIM_I915_VM_CREATE_FLAGS_ENABLE_PAGE_FAULT)
+		ppgtt->vm.page_fault_enabled = true;
 
 	err = gen8_init_scratch(&ppgtt->vm);
 	if (err)

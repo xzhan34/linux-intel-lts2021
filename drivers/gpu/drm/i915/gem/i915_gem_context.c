@@ -1230,6 +1230,10 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 	if (args->flags & PRELIM_I915_VM_CREATE_FLAGS_UNKNOWN)
 		return -EINVAL;
 
+	if ((args->flags & PRELIM_I915_VM_CREATE_FLAGS_ENABLE_PAGE_FAULT) &&
+	    !HAS_RECOVERABLE_PAGE_FAULT(i915))
+		return -EINVAL;
+
 	if (args->extensions) {
 		vce.i915 = i915;
 		err = i915_user_extensions(u64_to_user_ptr(args->extensions),
