@@ -979,6 +979,7 @@ struct prelim_drm_i915_gem_vm_bind {
 #define PRELIM_I915_GEM_VM_BIND_IMMEDIATE	(1ull << 63)
 #define PRELIM_I915_GEM_VM_BIND_READONLY	(1ull << 62)
 #define PRELIM_I915_GEM_VM_BIND_CAPTURE		(1ull << 61)
+#define PRELIM_I915_GEM_VM_BIND_MAKE_RESIDENT	(1ull << 60)
 
 	__u64 extensions;
 };

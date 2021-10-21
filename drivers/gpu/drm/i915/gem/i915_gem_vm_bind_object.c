@@ -503,6 +503,9 @@ retry:
 	if (va->flags & PRELIM_I915_GEM_VM_BIND_IMMEDIATE) {
 		u64 pin_flags = va->start | PIN_OFFSET_FIXED | PIN_USER;
 
+		if (va->flags & PRELIM_I915_GEM_VM_BIND_MAKE_RESIDENT)
+			pin_flags |= PIN_RESIDENT;
+
 		/* Always take vm_priv lock here (just like execbuff path) even
 		 * for shared BOs, this will prevent the eviction/shrinker logic
 		 * from evicint private BOs of the VM.
