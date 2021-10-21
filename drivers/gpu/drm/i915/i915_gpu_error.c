@@ -44,6 +44,7 @@
 
 #include "gem/i915_gem_context.h"
 #include "gem/i915_gem_lmem.h"
+#include "gt/intel_engine_pm.h"
 #include "gt/intel_engine_regs.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_mcr.h"
@@ -1593,6 +1594,9 @@ gt_record_engines(struct intel_gt_coredump *gt,
 
 	for_each_engine(engine, gt->_gt, id) {
 		struct intel_engine_coredump *ee;
+
+		if (!intel_engine_pm_is_awake(engine))
+			continue;
 
 		/* Refill our page pool before entering atomic section */
 		pool_refill(&compress->pool, ALLOW_FAIL);
