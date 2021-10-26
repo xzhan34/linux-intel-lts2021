@@ -2050,7 +2050,7 @@ static int invalid_ext(struct i915_user_extension __user *ext, void *data)
 
 static const i915_user_extension_fn create_extensions[] = {
 	[I915_CONTEXT_CREATE_EXT_SETPARAM] = create_setparam,
-	[I915_CONTEXT_CREATE_EXT_CLONE] = invalid_ext,
+	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_CONTEXT_CREATE_EXT_CLONE)] = invalid_ext,
 };
 
 static bool client_is_banned(struct drm_i915_file_private *file_priv)

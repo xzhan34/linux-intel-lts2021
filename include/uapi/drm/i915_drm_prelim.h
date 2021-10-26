@@ -17,4 +17,15 @@
  * synchronized with values in i915_drm.h.
  */
 
+struct prelim_i915_user_extension {
+#define PRELIM_I915_USER_EXT		(1 << 16)
+#define PRELIM_I915_USER_EXT_MASK(x)	(x & 0xffff)
+};
+
+/* This API has been removed.  On the off chance someone somewhere has
+ * attempted to use it, never re-use this extension number.
+ */
+
+#define PRELIM_I915_CONTEXT_CREATE_EXT_CLONE	(PRELIM_I915_USER_EXT | 1)
+
 #endif /* __I915_DRM_PRELIM_H__ */
