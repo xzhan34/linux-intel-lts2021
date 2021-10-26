@@ -87,6 +87,8 @@ struct intel_iov_data {
 	unsigned long state;
 #define IOV_VF_FLR_IN_PROGRESS		0
 #define IOV_VF_NEEDS_FLR_START		1
+#define IOV_VF_FLR_DONE_RECEIVED	2
+#define IOV_VF_NEEDS_FLR_FINISH		3
 #define IOV_VF_FLR_FAILED		(BITS_PER_LONG - 1)
 };
 

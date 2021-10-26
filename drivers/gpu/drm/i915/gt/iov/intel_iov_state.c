@@ -102,6 +102,17 @@ static int pf_trigger_vf_flr_start(struct intel_iov *iov, u32 vfid)
 	return err;
 }
 
+static int pf_trigger_vf_flr_finish(struct intel_iov *iov, u32 vfid)
+{
+	int err;
+
+	err = pf_control_vf(iov, vfid, GUC_PF_TRIGGER_VF_FLR_FINISH);
+	if (unlikely(err))
+		IOV_ERROR(iov, "Failed to confirm FLR for VF%u (%pe)\n",
+			  vfid, ERR_PTR(err));
+	return err;
+}
+
 /* Return: true if more processing is needed */
 static bool pf_process_vf(struct intel_iov *iov, u32 vfid)
 {
@@ -120,6 +131,26 @@ static bool pf_process_vf(struct intel_iov *iov, u32 vfid)
 			return false;
 		}
 		return true;
+	}
+
+	if (test_and_clear_bit(IOV_VF_FLR_DONE_RECEIVED, state)) {
+		set_bit(IOV_VF_NEEDS_FLR_FINISH, state);
+		return true;
+	}
+
+	if (test_and_clear_bit(IOV_VF_NEEDS_FLR_FINISH, state)) {
+		err = pf_trigger_vf_flr_finish(iov, vfid);
+		if (err == -EBUSY) {
+			set_bit(IOV_VF_NEEDS_FLR_FINISH, state);
+			return true;
+		}
+		if (err) {
+			set_bit(IOV_VF_FLR_FAILED, state);
+			clear_bit(IOV_VF_FLR_IN_PROGRESS, state);
+			return false;
+		}
+		clear_bit(IOV_VF_FLR_IN_PROGRESS, state);
+		return false;
 	}
 
 	return false;
@@ -202,11 +233,22 @@ static void pf_handle_vf_flr(struct intel_iov *iov, u32 vfid)
 	pf_init_vf_flr(iov, vfid);
 }
 
+static void pf_handle_vf_flr_done(struct intel_iov *iov, u32 vfid)
+{
+	unsigned long *state = &iov->pf.state.data[vfid].state;
+
+	set_bit(IOV_VF_FLR_DONE_RECEIVED, state);
+	pf_queue_worker(iov);
+}
+
 static int pf_handle_vf_event(struct intel_iov *iov, u32 vfid, u32 eventid)
 {
 	switch (eventid) {
 	case GUC_PF_NOTIFY_VF_FLR:
 		pf_handle_vf_flr(iov, vfid);
+		break;
+	case GUC_PF_NOTIFY_VF_FLR_DONE:
+		pf_handle_vf_flr_done(iov, vfid);
 		break;
 	default:
 		return -ENOPKG;
