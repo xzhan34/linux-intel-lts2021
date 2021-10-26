@@ -67,6 +67,9 @@ static int pf_handle_vf_event(struct intel_iov *iov, u32 vfid, u32 eventid)
 static int pf_handle_pf_event(struct intel_iov *iov, u32 eventid)
 {
 	switch (eventid) {
+	case GUC_PF_NOTIFY_VF_ENABLE:
+		IOV_DEBUG(iov, "VFs %s/%s\n", str_enabled_disabled(true), str_enabled_disabled(false));
+		break;
 	default:
 		return -ENOPKG;
 	}
