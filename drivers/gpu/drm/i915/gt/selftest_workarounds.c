@@ -19,13 +19,6 @@
 #include "gem/selftests/igt_gem_utils.h"
 #include "gem/selftests/mock_context.h"
 
-static const struct wo_register {
-	enum intel_platform platform;
-	u32 reg;
-} wo_registers[] = {
-	{ INTEL_GEMINILAKE, 0x731c }
-};
-
 struct wa_lists {
 	struct i915_wa_list gt_wa_list;
 	struct {
@@ -417,22 +410,16 @@ static u32 reg_write(u32 old, u32 new, u32 rsvd)
 	return old;
 }
 
-static bool wo_register(struct intel_engine_cs *engine, u32 reg)
+static bool wo_register(u32 reg)
 {
-	enum intel_platform platform = INTEL_INFO(engine->i915)->platform;
-	int i;
+	return (reg & RING_FORCE_TO_NONPRIV_ACCESS_MASK) ==
+		RING_FORCE_TO_NONPRIV_ACCESS_WR;
+}
 
-	if ((reg & RING_FORCE_TO_NONPRIV_ACCESS_MASK) ==
-	     RING_FORCE_TO_NONPRIV_ACCESS_WR)
-		return true;
-
-	for (i = 0; i < ARRAY_SIZE(wo_registers); i++) {
-		if (wo_registers[i].platform == platform &&
-		    wo_registers[i].reg == reg)
-			return true;
-	}
-
-	return false;
+static bool ro_register(u32 reg)
+{
+	return (reg & RING_FORCE_TO_NONPRIV_ACCESS_MASK) ==
+		RING_FORCE_TO_NONPRIV_ACCESS_RD;
 }
 
 static bool timestamp(const struct intel_engine_cs *engine, u32 reg)
@@ -447,15 +434,6 @@ static bool timestamp(const struct intel_engine_cs *engine, u32 reg)
 	default:
 		return false;
 	}
-}
-
-static bool ro_register(u32 reg)
-{
-	if ((reg & RING_FORCE_TO_NONPRIV_ACCESS_MASK) ==
-	     RING_FORCE_TO_NONPRIV_ACCESS_RD)
-		return true;
-
-	return false;
 }
 
 static int whitelist_writable_count(struct intel_engine_cs *engine)
@@ -528,7 +506,7 @@ static int check_dirty_whitelist(struct intel_context *ce)
 		int idx;
 		bool ro_reg;
 
-		if (wo_register(engine, reg))
+		if (wo_register(reg))
 			continue;
 
 		if (timestamp(engine, reg))
@@ -965,6 +943,7 @@ err_batch:
 struct regmask {
 	i915_reg_t reg;
 	u8 graphics_ver;
+	u32 platforms;
 };
 
 static bool find_reg(struct drm_i915_private *i915,
@@ -972,10 +951,12 @@ static bool find_reg(struct drm_i915_private *i915,
 		     const struct regmask *tbl,
 		     unsigned long count)
 {
+	enum intel_platform platform = BIT(INTEL_INFO(i915)->platform);
 	u32 offset = i915_mmio_reg_offset(reg);
 
 	while (count--) {
 		if (GRAPHICS_VER(i915) == tbl->graphics_ver &&
+		    (!tbl->platforms || tbl->platforms & platform) &&
 		    i915_mmio_reg_offset(tbl->reg) == offset)
 			return true;
 		tbl++;
@@ -1012,6 +993,7 @@ static bool writeonly_reg(struct drm_i915_private *i915, i915_reg_t reg)
 	/* Some registers do not seem to behave and our writes unreadable */
 	static const struct regmask wo[] = {
 		{ GEN9_SLICE_COMMON_ECO_CHICKEN1, 9 },
+		{ _MMIO(0x731c), .platforms = BIT(INTEL_GEMINILAKE) },
 	};
 
 	return find_reg(i915, reg, wo, ARRAY_SIZE(wo));
