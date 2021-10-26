@@ -8,6 +8,7 @@
 #include "intel_iov_state.h"
 #include "intel_iov_utils.h"
 #include "gem/i915_gem_lmem.h"
+#include "gt/intel_gt.h"
 #include "gt/uc/abi/guc_actions_pf_abi.h"
 
 static void pf_state_worker_func(struct work_struct *w);
@@ -313,10 +314,19 @@ static void pf_init_vf_flr(struct intel_iov *iov, u32 vfid)
 static void pf_handle_vf_flr(struct intel_iov *iov, u32 vfid)
 {
 	struct device *dev = iov_to_dev(iov);
+	struct intel_gt *gt;
+	unsigned int gtid;
+
+	if (!iov_is_root(iov)) {
+		IOV_ERROR(iov, "Unexpected VF%u FLR notification\n", vfid);
+		return;
+	}
 
 	iov->pf.state.data[vfid].paused = false;
 	dev_info(dev, "VF%u FLR\n", vfid);
-	pf_init_vf_flr(iov, vfid);
+
+	for_each_gt(gt, iov_to_i915(iov), gtid)
+		pf_init_vf_flr(&gt->iov, vfid);
 }
 
 static void pf_handle_vf_flr_done(struct intel_iov *iov, u32 vfid)
