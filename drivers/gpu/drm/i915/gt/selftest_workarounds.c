@@ -27,6 +27,37 @@ struct wa_lists {
 	} engine[I915_NUM_ENGINES];
 };
 
+static u32 reg_offset(i915_reg_t reg)
+{
+	return i915_mmio_reg_offset(reg) & RING_FORCE_TO_NONPRIV_ADDRESS_MASK;
+}
+
+static u32 reg_access(i915_reg_t reg)
+{
+	return i915_mmio_reg_offset(reg) & RING_FORCE_TO_NONPRIV_ACCESS_MASK;
+}
+
+static bool wo_register(i915_reg_t reg)
+{
+	return reg_access(reg) == RING_FORCE_TO_NONPRIV_ACCESS_WR;
+}
+
+static bool ro_register(i915_reg_t reg)
+{
+	return reg_access(reg) == RING_FORCE_TO_NONPRIV_ACCESS_RD;
+}
+
+static const char *repr_access(i915_reg_t reg)
+{
+	if (ro_register(reg))
+		return "ro";
+
+	if (wo_register(reg))
+		return "wo";
+
+	return "allow";
+}
+
 static int request_add_sync(struct i915_request *rq, int err)
 {
 	i915_request_get(rq);
@@ -410,22 +441,9 @@ static u32 reg_write(u32 old, u32 new, u32 rsvd)
 	return old;
 }
 
-static bool wo_register(u32 reg)
+static bool timestamp(const struct intel_engine_cs *engine, i915_reg_t reg)
 {
-	return (reg & RING_FORCE_TO_NONPRIV_ACCESS_MASK) ==
-		RING_FORCE_TO_NONPRIV_ACCESS_WR;
-}
-
-static bool ro_register(u32 reg)
-{
-	return (reg & RING_FORCE_TO_NONPRIV_ACCESS_MASK) ==
-		RING_FORCE_TO_NONPRIV_ACCESS_RD;
-}
-
-static bool timestamp(const struct intel_engine_cs *engine, u32 reg)
-{
-	reg = (reg - engine->mmio_base) & ~RING_FORCE_TO_NONPRIV_ACCESS_MASK;
-	switch (reg) {
+	switch (reg_offset(reg) - engine->mmio_base) {
 	case 0x358:
 	case 0x35c:
 	case 0x3a8:
@@ -434,21 +452,6 @@ static bool timestamp(const struct intel_engine_cs *engine, u32 reg)
 	default:
 		return false;
 	}
-}
-
-static int whitelist_writable_count(struct intel_engine_cs *engine)
-{
-	int count = engine->whitelist.count;
-	int i;
-
-	for (i = 0; i < engine->whitelist.count; i++) {
-		u32 reg = i915_mmio_reg_offset(engine->whitelist.list[i].reg);
-
-		if (ro_register(reg))
-			count--;
-	}
-
-	return count;
 }
 
 static int check_dirty_whitelist(struct intel_context *ce)
@@ -497,22 +500,16 @@ static int check_dirty_whitelist(struct intel_context *ce)
 	}
 
 	for (i = 0; i < engine->whitelist.count; i++) {
-		u32 reg = i915_mmio_reg_offset(engine->whitelist.list[i].reg);
+		bool ro_reg = ro_register(engine->whitelist.list[i].reg);
+		bool varying_reg =
+			timestamp(engine, engine->whitelist.list[i].reg);
+		u32 reg = reg_offset(engine->whitelist.list[i].reg);
 		struct i915_gem_ww_ctx ww;
 		u64 addr = scratch->node.start;
 		struct i915_request *rq;
 		u32 srm, lrm, rsvd;
 		u32 expect;
 		int idx;
-		bool ro_reg;
-
-		if (wo_register(reg))
-			continue;
-
-		if (timestamp(engine, reg))
-			continue; /* timestamps are expected to autoincrement */
-
-		ro_reg = ro_register(reg);
 
 		i915_gem_ww_ctx_init(&ww, false);
 retry:
@@ -537,16 +534,13 @@ retry:
 			goto out_unmap_batch;
 		}
 
-		/* Clear non priv flags */
-		reg &= RING_FORCE_TO_NONPRIV_ADDRESS_MASK;
-
 		srm = MI_STORE_REGISTER_MEM;
 		lrm = MI_LOAD_REGISTER_MEM;
 		if (GRAPHICS_VER(engine->i915) >= 8)
 			lrm++, srm++;
 
-		pr_debug("%s: Writing garbage to %x\n",
-			 engine->name, reg);
+		pr_debug("%s: Writing garbage to %x[%s\n",
+			 engine->name, reg, repr_access(engine->whitelist.list[i].reg));
 
 		/* SRM original */
 		*cs++ = srm;
@@ -672,16 +666,15 @@ err_request:
 				err++;
 			idx++;
 		}
+		if (varying_reg)
+			err = 0;
 		if (err) {
-			pr_err("%s: %d mismatch between values written to whitelisted register [%x], and values read back!\n",
-			       engine->name, err, reg);
+			pr_err("%s: %d mismatch between values written to whitelisted register [%x:%s], and values read back!\n",
+			       engine->name, err,
+			       reg, repr_access(engine->whitelist.list[i].reg));
 
-			if (ro_reg)
-				pr_info("%s: Whitelisted read-only register: %x, original value %08x\n",
-					engine->name, reg, results[0]);
-			else
-				pr_info("%s: Whitelisted register: %x, original value %08x, rsvd %08x\n",
-					engine->name, reg, results[0], rsvd);
+			pr_info("%s: Whitelisted register: %x, original value %08x, rsvd %08x\n",
+				engine->name, reg, results[0], rsvd);
 
 			expect = results[0];
 			idx = 1;
@@ -855,13 +848,9 @@ static int read_whitelisted_registers(struct intel_context *ce,
 
 	for (i = 0; i < engine->whitelist.count; i++) {
 		u64 offset = results->node.start + sizeof(u32) * i;
-		u32 reg = i915_mmio_reg_offset(engine->whitelist.list[i].reg);
-
-		/* Clear non priv flags */
-		reg &= RING_FORCE_TO_NONPRIV_ADDRESS_MASK;
 
 		*cs++ = srm;
-		*cs++ = reg;
+		*cs++ = reg_offset(engine->whitelist.list[i].reg);
 		*cs++ = lower_32_bits(offset);
 		*cs++ = upper_32_bits(offset);
 	}
@@ -889,17 +878,9 @@ static int scrub_whitelisted_registers(struct intel_context *ce)
 		goto err_batch;
 	}
 
-	*cs++ = MI_LOAD_REGISTER_IMM(whitelist_writable_count(engine));
+	*cs++ = MI_LOAD_REGISTER_IMM(engine->whitelist.count);
 	for (i = 0; i < engine->whitelist.count; i++) {
-		u32 reg = i915_mmio_reg_offset(engine->whitelist.list[i].reg);
-
-		if (ro_register(reg))
-			continue;
-
-		/* Clear non priv flags */
-		reg &= RING_FORCE_TO_NONPRIV_ADDRESS_MASK;
-
-		*cs++ = reg;
+		*cs++ = reg_offset(engine->whitelist.list[i].reg);
 		*cs++ = 0xffffffff;
 	}
 	*cs++ = MI_BATCH_BUFFER_END;
@@ -979,16 +960,25 @@ static bool pardon_reg(struct drm_i915_private *i915, i915_reg_t reg)
 static bool result_eq(struct intel_engine_cs *engine,
 		      u32 a, u32 b, i915_reg_t reg)
 {
-	if (a != b && !pardon_reg(engine->i915, reg)) {
-		pr_err("Whitelisted register 0x%4x not context saved: A=%08x, B=%08x\n",
-		       i915_mmio_reg_offset(reg), a, b);
+	if (wo_register(reg)) /* read undefined */
+		return true;
+
+	if (ro_register(reg) || timestamp(engine, reg)) /* expect varying */
+		return true;
+
+	if (pardon_reg(engine->i915, reg)) /* mistakes were made */
+		return true;
+
+	if (a != b) {
+		pr_err("%s: Whitelisted register 0x%4x[%s] not context saved: A=%08x, B=%08x\n",
+		       engine->name, reg_offset(reg), repr_access(reg), a, b);
 		return false;
 	}
 
 	return true;
 }
 
-static bool writeonly_reg(struct drm_i915_private *i915, i915_reg_t reg)
+static bool ignore_reg(struct drm_i915_private *i915, i915_reg_t reg)
 {
 	/* Some registers do not seem to behave and our writes unreadable */
 	static const struct regmask wo[] = {
@@ -1002,9 +992,18 @@ static bool writeonly_reg(struct drm_i915_private *i915, i915_reg_t reg)
 static bool result_neq(struct intel_engine_cs *engine,
 		       u32 a, u32 b, i915_reg_t reg)
 {
-	if (a == b && !writeonly_reg(engine->i915, reg)) {
-		pr_err("Whitelist register 0x%4x:%08x was unwritable\n",
-		       i915_mmio_reg_offset(reg), a);
+	if (wo_register(reg)) /* read undefined */
+		return true;
+
+	if (ro_register(reg) || timestamp(engine, reg)) /* expect varying */
+		return true;
+
+	if (ignore_reg(engine->i915, reg)) /* fail for unknown reasons */
+		return true;
+
+	if (a == b) {
+		pr_err("%s: Whitelist register 0x%4x[%s]:%08x was unwritable!\n",
+		       engine->name, reg_offset(reg), repr_access(reg), a);
 		return false;
 	}
 
@@ -1035,10 +1034,6 @@ check_whitelisted_registers(struct intel_engine_cs *engine,
 	err = 0;
 	for (i = 0; i < engine->whitelist.count; i++) {
 		const struct i915_wa *wa = &engine->whitelist.list[i];
-
-		if (i915_mmio_reg_offset(wa->reg) &
-		    RING_FORCE_TO_NONPRIV_ACCESS_RD)
-			continue;
 
 		if (!fn(engine, a[i], b[i], wa->reg))
 			err = -EINVAL;
@@ -1088,10 +1083,10 @@ static int live_isolated_whitelist(void *arg)
 	for_each_engine(engine, gt, id) {
 		struct intel_context *ce[2];
 
-		if (!engine->kernel_context->vm)
+		if (!engine->whitelist.count)
 			continue;
 
-		if (!whitelist_writable_count(engine))
+		if (!engine->kernel_context->vm)
 			continue;
 
 		ce[0] = intel_context_create(engine);
