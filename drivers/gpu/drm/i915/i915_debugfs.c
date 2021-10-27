@@ -757,6 +757,7 @@ static int
 i915_drop_caches_set(void *data, u64 val)
 {
 	struct drm_i915_private *i915 = data;
+	intel_wakeref_t wakeref;
 	int ret;
 
 	DRM_DEBUG("Dropping caches: 0x%08llx [0x%08llx]\n",
@@ -766,16 +767,20 @@ i915_drop_caches_set(void *data, u64 val)
 	if (ret)
 		return ret;
 
-	fs_reclaim_acquire(GFP_KERNEL);
-	if (val & DROP_BOUND)
-		i915_gem_shrink(NULL, i915, LONG_MAX, NULL, I915_SHRINK_BOUND);
+	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
+		fs_reclaim_acquire(GFP_KERNEL);
 
-	if (val & DROP_UNBOUND)
-		i915_gem_shrink(NULL, i915, LONG_MAX, NULL, I915_SHRINK_UNBOUND);
+		if (val & DROP_BOUND)
+			i915_gem_shrink(NULL, i915, LONG_MAX, NULL, I915_SHRINK_BOUND);
 
-	if (val & DROP_SHRINK_ALL)
-		i915_gem_shrink_all(i915);
-	fs_reclaim_release(GFP_KERNEL);
+		if (val & DROP_UNBOUND)
+			i915_gem_shrink(NULL, i915, LONG_MAX, NULL, I915_SHRINK_UNBOUND);
+
+		if (val & DROP_SHRINK_ALL)
+			i915_gem_shrink_all(i915);
+
+		fs_reclaim_release(GFP_KERNEL);
+	}
 
 	if (val & DROP_RCU)
 		rcu_barrier();
