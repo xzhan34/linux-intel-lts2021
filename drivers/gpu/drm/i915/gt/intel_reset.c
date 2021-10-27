@@ -1366,12 +1366,17 @@ void intel_gt_handle_error(struct intel_gt *gt,
 		intel_gt_clear_error_registers(gt, engine_mask);
 	}
 
+	if (intel_gt_is_wedged(gt) || engine_mask == gt->info.engine_mask) {
+		engine_mask = ALL_ENGINES; /* use the reset-all domain */
+		goto full_reset;
+	}
+
 	/*
 	 * Try engine reset when available. We fall back to full reset if
 	 * single reset fails.
 	 */
 	if (!intel_uc_uses_guc_submission(&gt->uc) &&
-	    intel_has_reset_engine(gt) && !intel_gt_is_wedged(gt)) {
+	    intel_has_reset_engine(gt)) {
 		local_bh_disable();
 		for_each_engine_masked(engine, gt, engine_mask, tmp) {
 			BUILD_BUG_ON(I915_RESET_MODESET >= I915_RESET_ENGINE);
@@ -1390,6 +1395,8 @@ void intel_gt_handle_error(struct intel_gt *gt,
 
 	if (!engine_mask)
 		goto out;
+
+full_reset:
 
 	/* Full reset needs the mutex, stop any other user trying to do so. */
 	if (test_and_set_bit(I915_RESET_BACKOFF, &gt->reset.flags)) {
