@@ -148,7 +148,16 @@ static const char *i915_cache_level_str(struct drm_i915_gem_object *obj)
 {
 	struct drm_i915_private *i915 = obj_to_i915(obj);
 
-	if (IS_PONTEVECCHIO(i915)) {
+	if (IS_METEORLAKE(i915)) {
+		switch (obj->pat_index) {
+		case 0: return " WB";
+		case 1: return " WT";
+		case 2: return " UC";
+		case 3: return " WB (1-Way Coh)";
+		case 4: return " WB (2-Way Coh)";
+		default: return " not defined";
+		}
+	} else if (IS_PONTEVECCHIO(i915)) {
 		switch (obj->pat_index) {
 		case 0: return " UC";
 		case 1: return " WC";
