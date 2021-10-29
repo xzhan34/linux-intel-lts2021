@@ -156,7 +156,7 @@ int intel_huc_auth(struct intel_huc *huc)
 
 	ret = intel_guc_auth_huc(guc, intel_guc_ggtt_offset(guc, huc->fw.rsa_data));
 	if (ret) {
-		DRM_ERROR("HuC: GuC did not ack Auth request %d\n", ret);
+		i915_probe_error(gt->i915, "HuC: GuC did not ack Auth request %d\n", ret);
 		goto fail;
 	}
 
@@ -167,7 +167,7 @@ int intel_huc_auth(struct intel_huc *huc)
 					huc->status.value,
 					2, 50, NULL);
 	if (ret) {
-		DRM_ERROR("HuC: Firmware not verified %d\n", ret);
+		i915_probe_error(gt->i915, "HuC: Firmware not verified %d\n", ret);
 		goto fail;
 	}
 
