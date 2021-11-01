@@ -798,8 +798,8 @@ int intel_gt_init(struct intel_gt *gt)
 
 	err = intel_gt_init_hwconfig(gt);
 	if (err)
-		drm_err(&gt->i915->drm, "Failed to retrieve hwconfig table: %pe\n",
-			ERR_PTR(err));
+		i915_probe_error(gt->i915, "Failed to retrieve hwconfig table: %pe\n",
+				 ERR_PTR(err));
 
 	err = __engines_record_defaults(gt);
 	if (err)
