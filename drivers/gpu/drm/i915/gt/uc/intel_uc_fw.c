@@ -118,6 +118,9 @@ void intel_uc_fw_change_status(struct intel_uc_fw *uc_fw,
 	fw_def(BROXTON,      0, huc_mmp(bxt,  2, 0, 0)) \
 	fw_def(SKYLAKE,      0, huc_mmp(skl,  2, 0, 0))
 
+#define INTEL_GSC_FIRMWARE_DEFS(fw_def, gsc_def) \
+	fw_def(METEORLAKE,   0, gsc_def(mtl, 102, 0, 0, 7366))
+
 /*
  * Set of macros for producing a list of filenames from the above table.
  */
@@ -144,6 +147,14 @@ void intel_uc_fw_change_status(struct intel_uc_fw *uc_fw,
 	__stringify(minor_) "." \
 	__stringify(patch_) "_" suffix_ ".bin"
 
+#define __MAKE_UC_FW_PATH_MMPB(prefix_, name_, major_, minor_, patch_, build_) \
+	"i915/" \
+	__stringify(prefix_) "_" name_ "_" \
+	__stringify(major_) "." \
+	__stringify(minor_) "." \
+	__stringify(patch_) "." \
+	__stringify(build_) ".bin"
+
 /* Minor for internal driver use, not part of file name */
 #define MAKE_GUC_FW_PATH_MAJOR(prefix_, major_, minor_) \
 	__MAKE_UC_FW_PATH_MAJOR(prefix_, "guc", major_)
@@ -160,6 +171,9 @@ void intel_uc_fw_change_status(struct intel_uc_fw *uc_fw,
 #define MAKE_HUC_FW_PATH_MMP(prefix_, major_, minor_, patch_) \
 	__MAKE_UC_FW_PATH_MMP(prefix_, "huc", major_, minor_, patch_)
 
+#define MAKE_GSC_FW_PATH(prefix_, major_, minor_, patch, build_) \
+	__MAKE_UC_FW_PATH_MMPB(prefix_, "gsc", major_, minor_, patch, build_)
+
 /*
  * All blobs need to be declared via MODULE_FIRMWARE().
  * This first expansion of the table macros is solely to provide
@@ -170,6 +184,7 @@ void intel_uc_fw_change_status(struct intel_uc_fw *uc_fw,
 
 INTEL_GUC_FIRMWARE_DEFS(INTEL_UC_MODULE_FW, MAKE_GUC_FW_PATH_MAJOR, MAKE_GUC_FW_PATH_MMP)
 INTEL_HUC_FIRMWARE_DEFS(INTEL_UC_MODULE_FW, MAKE_HUC_FW_PATH_BLANK, MAKE_HUC_FW_PATH_MMP, MAKE_HUC_FW_PATH_GSC)
+INTEL_GSC_FIRMWARE_DEFS(INTEL_UC_MODULE_FW, MAKE_GSC_FW_PATH)
 
 /*
  * The next expansion of the table macros (in __uc_fw_auto_select below) provides
@@ -220,6 +235,10 @@ struct __packed uc_fw_blob {
 	UC_FW_BLOB_NEW(major_, minor_, patch_, true, \
 		       MAKE_HUC_FW_PATH_GSC(prefix_, major_, minor_, patch_))
 
+#define GSC_FW_BLOB(prefix_, major_, minor_, patch_, build_) \
+	UC_FW_BLOB_OLD(major_, minor_, patch_, \
+		       MAKE_GSC_FW_PATH(prefix_, major_, minor_, patch_, build_))
+
 struct __packed uc_fw_platform_requirement {
 	enum intel_platform p;
 	u8 rev; /* first platform rev using this FW */
@@ -247,9 +266,13 @@ __uc_fw_auto_select(struct drm_i915_private *i915, struct intel_uc_fw *uc_fw)
 	static const struct uc_fw_platform_requirement blobs_huc[] = {
 		INTEL_HUC_FIRMWARE_DEFS(MAKE_FW_LIST, HUC_FW_BLOB, HUC_FW_BLOB_MMP, HUC_FW_BLOB_GSC)
 	};
+	static const struct uc_fw_platform_requirement blobs_gsc[] = {
+		INTEL_GSC_FIRMWARE_DEFS(MAKE_FW_LIST, GSC_FW_BLOB)
+	};
 	static const struct fw_blobs_by_type blobs_all[INTEL_UC_FW_NUM_TYPES] = {
 		[INTEL_UC_FW_TYPE_GUC] = { blobs_guc, ARRAY_SIZE(blobs_guc) },
 		[INTEL_UC_FW_TYPE_HUC] = { blobs_huc, ARRAY_SIZE(blobs_huc) },
+		[INTEL_UC_FW_TYPE_GSC] = { blobs_gsc, ARRAY_SIZE(blobs_gsc) },
 	};
 	static bool verified[INTEL_UC_FW_NUM_TYPES];
 	const struct uc_fw_platform_requirement *fw_blobs;
@@ -258,10 +281,6 @@ __uc_fw_auto_select(struct drm_i915_private *i915, struct intel_uc_fw *uc_fw)
 	u8 rev = INTEL_REVID(i915);
 	int i;
 	bool found;
-
-	/* FW is not defined until all the support is in place */
-	if (uc_fw->type == INTEL_UC_FW_TYPE_GSC)
-		return;
 
 	/*
 	 * The only difference between the ADL GuC FWs is the HWConfig support.
@@ -392,6 +411,14 @@ static const char *__override_huc_firmware_path(struct drm_i915_private *i915)
 	return "";
 }
 
+static const char *__override_gsc_firmware_path(struct drm_i915_private *i915)
+{
+	/* GSC only user is HuC loading for now, so we use the same param */
+	if (i915->params.enable_guc & ENABLE_GUC_LOAD_HUC)
+		return i915->params.gsc_firmware_path;
+	return "";
+}
+
 static void __uc_fw_user_override(struct drm_i915_private *i915, struct intel_uc_fw *uc_fw)
 {
 	const char *path = NULL;
@@ -404,7 +431,7 @@ static void __uc_fw_user_override(struct drm_i915_private *i915, struct intel_uc
 		path = __override_huc_firmware_path(i915);
 		break;
 	case INTEL_UC_FW_TYPE_GSC:
-		/* GSC fw override modparam will be added with fw defs */;
+		path = __override_gsc_firmware_path(i915);
 		break;
 	}
 
