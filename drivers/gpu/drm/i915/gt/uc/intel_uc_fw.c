@@ -19,11 +19,18 @@
 static inline struct intel_gt *
 ____uc_fw_to_gt(struct intel_uc_fw *uc_fw, enum intel_uc_fw_type type)
 {
-	if (type == INTEL_UC_FW_TYPE_GUC)
-		return container_of(uc_fw, struct intel_gt, uc.guc.fw);
+	GEM_BUG_ON(type >= INTEL_UC_FW_NUM_TYPES);
 
-	GEM_BUG_ON(type != INTEL_UC_FW_TYPE_HUC);
-	return container_of(uc_fw, struct intel_gt, uc.huc.fw);
+	switch (type) {
+	case INTEL_UC_FW_TYPE_GUC:
+		return container_of(uc_fw, struct intel_gt, uc.guc.fw);
+	case INTEL_UC_FW_TYPE_HUC:
+		return container_of(uc_fw, struct intel_gt, uc.huc.fw);
+	case INTEL_UC_FW_TYPE_GSC:
+		return container_of(uc_fw, struct intel_gt, uc.gsc.fw);
+	}
+
+	return NULL;
 }
 
 static inline struct intel_gt *__uc_fw_to_gt(struct intel_uc_fw *uc_fw)
@@ -252,6 +259,10 @@ __uc_fw_auto_select(struct drm_i915_private *i915, struct intel_uc_fw *uc_fw)
 	int i;
 	bool found;
 
+	/* FW is not defined until all the support is in place */
+	if (uc_fw->type == INTEL_UC_FW_TYPE_GSC)
+		return;
+
 	/*
 	 * The only difference between the ADL GuC FWs is the HWConfig support.
 	 * ADL-N does not support HWConfig, so we should use the same binary as
@@ -391,6 +402,9 @@ static void __uc_fw_user_override(struct drm_i915_private *i915, struct intel_uc
 		break;
 	case INTEL_UC_FW_TYPE_HUC:
 		path = __override_huc_firmware_path(i915);
+		break;
+	case INTEL_UC_FW_TYPE_GSC:
+		/* GSC fw override modparam will be added with fw defs */;
 		break;
 	}
 
