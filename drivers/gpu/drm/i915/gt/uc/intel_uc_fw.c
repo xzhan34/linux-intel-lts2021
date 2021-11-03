@@ -771,71 +771,6 @@ fail:
 	return err;
 }
 
-/*
- * The reserved GGTT space is ~18 MBs. All our blobs are well below 1MB, so for
- * safety we reserve 2MB each.
- */
-#define INTEL_UC_RSVD_GGTT_PER_FW SZ_2M
-static u32 uc_fw_ggtt_offset(struct intel_uc_fw *uc_fw)
-{
-	struct intel_gt *gt = __uc_fw_to_gt(uc_fw);
-	struct i915_ggtt *ggtt = gt->ggtt;
-	struct drm_mm_node *node = &ggtt->uc_fw;
-	u32 offset = uc_fw->type * INTEL_UC_RSVD_GGTT_PER_FW;
-
-	/*
-	 * To keep the math simple, we use 8MB for the root tile and 8MB for
-	 * the media one.
-	 */
-	BUILD_BUG_ON(INTEL_UC_FW_NUM_TYPES * INTEL_UC_RSVD_GGTT_PER_FW > SZ_8M);
-	if (gt->type == GT_MEDIA)
-		offset += SZ_8M;
-
-	GEM_BUG_ON(!drm_mm_node_allocated(node));
-	GEM_BUG_ON(upper_32_bits(node->start));
-	GEM_BUG_ON(upper_32_bits(node->start + node->size - 1));
-	GEM_BUG_ON(offset + uc_fw->obj->base.size > node->size);
-	GEM_BUG_ON(uc_fw->obj->base.size > INTEL_UC_RSVD_GGTT_PER_FW);
-
-	return lower_32_bits(node->start + offset);
-}
-
-static void uc_fw_bind_ggtt(struct intel_uc_fw *uc_fw)
-{
-	struct drm_i915_gem_object *obj = uc_fw->obj;
-	struct i915_ggtt *ggtt = __uc_fw_to_gt(uc_fw)->ggtt;
-	struct i915_vma *dummy = &uc_fw->dummy;
-	u32 pte_flags = 0;
-
-	dummy->node.start = uc_fw_ggtt_offset(uc_fw);
-	dummy->node.size = obj->base.size;
-	dummy->pages = obj->mm.pages;
-	dummy->vm = &ggtt->vm;
-
-	GEM_BUG_ON(!i915_gem_object_has_pinned_pages(obj));
-
-	/* uc_fw->obj cache domains were not controlled across suspend */
-	if (i915_gem_object_has_struct_page(obj))
-		drm_clflush_sg(dummy->pages);
-
-	if (i915_gem_object_is_lmem(obj))
-		pte_flags |= PTE_LM;
-
-	ggtt->vm.insert_entries(&ggtt->vm, NULL, dummy,
-				i915_gem_get_pat_index(ggtt->vm.i915,
-						       I915_CACHE_NONE),
-				pte_flags);
-}
-
-static void uc_fw_unbind_ggtt(struct intel_uc_fw *uc_fw)
-{
-	struct drm_i915_gem_object *obj = uc_fw->obj;
-	struct i915_ggtt *ggtt = __uc_fw_to_gt(uc_fw)->ggtt;
-	u64 start = uc_fw_ggtt_offset(uc_fw);
-
-	ggtt->vm.clear_range(&ggtt->vm, start, obj->base.size);
-}
-
 static int uc_fw_xfer(struct intel_uc_fw *uc_fw, u32 dst_offset, u32 dma_flags)
 {
 	struct intel_gt *gt = __uc_fw_to_gt(uc_fw);
@@ -850,7 +785,7 @@ static int uc_fw_xfer(struct intel_uc_fw *uc_fw, u32 dst_offset, u32 dma_flags)
 	intel_uncore_forcewake_get(uncore, FORCEWAKE_ALL);
 
 	/* Set the source address for the uCode */
-	offset = uc_fw_ggtt_offset(uc_fw);
+	offset = uc_fw->dummy.node.start;
 	GEM_BUG_ON(upper_32_bits(offset) & 0xFFFF0000);
 	intel_uncore_write_fw(uncore, DMA_ADDR_0_LOW, lower_32_bits(offset));
 	intel_uncore_write_fw(uncore, DMA_ADDR_0_HIGH, upper_32_bits(offset));
@@ -911,9 +846,7 @@ int intel_uc_fw_upload(struct intel_uc_fw *uc_fw, u32 dst_offset, u32 dma_flags)
 		return -ENOEXEC;
 
 	/* Call custom loader */
-	uc_fw_bind_ggtt(uc_fw);
 	err = uc_fw_xfer(uc_fw, dst_offset, dma_flags);
-	uc_fw_unbind_ggtt(uc_fw);
 	if (err)
 		goto fail;
 
@@ -1006,6 +939,72 @@ static void uc_fw_rsa_data_destroy(struct intel_uc_fw *uc_fw)
 	i915_vma_unpin_and_release(&uc_fw->rsa_data, 0);
 }
 
+/*
+ * The reserved GGTT space is ~18 MBs. All our blobs are well below 1MB, so for
+ * safety we reserve 2MB each.
+ */
+#define INTEL_UC_RSVD_GGTT_PER_FW SZ_2M
+static u32 uc_fw_ggtt_offset(struct intel_uc_fw *uc_fw)
+{
+	struct intel_gt *gt = __uc_fw_to_gt(uc_fw);
+	struct i915_ggtt *ggtt = gt->ggtt;
+	struct drm_mm_node *node = &ggtt->uc_fw;
+	u32 offset = uc_fw->type * INTEL_UC_RSVD_GGTT_PER_FW;
+
+	/*
+	 * To keep the math simple, we use 8MB for the root tile and 8MB for
+	 * the media one.
+	 */
+	BUILD_BUG_ON(INTEL_UC_FW_NUM_TYPES * INTEL_UC_RSVD_GGTT_PER_FW > SZ_8M);
+	if (gt->type == GT_MEDIA)
+		offset += SZ_8M;
+
+	GEM_BUG_ON(!drm_mm_node_allocated(node));
+	GEM_BUG_ON(upper_32_bits(node->start));
+	GEM_BUG_ON(upper_32_bits(node->start + node->size - 1));
+	GEM_BUG_ON(offset + uc_fw->obj->base.size > node->size);
+	GEM_BUG_ON(uc_fw->obj->base.size > INTEL_UC_RSVD_GGTT_PER_FW);
+
+	return lower_32_bits(node->start + offset);
+}
+
+static void uc_fw_bind_ggtt(struct intel_uc_fw *uc_fw)
+{
+	struct drm_i915_gem_object *obj = uc_fw->obj;
+	struct i915_ggtt *ggtt = __uc_fw_to_gt(uc_fw)->ggtt;
+	struct i915_vma *dummy = &uc_fw->dummy;
+	u32 pte_flags = 0;
+
+	dummy->node.start = uc_fw_ggtt_offset(uc_fw);
+	dummy->node.size = obj->base.size;
+	dummy->pages = obj->mm.pages;
+	dummy->vm = &ggtt->vm;
+
+	GEM_BUG_ON(!i915_gem_object_has_pinned_pages(obj));
+
+	/* uc_fw->obj cache domains were not controlled across suspend */
+	if (i915_gem_object_has_struct_page(obj))
+		drm_clflush_sg(dummy->pages);
+
+	if (i915_gem_object_is_lmem(obj))
+		pte_flags |= PTE_LM;
+
+	ggtt->vm.insert_entries(&ggtt->vm, NULL, dummy,
+				i915_gem_get_pat_index(ggtt->vm.i915,
+						       I915_CACHE_NONE),
+				pte_flags);
+}
+
+static void uc_fw_unbind_ggtt(struct intel_uc_fw *uc_fw)
+{
+	struct i915_vma *dummy = &uc_fw->dummy;
+
+	if (!dummy->vm)
+		return;
+
+	dummy->vm->clear_range(dummy->vm, dummy->node.start, dummy->node.size);
+}
+
 int intel_uc_fw_init(struct intel_uc_fw *uc_fw)
 {
 	int err;
@@ -1030,6 +1029,8 @@ int intel_uc_fw_init(struct intel_uc_fw *uc_fw)
 		goto out_unpin;
 	}
 
+	uc_fw_bind_ggtt(uc_fw);
+
 	return 0;
 
 out_unpin:
@@ -1041,12 +1042,24 @@ out:
 
 void intel_uc_fw_fini(struct intel_uc_fw *uc_fw)
 {
+	uc_fw_unbind_ggtt(uc_fw);
 	uc_fw_rsa_data_destroy(uc_fw);
 
 	if (i915_gem_object_has_pinned_pages(uc_fw->obj))
 		i915_gem_object_unpin_pages(uc_fw->obj);
 
 	intel_uc_fw_change_status(uc_fw, INTEL_UC_FIRMWARE_AVAILABLE);
+}
+
+void intel_uc_fw_resume(struct intel_uc_fw *uc_fw)
+{
+	if (!intel_uc_fw_is_available(uc_fw))
+		return;
+
+	if (!i915_gem_object_has_pinned_pages(uc_fw->obj))
+		return;
+
+	uc_fw_bind_ggtt(uc_fw);
 }
 
 /**

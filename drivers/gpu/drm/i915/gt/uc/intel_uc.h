@@ -23,6 +23,7 @@ struct intel_uc_ops {
 	void (*fini)(struct intel_uc *uc);
 	int (*init_hw)(struct intel_uc *uc);
 	void (*fini_hw)(struct intel_uc *uc);
+	void (*resume_early)(struct intel_uc *uc);
 };
 
 struct intel_uc {
@@ -123,6 +124,7 @@ intel_uc_ops_function(init, init, int, 0);
 intel_uc_ops_function(fini, fini, void, );
 intel_uc_ops_function(init_hw, init_hw, int, 0);
 intel_uc_ops_function(fini_hw, fini_hw, void, );
+intel_uc_ops_function(resume_early, resume_early, void, );
 #undef intel_uc_ops_function
 
 #endif

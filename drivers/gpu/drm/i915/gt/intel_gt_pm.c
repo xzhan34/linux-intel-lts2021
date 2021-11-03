@@ -228,6 +228,8 @@ void intel_gt_resume_early(struct intel_gt *gt)
 
 	if (GRAPHICS_VER(gt->i915) >= 8)
 		setup_private_pat(gt);
+
+	intel_uc_resume_early(&gt->uc);
 }
 
 int intel_gt_resume(struct intel_gt *gt)
