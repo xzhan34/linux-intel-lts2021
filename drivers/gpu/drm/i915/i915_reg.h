@@ -7150,6 +7150,18 @@ enum gt_vctr_registers {
 /* See PCODE_MBOX_DOMAIN_* - mailbox domain IDs - param1 and 2 */
 #define   PVC_PCODE_QOS_MULTIPLIER_GET		0x66
 /* See PCODE_MBOX_DOMAIN_* - mailbox domain IDs - param1 and 2 */
+#define   PCODE_MBOX_CD				0x60
+/* subcomands */
+#define     PCODE_MBOX_CD_TRIGGER_SHUTDOWN	0x0
+#define     PCODE_MBOX_CD_STATUS		0x1
+/* subcommand: trigger shutdown */
+#define     PCODE_MBOX_CD_TRIGGER_SHUTDOWN_DATA_SHUTDOWN 0x1
+#define     PCODE_MBOX_CD_TRIGGER_SHUTDOWN_DATA_REENABLE 0x0
+/* subcommand: status values */
+#define     PCODE_MBOX_CD_STATUS_DATA_SHUTDOWN_IN_PROGRESS 0x0
+#define     PCODE_MBOX_CD_STATUS_DATA_REENABLE_IN_PROGRESS 0x1
+#define     PCODE_MBOX_CD_STATUS_DATA_SHUTDOWN 0x2
+#define     PCODE_MBOX_CD_STATUS_DATA_ONLINE 0x3
 #define GEN6_PCODE_DATA				_MMIO(0x138128)
 #define   GEN6_PCODE_FREQ_IA_RATIO_SHIFT	8
 #define   GEN6_PCODE_FREQ_RING_RATIO_SHIFT	16

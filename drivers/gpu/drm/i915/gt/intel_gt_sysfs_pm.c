@@ -4,6 +4,7 @@
  */
 
 #include <drm/drm_device.h>
+#include <linux/mutex.h>
 #include <linux/sysfs.h>
 #include <linux/printk.h>
 
@@ -1226,6 +1227,105 @@ static int intel_sysfs_rps_init_gt(struct intel_gt *gt, struct kobject *kobj)
 	return add_rps_defaults(gt);
 }
 
+/* seconds */
+#define POWER_STATE_PW_DELAY_MIN 5
+
+static int iaf_gt_set_power_state(struct device *dev, bool enable)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, "no-name");
+	u32 pcode_cmd = enable ?
+		PCODE_MBOX_CD_TRIGGER_SHUTDOWN_DATA_REENABLE :
+		PCODE_MBOX_CD_TRIGGER_SHUTDOWN_DATA_SHUTDOWN;
+	u32 status = enable ?
+		PCODE_MBOX_CD_STATUS_DATA_ONLINE :
+		PCODE_MBOX_CD_STATUS_DATA_SHUTDOWN;
+	u32 iaf_status;
+	int retry = 0;
+	int ret;
+
+	/* enable/disable the IAF device */
+	ret = snb_pcode_write_p(gt->uncore, PCODE_MBOX_CD, PCODE_MBOX_CD_TRIGGER_SHUTDOWN,
+				0, pcode_cmd);
+	if (ret)
+		return ret;
+
+	ret = snb_pcode_read_p(gt->uncore, PCODE_MBOX_CD, PCODE_MBOX_CD_STATUS, 0,
+			       &iaf_status);
+
+	/*
+	 * Power on can be on the order of 10s of seconds.  Try to be
+	 * optimistic with 5.
+	 */
+	while (!ret && iaf_status != status && retry < 10) {
+		ssleep(POWER_STATE_PW_DELAY_MIN);
+		ret = snb_pcode_read_p(gt->uncore, PCODE_MBOX_CD, PCODE_MBOX_CD_STATUS, 0,
+				       &iaf_status);
+		retry++;
+	}
+
+	if (retry == 10)
+		ret = -EIO;
+
+	return ret;
+}
+
+static ssize_t iaf_power_enable_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	bool enable;
+	int ret;
+
+	/* This should not be possble, makesure of it */
+	GEM_BUG_ON(IS_PVC_BD_STEP(gt->i915, STEP_A0, STEP_B0));
+
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
+
+	if (gt->i915->intel_iaf.power_enabled == enable)
+		return count;
+
+	/*
+	 * If the driver is still present, do not allow the disable.
+	 * The driver MUST be unbound first
+	 */
+	mutex_lock(&gt->i915->intel_iaf.power_mutex);
+	if (gt->i915->intel_iaf.handle && !enable) {
+		ret = -EBUSY;
+		goto unlock;
+	}
+
+	ret = iaf_gt_set_power_state(dev, enable);
+	if (ret)
+		goto unlock;
+
+	/* remember the new state */
+	gt->i915->intel_iaf.power_enabled = enable;
+
+unlock:
+	mutex_unlock(&gt->i915->intel_iaf.power_mutex);
+
+	return ret ?: count;
+}
+
+static ssize_t iaf_power_enable_show(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buf)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+
+	return sysfs_emit(buf, "%d\n", gt->i915->intel_iaf.power_enabled);
+}
+
+static I915_DEVICE_ATTR_RW(iaf_power_enable, 0644, iaf_power_enable_show, iaf_power_enable_store);
+
+static const struct attribute * const iaf_attrs[] = {
+	&dev_attr_iaf_power_enable.attr.attr,
+	NULL
+};
+
 static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj)
 {
 	const struct attribute * const *attrs;
@@ -1254,6 +1354,13 @@ static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj)
 		ret = sysfs_create_files(kobj, sys_pwr_balance_attrs);
 		if (ret)
 			return ret;
+
+		if (IS_PVC_BD_STEP(gt->i915, STEP_B0, STEP_FOREVER) &&
+		    HAS_IAF(gt->i915)) {
+			ret = sysfs_create_files(kobj, iaf_attrs);
+			if (ret)
+				return ret;
+		}
 	}
 
 	return 0;

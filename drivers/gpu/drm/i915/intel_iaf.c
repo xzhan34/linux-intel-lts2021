@@ -10,6 +10,7 @@
 #else
 #include <linux/mfd/core.h>
 #endif
+#include <linux/mutex.h>
 #include <linux/xarray.h>
 
 #include <drm/intel_iaf_platform.h>
@@ -20,6 +21,7 @@
 
 #include "i915_drv.h"
 #include "intel_iaf.h"
+#include "intel_pcode.h"
 
 /* Xarray of fabric devices */
 static DEFINE_XARRAY_ALLOC(intel_fdevs);
@@ -46,9 +48,16 @@ static int register_dev(void *parent, void *handle, u32 fabric_id,
 
 	WARN(i915->intel_iaf.ops != &default_ops, "IAF: already registered");
 
+	mutex_lock(&i915->intel_iaf.power_mutex);
+	if (!i915->intel_iaf.power_enabled) {
+		mutex_unlock(&i915->intel_iaf.power_mutex);
+		return -EAGAIN;
+	}
+
 	i915->intel_iaf.handle = handle;
 	i915->intel_iaf.fabric_id = fabric_id;
 	i915->intel_iaf.ops = ops;
+	mutex_unlock(&i915->intel_iaf.power_mutex);
 
 	drm_info(&i915->drm, "IAF: registered fabric: 0x%x\n", fabric_id);
 
@@ -63,8 +72,11 @@ static void unregister_dev(void *parent, const void *handle)
 
 	drm_info(&i915->drm, "IAF: unregistered fabric: 0x%x\n",
 		 i915->intel_iaf.fabric_id);
+
+	mutex_lock(&i915->intel_iaf.power_mutex);
 	i915->intel_iaf.handle = NULL;
 	i915->intel_iaf.ops = &default_ops;
+	mutex_unlock(&i915->intel_iaf.power_mutex);
 }
 
 static int dev_event(void *parent, void *handle, enum iaf_dev_event event,
@@ -258,6 +270,22 @@ void intel_iaf_init_early(struct drm_i915_private *i915)
 {
 	i915->intel_iaf.ops = &default_ops;
 	i915->intel_iaf.index = -ENODEV;
+	mutex_init(&i915->intel_iaf.power_mutex);
+}
+
+static bool iaf_power_enabled(struct drm_i915_private *i915)
+{
+	u32 mbox = REG_FIELD_PREP(GEN6_PCODE_MB_COMMAND,
+				  PCODE_MBOX_CD) |
+		REG_FIELD_PREP(GEN6_PCODE_MB_PARAM1, PCODE_MBOX_CD_STATUS) |
+		REG_FIELD_PREP(GEN6_PCODE_MB_PARAM2, 0);
+	u32 val = 0;
+	int err = snb_pcode_read(&i915->uncore, mbox, &val, NULL);
+
+	if (err)
+		return false;
+
+	return val == PCODE_MBOX_CD_STATUS_DATA_ONLINE;
 }
 
 /**
@@ -275,12 +303,20 @@ void intel_iaf_init_mmio(struct drm_i915_private *i915)
 
 	iaf_info = intel_uncore_read(&i915->uncore, PUNIT_MMIO_CR_POC_STRAPS);
 
-	i915->intel_iaf.socket_id = REG_FIELD_GET(SOCKET_ID_MASK, iaf_info);
+	if (!REG_FIELD_GET(CD_ALIVE, iaf_info))
+		return;
 
-	if (REG_FIELD_GET(CD_ALIVE, iaf_info)) {
-		drm_info(&i915->drm, "IAF available\n");
-		i915->intel_iaf.present = true;
+	i915->intel_iaf.power_enabled = true;
+	if (IS_PVC_BD_STEP(i915, STEP_B0, STEP_FOREVER)) {
+		if (!iaf_power_enabled(i915)) {
+			i915->intel_iaf.power_enabled = false;
+			drm_warn(&i915->drm, "IAF: power disabled\n");
+		}
 	}
+
+	drm_info(&i915->drm, "IAF available\n");
+	i915->intel_iaf.socket_id = REG_FIELD_GET(SOCKET_ID_MASK, iaf_info);
+	i915->intel_iaf.present = true;
 }
 
 /**
