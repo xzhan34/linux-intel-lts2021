@@ -165,6 +165,7 @@ struct intel_rps_defaults {
 	u32 min_freq;
 	u32 max_freq;
 	u32 boost_freq;
+	u32 media_ratio_mode;
 };
 
 enum intel_gt_type {
