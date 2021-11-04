@@ -2578,7 +2578,7 @@ int intel_crtc_compute_min_cdclk(const struct intel_crtc_state *crtc_state)
 	 * Explicitly stating here that this seems to be currently
 	 * rather a Hack, than final solution.
 	 */
-	if (IS_TIGERLAKE(dev_priv)) {
+	if (IS_TIGERLAKE(dev_priv) || IS_DG2(dev_priv)) {
 		/*
 		 * Clamp to max_cdclk_freq in case pixel rate is higher,
 		 * in order not to break an 8K, but still leave W/A at place.
