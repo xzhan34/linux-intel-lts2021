@@ -617,6 +617,26 @@ static int check_ccs_header(struct intel_gt *gt,
 	return 0;
 }
 
+static int check_fw_header(struct intel_gt *gt,
+			   const struct firmware *fw,
+			   struct intel_uc_fw *uc_fw)
+{
+	int err = 0;
+
+	/* XXX: can we read something? spec says to load blindly */
+	if (uc_fw->type == INTEL_UC_FW_TYPE_GSC)
+		return 0;
+
+	if (uc_fw->loaded_via_gsc)
+		err = check_gsc_manifest(fw, uc_fw);
+	else
+		err = check_ccs_header(gt, fw, uc_fw);
+	if (err)
+		return err;
+
+	return 0;
+}
+
 static bool is_ver_8bit(struct intel_uc_fw_ver *ver)
 {
 	return ver->major < 0xFF && ver->minor < 0xFF && ver->patch < 0xFF;
@@ -711,17 +731,14 @@ int intel_uc_fw_fetch(struct intel_uc_fw *uc_fw)
 	if (err)
 		goto fail;
 
-	if (uc_fw->loaded_via_gsc)
-		err = check_gsc_manifest(fw, uc_fw);
-	else
-		err = check_ccs_header(gt, fw, uc_fw);
+	err = check_fw_header(gt, fw, uc_fw);
 	if (err)
 		goto fail;
 
 	if (uc_fw->type == INTEL_UC_FW_TYPE_GUC && !guc_check_version_range(uc_fw))
 		goto fail;
 
-	if (uc_fw->file_wanted.ver.major) {
+	if (uc_fw->file_wanted.ver.major && uc_fw->file_selected.ver.major) {
 		/* Check the file's major version was as it claimed */
 		if (uc_fw->file_selected.ver.major != uc_fw->file_wanted.ver.major) {
 			drm_notice(&i915->drm, "%s firmware %s: unexpected version: %u.%u != %u.%u\n",
@@ -742,16 +759,18 @@ int intel_uc_fw_fetch(struct intel_uc_fw *uc_fw)
 		/* Preserve the version that was really wanted */
 		memcpy(&uc_fw->file_wanted, &file_ideal, sizeof(uc_fw->file_wanted));
 
-		drm_notice(&i915->drm,
-			   "%s firmware %s (%d.%d) is recommended, but only %s (%d.%d) was found\n",
-			   intel_uc_fw_type_repr(uc_fw->type),
-			   uc_fw->file_wanted.path,
-			   uc_fw->file_wanted.ver.major, uc_fw->file_wanted.ver.minor,
-			   uc_fw->file_selected.path,
-			   uc_fw->file_selected.ver.major, uc_fw->file_selected.ver.minor);
-		drm_info(&i915->drm,
-			 "Consider updating your linux-firmware pkg or downloading from %s\n",
-			 INTEL_UC_FIRMWARE_URL);
+		if (uc_fw->file_selected.ver.major) {
+			drm_notice(&i915->drm,
+				   "%s firmware %s (%d.%d) is recommended, but only %s (%d.%d) was found\n",
+				   intel_uc_fw_type_repr(uc_fw->type),
+				   uc_fw->file_wanted.path,
+				   uc_fw->file_wanted.ver.major, uc_fw->file_wanted.ver.minor,
+				   uc_fw->file_selected.path,
+				   uc_fw->file_selected.ver.major, uc_fw->file_selected.ver.minor);
+			drm_info(&i915->drm,
+				 "Consider updating your linux-firmware pkg or downloading from %s\n",
+				 INTEL_UC_FIRMWARE_URL);
+		}
 	}
 
 	if (HAS_LMEM(i915) && !i915_is_mem_wa_enabled(i915, I915_WA_FORCE_SMEM_OBJECT))
