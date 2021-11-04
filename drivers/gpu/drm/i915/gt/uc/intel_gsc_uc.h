@@ -8,9 +8,16 @@
 
 #include "intel_uc_fw.h"
 
+struct i915_vma;
+struct intel_context;
+
 struct intel_gsc_uc {
 	/* Generic uC firmware management */
 	struct intel_uc_fw fw;
+
+	/* GSC-specific additions */
+	struct i915_vma *local; /* private memory for GSC usage */
+	struct intel_context *ce; /* for submission to GSC FW via GSC engine */
 };
 
 void intel_gsc_uc_init_early(struct intel_gsc_uc *gsc);

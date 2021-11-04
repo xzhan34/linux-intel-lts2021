@@ -1044,6 +1044,12 @@ int intel_gt_init(struct intel_gt *gt)
 
 	intel_pxp_init(&gt->pxp);
 
+	/*
+	 * FIXME: this should be moved to a delayed work because it takes too
+	 * long, but for now we're doing it as the last step of the init flow
+	 */
+	intel_uc_init_hw_late(&gt->uc);
+
 	goto out_fw;
 err_gt:
 	__intel_gt_disable(gt);

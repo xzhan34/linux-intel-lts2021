@@ -7,6 +7,7 @@
 
 #include "gt/intel_gt.h"
 #include "gt/intel_reset.h"
+#include "intel_gsc_fw.h"
 #include "intel_gsc_uc.h"
 #include "intel_guc.h"
 #include "intel_guc_ads.h"
@@ -633,6 +634,19 @@ static void __uc_fini_hw(struct intel_uc *uc)
 	__uc_sanitize(uc);
 }
 
+/*
+ * Firmwares loaded via the GSC engine require the submission back-end to have
+ * been initialized, so can only be loaded late in the probe/resume process.
+ * TODO move to worker
+ */
+static int __uc_init_hw_late(struct intel_uc *uc)
+{
+	if (!intel_uc_uses_gsc_uc(uc))
+		return 0;
+
+	return intel_gsc_fw_upload(&uc->gsc);
+}
+
 /**
  * intel_uc_reset_prepare - Prepare for reset
  * @uc: the intel_uc structure
@@ -797,6 +811,7 @@ static const struct intel_uc_ops uc_ops_on = {
 	.fini = __uc_fini,
 
 	.init_hw = __uc_init_hw,
+	.init_hw_late = __uc_init_hw_late,
 	.fini_hw = __uc_fini_hw,
 
 	.resume_early = __uc_resume_early,

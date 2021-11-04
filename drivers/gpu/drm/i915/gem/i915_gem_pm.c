@@ -323,9 +323,17 @@ void i915_gem_resume(struct drm_i915_private *i915)
 	 * guarantee that the context image is complete. So let's just reset
 	 * it and start again.
 	 */
-	for_each_gt(gt, i915, i)
+	for_each_gt(gt, i915, i) {
 		if (intel_gt_resume(gt))
 			goto err_wedged;
+
+		/*
+		 * FIXME: this should be moved to a delayed work because it
+		 * takes too long, but for now we're doing it here as this is
+		 * the easiest place to put it without doing throw-away work.
+		 */
+		intel_uc_init_hw_late(&gt->uc);
+	}
 
 	return;
 

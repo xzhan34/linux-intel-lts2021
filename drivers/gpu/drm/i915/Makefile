@@ -229,6 +229,7 @@ i915-y += gt/uc/intel_uc.o \
 	  gt/uc/intel_huc.o \
 	  gt/uc/intel_huc_debugfs.o \
 	  gt/uc/intel_huc_fw.o \
+	  gt/uc/intel_gsc_fw.o \
 	  gt/uc/intel_gsc_uc.o
 
 # graphics system controller (GSC) support
