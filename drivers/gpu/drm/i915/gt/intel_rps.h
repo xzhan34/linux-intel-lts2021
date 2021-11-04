@@ -39,6 +39,7 @@ int intel_freq_opcode(struct intel_rps *rps, int val);
 u32 intel_rps_get_rapl(struct intel_rps *rps, u32 rapl_pl1);
 u32 intel_rps_read_actual_frequency(struct intel_rps *rps);
 u32 intel_rps_read_actual_frequency_fw(struct intel_rps *rps);
+u32 intel_rps_read_chiplet_frequency(struct intel_rps *rps);
 u32 intel_rps_get_requested_frequency(struct intel_rps *rps);
 u32 intel_rps_get_min_frequency(struct intel_rps *rps);
 u32 intel_rps_get_min_raw_freq(struct intel_rps *rps);

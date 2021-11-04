@@ -653,7 +653,10 @@ frequency_sample(struct intel_gt *gt, unsigned int period_ns)
 		 * case we assume the system is running at the intended
 		 * frequency. Fortunately, the read should rarely fail!
 		 */
-		val = intel_rps_read_actual_frequency_fw(rps);
+		if (IS_PONTEVECCHIO(gt->i915))
+			val = intel_rps_read_chiplet_frequency(&gt->rps);
+		else
+			val = intel_rps_read_actual_frequency_fw(rps);
 		if (!val)
 			val = intel_gpu_freq(rps, rps->cur_freq);
 

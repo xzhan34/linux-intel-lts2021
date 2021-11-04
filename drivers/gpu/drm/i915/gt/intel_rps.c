@@ -2144,6 +2144,19 @@ u32 intel_rps_read_actual_frequency_fw(struct intel_rps *rps)
 	return intel_gpu_freq(rps, __read_cagf(rps, false));
 }
 
+u32 intel_rps_read_chiplet_frequency(struct intel_rps *rps)
+{
+	struct intel_runtime_pm *rpm = rps_to_uncore(rps)->rpm;
+	intel_wakeref_t wakeref;
+	u32 val = 0;
+
+	with_intel_runtime_pm_if_in_use(rpm, wakeref)
+		val = intel_uncore_read_fw(rps_to_uncore(rps), GEN12_RPSTAT1);
+
+	val = REG_FIELD_GET(PVC_RPSTAT1_CHIPLET_FREQ, val);
+	return intel_gpu_freq(rps, val);
+}
+
 static u32 __rps_read_mmio(struct intel_gt *gt, i915_reg_t reg32)
 {
 	intel_wakeref_t wakeref;

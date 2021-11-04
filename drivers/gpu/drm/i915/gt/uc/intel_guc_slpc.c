@@ -288,7 +288,10 @@ int intel_guc_slpc_init(struct intel_guc_slpc *slpc)
 	atomic_set(&slpc->num_waiters, 0);
 	slpc->num_boosts = 0;
 
-	slpc->media_ratio_mode = SLPC_MEDIA_RATIO_MODE_DYNAMIC_CONTROL;
+	slpc->media_ratio_mode = IS_PONTEVECCHIO(slpc_to_gt(slpc)->i915) ?
+					SLPC_MEDIA_RATIO_MODE_FIXED_ONE_TO_TWO :
+					SLPC_MEDIA_RATIO_MODE_DYNAMIC_CONTROL;
+
 	slpc_to_gt(slpc)->rps_defaults.media_ratio_mode = slpc->media_ratio_mode;
 
 	mutex_init(&slpc->lock);

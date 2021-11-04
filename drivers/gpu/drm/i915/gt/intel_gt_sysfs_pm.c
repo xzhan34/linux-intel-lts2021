@@ -284,8 +284,18 @@ static ssize_t act_freq_mhz_show(struct device *dev,
 {
 	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
 
-	return scnprintf(buff, PAGE_SIZE, "%d\n",
-			intel_rps_read_actual_frequency(&gt->rps));
+	/*
+	 * For PVC show chiplet freq which is the "base" frequency, all other
+	 * gt/rps frequency attributes also apply to the chiplet.
+	 * intel_rps_read_actual_frequency is used in base_act_freq_mhz_show
+	 */
+	if (IS_PONTEVECCHIO(gt->i915)) {
+		return sysfs_emit(buff, "%d\n",
+				  intel_rps_read_chiplet_frequency(&gt->rps));
+	} else {
+		return sysfs_emit(buff, "%d\n",
+				  intel_rps_read_actual_frequency(&gt->rps));
+	}
 }
 
 static ssize_t cur_freq_mhz_show(struct device *dev,
@@ -619,11 +629,110 @@ static const struct attribute *freq_attrs[] = {
 	NULL
 };
 
+/*
+ * PVC Performance control/query interface -
+ * sysfs files under directory <dev>/gt/gt<i>/
+ */
+
 static ssize_t freq_factor_scale_show(struct device *dev,
 				      struct device_attribute *attr,
 				      char *buff)
 {
 	return sysfs_emit(buff, "%s\n", U8_8_SCALE_TO_VALUE);
+}
+
+static ssize_t base_freq_factor_show(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	u32 val;
+	int err;
+
+	err = snb_pcode_read_p(gt->uncore, PVC_PCODE_QOS_MULTIPLIER_GET,
+			       PCODE_MBOX_DOMAIN_CHIPLET,
+			       PCODE_MBOX_DOMAIN_BASE, &val);
+	if (err)
+		return err;
+
+	val &= U8_8_VAL_MASK;
+
+	return sysfs_emit(buff, "%u\n", val);
+}
+
+static ssize_t base_freq_factor_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buff, size_t count)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	u32 val;
+	int err;
+
+	err = kstrtou32(buff, 0, &val);
+	if (err)
+		return err;
+
+	if (val > U8_8_VAL_MASK)
+		return -EINVAL;
+
+	err = snb_pcode_write_p(gt->uncore, PVC_PCODE_QOS_MULTIPLIER_SET,
+			      PCODE_MBOX_DOMAIN_CHIPLET,
+			      PCODE_MBOX_DOMAIN_BASE, val);
+	if (err)
+		return err;
+
+	return count;
+}
+
+static ssize_t base_RP0_freq_mhz_show(struct device *dev,
+				      struct device_attribute *attr,
+				      char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	u32 val;
+	int err;
+
+	err = snb_pcode_read_p(gt->uncore, XEHPSDV_PCODE_FREQUENCY_CONFIG,
+			       PCODE_MBOX_FC_SC_READ_FUSED_P0,
+			       PCODE_MBOX_DOMAIN_BASE, &val);
+	if (err)
+		return err;
+
+	/* data_out - Fused P0 for domain ID in units of 50 MHz */
+	val *= GT_FREQUENCY_MULTIPLIER;
+
+	return sysfs_emit(buff, "%u\n", val);
+}
+
+static ssize_t base_RPn_freq_mhz_show(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	u32 val;
+	int err;
+
+	err = snb_pcode_read_p(gt->uncore, XEHPSDV_PCODE_FREQUENCY_CONFIG,
+			       PCODE_MBOX_FC_SC_READ_FUSED_PN,
+			       PCODE_MBOX_DOMAIN_BASE, &val);
+	if (err)
+		return err;
+
+	/* data_out - Fused Pn for domain ID in units of 50 MHz */
+	val *= GT_FREQUENCY_MULTIPLIER;
+
+	return sysfs_emit(buff, "%u\n", val);
+}
+
+static ssize_t base_act_freq_mhz_show(struct device *dev,
+				      struct device_attribute *attr,
+				      char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+
+	/* On PVC this returns the base die frequency */
+	return sysfs_emit(buff, "%d\n",
+			  intel_rps_read_actual_frequency(&gt->rps));
 }
 
 static u32 media_ratio_mode_to_factor(u32 mode)
@@ -678,6 +787,9 @@ static ssize_t media_freq_factor_store(struct device *dev,
 
 	switch (val) {
 	case 0x0:
+		/* SLPC_MEDIA_RATIO_MODE_DYNAMIC_CONTROL is not supported on PVC */
+		if (IS_PONTEVECCHIO(gt->i915))
+			return -EINVAL;
 		mode = SLPC_MEDIA_RATIO_MODE_DYNAMIC_CONTROL;
 		break;
 	case 0x80:
@@ -740,11 +852,44 @@ static ssize_t media_RPn_freq_mhz_show(struct device *dev,
 	return sysfs_emit(buff, "%u\n", val);
 }
 
+static ssize_t media_act_freq_mhz_show(struct device *dev,
+				       struct device_attribute *attr,
+				       char *buff)
+{
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+	struct intel_rps *rps = &gt->rps;
+	i915_reg_t rgadr = PVC_MEDIA_PERF_STATUS;
+	u32 val = _with_pm_intel_dev_read(dev, attr, rgadr);
+
+	/* Available from PVC B-step */
+	val = REG_FIELD_GET(PVC_MEDIA_PERF_MEDIA_RATIO, val);
+	val = intel_gpu_freq(rps, val);
+
+	return sysfs_emit(buff, "%u\n", val);
+}
+
+static DEVICE_ATTR_RW(base_freq_factor);
+static struct device_attribute dev_attr_base_freq_factor_scale =
+	__ATTR(base_freq_factor.scale, 0444, freq_factor_scale_show, NULL);
+static DEVICE_ATTR_RO(base_RP0_freq_mhz);
+static DEVICE_ATTR_RO(base_RPn_freq_mhz);
+static DEVICE_ATTR_RO(base_act_freq_mhz);
+
 static DEVICE_ATTR_RW(media_freq_factor);
 static struct device_attribute dev_attr_media_freq_factor_scale =
 	__ATTR(media_freq_factor.scale, 0444, freq_factor_scale_show, NULL);
 static DEVICE_ATTR_RO(media_RP0_freq_mhz);
 static DEVICE_ATTR_RO(media_RPn_freq_mhz);
+static DEVICE_ATTR_RO(media_act_freq_mhz);
+
+static const struct attribute *pvc_perf_power_attrs[] = {
+	&dev_attr_base_freq_factor.attr,
+	&dev_attr_base_freq_factor_scale.attr,
+	&dev_attr_base_RP0_freq_mhz.attr,
+	&dev_attr_base_RPn_freq_mhz.attr,
+	&dev_attr_base_act_freq_mhz.attr,
+	NULL
+};
 
 static const struct attribute *media_perf_power_attrs[] = {
 	&dev_attr_media_freq_factor.attr,
@@ -799,6 +944,17 @@ default_media_freq_factor_show(struct kobject *kobj, struct kobj_attribute *attr
 static struct kobj_attribute default_media_freq_factor =
 __ATTR(media_freq_factor, 0444, default_media_freq_factor_show, NULL);
 
+static ssize_t
+default_base_freq_factor_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	struct intel_gt *gt = kobj_to_gt(kobj->parent);
+
+	return sysfs_emit(buf, "%d\n", gt->rps_defaults.base_freq_factor);
+}
+
+static struct kobj_attribute default_base_freq_factor =
+__ATTR(base_freq_factor, 0444, default_base_freq_factor_show, NULL);
+
 static const struct attribute * const rps_defaults_attrs[] = {
 	&default_min_freq_mhz.attr,
 	&default_max_freq_mhz.attr,
@@ -811,12 +967,35 @@ static int add_rps_defaults(struct intel_gt *gt)
 	return sysfs_create_files(gt->sysfs_defaults, rps_defaults_attrs);
 }
 
+static void set_default_base_freq_factor(struct intel_gt *gt)
+{
+	/* 0x100 corresponds to a factor value of 1.0 */
+	gt->rps_defaults.base_freq_factor = 0x100;
+}
+
 static int intel_sysfs_rps_init_gt(struct intel_gt *gt, struct kobject *kobj)
 {
 	int ret;
 
 	if (GRAPHICS_VER(gt->i915) >= 12) {
 		ret = sysfs_create_files(kobj, freq_attrs);
+		if (ret)
+			return ret;
+	}
+
+	if (IS_PONTEVECCHIO(gt->i915)) {
+		ret = sysfs_create_files(kobj, pvc_perf_power_attrs);
+		if (ret)
+			return ret;
+
+		set_default_base_freq_factor(gt);
+		ret = sysfs_create_file(gt->sysfs_defaults, &default_base_freq_factor.attr);
+		if (ret)
+			return ret;
+	}
+
+	if (IS_PVC_BD_STEP(gt->i915, STEP_B0, STEP_FOREVER)) {
+		ret = sysfs_create_file(kobj, &dev_attr_media_act_freq_mhz.attr);
 		if (ret)
 			return ret;
 	}
