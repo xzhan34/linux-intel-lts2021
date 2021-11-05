@@ -173,6 +173,13 @@ enum i915_iov_mode i915_sriov_probe(struct drm_i915_private *i915)
 	return I915_IOV_MODE_NONE;
 }
 
+static void migration_worker_func(struct work_struct *w);
+
+static void vf_init_early(struct drm_i915_private *i915)
+{
+	INIT_WORK(&i915->sriov.vf.migration_worker, migration_worker_func);
+}
+
 static int vf_check_guc_submission_support(struct drm_i915_private *i915)
 {
 	if (!intel_guc_submission_is_wanted(&to_gt(i915)->uc.guc)) {
@@ -207,6 +214,7 @@ int i915_sriov_early_tweaks(struct drm_i915_private *i915)
 	int err;
 
 	if (IS_SRIOV_VF(i915)) {
+		vf_init_early(i915);
 		err = vf_check_guc_submission_support(i915);
 		if (unlikely(err))
 			return err;
@@ -602,4 +610,47 @@ int i915_sriov_resume_early(struct drm_i915_private *i915)
 	}
 
 	return 0;
+}
+
+static void vf_post_migration_recovery(struct drm_i915_private *i915)
+{
+	int err;
+
+	drm_dbg(&i915->drm, "migration recovery in progress\n");
+
+	/* XXX add GuC handshake here */
+	err = -EOPNOTSUPP;
+	if (unlikely(err))
+		goto fail;
+	drm_notice(&i915->drm, "migration recovery completed\n");
+	return;
+
+fail:
+	drm_err(&i915->drm, "migration recovery failed (%pe)\n", ERR_PTR(err));
+	intel_gt_set_wedged(to_gt(i915));
+}
+
+static void migration_worker_func(struct work_struct *w)
+{
+	struct drm_i915_private *i915 = container_of(w, struct drm_i915_private,
+						     sriov.vf.migration_worker);
+
+	vf_post_migration_recovery(i915);
+}
+
+/**
+ * i915_sriov_vf_start_migration_recovery - Start VF migration recovery.
+ * @i915: the i915 struct
+ *
+ * This function shall be called only by VF.
+ */
+void i915_sriov_vf_start_migration_recovery(struct drm_i915_private *i915)
+{
+	bool started;
+
+	GEM_BUG_ON(!IS_SRIOV_VF(i915));
+
+	started = queue_work(system_unbound_wq, &i915->sriov.vf.migration_worker);
+	dev_info(i915->drm.dev, "VF migration recovery %s\n", started ?
+		 "scheduled" : "already in progress");
 }

@@ -40,4 +40,8 @@ int i915_sriov_pf_set_auto_provisioning(struct drm_i915_private *i915, bool enab
 
 int i915_sriov_suspend_late(struct drm_i915_private *i915);
 int i915_sriov_resume_early(struct drm_i915_private *i915);
+
+/* VF only */
+void i915_sriov_vf_start_migration_recovery(struct drm_i915_private *i915);
+
 #endif /* __I915_SRIOV_H__ */
