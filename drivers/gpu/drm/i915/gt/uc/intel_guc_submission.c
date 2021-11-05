@@ -1330,7 +1330,8 @@ static ktime_t guc_engine_busyness(struct intel_engine_cs *engine, ktime_t *now)
 	 * start_gt_clk is derived from GuC state. To get a consistent
 	 * view of activity, we query the GuC state only if gt is awake.
 	 */
-	if (!in_reset && (wakeref = intel_gt_pm_get_if_awake(gt))) {
+	if (!in_reset && !IS_SRIOV_VF(gt->i915) &&
+	    (wakeref = intel_gt_pm_get_if_awake(gt))) {
 		stats_saved = *stats;
 		gt_stamp_saved = guc->timestamp.gt_stamp;
 		/*
@@ -1463,6 +1464,9 @@ void intel_guc_busyness_park(struct intel_gt *gt)
 {
 	struct intel_guc *guc = &gt->uc.guc;
 
+	if (IS_SRIOV_VF(gt->i915))
+		return;
+
 	if (!guc_submission_initialized(guc))
 		return;
 
@@ -1491,6 +1495,9 @@ void intel_guc_busyness_unpark(struct intel_gt *gt)
 	struct intel_guc *guc = &gt->uc.guc;
 	unsigned long flags;
 	ktime_t unused;
+
+	if (IS_SRIOV_VF(gt->i915))
+		return;
 
 	if (!guc_submission_initialized(guc))
 		return;
@@ -1612,7 +1619,9 @@ void intel_guc_submission_reset_prepare(struct intel_guc *guc)
 	intel_gt_park_heartbeats(guc_to_gt(guc));
 	disable_submission(guc);
 	guc->interrupts.disable(guc);
-	__reset_guc_busyness_stats(guc);
+
+	if (!IS_SRIOV_VF(guc_to_gt(guc)->i915))
+		__reset_guc_busyness_stats(guc);
 
 	/* Flush IRQ handler */
 	spin_lock_irq(guc_to_gt(guc)->irq_lock);
@@ -4947,9 +4956,11 @@ int intel_guc_submission_enable(struct intel_guc *guc)
 	if (ret)
 		goto fail;
 
-	ret = guc_init_engine_stats(guc);
-	if (ret)
-		goto fail;
+	if (!IS_SRIOV_VF(gt->i915)) {
+		ret = guc_init_engine_stats(guc);
+		if (ret)
+			goto fail;
+	}
 
 	ret = guc_init_global_schedule_policy(guc);
 	if (ret)
