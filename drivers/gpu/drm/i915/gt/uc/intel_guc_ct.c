@@ -434,8 +434,24 @@ static int ct_write(struct intel_guc_ct *ct,
 	u32 *cmds = ctb->cmds;
 	unsigned int i;
 
-	if (unlikely(desc->status))
-		goto corrupted;
+	if (unlikely(desc->status)) {
+		/*
+		 * After VF migration, H2G link is not usable any more.
+		 * Let the caller know, so it can do recovery and retry.
+		 * Any other (non-migration) status is still fatal.
+		 */
+		if (desc->status & GUC_CTB_STATUS_UNUSED) {
+			CT_ERROR(ct, "Unexpected H2G status %#x\n", desc->status);
+			desc->status &= ~GUC_CTB_STATUS_UNUSED;
+		}
+		if (desc->status) {
+			if (desc->status & ~GUC_CTB_STATUS_MIGRATED)
+				goto corrupted;
+			if (!IS_SRIOV_VF(ct_to_i915(ct)))
+				goto corrupted;
+			return -EREMCHG;
+		}
+	}
 
 	GEM_BUG_ON(tail > size);
 
@@ -721,6 +737,9 @@ static int ct_send_nb(struct intel_guc_ct *ct,
 out:
 	spin_unlock_irqrestore(&ctb->lock, spin_flags);
 
+	if (unlikely(ret == -EREMCHG))
+		i915_sriov_vf_start_migration_recovery(ct_to_i915(ct));
+
 	return ret;
 }
 
@@ -838,6 +857,16 @@ unlink:
 	list_del(&request.link);
 	spin_unlock_irqrestore(&ct->requests.lock, flags);
 
+	if (unlikely(err == -EREMCHG)) {
+		/*
+		 * This retcode means that we're a VF and we've got migrated. Schedule
+		 * post-migration recovery procedure. Do not try to re-send, as values
+		 * of action parameters may no longer be valid after migration. Also,
+		 * the action itself might no longer be needed since HW was reset.
+		 */
+		i915_sriov_vf_start_migration_recovery(ct_to_i915(ct));
+	}
+
 	if (unlikely(send_again))
 		goto resend;
 
@@ -938,12 +967,23 @@ static int ct_read(struct intel_guc_ct *ct, struct ct_incoming_msg **msg)
 			 * contexts/engines being reset. But should never happen as
 			 * no contexts should be active when CLIENT_RESET is sent.
 			 */
-			CT_ERROR(ct, "Unexpected G2H after GuC has stopped!\n");
+			CT_ERROR(ct, "Unexpected G2H status %#x\n", status);
 			status &= ~GUC_CTB_STATUS_UNUSED;
+			desc->status &= ~GUC_CTB_STATUS_UNUSED;
 		}
 
-		if (status)
-			goto corrupted;
+		if (status) {
+			/*
+			 * after VF migration G2H shall be still usable
+			 * only any other non-migration status is fatal
+			 */
+			if (status & ~GUC_CTB_STATUS_MIGRATED)
+				goto corrupted;
+			if (!IS_SRIOV_VF(ct_to_i915(ct)))
+				goto corrupted;
+			desc->status &= ~GUC_CTB_STATUS_MIGRATED;
+			return -EREMCHG;
+		}
 	}
 
 	GEM_BUG_ON(head > size);
@@ -1360,11 +1400,17 @@ static int ct_receive(struct intel_guc_ct *ct)
 	if (READ_ONCE(ctb->head) == READ_ONCE(ctb->desc->tail))
 		return 0;
 
+retry:
 	spin_lock_irqsave(&ctb->lock, flags);
 	ret = ct_read(ct, &msg);
 	spin_unlock_irqrestore(&ctb->lock, flags);
-	if (ret < 0)
+	if (ret < 0) {
+		if (ret == -EREMCHG) {
+			i915_sriov_vf_start_migration_recovery(ct_to_i915(ct));
+			goto retry;
+		}
 		return ret;
+	}
 
 	if (msg)
 		ct_handle_msg(ct, msg);
