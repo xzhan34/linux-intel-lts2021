@@ -890,6 +890,13 @@ busy_loop:
 		u32 hint = FIELD_GET(GUC_HXG_FAILURE_MSG_0_HINT, header);
 		u32 error = FIELD_GET(GUC_HXG_FAILURE_MSG_0_ERROR, header);
 
+		if (error == INTEL_GUC_RESPONSE_VF_MIGRATED) {
+			drm_dbg(&i915->drm, "mmio request %#x: migrated!\n", request[0]);
+			i915_sriov_vf_start_migration_recovery(i915);
+			ret = -EREMOTEIO;
+			goto out;
+		}
+
 		drm_err(&i915->drm, "mmio request %#x: failure %x/%u\n",
 			request[0], error, hint);
 		ret = -ENXIO;
