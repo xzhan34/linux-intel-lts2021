@@ -128,6 +128,16 @@ int intel_root_gt_init_early(struct drm_i915_private *i915)
 	return 0;
 }
 
+static unsigned int to_logical_instance(struct intel_gt *gt, unsigned int instance)
+{
+	struct drm_i915_private *i915 = gt->i915;
+
+	if (IS_SRIOV_VF(i915) && HAS_REMOTE_TILES(i915))
+		instance = hweight32(GENMASK(instance, 0) &
+				     to_root_gt(i915)->iov.vf.config.tile_mask) - 1;
+	return instance;
+}
+
 static int intel_gt_probe_lmem(struct intel_gt *gt)
 {
 	struct drm_i915_private *i915 = gt->i915;
@@ -149,7 +159,7 @@ static int intel_gt_probe_lmem(struct intel_gt *gt)
 	}
 
 	mem->id = id;
-	mem->instance = instance;
+	mem->instance = to_logical_instance(gt, instance);
 	mem->gt = gt;
 
 	intel_memory_region_set_name(mem, "local%u", mem->instance);
