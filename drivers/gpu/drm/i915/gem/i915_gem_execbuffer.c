@@ -2949,7 +2949,18 @@ static int eb_submit(struct i915_execbuffer *eb)
 
 static int num_vcs_engines(struct drm_i915_private *i915)
 {
-	return hweight_long(VDBOX_MASK(to_gt(i915)));
+	struct intel_gt *gt;
+	int id;
+
+	for_each_gt(gt, i915, id) {
+		int count;
+
+		count = hweight_long(VDBOX_MASK(gt));
+		if (count)
+			return count;
+	}
+
+	return 0;
 }
 
 /*
@@ -3143,19 +3154,28 @@ static void eb_unpin_engine(struct i915_execbuffer *eb)
 	intel_context_unpin(ce);
 }
 
-static unsigned int
+static struct intel_context *
 eb_select_legacy_ring(struct i915_execbuffer *eb)
 {
 	struct drm_i915_private *i915 = eb->i915;
 	struct drm_i915_gem_execbuffer2 *args = eb->args;
 	unsigned int user_ring_id = args->flags & I915_EXEC_RING_MASK;
+	struct i915_gem_engines *e;
+	struct intel_context *ce;
+	unsigned int idx;
 
 	if (user_ring_id != I915_EXEC_BSD &&
 	    (args->flags & I915_EXEC_BSD_MASK)) {
 		drm_dbg(&i915->drm,
 			"execbuf with non bsd ring but with invalid "
 			"bsd dispatch flags: %d\n", (int)(args->flags));
-		return -1;
+		return ERR_PTR(-EINVAL);
+	}
+
+	if (user_ring_id >= ARRAY_SIZE(user_ring_map)) {
+		drm_dbg(&i915->drm, "execbuf with unknown ring: %u\n",
+			user_ring_id);
+		return ERR_PTR(-EINVAL);
 	}
 
 	if (user_ring_id == I915_EXEC_BSD && num_vcs_engines(i915) > 1) {
@@ -3171,34 +3191,48 @@ eb_select_legacy_ring(struct i915_execbuffer *eb)
 			drm_dbg(&i915->drm,
 				"execbuf with unknown bsd ring: %u\n",
 				bsd_idx);
-			return -1;
+			return ERR_PTR(-EINVAL);
 		}
 
-		return _VCS(bsd_idx);
+		idx =  _VCS(bsd_idx);
+	} else {
+		idx = user_ring_map[user_ring_id];
 	}
 
-	if (user_ring_id >= ARRAY_SIZE(user_ring_map)) {
+	ce = NULL;
+	rcu_read_lock();
+	e = rcu_dereference(eb->gem_context->engines);
+	if (e) {
+		/* Look for the first matching engine on any GT */
+		while (idx < e->num_engines) {
+			if (e->engines[idx]) {
+				ce = intel_context_get(e->engines[idx]);
+				break;
+			}
+			idx += I915_NUM_ENGINES;
+		}
+	}
+	rcu_read_unlock();
+	if (!ce) {
 		drm_dbg(&i915->drm, "execbuf with unknown ring: %u\n",
 			user_ring_id);
-		return -1;
+		return ERR_PTR(-EINVAL);
 	}
 
-	return user_ring_map[user_ring_id];
+	return ce;
 }
 
 static int
 eb_select_engine(struct i915_execbuffer *eb)
 {
 	struct intel_context *ce, *child;
-	unsigned int idx;
 	int err;
 
 	if (i915_gem_context_user_engines(eb->gem_context))
-		idx = eb->args->flags & I915_EXEC_RING_MASK;
+		ce = i915_gem_context_get_engine(eb->gem_context,
+						 eb->args->flags & I915_EXEC_RING_MASK);
 	else
-		idx = eb_select_legacy_ring(eb);
-
-	ce = i915_gem_context_get_engine(eb->gem_context, idx);
+		ce = eb_select_legacy_ring(eb);
 	if (IS_ERR(ce))
 		return PTR_ERR(ce);
 
