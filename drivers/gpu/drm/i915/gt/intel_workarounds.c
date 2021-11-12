@@ -2258,6 +2258,22 @@ static void tgl_whitelist_build(struct intel_engine_cs *engine)
 	}
 }
 
+static void xehpsdv_whitelist_build(struct intel_engine_cs *engine)
+{
+	struct i915_wa_list *w = &engine->whitelist;
+
+	switch (engine->class) {
+	case COMPUTE_CLASS:
+		/* Wa_22011767781:xehpsdv */
+		if (i915_modparams.debug_eu &&
+		    IS_XEHPSDV_GRAPHICS_STEP(engine->i915, STEP_B0, STEP_C0))
+			whitelist_mcr_reg(w, EU_GLOBAL_SIP);
+		break;
+	default:
+		break;
+	}
+}
+
 static void dg2_whitelist_build(struct intel_engine_cs *engine)
 {
 	struct i915_wa_list *w = &engine->whitelist;
@@ -2344,7 +2360,7 @@ void intel_engine_init_whitelist(struct intel_engine_cs *engine)
 	else if (IS_DG2(i915))
 		dg2_whitelist_build(engine);
 	else if (IS_XEHPSDV(i915))
-		; /* none needed */
+		xehpsdv_whitelist_build(engine);
 	else if (GRAPHICS_VER(i915) == 12)
 		tgl_whitelist_build(engine);
 	else if (GRAPHICS_VER(i915) == 11)
