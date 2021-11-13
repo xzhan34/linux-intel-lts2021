@@ -459,13 +459,16 @@ static void _guc_log_copy_debuglogs_for_relay(struct intel_guc_log *log)
 
 		/* Just copy the newly written data */
 		if (read_offset > write_offset) {
-			i915_memcpy_from_wc(dst_data, src_data, write_offset);
+			if (!i915_memcpy_from_wc(dst_data, src_data, write_offset))
+				i915_unaligned_memcpy_from_wc(dst_data, src_data, write_offset);
 			bytes_to_copy = buffer_size - read_offset;
 		} else {
 			bytes_to_copy = write_offset - read_offset;
 		}
-		i915_memcpy_from_wc(dst_data + read_offset,
-				    src_data + read_offset, bytes_to_copy);
+		if (!i915_memcpy_from_wc(dst_data + read_offset,
+					 src_data + read_offset, bytes_to_copy))
+			i915_unaligned_memcpy_from_wc(dst_data + read_offset,
+						      src_data + read_offset, bytes_to_copy);
 
 		src_data += buffer_size;
 		dst_data += buffer_size;
