@@ -91,6 +91,7 @@
 #include "i915_suspend.h"
 #include "i915_switcheroo.h"
 #include "i915_sysfs.h"
+#include "i915_sysrq.h"
 #include "i915_utils.h"
 #include "i915_vgpu.h"
 #include "intel_dram.h"
@@ -812,6 +813,7 @@ static void i915_driver_register(struct drm_i915_private *dev_priv)
 
 	i915_debugfs_register(dev_priv);
 	i915_setup_sysfs(dev_priv);
+	i915_register_sysrq(dev_priv);
 
 	for_each_gt(gt, dev_priv, i)
 		intel_gt_driver_register(gt);
@@ -862,6 +864,7 @@ static void i915_driver_unregister(struct drm_i915_private *dev_priv)
 	for_each_gt(gt, dev_priv, i)
 		intel_gt_driver_unregister(gt);
 
+	i915_unregister_sysrq(dev_priv);
 	i915_teardown_sysfs(dev_priv);
 	drm_dev_unplug(&dev_priv->drm);
 
