@@ -334,11 +334,16 @@ static void pf_set_status(struct drm_i915_private *i915, int status)
 
 static bool pf_checklist(struct drm_i915_private *i915)
 {
+	struct intel_gt *gt;
+	unsigned int id;
+
 	GEM_BUG_ON(!IS_SRIOV_PF(i915));
 
-	if (intel_gt_has_unrecoverable_error(to_gt(i915))) {
-		pf_update_status(&to_gt(i915)->iov, -EIO, "GT wedged");
-		return false;
+	for_each_gt(gt, i915, id) {
+		if (intel_gt_has_unrecoverable_error(gt)) {
+			pf_update_status(&gt->iov, -EIO, "GT wedged");
+			return false;
+		}
 	}
 
 	return true;
