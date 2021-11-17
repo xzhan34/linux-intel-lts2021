@@ -8,6 +8,7 @@
 #include "i915_pci.h"
 #include "intel_pci_config.h"
 
+#include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/iov/intel_iov_provisioning.h"
 #include "gt/iov/intel_iov_state.h"
@@ -191,6 +192,18 @@ static void pf_set_status(struct drm_i915_private *i915, int status)
 	i915->sriov.pf.__status = status;
 }
 
+static bool pf_checklist(struct drm_i915_private *i915)
+{
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	if (intel_gt_has_unrecoverable_error(to_gt(i915))) {
+		pf_update_status(&to_gt(i915)->iov, -EIO, "GT wedged");
+		return false;
+	}
+
+	return true;
+}
+
 /**
  * i915_sriov_pf_confirm - Confirm that PF is ready to enable VFs.
  * @i915: the i915 struct
@@ -206,7 +219,7 @@ void i915_sriov_pf_confirm(struct drm_i915_private *i915)
 
 	GEM_BUG_ON(!IS_SRIOV_PF(i915));
 
-	if (i915_sriov_pf_aborted(i915)) {
+	if (i915_sriov_pf_aborted(i915) || !pf_checklist(i915)) {
 		dev_notice(dev, "No VFs could be associated with this PF!\n");
 		pf_reduce_totalvfs(i915, 0);
 		return;
