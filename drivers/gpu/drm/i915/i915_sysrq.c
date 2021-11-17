@@ -111,7 +111,8 @@ static void show_gt(struct intel_gt *gt, struct drm_printer *p)
 	enum intel_engine_id id;
 	intel_wakeref_t wakeref;
 
-	drm_printf(p, "GT awake? %s [%d], %llums\n",
+	drm_printf(p, "GT%d awake? %s [%d], %llums\n",
+		   gt->info.id,
 		   str_yes_no(gt->awake),
 		   atomic_read(&gt->wakeref.count),
 		   ktime_to_ms(intel_gt_get_awake_time(gt)));
@@ -131,6 +132,15 @@ static void show_gt(struct intel_gt *gt, struct drm_printer *p)
 	intel_gt_show_timelines(gt, p, i915_request_show_with_schedule);
 }
 
+static void show_gts(struct drm_i915_private *i915, struct drm_printer *p)
+{
+	struct intel_gt *gt;
+	int i;
+
+	for_each_gt(gt, i915, i)
+		show_gt(gt, p);
+}
+
 static void show_rpm(struct drm_i915_private *i915, struct drm_printer *p)
 {
 	drm_printf(p, "Runtime power status: %s\n",
@@ -146,7 +156,7 @@ static void show_gpu(void *data)
 	struct drm_printer p = drm_info_printer(i915->drm.dev);
 
 	show_rpm(i915, &p);
-	show_gt(to_gt(i915), &p);
+	show_gts(i915, &p);
 	show_gpu_mem(i915, &p);
 }
 
