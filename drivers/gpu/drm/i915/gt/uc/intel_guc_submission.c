@@ -1444,7 +1444,7 @@ static int guc_init_engine_stats(struct intel_guc *guc)
 
 		if (ret) {
 			cancel_delayed_work_sync(&guc->timestamp.work);
-			drm_err(&gt->i915->drm, "Failed to enable usage stats: %d!\n", ret);
+			i915_probe_error(gt->i915, "Failed to enable usage stats: %d!\n", ret);
 		}
 	}
 
