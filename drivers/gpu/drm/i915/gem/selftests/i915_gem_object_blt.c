@@ -303,6 +303,8 @@ static int igt_fill_blt_thread(void *arg)
 		i915_gem_object_unpin_map(obj);
 		i915_gem_object_put(obj);
 
+		i915_gem_drain_freed_objects(engine->i915);
+
 		total <<= 1;
 	} while (!time_after(jiffies, end));
 
@@ -438,6 +440,8 @@ static int igt_copy_blt_thread(void *arg)
 
 		i915_gem_object_put(src);
 		i915_gem_object_put(dst);
+
+		i915_gem_drain_freed_objects(engine->i915);
 
 		total <<= 1;
 	} while (!time_after(jiffies, end));
