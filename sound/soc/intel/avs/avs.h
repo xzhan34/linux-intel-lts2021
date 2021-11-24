@@ -46,8 +46,8 @@ struct avs_dsp_ops {
 	int (* const power)(struct avs_dev *, u32, bool);
 	int (* const reset)(struct avs_dev *, u32, bool);
 	int (* const stall)(struct avs_dev *, u32, bool);
-	irqreturn_t (* const irq_handler)(int, void *);
-	irqreturn_t (* const irq_thread)(int, void *);
+	irqreturn_t (* const irq_handler)(struct avs_dev *);
+	irqreturn_t (* const irq_thread)(struct avs_dev *);
 	void (* const int_control)(struct avs_dev *, bool);
 	int (* const load_basefw)(struct avs_dev *, struct firmware *);
 	int (* const load_lib)(struct avs_dev *, struct firmware *, u32);
@@ -241,6 +241,7 @@ static inline void avs_ipc_err(struct avs_dev *adev, struct avs_ipc_msg *tx,
 			tx->glb.primary, tx->glb.ext.val, error);
 }
 
+irqreturn_t avs_ipc_irq_handler(struct avs_dev *adev);
 irqreturn_t avs_dsp_irq_handler(int irq, void *dev_id);
 irqreturn_t avs_dsp_irq_thread(int irq, void *dev_id);
 void avs_dsp_process_response(struct avs_dev *adev, u64 header);
@@ -264,6 +265,7 @@ void avs_ipc_block(struct avs_ipc *ipc);
 int avs_dsp_disable_d0ix(struct avs_dev *adev);
 int avs_dsp_enable_d0ix(struct avs_dev *adev);
 
+irqreturn_t skl_ipc_irq_thread(struct avs_dev *adev);
 int skl_log_buffer_offset(struct avs_dev *adev, u32 core);
 
 /* Firmware resources management */
