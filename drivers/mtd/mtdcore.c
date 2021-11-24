@@ -1151,21 +1151,20 @@ int __get_mtd_device(struct mtd_info *mtd)
 	struct mtd_info *master = mtd_get_master(mtd);
 	int err;
 
-	if (!try_module_get(master->owner))
+	if (master->_get_device) {
+		err = master->_get_device(mtd);
+		if (err)
+			return err;
+	}
+
+	if (!try_module_get(master->owner)) {
+		if (master->_put_device)
+			master->_put_device(master);
 		return -ENODEV;
+	}
 
 	kref_get(&mtd->refcnt);
 	pr_debug("get mtd %s %d\n", mtd->name, kref_read(&mtd->refcnt));
-
-	if (master->_get_device) {
-		err = master->_get_device(mtd);
-
-		if (err) {
-			kref_put(&mtd->refcnt, mtd_device_release);
-			module_put(master->owner);
-			return err;
-		}
-	}
 
 	while (mtd->parent) {
 		mtd = mtd->parent;
@@ -1237,14 +1236,14 @@ void __put_mtd_device(struct mtd_info *mtd)
 		mtd = parent;
 	}
 
-	if (master->_put_device)
-		master->_put_device(master);
-
-	module_put(master->owner);
-
 	pr_debug("put mtd %s %d\n", master->name, kref_read(&master->refcnt));
 	kref_put(&master->refcnt, mtd_device_release);
 
+	module_put(master->owner);
+
+	/* must be the last as master can be freed in the _put_device */
+	if (master->_put_device)
+		master->_put_device(master);
 }
 EXPORT_SYMBOL_GPL(__put_mtd_device);
 
