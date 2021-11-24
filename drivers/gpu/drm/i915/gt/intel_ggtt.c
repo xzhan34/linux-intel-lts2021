@@ -848,8 +848,11 @@ static int ggtt_probe_common(struct i915_ggtt *ggtt, u64 size)
 	}
 
 	pte_flags = 0;
-	if (i915_gem_object_is_lmem(ggtt->vm.scratch[0]))
+	if (i915_gem_object_is_lmem(ggtt->vm.scratch[0])) {
+		/* we rely on scratch in SMEM to clean stale LMEM for the WA */
+		GEM_DEBUG_WARN_ON(intel_ggtt_needs_same_mem_type_within_cl_wa(i915));
 		pte_flags |= PTE_LM;
+	}
 
 	ggtt->vm.scratch[0]->encode =
 		ggtt->vm.pte_encode(px_dma(ggtt->vm.scratch[0]),

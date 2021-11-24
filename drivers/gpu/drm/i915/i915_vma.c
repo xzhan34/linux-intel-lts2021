@@ -789,6 +789,12 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 				  alignment, vma->fence_alignment);
 	}
 
+	if (i915_is_ggtt(vma->vm) &&
+	    intel_ggtt_needs_same_mem_type_within_cl_wa(vma->vm->i915)) {
+		size = round_up(size, I915_GTT_PAGE_SIZE_64K);
+		alignment = round_up(alignment, I915_GTT_PAGE_SIZE_64K);
+	}
+
 	GEM_BUG_ON(!IS_ALIGNED(size, I915_GTT_PAGE_SIZE));
 	GEM_BUG_ON(!IS_ALIGNED(alignment, I915_GTT_MIN_ALIGNMENT));
 	GEM_BUG_ON(!is_power_of_2(alignment));

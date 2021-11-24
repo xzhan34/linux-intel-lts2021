@@ -1470,6 +1470,17 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 
 #define HAS_BAR2_SMEM_STOLEN(i915) (!HAS_LMEM(i915) && \
 				    GRAPHICS_VER_FULL(i915) >= IP_VER(12, 70))
+static inline bool
+intel_ggtt_needs_same_mem_type_within_cl_wa(struct drm_i915_private *dev_priv)
+{
+	/*
+	 * Wa_14011411649:xehpsdv,dg2_g10
+	 * We can't mix LMEM and SMEM allocation within the same GGTT
+	 * cacheline (i.e. 16 PTEs, 64k address block).
+	 */
+	return IS_DG2_GRAPHICS_STEP(dev_priv, G10, STEP_A0, STEP_B0) ||
+		IS_XEHPSDV(dev_priv);
+}
 
 /* i915_gem.c */
 void i915_gem_init_early(struct drm_i915_private *dev_priv);

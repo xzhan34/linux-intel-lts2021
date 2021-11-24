@@ -221,6 +221,8 @@ static void __i915_vm_retire(struct i915_active *ref)
 
 void i915_address_space_init(struct i915_address_space *vm, int subclass)
 {
+	u64 min_alignment;
+
 	kref_init(&vm->ref);
 
 	/*
@@ -262,7 +264,13 @@ void i915_address_space_init(struct i915_address_space *vm, int subclass)
 	GEM_BUG_ON(!vm->total);
 	drm_mm_init(&vm->mm, 0, vm->total);
 
-	memset64(vm->min_alignment, I915_GTT_MIN_ALIGNMENT,
+	min_alignment = I915_GTT_MIN_ALIGNMENT;
+	if (subclass == VM_CLASS_GGTT &&
+	    intel_ggtt_needs_same_mem_type_within_cl_wa(vm->i915)) {
+		min_alignment = I915_GTT_PAGE_SIZE_64K;
+	}
+
+	memset64(vm->min_alignment, min_alignment,
 		 ARRAY_SIZE(vm->min_alignment));
 
 	if (HAS_64K_PAGES(vm->i915)) {
