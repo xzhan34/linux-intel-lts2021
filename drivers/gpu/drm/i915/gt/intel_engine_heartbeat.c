@@ -160,8 +160,12 @@ static void heartbeat(struct work_struct *wrk)
 		goto out;
 	}
 
-	if (engine->heartbeat.systole) {
+	rq = READ_ONCE(engine->heartbeat.systole);
+	if (rq) {
 		long delay = READ_ONCE(engine->props.heartbeat_interval_ms);
+
+		if (i915_request_completed(rq))
+			goto out;
 
 		/* Safeguard against too-fast worker invocations */
 		if (!time_after(jiffies,
