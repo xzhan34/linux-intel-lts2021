@@ -2235,6 +2235,30 @@ __vgpu_write(8)
 __vgpu_write(16)
 __vgpu_write(32)
 
+static const struct i915_range vf_accessible_regs[] = {
+	{ .start = 0x190010, .end = 0x190010 },
+	{ .start = 0x190018, .end = 0x19001C },
+	{ .start = 0x190030, .end = 0x190048 },
+	{ .start = 0x190060, .end = 0x190064 },
+	{ .start = 0x190070, .end = 0x190074 },
+	{ .start = 0x190090, .end = 0x190090 },
+	{ .start = 0x1900a0, .end = 0x1900a0 },
+	{ .start = 0x1900a8, .end = 0x1900ac },
+	{ .start = 0x1900b0, .end = 0x1900b4 },
+	{ .start = 0x1900d0, .end = 0x1900d4 },
+	{ .start = 0x1900e8, .end = 0x1900ec },
+	{ .start = 0x1900F0, .end = 0x1900F4 },
+	{ .start = 0x190100, .end = 0x190100 },
+	{ .start = 0x1901f0, .end = 0x1901f0 },
+	{ .start = 0x1901f8, .end = 0x1901f8 },
+	{ .start = 0x190240, .end = 0x19024c },
+};
+
+static bool reg_is_vf_accessible(u32 offset)
+{
+	return BSEARCH(offset, &vf_accessible_regs[0], ARRAY_SIZE(vf_accessible_regs), mmio_range_cmp);
+}
+
 static int __vf_runtime_reg_cmp(u32 key, const struct vf_runtime_reg *reg)
 {
 	u32 offset = reg->offset;
@@ -2262,8 +2286,15 @@ static u##x vf_read##x(struct intel_uncore *uncore, \
 { \
 	u32 offset = i915_mmio_reg_offset(reg); \
 	const struct vf_runtime_reg *vf_reg = __vf_runtime_reg_find(uncore->i915, offset); \
+	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_IOV) && vf_reg) \
+		drm_dbg(&uncore->i915->drm, "runtime MMIO %#04x = %#x\n", \
+			offset, vf_reg->value); \
 	if (vf_reg) \
 		return vf_reg->value; \
+	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_IOV) && !reg_is_vf_accessible(offset)) { \
+		WARN(1, "rejected read MMIO %#04x\n", offset); \
+		return 0; \
+	} \
 	return gen2_read##x(uncore, reg, trace); \
 }
 
