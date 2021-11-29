@@ -10,6 +10,7 @@
 #include "intel_huc.h"
 #include "i915_drv.h"
 #include "pxp/intel_pxp_tee_interface.h"
+#include "pxp/intel_pxp_huc.h"
 
 /**
  * DOC: HuC
@@ -115,7 +116,8 @@ static int check_huc_loading_mode(struct intel_huc *huc)
 
 int intel_huc_init(struct intel_huc *huc)
 {
-	struct drm_i915_private *i915 = huc_to_gt(huc)->i915;
+	struct intel_gt *gt = huc_to_gt(huc);
+	struct drm_i915_private *i915 = gt->i915;
 	int err;
 
 	err = check_huc_loading_mode(huc);

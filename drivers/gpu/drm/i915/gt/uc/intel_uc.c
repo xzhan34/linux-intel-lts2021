@@ -641,10 +641,19 @@ static void __uc_fini_hw(struct intel_uc *uc)
  */
 static int __uc_init_hw_late(struct intel_uc *uc)
 {
+	int err;
+
 	if (!intel_uc_uses_gsc_uc(uc))
 		return 0;
 
-	return intel_gsc_fw_upload(&uc->gsc);
+	err = intel_gsc_fw_upload(&uc->gsc);
+	if (err)
+		return err;
+
+	if (intel_uc_uses_huc(uc))
+		err = intel_huc_fw_load_and_auth_via_gsc(&uc->huc);
+
+	return err;
 }
 
 /**

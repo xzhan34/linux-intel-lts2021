@@ -30,6 +30,35 @@ static bool gsc_init_done(struct intel_uncore *uncore)
 	return fw_status & GSC_FIRMWARE_INIT_COMPLETE_BIT;
 }
 
+struct gsc_heci_pkt {
+	u64 addr_in;
+	u32 size_in;
+	u64 addr_out;
+	u32 size_out;
+};
+
+static int emit_gsc_heci_pkt(struct i915_request *rq, struct gsc_heci_pkt *pkt)
+{
+	u32* cs;
+
+	cs = intel_ring_begin(rq, 8);
+	if (IS_ERR(cs))
+		return PTR_ERR(cs);
+
+	*cs++ = GSC_HECI_CMD_PKT;
+	*cs++ = lower_32_bits(pkt->addr_in);
+	*cs++ = upper_32_bits(pkt->addr_in);
+	*cs++ = pkt->size_in;
+	*cs++ = lower_32_bits(pkt->addr_out);
+	*cs++ = upper_32_bits(pkt->addr_out);
+	*cs++ = pkt->size_out;
+	*cs++ = 0;
+
+	intel_ring_advance(rq, cs);
+
+	return 0;
+}
+
 static int emit_gsc_fw_load(struct i915_request *rq, struct intel_gsc_uc *gsc)
 {
 	u32 offset = i915_ggtt_offset(gsc->local);
@@ -49,7 +78,12 @@ static int emit_gsc_fw_load(struct i915_request *rq, struct intel_gsc_uc *gsc)
 	return 0;
 }
 
-static int gsc_fw_load(struct intel_gsc_uc *gsc)
+/*
+ * Our submissions to GSC are going to be either a FW load or an heci pkt, but
+ * all the request emission logic is the same so we can use a common func and
+ * just add the correct cmd
+ */
+static int submit_to_gsc_fw(struct intel_gsc_uc *gsc, struct gsc_heci_pkt *pkt)
 {
 	struct intel_context *ce = gsc->ce;
 	struct i915_request *rq;
@@ -75,7 +109,10 @@ static int gsc_fw_load(struct intel_gsc_uc *gsc)
 	 * use cases we should implement it.
 	 */
 
-	err = emit_gsc_fw_load(rq, gsc);
+	if (pkt)
+		err = emit_gsc_heci_pkt(rq, pkt);
+	else
+		err = emit_gsc_fw_load(rq, gsc);
 	if (err)
 		goto out_rq;
 
@@ -97,10 +134,28 @@ out_rq:
 
 	if (err)
 		drm_err(&gsc_uc_to_gt(gsc)->i915->drm,
-			"request submission for GSC load failed (%d)\n",
+			"request submission for GSC failed (%d)\n",
 			err);
 
 	return err;
+}
+
+static int gsc_fw_load(struct intel_gsc_uc *gsc)
+{
+	return submit_to_gsc_fw(gsc, NULL);
+}
+
+int intel_gsc_fw_heci_send(struct intel_gsc_uc *gsc, u64 addr_in, u32 size_in,
+			   u64 addr_out, u32 size_out)
+{
+	struct gsc_heci_pkt pkt = {
+		.addr_in = addr_in,
+		.size_in = size_in,
+		.addr_out = addr_out,
+		.size_out = size_out
+	};
+
+	return submit_to_gsc_fw(gsc, &pkt);
 }
 
 static int gsc_fw_load_prepare(struct intel_gsc_uc *gsc)
