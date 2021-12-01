@@ -1054,7 +1054,7 @@ static void guc_submission_tasklet(struct tasklet_struct *t)
 static void cs_irq_handler(struct intel_engine_cs *engine, u16 iir)
 {
 	if (iir & GT_RENDER_USER_INTERRUPT)
-		intel_engine_signal_breadcrumbs(engine);
+		intel_engine_signal_breadcrumbs_irq(engine);
 }
 
 static void __guc_context_destroy(struct intel_context *ce);

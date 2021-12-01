@@ -594,3 +594,15 @@ void intel_engine_print_breadcrumbs(struct intel_engine_cs *engine,
 	if (!list_empty(&b->signalers))
 		print_signals(b, p);
 }
+
+void intel_engine_signal_breadcrumbs(const struct intel_engine_cs *engine)
+{
+	struct intel_breadcrumbs *b;
+
+	b = engine->breadcrumbs;
+	if (!b)
+		return;
+
+	if (READ_ONCE(b->irq_enabled))
+		irq_work_queue(&b->irq_work);
+}

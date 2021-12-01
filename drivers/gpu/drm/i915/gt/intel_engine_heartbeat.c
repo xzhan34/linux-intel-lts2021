@@ -6,6 +6,7 @@
 #include "i915_drv.h"
 #include "i915_request.h"
 
+#include "intel_breadcrumbs.h"
 #include "intel_context.h"
 #include "intel_engine_heartbeat.h"
 #include "intel_engine_pm.h"
@@ -134,6 +135,7 @@ static void heartbeat(struct work_struct *wrk)
 
 	/* Just in case everything has gone horribly wrong, give it a kick */
 	intel_engine_flush_submission(engine);
+	intel_engine_signal_breadcrumbs(engine);
 
 	rq = engine->heartbeat.systole;
 	if (rq && i915_request_completed(rq)) {

@@ -7,6 +7,7 @@
 
 #include "i915_drv.h" /* for_each_engine() */
 #include "i915_request.h"
+#include "intel_breadcrumbs.h"
 #include "intel_engine_heartbeat.h"
 #include "intel_engine_pm.h"
 #include "intel_execlists_submission.h"
@@ -56,6 +57,7 @@ static bool flush_submission(struct intel_gt *gt)
 			continue;
 
 		intel_engine_flush_submission(engine);
+		intel_engine_signal_breadcrumbs(engine);
 
 		/* Flush the background retirement and idle barriers */
 		flush_work(&engine->retire_work);

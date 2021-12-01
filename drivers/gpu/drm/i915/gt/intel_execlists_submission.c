@@ -2517,7 +2517,7 @@ static void execlists_irq_handler(struct intel_engine_cs *engine, u16 iir)
 		tasklet = true;
 
 	if (iir & GT_RENDER_USER_INTERRUPT)
-		intel_engine_signal_breadcrumbs(engine);
+		intel_engine_signal_breadcrumbs_irq(engine);
 
 	if (tasklet)
 		tasklet_hi_schedule(&engine->sched_engine->tasklet);
