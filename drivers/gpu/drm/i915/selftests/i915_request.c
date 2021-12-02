@@ -2715,7 +2715,7 @@ static int perf_series_engines(void *arg)
 			struct intel_context *ce = ps->ce[idx];
 
 			p->engine = ps->ce[idx]->engine;
-			intel_engine_pm_get(p->engine);
+			st_engine_heartbeat_disable(p->engine);
 
 			if (intel_engine_supports_stats(p->engine))
 				p->busy = intel_engine_get_busy_time(p->engine,
@@ -2743,9 +2743,9 @@ static int perf_series_engines(void *arg)
 				now = ktime_get();
 			p->time = ktime_sub(now, p->time);
 
+			st_engine_heartbeat_enable(p->engine);
 			err = switch_to_kernel_sync(ce, err);
 			p->runtime += intel_context_get_total_runtime_ns(ce);
-			intel_engine_pm_put(p->engine);
 
 			busy = 100 * ktime_to_ns(p->busy);
 			dt = ktime_to_ns(p->time);
@@ -2801,6 +2801,7 @@ static int p_sync0(void *arg)
 		return err;
 	}
 
+	st_engine_heartbeat_disable(engine);
 	if (intel_engine_supports_stats(engine)) {
 		p->busy = intel_engine_get_busy_time(engine, &p->time);
 		busy = true;
@@ -2842,6 +2843,7 @@ static int p_sync0(void *arg)
 		p->time = ktime_sub(ktime_get(), p->time);
 	}
 
+	st_engine_heartbeat_enable(engine);
 	err = switch_to_kernel_sync(ce, err);
 	p->runtime = intel_context_get_total_runtime_ns(ce);
 	p->count = count;
@@ -2872,6 +2874,7 @@ static int p_sync1(void *arg)
 		return err;
 	}
 
+	st_engine_heartbeat_disable(engine);
 	if (intel_engine_supports_stats(engine)) {
 		p->busy = intel_engine_get_busy_time(engine, &p->time);
 		busy = true;
@@ -2915,6 +2918,7 @@ static int p_sync1(void *arg)
 		p->time = ktime_sub(ktime_get(), p->time);
 	}
 
+	st_engine_heartbeat_enable(engine);
 	err = switch_to_kernel_sync(ce, err);
 	p->runtime = intel_context_get_total_runtime_ns(ce);
 	p->count = count;
@@ -2944,6 +2948,7 @@ static int p_many(void *arg)
 		return err;
 	}
 
+	st_engine_heartbeat_disable(engine);
 	if (intel_engine_supports_stats(engine)) {
 		p->busy = intel_engine_get_busy_time(engine, &p->time);
 		busy = true;
@@ -2976,6 +2981,7 @@ static int p_many(void *arg)
 		p->time = ktime_sub(ktime_get(), p->time);
 	}
 
+	st_engine_heartbeat_enable(engine);
 	err = switch_to_kernel_sync(ce, err);
 	p->runtime = intel_context_get_total_runtime_ns(ce);
 	p->count = count;
@@ -3024,8 +3030,6 @@ static int perf_parallel_engines(void *arg)
 
 		idx = 0;
 		for_each_uabi_engine(engine, i915) {
-			intel_engine_pm_get(engine);
-
 			memset(&engines[idx].p, 0, sizeof(engines[idx].p));
 			engines[idx].p.engine = engine;
 
@@ -3052,7 +3056,6 @@ static int perf_parallel_engines(void *arg)
 			if (status && !err)
 				err = status;
 
-			intel_engine_pm_put(engine);
 			put_task_struct(engines[idx++].tsk);
 		}
 
