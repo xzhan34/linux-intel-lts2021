@@ -1552,7 +1552,8 @@ static int live_breadcrumbs_smoketest(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
 	const unsigned int nengines = num_uabi_engines(i915);
-	const unsigned int ncpus = num_online_cpus();
+	const unsigned int ncpus = /* saturate with nengines * ncpus */
+		max_t(int, 2, DIV_ROUND_UP(num_online_cpus(), nengines));
 	unsigned long num_waits, num_fences;
 	struct intel_engine_cs *engine;
 	struct task_struct **threads;
@@ -1624,7 +1625,7 @@ static int live_breadcrumbs_smoketest(void *arg)
 			goto out_flush;
 		}
 		/* One ring interleaved between requests from all cpus */
-		smoke[idx].max_batch /= num_online_cpus() + 1;
+		smoke[idx].max_batch /= ncpus + 1;
 		pr_debug("Limiting batches to %d requests on %s\n",
 			 smoke[idx].max_batch, engine->name);
 
