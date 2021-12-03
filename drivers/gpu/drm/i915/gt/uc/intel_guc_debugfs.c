@@ -15,6 +15,7 @@
 #include "intel_guc_debugfs.h"
 #include "intel_guc_log_debugfs.h"
 #include "intel_runtime_pm.h"
+#include "i915_drv.h"
 
 static int guc_info_show(struct seq_file *m, void *data)
 {
@@ -27,7 +28,9 @@ static int guc_info_show(struct seq_file *m, void *data)
 
 	intel_guc_load_status(guc, &p);
 	drm_puts(&p, "\n");
-	intel_guc_log_info(&guc->log, &p);
+
+	if (!IS_SRIOV_VF(guc_to_gt(guc)->i915))
+		intel_guc_log_info(&guc->log, &p);
 
 	if (!intel_guc_submission_is_used(guc))
 		return 0;

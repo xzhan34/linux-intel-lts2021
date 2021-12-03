@@ -1561,6 +1561,9 @@ void intel_guc_load_status(struct intel_guc *guc, struct drm_printer *p)
 
 	intel_uc_fw_dump(&guc->fw, p);
 
+	if (IS_SRIOV_VF(guc_to_gt(guc)->i915))
+		return;
+
 	with_intel_runtime_pm(uncore->rpm, wakeref) {
 		u32 status = intel_uncore_read(uncore, GUC_STATUS);
 		u32 i;
