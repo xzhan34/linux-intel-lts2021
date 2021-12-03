@@ -114,6 +114,7 @@ intel_memory_region_get(struct intel_memory_region *mem);
 void intel_memory_region_put(struct intel_memory_region *mem);
 
 int intel_memory_regions_hw_probe(struct drm_i915_private *i915);
+int intel_memory_regions_resume_early(struct drm_i915_private *i915);
 void intel_memory_regions_driver_release(struct drm_i915_private *i915);
 struct intel_memory_region *
 intel_memory_region_by_type(struct drm_i915_private *i915,

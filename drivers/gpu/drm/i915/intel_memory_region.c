@@ -344,6 +344,27 @@ out_cleanup:
 	return err;
 }
 
+int intel_memory_regions_resume_early(struct drm_i915_private *i915)
+{
+	int ret = 0;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(i915->mm.regions); i++) {
+		struct intel_memory_region *region;
+		int err = 0;
+
+		region = i915->mm.regions[i];
+		if (!region)
+			continue;
+
+		err = intel_memory_region_memtest(region, (void *)_RET_IP_);
+		if (err && !ret)
+			ret = err;
+	}
+
+	return ret;
+}
+
 void intel_memory_regions_driver_release(struct drm_i915_private *i915)
 {
 	int i;

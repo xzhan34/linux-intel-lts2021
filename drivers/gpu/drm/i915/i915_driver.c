@@ -1511,6 +1511,18 @@ static int i915_drm_resume_early(struct drm_device *dev)
 
 	disable_rpm_wakeref_asserts(&dev_priv->runtime_pm);
 
+	/*
+	 * As soon as we can talk to the device, check the local memory.
+	 *
+	 * This is a destructive process, so we need to run before we start
+	 * repopulating the device.
+	 */
+	ret = intel_memory_regions_resume_early(dev_priv);
+	if (ret) {
+		drm_err(&dev_priv->drm, "Memory health check failed\n");
+		goto out;
+	}
+
 	ret = vlv_resume_prepare(dev_priv, false);
 	if (ret)
 		drm_err(&dev_priv->drm,
@@ -1525,6 +1537,7 @@ static int i915_drm_resume_early(struct drm_device *dev)
 
 	intel_power_domains_resume(dev_priv);
 
+out:
 	enable_rpm_wakeref_asserts(&dev_priv->runtime_pm);
 
 	return ret;
