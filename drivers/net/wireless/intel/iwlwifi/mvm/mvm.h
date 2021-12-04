@@ -1141,6 +1141,8 @@ struct iwl_mvm {
  * @IWL_MVM_STATUS_IN_D3: in D3 (or at least about to go into it)
  * @IWL_MVM_STATUS_STARTING: starting mac,
  *	used to disable restart flow while in STARTING state
+ * @IWL_MVM_STATUS_SUPPRESS_ERROR_LOG_ONCE: suppress one error log
+ *	if this is set, when intentionally triggered
  */
 enum iwl_mvm_status {
 	IWL_MVM_STATUS_HW_RFKILL,
@@ -1153,6 +1155,7 @@ enum iwl_mvm_status {
 	IWL_MVM_STATUS_NEED_FLUSH_P2P,
 	IWL_MVM_STATUS_IN_D3,
 	IWL_MVM_STATUS_STARTING,
+	IWL_MVM_STATUS_SUPPRESS_ERROR_LOG_ONCE,
 };
 
 struct iwl_mvm_csme_conn_info {
