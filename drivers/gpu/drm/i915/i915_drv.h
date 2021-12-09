@@ -317,6 +317,21 @@ struct i915_gem_mm {
 	/* shrinker accounting, also useful for userland debugging */
 	u64 shrink_memory;
 	u32 shrink_count;
+
+	/* background task for returning bound system pages */
+	struct {
+		struct task_struct *tsk; /* our kswapd equivalent */
+
+		/*
+		 * Track the number of pages do_shrink_slab() has asked us
+		 * to reclaim, and we have failed to find. This count of
+		 * outstanding reclaims is passed to the swapper thread,
+		 * which then blocks as it tries to achieve that goal.
+		 * It is likely that the target overshoots due to the
+		 * latency between our thread and kswapd making new requests.
+		 */
+		atomic_long_t target;
+	} swapper;
 };
 
 #define I915_IDLE_ENGINES_TIMEOUT (200) /* in ms */

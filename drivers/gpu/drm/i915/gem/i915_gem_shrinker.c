@@ -5,6 +5,7 @@
  */
 
 #include <linux/oom.h>
+#include <linux/sched/mm.h>
 #include <linux/shmem_fs.h>
 #include <linux/slab.h>
 #include <linux/swap.h>
@@ -311,6 +312,113 @@ i915_gem_shrinker_count(struct shrinker *shrinker, struct shrink_control *sc)
 	return count;
 }
 
+static unsigned long run_swapper(struct drm_i915_private *i915,
+				 unsigned long target,
+				 unsigned long *nr_scanned)
+{
+	return i915_gem_shrink(NULL, i915,
+			       target, nr_scanned,
+			       I915_SHRINK_ACTIVE |
+			       I915_SHRINK_BOUND |
+			       I915_SHRINK_UNBOUND |
+			       I915_SHRINK_WRITEBACK);
+}
+
+static int swapper(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	atomic_long_t *target = &i915->mm.swapper.target;
+	unsigned int noreclaim_state;
+
+	/*
+	 * For us to be running the swapper implies that the system is under
+	 * enough memory pressure to be swapping. At that point, we both want
+	 * to ensure we make forward progress in order to reclaim pages from
+	 * the device and not contribute further to direct reclaim pressure. We
+	 * mark ourselves as a memalloc task in order to not trigger direct
+	 * reclaim ourselves, but dip into the system memory reserves for
+	 * shrinkers.
+	 */
+	noreclaim_state = memalloc_noreclaim_save();
+
+	do {
+		intel_wakeref_t wakeref;
+
+		___wait_var_event(target,
+				  atomic_long_read(target) ||
+				  kthread_should_stop(),
+				  TASK_IDLE, 0, 0, schedule());
+		if (kthread_should_stop())
+			break;
+
+		with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
+			unsigned long nr_scan = atomic_long_xchg(target, 0);
+
+			/*
+			 * Now that we have woken up the device hierarchy,
+			 * act as a normal shrinker. Our shrinker is primarily
+			 * focussed on supporting direct reclaim (low latency,
+			 * avoiding contention that may lead to more reclaim,
+			 * or prevent that reclaim from making forward progress)
+			 * and we wish to continue that good practice even
+			 * here where we could accidentally sleep holding locks.
+			 *
+			 * Let lockdep know and warn us about any bad practice
+			 * that may lead to high latency in direct reclaim, or
+			 * anywhere else.
+			 *
+			 * While the swapper is active, direct reclaim from
+			 * other threads will also be running in parallel
+			 * through i915_gem_shrink(), scouring for idle pages.
+			 */
+			fs_reclaim_acquire(GFP_KERNEL);
+			run_swapper(i915, nr_scan, &nr_scan);
+			fs_reclaim_release(GFP_KERNEL);
+		}
+	} while (1);
+
+	memalloc_noreclaim_restore(noreclaim_state);
+	return 0;
+}
+
+static void start_swapper(struct drm_i915_private *i915)
+{
+	i915->mm.swapper.tsk = kthread_run(swapper, i915, "i915-swapd");
+	if (IS_ERR(i915->mm.swapper.tsk))
+		drm_err(&i915->drm,
+			"Failed to launch swapper; memory reclaim may be degraded\n");
+}
+
+static unsigned long kick_swapper(struct drm_i915_private *i915,
+				  unsigned long nr_scan,
+				  unsigned long *scanned)
+{
+	/* Run immediately under kswap if disabled */
+	if (IS_ERR_OR_NULL(i915->mm.swapper.tsk))
+		/*
+		 * Note that as we are still inside kswapd, we are still
+		 * inside a fs_reclaim context and cannot forcibly wake the
+		 * device and so can only opportunitiscally reclaim bound
+		 * memory.
+		 */
+		return run_swapper(i915, nr_scan, scanned);
+
+	if (!atomic_long_fetch_add(nr_scan, &i915->mm.swapper.target))
+		wake_up_var(&i915->mm.swapper.target);
+
+	return 0;
+}
+
+static void stop_swapper(struct drm_i915_private *i915)
+{
+	struct task_struct *tsk = fetch_and_zero(&i915->mm.swapper.tsk);
+
+	if (IS_ERR_OR_NULL(tsk))
+		return;
+
+	kthread_stop(tsk);
+}
+
 static unsigned long
 i915_gem_shrinker_scan(struct shrinker *shrinker, struct shrink_control *sc)
 {
@@ -319,27 +427,22 @@ i915_gem_shrinker_scan(struct shrinker *shrinker, struct shrink_control *sc)
 	unsigned long freed;
 
 	sc->nr_scanned = 0;
-
 	freed = i915_gem_shrink(NULL, i915,
 				sc->nr_to_scan,
 				&sc->nr_scanned,
 				I915_SHRINK_BOUND |
 				I915_SHRINK_UNBOUND);
-	if (sc->nr_scanned < sc->nr_to_scan && current_is_kswapd()) {
-		intel_wakeref_t wakeref;
+	if (!sc->nr_scanned) /* nothing left to reclaim */
+		return SHRINK_STOP;
 
-		with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
-			freed += i915_gem_shrink(NULL, i915,
-						 sc->nr_to_scan - sc->nr_scanned,
-						 &sc->nr_scanned,
-						 I915_SHRINK_ACTIVE |
-						 I915_SHRINK_BOUND |
-						 I915_SHRINK_UNBOUND |
-						 I915_SHRINK_WRITEBACK);
-		}
-	}
+	/* Pages still bound and system is failing with direct reclaim? */
+	if (sc->nr_scanned < sc->nr_to_scan && current_is_kswapd())
+		/* Defer high latency tasks to a background thread. */
+		freed += kick_swapper(i915,
+				      sc->nr_to_scan - sc->nr_scanned,
+				      &sc->nr_scanned);
 
-	return sc->nr_scanned ? freed : SHRINK_STOP;
+	return freed;
 }
 
 static int
@@ -429,10 +532,14 @@ void i915_gem_driver_register__shrinker(struct drm_i915_private *i915)
 	i915->mm.vmap_notifier.notifier_call = i915_gem_shrinker_vmap;
 	drm_WARN_ON(&i915->drm,
 		    register_vmap_purge_notifier(&i915->mm.vmap_notifier));
+
+	start_swapper(i915);
 }
 
 void i915_gem_driver_unregister__shrinker(struct drm_i915_private *i915)
 {
+	stop_swapper(i915);
+
 	drm_WARN_ON(&i915->drm,
 		    unregister_vmap_purge_notifier(&i915->mm.vmap_notifier));
 	drm_WARN_ON(&i915->drm,
