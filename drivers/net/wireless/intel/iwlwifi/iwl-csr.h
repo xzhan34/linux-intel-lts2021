@@ -112,8 +112,6 @@
 /* Doorbell - since Bz
  * connected to UREG_DOORBELL_TO_ISR6 (lower 16 bits only)
  */
-
-/* Doorbell NMI (since Bz) */
 #define CSR_DOORBELL_VECTOR	(CSR_BASE + 0x130)
 
 /* host chicken bits */
