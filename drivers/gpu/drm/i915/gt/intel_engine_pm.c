@@ -68,8 +68,6 @@ static int __engine_unpark(struct intel_wakeref *wf)
 			 ce->timeline->seqno,
 			 READ_ONCE(*ce->timeline->hwsp_seqno),
 			 ce->ring->emit);
-		GEM_BUG_ON(ce->timeline->seqno !=
-			   READ_ONCE(*ce->timeline->hwsp_seqno));
 	}
 
 	if (engine->unpark)
