@@ -1823,6 +1823,13 @@ err_put:
 	return err;
 }
 
+static bool pf_is_config_valid_lmem(struct intel_iov *iov, unsigned int id)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	return iov->pf.provisioning.configs[id].lmem_obj;
+}
+
 /**
  * intel_iov_provisioning_set_lmem - Provision VF with LMEM.
  * @iov: the IOV struct
@@ -1835,6 +1842,7 @@ int intel_iov_provisioning_set_lmem(struct intel_iov *iov, unsigned int id, u64 
 {
 	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
 	intel_wakeref_t wakeref;
+	bool reprovisioning;
 	int err = -ENONET;
 
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
@@ -1843,12 +1851,16 @@ int intel_iov_provisioning_set_lmem(struct intel_iov *iov, unsigned int id, u64 
 
 	mutex_lock(pf_provisioning_mutex(iov));
 
+	reprovisioning = pf_is_config_valid_lmem(iov, id) || size;
+
 	with_intel_runtime_pm(rpm, wakeref)
 		err = pf_provision_lmem(iov, id, size);
 
 	if (unlikely(err))
 		IOV_ERROR(iov, "Failed to provision VF%u with %llu of LMEM (%pe)\n",
 			  id, size, ERR_PTR(err));
+	else if (reprovisioning)
+		pf_mark_manual_provisioning(iov);
 
 	mutex_unlock(pf_provisioning_mutex(iov));
 	return err;
