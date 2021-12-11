@@ -1867,6 +1867,8 @@ static void pf_unprovision_config(struct intel_iov *iov, unsigned int id)
 	pf_provision_ggtt(iov, id, 0);
 	pf_provision_ctxs(iov, id, 0);
 	pf_provision_dbs(iov, id, 0);
+	pf_provision_exec_quantum(iov, id, 0);
+	pf_provision_preempt_timeout(iov, id, 0);
 
 	pf_unprovision_thresholds(iov, id);
 }
