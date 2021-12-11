@@ -907,6 +907,38 @@ struct prelim_drm_i915_gem_wait_user_fence {
 	__s64 timeout;
 };
 
+/*
+ * This extension allows user to attach a pair of <addr, value> to an execbuf.
+ * When that execbuf is finished by GPU HW, the value is written to addr.
+ * So after execbuf is submitted, user can poll addr to know whether execbuf
+ * has been finished or not. User space can also call i915_gem_wait_user_fence_ioctl
+ * (with PRELIM_I915_UFENCE_WAIT_EQ operation) to wait for finishing of execbuf.
+ * This ioctl can sleep so it is more efficient than a busy polling.
+ * So this serves as synchronization purpose. It is similar to DRM_IOCTL_I915_GEM_WAIT,
+ * which is prohibited by compute context. The method introduced here can be use for
+ * both compute and non-compute context.
+ */
+struct prelim_drm_i915_gem_execbuffer_ext_user_fence {
+#define PRELIM_DRM_I915_GEM_EXECBUFFER_EXT_USER_FENCE (PRELIM_I915_USER_EXT | 1)
+	struct i915_user_extension base;
+
+	/**
+	 * A virtual address mapped to current process's GPU address space.
+	 * addr has to be qword aligned. address has to be a a valid gpu
+	 * virtual address at the time of batch buffer completion.
+	 */
+	__u64 addr;
+
+	/**
+	 * value to be written to above address after execbuf finishes.
+	 */
+	__u64 value;
+	/**
+	 * for future extensions. Currently not used.
+	 */
+	__u64 rsvd;
+};
+
 /* Deprecated in favor of prelim_drm_i915_vm_bind_ext_user_fence */
 struct prelim_drm_i915_vm_bind_ext_sync_fence {
 #define PRELIM_I915_VM_BIND_EXT_SYNC_FENCE     (PRELIM_I915_USER_EXT | 0)

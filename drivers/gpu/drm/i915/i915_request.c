@@ -1016,6 +1016,7 @@ __i915_request_create(struct intel_context *ce, gfp_t gfp)
 	rq->engine = ce->engine;
 	rq->ring = ce->ring;
 	rq->execution_mask = ce->engine->mask;
+	rq->has_user_fence = false;
 
 	RCU_INIT_POINTER(rq->timeline, tl);
 

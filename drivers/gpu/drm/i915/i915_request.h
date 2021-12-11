@@ -348,6 +348,8 @@ struct i915_request {
 		struct list_head link;
 		unsigned long delay;
 	} mock;)
+	bool has_user_fence;
+	struct prelim_drm_i915_gem_execbuffer_ext_user_fence user_fence;
 };
 
 #define I915_FENCE_GFP I915_GFP_ALLOW_FAIL

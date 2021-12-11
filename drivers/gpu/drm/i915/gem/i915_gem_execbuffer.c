@@ -324,6 +324,8 @@ struct i915_execbuffer {
 
 	struct eb_fence *fences;
 	unsigned long num_fences;
+	bool has_user_fence;
+	struct prelim_drm_i915_gem_execbuffer_ext_user_fence user_fence;
 };
 
 static int eb_parse(struct i915_execbuffer *eb);
@@ -3261,6 +3263,15 @@ eb_select_engine(struct i915_execbuffer *eb)
 	if (IS_ERR(ce))
 		return PTR_ERR(ce);
 
+	/*
+	 * Currently don't support user fence for parallel submission
+	 * This can be supported in the future if needed
+	 */
+	if (intel_context_is_parallel(ce) && eb->has_user_fence) {
+		intel_context_put(ce);
+		return -EINVAL;
+	}
+
 	if (intel_context_is_parallel(ce)) {
 		if (eb->buffer_count < ce->parallel.number_children + 1) {
 			intel_context_put(ce);
@@ -3605,6 +3616,28 @@ static void signal_fence_array(const struct i915_execbuffer *eb,
 }
 
 static int
+parse_user_fence(struct i915_user_extension __user *ext, void *data)
+{
+	struct i915_execbuffer *eb = data;
+	struct prelim_drm_i915_gem_execbuffer_ext_user_fence user_fence;
+
+	if (GRAPHICS_VER(eb->i915) < 9)
+		return -ENODEV;
+
+	if (copy_from_user(&user_fence, ext, sizeof(user_fence)))
+		return -EFAULT;
+
+	if (!IS_ALIGNED(user_fence.addr, 8))
+		return -EINVAL;
+
+	eb->user_fence.addr = user_fence.addr;
+	eb->user_fence.value = user_fence.value;
+	eb->has_user_fence = true;
+
+	return 0;
+}
+
+static int
 parse_timeline_fences(struct i915_user_extension __user *ext, void *data)
 {
 	struct i915_execbuffer *eb = data;
@@ -3713,6 +3746,7 @@ static int eb_requests_add(struct i915_execbuffer *eb, int err)
 
 static const i915_user_extension_fn execbuf_extensions[] = {
 	[DRM_I915_GEM_EXECBUFFER_EXT_TIMELINE_FENCES] = parse_timeline_fences,
+	[PRELIM_I915_USER_EXT_MASK(PRELIM_DRM_I915_GEM_EXECBUFFER_EXT_USER_FENCE)] = parse_user_fence,
 };
 
 static int
@@ -3921,6 +3955,17 @@ eb_requests_create(struct i915_execbuffer *eb, struct dma_fence *in_fence,
 		}
 
 		/*
+		 * each eb can only have maximumly one user fence. Set this user
+		 * fence only to the parent request - means user fence will be
+		 * signaled after parent request complete (and all child requests
+		 * also complete)
+		 */
+		if (i == 0 && eb->has_user_fence) {
+			eb->requests[i]->user_fence = eb->user_fence;
+			eb->requests[i]->has_user_fence = true;
+		}
+
+		/*
 		 * Only the first request added (committed to backend) has to
 		 * take the in fences into account as all subsequent requests
 		 * will have fences inserted inbetween them.
@@ -3989,6 +4034,7 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 
 	eb.fences = NULL;
 	eb.num_fences = 0;
+	eb.has_user_fence = false;
 
 	memset(eb.requests, 0, sizeof(struct i915_request *) *
 	       ARRAY_SIZE(eb.requests));
