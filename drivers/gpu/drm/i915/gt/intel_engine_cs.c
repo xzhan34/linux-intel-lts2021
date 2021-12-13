@@ -1697,7 +1697,7 @@ static bool ring_is_idle(struct intel_engine_cs *engine)
 	    !(ENGINE_READ(engine, RING_MI_MODE) & MODE_IDLE))
 		idle = false;
 
-	intel_engine_pm_put(engine);
+	intel_engine_pm_put_async(engine);
 
 	return idle;
 }
