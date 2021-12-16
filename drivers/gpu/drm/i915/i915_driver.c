@@ -1250,7 +1250,8 @@ void i915_driver_register(struct drm_i915_private *dev_priv)
 	i915_pmu_register(dev_priv);
 	i915_perf_register(dev_priv);
 
-	i915_hwmon_register(dev_priv);
+	if (!IS_SRIOV_VF(dev_priv))
+		i915_hwmon_register(dev_priv);
 
 	intel_display_driver_register(dev_priv);
 
