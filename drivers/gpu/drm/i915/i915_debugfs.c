@@ -971,6 +971,12 @@ i915_drop_caches_get(void *data, u64 *val)
 	return 0;
 }
 
+static bool has_sriov_wa(struct drm_i915_private *i915)
+{
+	/* Both pf and vf take an untracked wakeref for their lifetime */
+	return IS_SRIOV_PF(i915) || IS_SRIOV_VF(i915);
+}
+
 static int
 gt_idle(struct intel_gt *gt, u64 val)
 {
@@ -979,7 +985,11 @@ gt_idle(struct intel_gt *gt, u64 val)
 	if (val & (DROP_RETIRE | DROP_IDLE))
 		intel_gt_retire_requests(gt);
 
-	if (val & DROP_IDLE) {
+	/*
+	 * FIXME: At the moment we ugly assume that if we are PF/VF we are idle.
+	 * We need a better mechanism to verify this on SR-IOV.
+	 */
+	if (val & DROP_IDLE && !has_sriov_wa(gt->i915)) {
 		ret = intel_gt_pm_wait_for_idle(gt);
 		if (ret)
 			return ret;

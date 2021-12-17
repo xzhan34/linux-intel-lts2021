@@ -1769,6 +1769,9 @@ static void intel_shutdown_encoders(struct drm_i915_private *dev_priv)
 
 void i915_driver_shutdown(struct drm_i915_private *i915)
 {
+	struct intel_gt *gt;
+	unsigned int i;
+
 	disable_rpm_wakeref_asserts(&i915->runtime_pm);
 	intel_runtime_pm_disable(&i915->runtime_pm);
 	intel_power_domains_disable(i915);
@@ -1790,6 +1793,9 @@ void i915_driver_shutdown(struct drm_i915_private *i915)
 	intel_dmc_ucode_suspend(i915);
 
 	i915_gem_suspend(i915);
+
+	for_each_gt(gt, i915, i)
+		intel_gt_shutdown(gt);
 
 	/*
 	 * The only requirement is to reboot with display DC states disabled,

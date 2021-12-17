@@ -382,6 +382,7 @@ void intel_gt_suspend_late(struct intel_gt *gt)
 
 	/* We expect to be idle already; but also want to be independent */
 	wait_for_suspend(gt);
+	intel_gt_pm_wait_for_idle(gt);
 
 	if (is_mock_gt(gt))
 		return;

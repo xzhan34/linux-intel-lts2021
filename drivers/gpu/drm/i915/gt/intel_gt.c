@@ -542,6 +542,7 @@ void intel_gt_driver_register(struct intel_gt *gt)
 	intel_gt_debugfs_register(gt);
 	intel_gt_sysfs_register(gt);
 	intel_iov_sysfs_setup(&gt->iov);
+	intel_iov_vf_get_wakeref_wa(&gt->iov);
 }
 
 static int intel_gt_init_scratch(struct intel_gt *gt, unsigned int size)
@@ -1129,6 +1130,8 @@ void intel_gt_driver_unregister(struct intel_gt *gt)
 {
 	intel_wakeref_t wakeref;
 
+	intel_iov_vf_put_wakeref_wa(&gt->iov);
+
 	if (!gt->i915->drm.unplugged)
 		intel_iov_sysfs_teardown(&gt->iov);
 
@@ -1244,6 +1247,11 @@ static int driver_flr_init(struct intel_gt *gt)
 		return ret;
 
 	return drmm_add_action(&gt->i915->drm, driver_flr_fini, gt);
+}
+
+void intel_gt_shutdown(struct intel_gt *gt)
+{
+	intel_iov_vf_put_wakeref_wa(&gt->iov);
 }
 
 static int intel_gt_tile_setup(struct intel_gt *gt,
