@@ -556,6 +556,33 @@ static u32 *emit_preempt_busywait(struct i915_request *rq, u32 *cs)
 	return cs;
 }
 
+static u32 *emit_user_fence_store(struct i915_request *rq, u32 *cs)
+{
+	/* user fence feature not supported pre-gen9*/
+	if (GRAPHICS_VER(rq->engine->i915) < 9)
+		return cs;
+
+	if (rq->has_user_fence) {
+		*cs++ = MI_STORE_QWORD_IMM_GEN8_POSTED;
+		*cs++ = lower_32_bits(rq->user_fence.addr);
+		*cs++ = upper_32_bits(rq->user_fence.addr);
+		*cs++ = lower_32_bits(rq->user_fence.value);
+		*cs++ = upper_32_bits(rq->user_fence.value);
+	} else {
+		/* user fence space is reserved regardless whether this
+		 * request has user fence or not. See func measure_breadcrumb_dw
+		 * fill the hole if there is no user fence.
+		 */
+		*cs++ = MI_NOOP;
+		*cs++ = MI_NOOP;
+		*cs++ = MI_NOOP;
+		*cs++ = MI_NOOP;
+		*cs++ = MI_NOOP;
+	}
+	*cs++ = MI_NOOP;
+	return cs;
+}
+
 static __always_inline u32*
 gen8_emit_fini_breadcrumb_tail(struct i915_request *rq, u32 *cs)
 {
@@ -574,6 +601,7 @@ gen8_emit_fini_breadcrumb_tail(struct i915_request *rq, u32 *cs)
 
 static u32 *emit_xcs_breadcrumb(struct i915_request *rq, u32 *cs)
 {
+	cs = emit_user_fence_store(rq, cs);
 	return gen8_emit_ggtt_write(cs, i915_request_seqno(rq), hwsp_offset(rq), 0);
 }
 
@@ -613,6 +641,7 @@ u32 *gen11_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 				    PIPE_CONTROL_DC_FLUSH_ENABLE,
 				    0);
 
+	cs = emit_user_fence_store(rq, cs);
 	/*XXX: Look at gen8_emit_fini_breadcrumb_rcs */
 	cs = gen8_emit_ggtt_write_rcs(cs,
 				      i915_request_seqno(rq),
@@ -743,6 +772,8 @@ u32 *gen12_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 		flags &= ~PIPE_CONTROL_3D_ENGINE_FLAGS;
 
 	cs = gen12_emit_pipe_control(cs, PIPE_CONTROL0_HDC_PIPELINE_FLUSH, flags, 0);
+
+	cs = emit_user_fence_store(rq, cs);
 
 	/*XXX: Look at gen8_emit_fini_breadcrumb_rcs */
 	cs = gen12_emit_ggtt_write_rcs(cs,
