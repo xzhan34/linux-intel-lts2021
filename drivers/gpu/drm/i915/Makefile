@@ -41,6 +41,7 @@ i915-y += i915_driver.o \
 	  i915_module.o \
 	  i915_params.o \
 	  i915_pci.o \
+	  i915_pci_err.o \
 	  i915_scatterlist.o \
 	  i915_suspend.o \
 	  i915_switcheroo.o \

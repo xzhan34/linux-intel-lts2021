@@ -3722,6 +3722,17 @@ static irqreturn_t dg1_irq_handler(int irq, void *arg)
 			continue;
 
 		master_ctl = raw_reg_read(regs, GEN11_GFX_MSTR_IRQ);
+
+		/*
+		 * We might be in irq handler just when PCIe DPC is initiated and all
+		 * MMIO reads will be returned with all 1's. Ignore this irq as device
+		 * is inaccessible.
+		 */
+		if (master_ctl == REG_GENMASK(31, 0)) {
+			dev_dbg(gt->i915->drm.dev, "Ignore this IRQ as device might be in DPC containment.\n");
+			return IRQ_HANDLED;
+		}
+
 		raw_reg_write(regs, GEN11_GFX_MSTR_IRQ, master_ctl);
 
 		gen11_gt_irq_handler(gt, master_ctl);

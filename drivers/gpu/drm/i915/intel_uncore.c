@@ -242,7 +242,7 @@ fw_domain_wait_ack_with_fallback(const struct intel_uncore_forcewake_domain *d,
 	unsigned int pass;
 	bool ack_detected;
 
-	if (d->uncore->i915->quiesce_gpu)
+	if (d->uncore->i915->quiesce_gpu || i915_is_pci_faulted(d->uncore->i915))
 		return 0;
 
 	/*
@@ -2904,7 +2904,7 @@ int __intel_wait_for_register_fw(struct intel_uncore *uncore,
 	GEM_BUG_ON(fast_timeout_us > 20000);
 	GEM_BUG_ON(!fast_timeout_us && !slow_timeout_ms);
 
-	if (uncore->i915->quiesce_gpu)
+	if (uncore->i915->quiesce_gpu || i915_is_pci_faulted(uncore->i915))
 		return 0;
 
 	ret = -ETIMEDOUT;

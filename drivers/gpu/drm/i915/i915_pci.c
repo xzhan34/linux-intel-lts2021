@@ -1427,6 +1427,17 @@ bool i915_pci_resource_valid(struct pci_dev *pdev, int bar)
 	return true;
 }
 
+static int device_set_offline(struct device *dev, void *data)
+{
+	dev->offline = true;
+	return 0;
+}
+
+void i915_pci_set_offline(struct pci_dev *pdev)
+{
+	device_for_each_child(&pdev->dev, NULL, device_set_offline);
+}
+
 static bool intel_mmio_bar_valid(struct pci_dev *pdev, struct intel_device_info *intel_info)
 {
 	int gttmmaddr_bar = intel_info->graphics.ver == 2 ? GEN2_GTTMMADR_BAR : GTTMMADR_BAR;
@@ -1438,6 +1449,8 @@ static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct intel_device_info *intel_info =
 		(struct intel_device_info *) ent->driver_data;
+	struct drm_i915_private *i915;
+	intel_wakeref_t wakeref;
 	int err;
 
 	/* If we've already injected a fault into an earlier device, bail */
@@ -1479,6 +1492,10 @@ static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	pvc_wa_disallow_rc6(pdev_to_i915(pdev));
 
+	i915 = pdev_to_i915(pdev);
+	with_intel_runtime_pm(&i915->runtime_pm, wakeref)
+		i915_driver_register(i915);
+
 	if (i915_inject_probe_failure(pci_get_drvdata(pdev))) {
 		err = -ENODEV;
 		goto err_remove;
@@ -1496,11 +1513,14 @@ static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (err)
 		goto err_remove;
 
-	pvc_wa_allow_rc6(pdev_to_i915(pdev));
+	if (i915_save_pci_state(pdev))
+		pci_restore_state(pdev);
+
+	pvc_wa_allow_rc6(i915);
 	return 0;
 
 err_remove:
-	pvc_wa_allow_rc6(pdev_to_i915(pdev));
+	pvc_wa_allow_rc6(i915);
 	i915_pci_remove(pdev);
 	return err > 0 ? -ENOTTY : err;
 }
@@ -1520,6 +1540,8 @@ static void i915_pci_shutdown(struct pci_dev *pdev)
 	pci_set_drvdata(pdev, NULL);
 }
 
+extern const struct pci_error_handlers i915_pci_err_handlers;
+
 static struct pci_driver i915_pci_driver = {
 	.name = DRIVER_NAME,
 	.id_table = pciidlist,
@@ -1527,6 +1549,7 @@ static struct pci_driver i915_pci_driver = {
 	.remove = i915_pci_remove,
 	.shutdown = i915_pci_shutdown,
 	.driver.pm = &i915_pm_ops,
+	.err_handler = &i915_pci_err_handlers,
 };
 
 int i915_pci_register_driver(void)

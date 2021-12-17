@@ -153,6 +153,41 @@ void i915_log_driver_error(struct drm_i915_private *i915,
 	va_end(args);
 }
 
+bool i915_save_pci_state(struct pci_dev *pdev)
+{
+	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
+
+	if (pci_save_state(pdev))
+		return false;
+
+	kfree(i915->pci_state);
+
+	i915->pci_state = pci_store_saved_state(pdev);
+
+	if (!i915->pci_state) {
+		drm_err(&i915->drm, "Failed to store PCI saved state\n");
+		return false;
+	}
+
+	return true;
+}
+
+void i915_load_pci_state(struct pci_dev *pdev)
+{
+	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
+	int ret;
+
+	if (!i915->pci_state)
+		return;
+
+	ret = pci_load_saved_state(pdev, i915->pci_state);
+	if (!ret) {
+		pci_restore_state(pdev);
+	} else {
+		drm_warn(&i915->drm, "Failed to load PCI state, err:%d\n", ret);
+	}
+}
+
 static int i915_get_bridge_dev(struct drm_i915_private *dev_priv)
 {
 	int domain = pci_domain_nr(to_pci_dev(dev_priv->drm.dev)->bus);
@@ -1148,7 +1183,7 @@ static void i915_driver_hw_remove(struct drm_i915_private *dev_priv)
  * Perform any steps necessary to make the driver available via kernel
  * internal or userspace interfaces.
  */
-static void i915_driver_register(struct drm_i915_private *dev_priv)
+void i915_driver_register(struct drm_i915_private *dev_priv)
 {
 	struct drm_device *dev = &dev_priv->drm;
 	struct intel_gt *gt;
@@ -1184,7 +1219,6 @@ static void i915_driver_register(struct drm_i915_private *dev_priv)
 	intel_display_driver_register(dev_priv);
 
 	intel_power_domains_enable(dev_priv);
-	intel_runtime_pm_enable(&dev_priv->runtime_pm);
 
 	intel_register_dsm_handler();
 
@@ -1225,8 +1259,18 @@ static void i915_driver_unregister(struct drm_i915_private *dev_priv)
 		intel_gt_driver_unregister(gt);
 
 	i915_unregister_sysrq(dev_priv);
-	i915_teardown_sysfs(dev_priv);
-	drm_dev_unplug(&dev_priv->drm);
+
+	/*
+	 * check if we already unplugged in handling a PCI error
+	 * check for quiesce_gpu as we are faking the drm unplug
+	 * in that path.
+	 * FIXME: This check is not needed when unbind is called
+	 * in error_detected callback
+	 */
+	if (!dev_priv->drm.unplugged || dev_priv->quiesce_gpu) {
+		i915_teardown_sysfs(dev_priv);
+		drm_dev_unplug(&dev_priv->drm);
+	}
 
 	i915_gem_driver_unregister(dev_priv);
 }
@@ -1415,7 +1459,7 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (ret)
 		goto out_cleanup_blt_windows;
 
-	i915_driver_register(i915);
+	intel_runtime_pm_enable(&i915->runtime_pm);
 
 	enable_rpm_wakeref_asserts(&i915->runtime_pm);
 
@@ -1466,12 +1510,6 @@ out_fini:
 	return ret;
 }
 
-static int device_set_offline(struct device *dev, void *data)
-{
-	dev->offline = true;
-	return 0;
-}
-
 void i915_driver_remove(struct drm_i915_private *i915)
 {
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
@@ -1485,7 +1523,7 @@ void i915_driver_remove(struct drm_i915_private *i915)
 	 * so MEI driver can avoid access to HW registers
 	 */
 	if (i915->quiesce_gpu)
-		device_for_each_child(&pdev->dev, NULL, device_set_offline);
+		i915_pci_set_offline(pdev);
 
 	i915_driver_unregister(i915);
 
@@ -1512,6 +1550,8 @@ void i915_driver_remove(struct drm_i915_private *i915)
 	intel_modeset_driver_remove_nogem(i915);
 
 	i915_driver_hw_remove(i915);
+
+	kfree(i915->pci_state);
 
 	enable_rpm_wakeref_asserts(&i915->runtime_pm);
 }
@@ -1773,7 +1813,7 @@ static int i915_drm_suspend(struct drm_device *dev)
 	if (HAS_DISPLAY(dev_priv))
 		drm_kms_helper_poll_disable(dev);
 
-	pci_save_state(pdev);
+	i915_save_pci_state(pdev);
 
 	intel_display_suspend(dev);
 
@@ -2012,6 +2052,8 @@ static int i915_drm_resume_early(struct drm_device *dev)
 		return -EIO;
 
 	pci_set_master(pdev);
+
+	i915_load_pci_state(pdev);
 
 	disable_rpm_wakeref_asserts(&dev_priv->runtime_pm);
 

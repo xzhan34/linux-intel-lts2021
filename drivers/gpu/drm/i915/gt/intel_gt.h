@@ -118,6 +118,12 @@ static inline bool pvc_needs_rc6_wa(struct drm_i915_private *i915)
 
 	if (i915->quiesce_gpu)
 		return false;
+	/*
+	 * Lets not break the dpc recovery, which will be hindered
+	 * by rpm resume caused by RC6 Wa
+	 */
+	if (i915_is_pci_faulted(i915))
+		return false;
 
 	return (IS_PVC_BD_STEP(i915, STEP_B0, STEP_FOREVER) && i915->remote_tiles > 0);
 }

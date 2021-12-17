@@ -2906,6 +2906,11 @@ void intel_klog_error_capture(struct intel_gt *gt,
 		return;
 	}
 
+	if (i915_is_pci_faulted(i915)) {
+		drm_err(&gt->i915->drm, "[Capture/%d.%d] PCI is faulted, skipping error capture :(\n", l_count, line++);
+		return;
+	}
+
 	error = READ_ONCE(i915->gpu_error.first_error);
 	if (error) {
 		drm_err(&i915->drm, "[Capture/%d.%d] Clearing existing error capture first...\n", l_count, line++);
