@@ -10,6 +10,8 @@
 #include <linux/slab.h>
 #include <linux/sysrq.h>
 
+#include "gt/uc/intel_guc.h"
+
 #include "gt/intel_engine.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
@@ -107,6 +109,7 @@ static void show_gt(struct intel_gt *gt, struct drm_printer *p)
 {
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
+	intel_wakeref_t wakeref;
 
 	drm_printf(p, "GT awake? %s [%d], %llums\n",
 		   str_yes_no(gt->awake),
@@ -114,6 +117,9 @@ static void show_gt(struct intel_gt *gt, struct drm_printer *p)
 		   ktime_to_ms(intel_gt_get_awake_time(gt)));
 	if (gt->awake)
 		intel_wakeref_show(&gt->wakeref, p);
+
+	with_intel_gt_pm_if_awake(gt, wakeref)
+		intel_guc_print_info(&gt->uc.guc, p);
 
 	for_each_engine(engine, gt, id) {
 		if (intel_engine_is_idle(engine))

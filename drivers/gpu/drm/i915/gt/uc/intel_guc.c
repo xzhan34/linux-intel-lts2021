@@ -888,3 +888,15 @@ void intel_guc_load_status(struct intel_guc *guc, struct drm_printer *p)
 		}
 	}
 }
+
+void intel_guc_print_info(struct intel_guc *guc, struct drm_printer *p)
+{
+	intel_guc_load_status(guc, p);
+
+	if (intel_guc_submission_is_used(guc)) {
+		intel_guc_ct_print_info(&guc->ct, p);
+		intel_guc_submission_print_info(guc, p);
+		intel_guc_ads_print_policy_info(guc, p);
+		intel_guc_submission_print_context_info(guc, p);
+	}
+}

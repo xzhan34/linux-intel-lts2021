@@ -475,6 +475,7 @@ void intel_guc_submission_reset_finish(struct intel_guc *guc);
 void intel_guc_submission_cancel_requests(struct intel_guc *guc);
 
 void intel_guc_load_status(struct intel_guc *guc, struct drm_printer *p);
+void intel_guc_print_info(struct intel_guc *guc, struct drm_printer *p);
 
 void intel_guc_dump_time_info(struct intel_guc *guc, struct drm_printer *p);
 
