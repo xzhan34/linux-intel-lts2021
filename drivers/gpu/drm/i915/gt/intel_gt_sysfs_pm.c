@@ -563,6 +563,51 @@ static const struct attribute *freq_attrs[] = {
 	NULL
 };
 
+static ssize_t
+default_min_freq_mhz_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	struct intel_gt *gt = kobj_to_gt(kobj->parent);
+
+	return sysfs_emit(buf, "%d\n", gt->rps_defaults.min_freq);
+}
+
+static struct kobj_attribute default_min_freq_mhz =
+__ATTR(rps_min_freq_mhz, 0444, default_min_freq_mhz_show, NULL);
+
+static ssize_t
+default_max_freq_mhz_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	struct intel_gt *gt = kobj_to_gt(kobj->parent);
+
+	return sysfs_emit(buf, "%d\n", gt->rps_defaults.max_freq);
+}
+
+static struct kobj_attribute default_max_freq_mhz =
+__ATTR(rps_max_freq_mhz, 0444, default_max_freq_mhz_show, NULL);
+
+static ssize_t
+default_boost_freq_mhz_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	struct intel_gt *gt = kobj_to_gt(kobj->parent);
+
+	return sysfs_emit(buf, "%d\n", gt->rps_defaults.boost_freq);
+}
+
+static struct kobj_attribute default_boost_freq_mhz =
+__ATTR(rps_boost_freq_mhz, 0444, default_boost_freq_mhz_show, NULL);
+
+static const struct attribute * const rps_defaults_attrs[] = {
+	&default_min_freq_mhz.attr,
+	&default_max_freq_mhz.attr,
+	&default_boost_freq_mhz.attr,
+	NULL
+};
+
+static int add_rps_defaults(struct intel_gt *gt)
+{
+	return sysfs_create_files(gt->sysfs_defaults, rps_defaults_attrs);
+}
+
 static int intel_sysfs_rps_init_gt(struct intel_gt *gt, struct kobject *kobj)
 {
 	int ret;
@@ -579,7 +624,7 @@ static int intel_sysfs_rps_init_gt(struct intel_gt *gt, struct kobject *kobj)
 			return ret;
 	}
 
-	return 0;
+	return add_rps_defaults(gt);
 }
 
 static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj)

@@ -132,6 +132,12 @@ enum intel_submission_method {
 	INTEL_SUBMISSION_GUC,
 };
 
+struct intel_rps_defaults {
+	u32 min_freq;
+	u32 max_freq;
+	u32 boost_freq;
+};
+
 enum intel_gt_type {
 	GT_PRIMARY,
 	GT_TILE,
@@ -348,6 +354,10 @@ struct intel_gt {
 
 	/** link: &ggtt.gt_list */
 	struct list_head ggtt_link;
+
+	/* sysfs defaults per gt */
+	struct intel_rps_defaults rps_defaults;
+	struct kobject *sysfs_defaults;
 
 	struct i915_perf_gt perf;
 };

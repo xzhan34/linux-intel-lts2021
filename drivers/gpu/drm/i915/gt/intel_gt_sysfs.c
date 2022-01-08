@@ -119,6 +119,12 @@ void intel_gt_sysfs_register(struct intel_gt *gt)
 		return;
 	}
 
+	gt->sysfs_defaults = kobject_create_and_add(".defaults", dir);
+	if (!gt->sysfs_defaults) {
+		drm_err(&gt->i915->drm, "failed to create gt sysfs .defaults\n");
+		return;
+	}
+
 	if (sysfs_create_file(dir, &dev_attr_id.attr))
 		drm_err(&gt->i915->drm,
 			"failed to create sysfs %s info files\n", name);
