@@ -129,9 +129,9 @@ static void show_rpm(struct drm_i915_private *i915, struct drm_printer *p)
 {
 	drm_printf(p, "Runtime power status: %s\n",
 		   str_enabled_disabled(!i915->power_domains.init_wakeref));
+	print_intel_runtime_pm_wakeref(&i915->runtime_pm, p);
 	drm_printf(p, "IRQs disabled: %s\n",
 		   str_yes_no(!intel_irqs_enabled(i915)));
-	print_intel_runtime_pm_wakeref(&i915->runtime_pm, p);
 }
 
 static void show_gpu(void *data)
