@@ -2288,6 +2288,26 @@ i915_debugger_client_discovery(struct i915_debugger *debugger)
 	rcu_read_unlock();
 }
 
+static void
+compute_engines_reschedule_heartbeat(struct i915_debugger *debugger)
+{
+	struct drm_i915_private *i915 = debugger->i915;
+	intel_wakeref_t wakeref;
+	struct intel_gt *gt;
+	int gt_id;
+
+	for_each_gt(gt, i915, gt_id) {
+		with_intel_gt_pm_if_awake(gt, wakeref) {
+			struct intel_engine_cs *engine;
+			int engine_id;
+
+			for_each_engine(engine, gt, engine_id)
+				if (intel_engine_has_eu_attention(engine))
+					intel_engine_schedule_heartbeat(engine);
+		}
+	}
+}
+
 static int i915_debugger_discovery_worker(void *data)
 {
 	struct i915_debugger *debugger = data;
@@ -2446,6 +2466,8 @@ i915_debugger_open(struct drm_i915_private * const i915,
 
 	complete(&debugger->read_done);
 	wake_up_process(discovery_task);
+
+	compute_engines_reschedule_heartbeat(debugger);
 
 	DD_INFO(debugger, "connected, debug level = %d", debugger->debug_lvl);
 
@@ -3147,6 +3169,20 @@ bool i915_debugger_prevents_hangcheck(struct intel_engine_cs *engine)
 		return false;
 
 	return rcu_access_pointer(engine->i915->debug.debugger);
+}
+
+#define i915_DEBUGGER_ATTENTION_INTERVAL 100
+long i915_debugger_attention_poll_interval(struct intel_engine_cs *engine)
+{
+	long delay = 0;
+
+	GEM_BUG_ON(!engine);
+
+	if (intel_engine_has_eu_attention(engine) &&
+	    rcu_access_pointer(engine->i915->debug.debugger))
+		delay = i915_DEBUGGER_ATTENTION_INTERVAL;
+
+	return delay;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

@@ -61,6 +61,8 @@ int i915_debugger_handle_engine_attention(struct intel_engine_cs *engine);
 
 bool i915_debugger_prevents_hangcheck(struct intel_engine_cs *engine);
 
+long i915_debugger_attention_poll_interval(struct intel_engine_cs *engine);
+
 #else /* CONFIG_DRM_I915_DEBUGGER */
 
 static inline int i915_debugger_open_ioctl(struct drm_device *dev, void *data,
@@ -116,6 +118,13 @@ i915_debugger_prevents_hangcheck(struct intel_engine_cs *engine)
 {
 	return false;
 }
+
+static inline long
+i915_debugger_attention_poll_interval(struct intel_engine_cs *engine)
+{
+	return 0;
+}
+
 #endif /* CONFIG_DRM_I915_DEBUGGER */
 
 #endif /* __I915_DEBUGGER_H__ */

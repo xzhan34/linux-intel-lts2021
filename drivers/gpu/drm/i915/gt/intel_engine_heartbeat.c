@@ -27,11 +27,8 @@ static bool next_heartbeat(struct intel_engine_cs *engine)
 	struct i915_request *rq;
 	long delay;
 
-	/* XXX refine the interval when heartbeat and attention handling is split */
-	if (intel_engine_has_eu_attention(engine) &&
-	    rcu_access_pointer(engine->i915->debug.debugger))
-		delay = 250;
-	else
+	delay = i915_debugger_attention_poll_interval(engine);
+	if (!delay)
 		delay = READ_ONCE(engine->props.heartbeat_interval_ms);
 
 	rq = engine->heartbeat.systole;
@@ -232,6 +229,10 @@ static void heartbeat(struct work_struct *wrk)
 		goto out;
 	}
 
+	/* Hangcheck disabled so do not check for systole. */
+	if (!engine->i915->params.enable_hangcheck)
+		goto out;
+
 	if (i915_sched_engine_disabled(engine->sched_engine)) {
 		reset_engine(engine, engine->heartbeat.systole);
 		goto out;
@@ -343,7 +344,7 @@ static void heartbeat(struct work_struct *wrk)
 unlock:
 	mutex_unlock(&ce->timeline->mutex);
 out:
-	if (!engine->i915->params.enable_hangcheck || !next_heartbeat(engine))
+	if (!next_heartbeat(engine))
 		i915_request_put(fetch_and_zero(&engine->heartbeat.systole));
 	intel_engine_pm_put_async(engine);
 }
