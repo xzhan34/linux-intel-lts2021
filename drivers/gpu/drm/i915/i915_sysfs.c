@@ -835,6 +835,21 @@ static void i915_setup_enable_eu_debug_sysfs(struct device *kdev) {}
 
 #endif /* CONFIG_DRM_I915_DEBUGGER */
 
+static ssize_t iaf_socket_id_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct drm_i915_private *i915 = kdev_minor_to_i915(dev);
+
+	return sysfs_emit(buf, "0x%x\n", i915->intel_iaf.socket_id);
+}
+
+static I915_DEVICE_ATTR_RO(iaf_socket_id, iaf_socket_id_show);
+
+static const struct attribute *iaf_attrs[] = {
+	&dev_attr_iaf_socket_id.attr.attr,
+	NULL
+};
+
 void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 {
 	struct device *kdev = dev_priv->drm.primary->kdev;
@@ -859,6 +874,12 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 		ret = sysfs_create_files(&kdev->kobj, lmem_attrs);
 		if (ret)
 			DRM_ERROR("Local memory sysfs setup failed\n");
+	}
+
+	if (HAS_IAF(dev_priv)) {
+		ret = sysfs_create_files(&kdev->kobj, iaf_attrs);
+		if (ret)
+			drm_warn(&dev_priv->drm, "PVC socket sysfs setup failed\n");
 	}
 
 	dev_priv->clients.root =
