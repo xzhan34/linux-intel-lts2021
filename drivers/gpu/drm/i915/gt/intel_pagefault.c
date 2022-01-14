@@ -315,7 +315,7 @@ handle_i915_mm_fault(struct intel_guc *guc,
 	vma = i915_find_vma(vm, info->page_addr);
 	if (vma)
 		vma = i915_vma_tryget(vma);
-	if (GEM_WARN_ON(!vma))
+	if (!vma)
 		return ERR_PTR( -ENOENT);
 
 	mark_engine_as_active(gt, info->engine_class, info->engine_instance);

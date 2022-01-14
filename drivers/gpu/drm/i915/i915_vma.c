@@ -1214,8 +1214,16 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	i915_debugger_wait_on_discovery(vma->vm->i915, /* wait for vm event */
 					vma->vm->client);
 
+	/*
+	 * Restrict faults to persistent vmas unless faults are enabled using
+	 * modparam enable_pagefault.
+	 * XXX: Remove this when we formalize the faulting support on legacy
+	 * path
+	 */
 	if (!i915_is_ggtt(vma->vm)) {
-		if (!i915_vm_page_fault_enabled(vma->vm))
+		if (!i915_vm_page_fault_enabled(vma->vm) ||
+		    (!vma->vm->i915->params.enable_pagefault &&
+		     !i915_vma_is_persistent(vma)))
 			flags |= PIN_RESIDENT;
 	}
 
