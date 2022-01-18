@@ -13,10 +13,17 @@
 #include "i915_selftest.h"
 
 #define INTEL_FLAT_PPGTT_MAX_PINNED_OBJS	1024
-#define INTEL_FLAT_PPGTT_BB_OBJ_SIZE		SZ_8K
+#define INTEL_FLAT_PPGTT_BB_OBJ_SIZE		SZ_32K
+
+/* One page corresponding to each level of PT to hold scratch for blitter to
+ * copy from for pvc MEMCOPY command.
+ */
+#define INTEL_FLAT_PPGTT_BB_SCRATCH_OFFSET	(INTEL_FLAT_PPGTT_BB_OBJ_SIZE - 5 * SZ_4K)
 #define INTEL_FLAT_PPGTT_MAX_PTE_ENTRIES	((INTEL_FLAT_PPGTT_BB_OBJ_SIZE >> 5) - 2)
 /* 16 DW per FAST_COLOR_BLT */
-#define INTEL_FLAT_PPGTT_MAX_FILL_PTE_ENTRIES 	((INTEL_FLAT_PPGTT_BB_OBJ_SIZE >> 6) - 2)
+#define INTEL_FLAT_PPGTT_MAX_FILL_PTE_ENTRIES	((INTEL_FLAT_PPGTT_BB_OBJ_SIZE >> 6) - 2)
+
+#define INTEL_FLAT_PPGTT_MAX_SCRATCH_PTE_ENTRIES	((INTEL_FLAT_PPGTT_BB_SCRATCH_OFFSET >> 6) - 2)
 
 struct i915_address_space;
 struct i915_request;

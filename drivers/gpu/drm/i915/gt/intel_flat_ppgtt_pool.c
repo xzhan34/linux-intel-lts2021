@@ -76,7 +76,8 @@ struct i915_request *
 intel_flat_ppgtt_get_request(struct intel_flat_ppgtt_pool *fpp)
 {
 	struct intel_gt *gt = container_of(fpp, struct intel_gt, fpp);
-	struct intel_context *ce = gt->engine[BCS0]->bind_context;
+	enum intel_engine_id id = gt->rsvd_bcs;
+	struct intel_context *ce = gt->engine[id]->bind_context;
 	struct i915_request *rq;
 	int err;
 
@@ -145,7 +146,7 @@ void intel_flat_ppgtt_allocate_requests(struct i915_vma *vma, bool clear)
 	LIST_HEAD(fpp_list);
 	int count;
 
-	engine = gt->engine[BCS0];
+	engine = gt->engine[gt->rsvd_bcs];
 	if (!engine)
 		return;
 

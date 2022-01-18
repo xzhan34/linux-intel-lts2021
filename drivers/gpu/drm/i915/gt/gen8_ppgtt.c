@@ -84,8 +84,45 @@ static u32 *fill_cmd_pte(u32 *cmd, u64 start, u32 idx, u64 val)
 }
 
 static u32 *
-fill_value_blt(struct intel_gt *gt, u32 *cmd,
-	       u64 offset, int idx, int count, u64 val)
+pvc_fill_value_blt(struct intel_gt *gt, u32 *cmd,
+		   u64 start, int idx, int count, u64 src_offset)
+{
+	u64 dst_offset = start + idx * sizeof(gen8_pte_t);
+	u32 src_mocs = FIELD_PREP(MC_SRC_MOCS_INDEX_MASK, gt->mocs.uc_index);
+	u32 dst_mocs = FIELD_PREP(MC_DST_MOCS_INDEX_MASK, gt->mocs.uc_index);
+	size_t size = count << 3;
+
+	/*
+	 * Note that PVC_MEM_SET_CMD is not applicable here as we need to
+	 * set a 64b value and MEM_SET only allows for an 8b value. Hence
+	 * we copy the values from a prefilled buffer, such as the scratch
+	 * page tables (or we submit the values in a buffer alongside the
+	 * command stream).
+	 */
+	*cmd++ = PVC_MEM_COPY_CMD | (10 - 2);
+	*cmd++ = size - 1;
+	*cmd++ = 0;
+	*cmd++ = 0;
+	*cmd++ = 0;
+	*cmd++ = lower_32_bits(src_offset);
+	*cmd++ = upper_32_bits(src_offset);
+	*cmd++ = lower_32_bits(dst_offset);
+	*cmd++ = upper_32_bits(dst_offset);
+	*cmd++ = src_mocs | dst_mocs;
+
+	/*
+	 * Add flush between MEM_COPY and MI_STORE to enforce ordering. Otherwise,
+	 * two commands modifying the same cacheline could complete in any order
+	 * corrupting the page table.
+	 */
+	return __gen8_emit_flush_dw(cmd, 0, LRC_PPHWSP_SCRATCH_ADDR,
+				    MI_FLUSH_DW_OP_STOREDW |
+				    MI_FLUSH_DW_STORE_INDEX);
+}
+
+static u32 *
+gen12_fill_value_blt(struct intel_gt *gt, u32 *cmd,
+		     u64 offset, int idx, int count, u64 val)
 {
 	u32 mocs = 0;
 	u32 mem = 0;
@@ -138,9 +175,23 @@ fill_value_blt(struct intel_gt *gt, u32 *cmd,
 /*
  * Fills a page with a given value
  */
-static u32 *fill_page_blt(struct intel_gt *gt, u32 *cmd, u64 offset, u64 val)
+
+static u32 *fill_page_blt(struct intel_gt *gt, u32 *cmd, u64 offset,
+			  u64 val, u64 src_offset)
 {
-	return fill_value_blt(gt, cmd, offset, 0, PAGE_SIZE >> 3, val);
+	if (HAS_LINK_COPY_ENGINES(gt->i915))
+		return pvc_fill_value_blt(gt, cmd, offset, 0, PAGE_SIZE >> 3, src_offset);
+
+	return gen12_fill_value_blt(gt, cmd, offset, 0, PAGE_SIZE >> 3, val);
+}
+
+static u32 *fill_value_blt(struct intel_gt *gt, u32 *cmd, u64 offset,
+			   int idx, int num_ptes, u64 val, u64 src_offset)
+{
+	if (HAS_LINK_COPY_ENGINES(gt->i915))
+		return pvc_fill_value_blt(gt, cmd, offset, idx, num_ptes, src_offset);
+
+	return gen12_fill_value_blt(gt, cmd, offset, idx, num_ptes, val);
 }
 
 static struct i915_request *
@@ -499,7 +550,8 @@ static u64 __gen8_ppgtt_clear(struct i915_address_space * const vm,
 
 				*cmd = fill_value_blt(vm->gt, *cmd, px_dma(pt),
 						      pte, num_ptes,
-						      vm->scratch[0]->encode);
+						      vm->scratch[0]->encode,
+						      px_dma(vm->scratch[1]));
 				*nptes += 1;
 			}
 
@@ -652,9 +704,9 @@ static int __gen8_ppgtt_alloc(struct i915_address_space * const vm,
 			if (!cmd) {
 				fill_px(pt, vm->scratch[lvl]->encode);
 			} else {
-				*cmd = fill_page_blt(vm->gt, *cmd,
-						     px_dma(pt),
-						     vm->scratch[lvl]->encode);
+				*cmd = fill_page_blt(vm->gt, *cmd, px_dma(pt),
+						     vm->scratch[lvl]->encode,
+						     px_dma(vm->scratch[lvl + 1]));
 				*nptes += 1;
 			}
 			spin_lock(&pd->lock);
@@ -1526,6 +1578,22 @@ static void gen8_ppgtt_insert_wa(struct i915_address_space *vm,
 	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
 }
 
+static void init_scratch_blt(struct i915_address_space *vm, struct intel_pte_bo *bo, int index)
+{
+	int i;
+	void *src;
+
+	if (!IS_PONTEVECCHIO(vm->gt->i915))
+		return;
+
+	src = (void *)bo->cmd + INTEL_FLAT_PPGTT_BB_SCRATCH_OFFSET;
+
+	for (i = 0; i < vm->top; i++)
+		memset64(src + i * PAGE_SIZE,
+			 vm->scratch[i]->fault_encode[index],
+			 PAGE_SIZE >> 3);
+}
+
 static int gen8_init_scratch(struct i915_address_space *vm)
 {
 	struct intel_gt *gt = vm->gt;
@@ -1610,14 +1678,18 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 			vm->scratch[i]->fault_encode[0] = invalid_pte;
 		}
 	}
+	if (cmd)
+		init_scratch_blt(vm, bo, 0);
 retry:
 
 	for (i = 1; i <= vm->top; i++) {
-		if (!cmd)
+		if (!cmd) {
 			fill_px(vm->scratch[i], vm->scratch[i - 1]->encode);
-		else
+		} else {
+			u64 src_offset = i915_vma_offset(bo->vma) + INTEL_FLAT_PPGTT_BB_SCRATCH_OFFSET + (i - 1) * PAGE_SIZE;
 			cmd = fill_page_blt(vm->gt, cmd, px_dma(vm->scratch[i]),
-					    vm->scratch[i - 1]->encode);
+					    vm->scratch[i - 1]->encode, src_offset);
+		}
 	}
 
 	if (cmd) {
@@ -1712,9 +1784,11 @@ gen8_alloc_top_pd(struct i915_address_space *vm)
 	wakeref = l4wa_pm_get(gt);
 	if (wakeref) {
 		struct intel_pte_bo *bo = get_next_batch(&gt->fpp);
+		u64 src_offset = i915_vma_offset(bo->vma) + INTEL_FLAT_PPGTT_BB_SCRATCH_OFFSET + vm->top * PAGE_SIZE;
 
+		init_scratch_blt(vm, bo, 0);
 		cmd = fill_value_blt(vm->gt, bo->cmd, px_dma(pd), 0, count,
-				     vm->scratch[vm->top]->encode);
+				     vm->scratch[vm->top]->encode, src_offset);
 
 		GEM_BUG_ON(cmd >= bo->cmd + bo->vma->size / sizeof(*bo->cmd));
 		*cmd++ = MI_BATCH_BUFFER_END;
@@ -1976,7 +2050,7 @@ err_put:
 static int __gen12_init_fault_scratch(struct i915_address_space * const vm,
 				      struct i915_page_directory * const pd,
 				      u64 * const start, const u64 end, int lvl,
-				      bool valid, u32 **cmd, int *nptes)
+				      bool valid, u32 **cmd, int *nptes, u64 src_offset)
 {
 	const struct drm_i915_gem_object * const scratch = vm->scratch[lvl];
 	unsigned int idx, len;
@@ -2025,7 +2099,8 @@ static int __gen12_init_fault_scratch(struct i915_address_space * const vm,
 				spin_unlock(&pd->lock);
 
 				ret =  __gen12_init_fault_scratch(vm, as_pd(pt),
-								  start, end, lvl, valid, cmd, nptes);
+								  start, end, lvl, valid,
+								  cmd, nptes, src_offset);
 				spin_lock(&pd->lock);
 				atomic_dec(&pt->used);
 			} else {
@@ -2041,13 +2116,21 @@ static int __gen12_init_fault_scratch(struct i915_address_space * const vm,
 				} else {
 					*cmd = fill_value_blt(vm->gt, *cmd, px_dma(pt),
 							      pte, num_ptes,
-							      vm->scratch[0]->fault_encode[valid]);
+							      vm->scratch[0]->fault_encode[valid], src_offset);
 					*nptes += 1;
 				}
 				*start += num_ptes;
 			}
 		}
-		if (cmd && *nptes >= INTEL_FLAT_PPGTT_MAX_FILL_PTE_ENTRIES) {
+		/*
+		 * For special case, when fill_value_blt needs to copy the
+		 * scratch from the pte_bo, we cannot use the whole pte_bo
+		 * object for the command.
+		 * Use INTEL_FLAT_PPGTT_MAX_SCRATCH_PTE_ENTRIES instead of
+		 * INTEL_FLAT_PPGTT_MAX_FILL_PTE_ENTRIES so that we don't
+		 * overwrite the scratch_offset with commands.
+		 */
+		if (cmd && *nptes >= INTEL_FLAT_PPGTT_MAX_SCRATCH_PTE_ENTRIES) {
 			ret = -EAGAIN;
 			break;
 		}
@@ -2078,7 +2161,7 @@ void gen12_init_fault_scratch(struct i915_address_space *vm, u64 start,
 	if (!wakeref) {
 		__gen12_init_fault_scratch(vm, i915_vm_to_ppgtt(vm)->pd,
 					   &start, end, vm->top,
-					   valid, NULL, NULL);
+					   valid, NULL, NULL, 0);
 		return;
 	}
 
@@ -2096,10 +2179,12 @@ void gen12_init_fault_scratch(struct i915_address_space *vm, u64 start,
 			err = PTR_ERR(rq);
 			break;
 		}
+		init_scratch_blt(vm, bo, valid);
 
 		err = __gen12_init_fault_scratch(vm, i915_vm_to_ppgtt(vm)->pd,
 						 &begin, end, vm->top,
-						 valid, &cmd, &count);
+						 valid, &cmd, &count,
+						 i915_vma_offset(bo->vma) + INTEL_FLAT_PPGTT_BB_SCRATCH_OFFSET);
 		if (err == -EAGAIN)
 			err = 0;
 		if (err || !count) {
@@ -2131,6 +2216,6 @@ void gen12_init_fault_scratch(struct i915_address_space *vm, u64 start,
 	if (unlikely(err)) {
 		__gen12_init_fault_scratch(vm, i915_vm_to_ppgtt(vm)->pd,
 					   &start, end, vm->top,
-					   valid, NULL, NULL);
+					   valid, NULL, NULL, 0);
 	}
 }
