@@ -180,6 +180,21 @@ struct prelim_drm_i915_query_item {
 #define PRELIM_DRM_I915_QUERY			(1 << 16)
 #define PRELIM_DRM_I915_QUERY_MASK(x)		(x & 0xffff)
 #define PRELIM_DRM_I915_QUERY_MEMORY_REGIONS	(PRELIM_DRM_I915_QUERY | 4)
+#define PRELIM_DRM_I915_QUERY_ENGINE_INFO	(PRELIM_DRM_I915_QUERY | 13)
+};
+
+/*
+ * Indicates the 2k user priority levels are statically mapped into 3 buckets as
+ * follows:
+ *
+ * -1k to -1	Low priority
+ * 0		Normal priority
+ * 1 to 1k	Highest priority
+ */
+#define   PRELIM_I915_SCHEDULER_CAP_STATIC_PRIORITY_MAP	(1ul << 31)
+
+struct prelim_i915_context_param_engines {
+#define PRELIM_I915_CONTEXT_ENGINES_EXT_PARALLEL_SUBMIT (PRELIM_I915_USER_EXT | 2) /* see prelim_i915_context_engines_parallel_submit */
 };
 
 enum prelim_drm_i915_gem_memory_class {
@@ -230,6 +245,54 @@ struct prelim_drm_i915_query_memory_regions {
 
 	/* Info about each supported region */
 	struct prelim_drm_i915_memory_region_info regions[];
+};
+
+/**
+ * struct prelim_drm_i915_engine_info
+ *
+ * Describes one engine and it's capabilities as known to the driver.
+ */
+struct prelim_drm_i915_engine_info {
+	/** Engine class and instance. */
+	struct i915_engine_class_instance engine;
+
+	/** Reserved field. */
+	__u32 rsvd0;
+
+	/** Engine flags. */
+	__u64 flags;
+#define PRELIM_I915_ENGINE_INFO_HAS_LOGICAL_INSTANCE	(1ull << 62)
+
+	/** Capabilities of this engine. */
+	__u64 capabilities;
+#define I915_VIDEO_CLASS_CAPABILITY_HEVC		(1 << 0)
+#define I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC	(1 << 1)
+
+	__u64 rsvd3;
+
+	/** Logical engine instance */
+	__u16 logical_instance;
+
+	/** Reserved fields. */
+	__u16 rsvd1[3];
+	__u64 rsvd2[2];
+};
+
+/**
+ * struct drm_i915_query_engine_info
+ *
+ * Engine info query enumerates all engines known to the driver by filling in
+ * an array of struct drm_i915_engine_info structures.
+ */
+struct prelim_drm_i915_query_engine_info {
+	/** Number of struct drm_i915_engine_info structs following. */
+	__u32 num_engines;
+
+	/** MBZ */
+	__u32 rsvd[3];
+
+	/** Marker for drm_i915_engine_info structures. */
+	struct prelim_drm_i915_engine_info engines[];
 };
 
 /**

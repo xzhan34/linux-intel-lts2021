@@ -118,7 +118,8 @@ static void set_scheduler_caps(struct drm_i915_private *i915)
 				     I915_SCHEDULER_CAP_PRIORITY);
 
 		if (intel_engine_uses_guc(engine))
-			enabled |= I915_SCHEDULER_CAP_STATIC_PRIORITY_MAP;
+			enabled |= I915_SCHEDULER_CAP_STATIC_PRIORITY_MAP |
+				PRELIM_I915_SCHEDULER_CAP_STATIC_PRIORITY_MAP;
 
 		for (i = 0; i < ARRAY_SIZE(map); i++) {
 			if (engine->flags & BIT(map[i].engine))

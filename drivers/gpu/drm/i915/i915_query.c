@@ -175,6 +175,57 @@ query_engine_info(struct drm_i915_private *i915,
 	return len;
 }
 
+static int
+prelim_query_engine_info(struct drm_i915_private *i915,
+			 struct drm_i915_query_item *query_item)
+{
+	struct prelim_drm_i915_query_engine_info __user *query_ptr =
+					u64_to_user_ptr(query_item->data_ptr);
+	struct prelim_drm_i915_engine_info __user *info_ptr;
+	struct prelim_drm_i915_query_engine_info query;
+	struct prelim_drm_i915_engine_info info = { };
+	unsigned int num_uabi_engines = 0;
+	struct intel_engine_cs *engine;
+	int len, ret;
+
+	if (query_item->flags)
+		return -EINVAL;
+
+	for_each_uabi_engine(engine, i915)
+		num_uabi_engines++;
+
+	len = struct_size(query_ptr, engines, num_uabi_engines);
+
+	ret = copy_query_item(&query, sizeof(query), len, query_item);
+	if (ret != 0)
+		return ret;
+
+	if (query.num_engines || query.rsvd[0] || query.rsvd[1] ||
+	    query.rsvd[2])
+		return -EINVAL;
+
+	info_ptr = &query_ptr->engines[0];
+
+	for_each_uabi_engine(engine, i915) {
+		info.engine.engine_class = engine->uabi_class;
+		info.engine.engine_instance = engine->uabi_instance;
+		info.flags = PRELIM_I915_ENGINE_INFO_HAS_LOGICAL_INSTANCE;
+		info.capabilities = engine->uabi_capabilities;
+		info.logical_instance = ilog2(engine->logical_mask);
+
+		if (copy_to_user(info_ptr, &info, sizeof(info)))
+			return -EFAULT;
+
+		query.num_engines++;
+		info_ptr++;
+	}
+
+	if (copy_to_user(query_ptr, &query, sizeof(query)))
+		return -EFAULT;
+
+	return len;
+}
+
 static int can_copy_perf_config_registers_or_number(u32 user_n_regs,
 						    u64 user_regs_ptr,
 						    u32 kernel_n_regs)
@@ -678,6 +729,7 @@ static i915_query_funcs_table i915_query_funcs_prelim[] = {
 #define MAKE_TABLE_IDX(id)		[PRELIM_DRM_I915_QUERY_MASK(PRELIM_DRM_I915_QUERY_##id) - 1]
 
 	MAKE_TABLE_IDX(MEMORY_REGIONS) = prelim_query_memregion_info,
+	MAKE_TABLE_IDX(ENGINE_INFO) = prelim_query_engine_info,
 
 #undef MAKE_TABLE_IDX
 };

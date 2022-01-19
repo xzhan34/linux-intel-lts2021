@@ -368,7 +368,7 @@ struct intel_engine_cs {
 	u16 uabi_class;
 	u16 uabi_instance;
 
-	u32 uabi_capabilities;
+	u64 uabi_capabilities;
 	u32 context_size;
 	u32 mmio_base;
 
