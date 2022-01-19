@@ -4428,9 +4428,9 @@ static int bond_virtual_engine(struct intel_gt *gt,
 				goto out;
 			}
 
-			err = intel_virtual_engine_attach_bond(ve->engine,
-							       master,
-							       siblings[n]);
+			err = intel_engine_attach_bond(ve->engine,
+						       master,
+						       siblings[n]);
 			if (err) {
 				intel_context_put(ve);
 				onstack_fence_fini(&fence);

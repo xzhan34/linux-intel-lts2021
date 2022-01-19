@@ -322,6 +322,24 @@ intel_engine_has_heartbeat(const struct intel_engine_cs *engine)
 		return READ_ONCE(engine->props.heartbeat_interval_ms);
 }
 
+static inline struct intel_context *
+intel_engine_clone_virtual(struct intel_engine_cs *src)
+{
+	GEM_BUG_ON(!intel_engine_is_virtual(src));
+	return src->cops->clone_virtual(src);
+}
+
+static inline int
+intel_engine_attach_bond(struct intel_engine_cs *engine,
+			 const struct intel_engine_cs *master,
+			 const struct intel_engine_cs *sibling)
+{
+	if (!engine->cops->attach_bond)
+		return 0;
+
+	return engine->cops->attach_bond(engine, master, sibling);
+}
+
 static inline struct intel_engine_cs *
 intel_engine_get_sibling(struct intel_engine_cs *engine, unsigned int sibling)
 {

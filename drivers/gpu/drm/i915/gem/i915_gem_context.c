@@ -76,7 +76,6 @@
 #include "gt/intel_engine_heartbeat.h"
 #include "gt/intel_engine_regs.h"
 #include "gt/intel_engine_user.h"
-#include "gt/intel_execlists_submission.h"
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_ring.h"
 
@@ -1508,13 +1507,9 @@ set_engines__bond(struct i915_user_extension __user *base, void *data)
 		 * A non-virtual engine has no siblings to choose between; and
 		 * a submit fence will always be directed to the one engine.
 		 */
-		if (intel_engine_is_virtual(virtual)) {
-			err = intel_virtual_engine_attach_bond(virtual,
-							       master,
-							       bond);
-			if (err)
-				return err;
-		}
+		err = intel_engine_attach_bond(virtual, master, bond);
+		if (err)
+			return err;
 	}
 
 	return 0;

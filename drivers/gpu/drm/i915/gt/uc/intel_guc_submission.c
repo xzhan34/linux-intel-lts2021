@@ -3824,6 +3824,18 @@ static int guc_virtual_context_alloc(struct intel_context *ce)
 	return lrc_alloc(ce, engine);
 }
 
+static struct intel_context *guc_clone_virtual(struct intel_engine_cs *src)
+{
+	struct intel_engine_cs *siblings[GUC_MAX_INSTANCES_PER_CLASS], *engine;
+	intel_engine_mask_t tmp, mask = src->mask;
+	unsigned int num_siblings = 0;
+
+	for_each_engine_masked(engine, src->gt, mask, tmp)
+		siblings[num_siblings++] = engine;
+
+	return guc_create_virtual(siblings, num_siblings, 0);
+}
+
 static const struct intel_context_ops virtual_guc_context_ops = {
 	.alloc = guc_virtual_context_alloc,
 
@@ -3845,6 +3857,7 @@ static const struct intel_context_ops virtual_guc_context_ops = {
 
 	.destroy = guc_context_destroy,
 
+	.clone_virtual = guc_clone_virtual,
 	.get_sibling = guc_virtual_get_sibling,
 };
 
