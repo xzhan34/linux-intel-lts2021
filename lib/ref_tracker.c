@@ -59,7 +59,7 @@ __ref_tracker_dir_pr_ostream(struct ref_tracker_dir *dir,
 	if (list_empty(&dir->list))
 		return;
 
-	sbuf = kmalloc(STACK_BUF_SIZE, GFP_NOWAIT);
+	sbuf = kmalloc(STACK_BUF_SIZE, GFP_NOWAIT | __GFP_NOWARN);
 
 	list_for_each_entry(tracker, &dir->list, head)
 		++total;
@@ -156,7 +156,8 @@ int ref_tracker_alloc(struct ref_tracker_dir *dir,
 	unsigned int nr_entries;
 	unsigned long flags;
 
-	*trackerp = tracker = kzalloc(sizeof(*tracker), gfp | __GFP_NOFAIL);
+	gfp |= __GFP_NOWARN;
+	*trackerp = tracker = kzalloc(sizeof(*tracker), gfp);
 	if (unlikely(!tracker)) {
 		pr_err_once("memory allocation failure, unreliable refcount tracker.\n");
 		refcount_inc(&dir->untracked);
@@ -188,7 +189,8 @@ int ref_tracker_free(struct ref_tracker_dir *dir,
 	}
 	nr_entries = stack_trace_save(entries, ARRAY_SIZE(entries), 1);
 	nr_entries = filter_irq_stacks(entries, nr_entries);
-	stack_handle = stack_depot_save(entries, nr_entries, GFP_ATOMIC);
+	stack_handle = stack_depot_save(entries, nr_entries,
+					GFP_NOWAIT | __GFP_NOWARN);
 
 	spin_lock_irqsave(&dir->lock, flags);
 	if (tracker->dead) {
