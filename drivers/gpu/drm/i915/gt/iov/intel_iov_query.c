@@ -273,13 +273,18 @@ static int vf_get_lmem_info(struct intel_iov *iov)
 	int err;
 
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
-	GEM_BUG_ON(iov->vf.config.lmem_size);
 
 	err = guc_action_query_single_klv64(guc, GUC_KLV_VF_CFG_LMEM_SIZE_KEY, &size);
 	if (unlikely(err))
 		return err;
 
 	IOV_DEBUG(iov, "LMEM %lluM\n", size / SZ_1M);
+
+	if (iov->vf.config.lmem_size && iov->vf.config.lmem_size != size) {
+		IOV_ERROR(iov, "Unexpected LMEM reassignment: %lluM != %lluM\n",
+			  size / SZ_1M, iov->vf.config.lmem_size / SZ_1M);
+		return -EREMCHG;
+	}
 
 	iov->vf.config.lmem_size = size;
 
