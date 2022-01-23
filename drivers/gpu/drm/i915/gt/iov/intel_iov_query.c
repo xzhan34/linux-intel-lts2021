@@ -261,7 +261,6 @@ static int vf_get_submission_cfg(struct intel_iov *iov)
 	int err;
 
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
-	GEM_BUG_ON(iov->vf.config.num_ctxs);
 
 	err = guc_action_query_single_klv32(guc, GUC_KLV_VF_CFG_NUM_CONTEXTS_KEY, &num_ctxs);
 	if (unlikely(err))
@@ -272,6 +271,17 @@ static int vf_get_submission_cfg(struct intel_iov *iov)
 		return err;
 
 	IOV_DEBUG(iov, "CTXs %u DBs %u\n", num_ctxs, num_dbs);
+
+	if (iov->vf.config.num_ctxs && iov->vf.config.num_ctxs != num_ctxs) {
+		IOV_ERROR(iov, "Unexpected CTXs reassignment: %u != %u\n",
+			  num_ctxs, iov->vf.config.num_ctxs);
+		return -EREMCHG;
+	}
+	if (iov->vf.config.num_dbs && iov->vf.config.num_dbs != num_dbs) {
+		IOV_ERROR(iov, "Unexpected DBs reassignment: %u != %u\n",
+			  num_dbs, iov->vf.config.num_dbs);
+		return -EREMCHG;
+	}
 
 	iov->vf.config.num_ctxs = num_ctxs;
 	iov->vf.config.num_dbs = num_dbs;
