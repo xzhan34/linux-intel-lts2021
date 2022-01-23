@@ -230,7 +230,6 @@ static int vf_get_ggtt_info(struct intel_iov *iov)
 	int err;
 
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
-	GEM_BUG_ON(iov->vf.config.ggtt_size);
 
 	err = guc_action_query_single_klv64(guc, GUC_KLV_VF_CFG_GGTT_START_KEY, &start);
 	if (unlikely(err))
@@ -241,7 +240,13 @@ static int vf_get_ggtt_info(struct intel_iov *iov)
 		return err;
 
 	IOV_DEBUG(iov, "GGTT %#llx-%#llx = %lluK\n",
-		  start, start + size -1, size / SZ_1K);
+		  start, start + size - 1, size / SZ_1K);
+
+	if (iov->vf.config.ggtt_size && iov->vf.config.ggtt_size != size) {
+		IOV_ERROR(iov, "Unexpected GGTT reassignment: %lluK != %lluK\n",
+			  size / SZ_1K, iov->vf.config.ggtt_size / SZ_1K);
+		return -EREMCHG;
+	}
 
 	iov->vf.config.ggtt_base = start;
 	iov->vf.config.ggtt_size = size;
