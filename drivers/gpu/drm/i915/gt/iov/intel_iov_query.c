@@ -254,6 +254,13 @@ static int vf_get_tiles(struct intel_iov *iov)
 	}
 
 	IOV_DEBUG(iov, "tile mask %#x\n", tile_mask);
+
+	if (iov->vf.config.tile_mask && iov->vf.config.tile_mask != tile_mask) {
+		IOV_ERROR(iov, "Unexpected GT reassignment: %#x != %#x\n",
+			  tile_mask, iov->vf.config.tile_mask);
+		return -EREMCHG;
+	}
+
 	iov->vf.config.tile_mask = tile_mask;
 
 	return 0;
