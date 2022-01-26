@@ -1249,6 +1249,8 @@ static int guc_send_invalidate_tlb(struct intel_guc *guc, u32 *action, u32 size)
 {
 	struct intel_guc_tlb_wait _wq, *wq = &_wq;
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	struct intel_gt *gt = guc_to_gt(guc);
+	u64 rstcnt = atomic_read(&gt->reset.engines_reset_count);
 	int err = 0;
 	u32 seqno;
 
@@ -1288,7 +1290,7 @@ static int guc_send_invalidate_tlb(struct intel_guc *guc, u32 *action, u32 size)
 		goto out;
 	}
 
-	intel_boost_fake_int_timer(guc_to_gt(guc), true);
+	intel_boost_fake_int_timer(gt, true);
 
 /*
  * GuC has a timeout of 1ms for a tlb invalidation response from GAM. On a
@@ -1303,8 +1305,11 @@ static int guc_send_invalidate_tlb(struct intel_guc *guc, u32 *action, u32 size)
 		 * XXX: Failure of tlb invalidation is critical and would
 		 * warrant a gt reset.
 		 */
-		drm_err(&guc_to_gt(guc)->i915->drm,
-			 "tlb invalidation response timed out for seqno %u\n", seqno);
+		if (gt->reset.flags == 0 &&
+		    rstcnt == atomic_read(&gt->reset.engines_reset_count))
+			drm_err(&gt->i915->drm,
+				"tlb invalidation response timed out for seqno %u\n", seqno);
+
 		err = -ETIME;
 	}
 out:
@@ -1312,7 +1317,7 @@ out:
 	if (seqno != guc->serial_slot)
 		xa_erase_irq(&guc->tlb_lookup, seqno);
 
-	intel_boost_fake_int_timer(guc_to_gt(guc), false);
+	intel_boost_fake_int_timer(gt, false);
 
 	return err;
 }
