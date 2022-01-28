@@ -992,16 +992,12 @@ gt_drop_caches(struct intel_gt *gt, u64 val)
 }
 
 static int
-i915_drop_caches_set(void *data, u64 val)
+__i915_drop_caches_set(struct drm_i915_private *i915, u64 val)
 {
-	struct drm_i915_private *i915 = data;
 	intel_wakeref_t wakeref;
 	struct intel_gt *gt;
 	unsigned int i;
 	int ret;
-
-	DRM_DEBUG("Dropping caches: 0x%08llx [0x%08llx]\n",
-		  val, val & DROP_ALL);
 
 	/* Reset all GT first before doing any waits/flushes */
 	if (val & DROP_RESET_ACTIVE) {
@@ -1043,6 +1039,38 @@ i915_drop_caches_set(void *data, u64 val)
 
 	if (val & DROP_FREED)
 		i915_gem_drain_freed_objects(i915);
+
+	return 0;
+}
+
+static int
+i915_drop_caches_set(void *data, u64 val)
+{
+	struct drm_i915_private *i915 = data;
+	int loop;
+	int ret;
+
+	DRM_DEBUG("Dropping caches: 0x%08llx [0x%08llx]\n",
+		  val, val & DROP_ALL);
+
+	/*
+	 * Run through twice in case we wake up while freeing.
+	 *
+	 * Primarily this is concerned with L4WA and the like, where
+	 * during freeing of objects we may then wake the device up,
+	 * invalidating the earlier wait-for-idle. Since the user
+	 * expects the device to be idle if they ask for DROP_IDLE,
+	 * we want to repeat the wait.
+	 *
+	 * After the first loop, there should be no more user objects to free
+	 * and so the system should settle and require no more than 2 loops
+	 * to idle after freeing.
+	 */
+	for (loop = 0; loop < 2; loop++) {
+		ret = __i915_drop_caches_set(i915, val);
+		if (ret)
+			return ret;
+	}
 
 	return 0;
 }
