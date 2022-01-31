@@ -622,7 +622,7 @@ extern "C" {
  * line pair. The main surface pitch is required to be a multiple of four
  * tile4 widths.
  */
-#define I915_FORMAT_MOD_4_TILED_MTL_RC_CCS fourcc_mod_code(INTEL, 13)
+#define PRELIM_I915_FORMAT_MOD_4_TILED_MTL_RC_CCS intel_prelim_fourcc_mod_code(16)
 
 /*
  * Intel color control surfaces (CCS) for display ver 14 media compression
@@ -635,7 +635,7 @@ extern "C" {
  * Y and UV planes i.e., planes 0 and 1 are used for Y and UV surfaces,
  * planes 2 and 3 for the respective CCS.
  */
-#define I915_FORMAT_MOD_4_TILED_MTL_MC_CCS fourcc_mod_code(INTEL, 14)
+#define PRELIM_I915_FORMAT_MOD_4_TILED_MTL_MC_CCS intel_prelim_fourcc_mod_code(17)
 
 /*
  * Intel Color Control Surface with Clear Color (CCS) for display ver 14 render
@@ -654,7 +654,7 @@ extern "C" {
  * corresponds to an area of 4x1 tiles in the main surface. The main surface
  * pitch is required to be a multiple of 4 tile widths.
  */
-#define I915_FORMAT_MOD_4_TILED_MTL_RC_CCS_CC fourcc_mod_code(INTEL, 15)
+#define PRELIM_I915_FORMAT_MOD_4_TILED_MTL_RC_CCS_CC intel_prelim_fourcc_mod_code(18)
 
 /*
  * Tiled, NV12MT, grouped in 64 (pixels) x 32 (lines) -sized macroblocks
