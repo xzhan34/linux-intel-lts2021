@@ -580,8 +580,10 @@ GuC VF/PF Virtualization ABI
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. kernel-doc:: drivers/gpu/drm/i915/gt/iov/abi/iov_communication_abi.h
+.. kernel-doc:: drivers/gpu/drm/i915/gt/iov/abi/iov_communication_mmio_abi.h
 .. kernel-doc:: drivers/gpu/drm/i915/gt/iov/abi/iov_messages_abi.h
 .. kernel-doc:: drivers/gpu/drm/i915/gt/iov/abi/iov_actions_abi.h
+.. kernel-doc:: drivers/gpu/drm/i915/gt/iov/abi/iov_actions_mmio_abi.h
 .. kernel-doc:: drivers/gpu/drm/i915/gt/iov/abi/iov_errors_abi.h
 
 HuC
