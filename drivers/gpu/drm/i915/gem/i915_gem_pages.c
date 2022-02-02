@@ -484,10 +484,18 @@ __i915_gem_object_get_sg(struct drm_i915_gem_object *obj,
 	struct scatterlist *sg;
 	unsigned int idx, count;
 
-	might_sleep();
+	might_sleep_if(n);
 	GEM_BUG_ON(n >= obj->base.size >> PAGE_SHIFT);
 	if (!i915_gem_object_has_pinned_pages(obj))
 		assert_object_held(obj);
+
+	/* Skip the search and caching for the base address */
+	sg = obj->mm.pages->sgl;
+	if (likely(n == 0 ||
+		   n <  (dma ? __sg_dma_page_count(sg) : __sg_page_count(sg)))) {
+		*offset = n;
+		return sg;
+	}
 
 	/* As we iterate forward through the sg, we record each entry in a
 	 * radixtree for quick repeated (backwards) lookups. If we have seen
