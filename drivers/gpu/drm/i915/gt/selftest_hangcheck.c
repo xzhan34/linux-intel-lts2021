@@ -299,6 +299,11 @@ static bool wait_until_running(struct hang *h, struct i915_request *rq)
 			  1000));
 }
 
+static inline bool intel_engine_is_internal(struct intel_engine_cs *engine)
+{
+	return engine->legacy_idx == INVALID_ENGINE;
+}
+
 static int igt_hang_sanitycheck(void *arg)
 {
 	struct intel_gt *gt = arg;
@@ -319,6 +324,9 @@ static int igt_hang_sanitycheck(void *arg)
 		long timeout;
 
 		if (!intel_engine_can_store_dword(engine))
+			continue;
+
+		if (intel_engine_is_internal(engine))
 			continue;
 
 		rq = hang_create_request(&h, engine);
@@ -728,6 +736,9 @@ static int __igt_reset_engine(struct intel_gt *gt, bool active)
 		if (active && !intel_engine_can_store_dword(engine))
 			continue;
 
+		if (intel_engine_is_internal(engine))
+			continue;
+
 		if (!wait_for_idle(engine)) {
 			pr_err("%s failed to idle before reset\n",
 			       engine->name);
@@ -1005,6 +1016,9 @@ static int __igt_reset_engines(struct intel_gt *gt,
 		unsigned long count = 0, reported;
 		bool using_guc = intel_engine_uses_guc(engine);
 		IGT_TIMEOUT(end_time);
+
+		if (intel_engine_is_internal(engine))
+			continue;
 
 		if (flags & TEST_ACTIVE) {
 			if (!intel_engine_can_store_dword(engine))
@@ -1645,6 +1659,9 @@ static int wait_for_others(struct intel_gt *gt,
 		if (engine == exclude)
 			continue;
 
+		if (intel_engine_is_internal(engine))
+			continue;
+
 		if (!wait_for_idle(engine))
 			return -EIO;
 	}
@@ -1679,6 +1696,8 @@ static int igt_reset_queue(void *arg)
 		if (!intel_engine_can_store_dword(engine))
 			continue;
 
+		if (intel_engine_is_internal(engine))
+			continue;
 		/*
 		 * Can't test on the 'bind' engine. The test requires creating
 		 * two hanging batches back to back. Creating the second
