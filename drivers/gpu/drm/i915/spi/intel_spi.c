@@ -31,6 +31,9 @@ void intel_spi_init(struct intel_spi *spi, struct drm_i915_private *dev_priv)
 	/* Only the DGFX devices have internal SPI */
 	if (!IS_DGFX(dev_priv))
 		return;
+	/* No access to internal SPI from VFs */
+	if (IS_SRIOV_VF(dev_priv))
+		return;
 
 	spi->bar.parent = &pdev->resource[0];
 	spi->bar.start = GEN12_GUNIT_SPI_BASE + pdev->resource[0].start;
