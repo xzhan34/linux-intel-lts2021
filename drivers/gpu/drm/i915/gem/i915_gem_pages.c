@@ -192,8 +192,22 @@ static void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj)
 	rcu_read_unlock();
 }
 
+static bool is_iomap_addr(struct drm_i915_gem_object *obj, void *ptr)
+{
+	struct intel_memory_region *mem;
+
+	mem = obj->mm.region;
+	if (!mem)
+		return false;
+
+	return ptrdiff(ptr, mem->iomap.iomem) < mem->iomap.size;
+}
+
 static void unmap_object(struct drm_i915_gem_object *obj, void *ptr)
 {
+	if (is_iomap_addr(obj, ptr))
+		return;
+
 	if (is_vmalloc_addr(ptr))
 		vunmap(ptr);
 }
@@ -297,8 +311,10 @@ static void *i915_gem_object_map_page(struct drm_i915_gem_object *obj,
 		 * So if the page is beyond the 32b boundary, make an explicit
 		 * vmap.
 		 */
-		if (n_pages == 1 && !PageHighMem(sg_page(obj->mm.pages->sgl)))
+		if (sg_is_last(obj->mm.pages->sgl) &&
+		    !PageHighMem(sg_page(obj->mm.pages->sgl)))
 			return page_address(sg_page(obj->mm.pages->sgl));
+
 		pgprot = PAGE_KERNEL;
 		break;
 	case I915_MAP_WC:
@@ -336,6 +352,10 @@ static void *i915_gem_object_map_pfn(struct drm_i915_gem_object *obj,
 
 	if (type != I915_MAP_WC)
 		return ERR_PTR(-ENODEV);
+
+	/* A single contiguous block of lmem? Reuse the io_mapping */
+	if (obj->flags & I915_BO_ALLOC_CONTIGUOUS)
+		return (void __force *)i915_gem_object_lmem_io_map(obj, 0, obj->base.size);
 
 	if (n_pfn > ARRAY_SIZE(stack)) {
 		/* Too big for stack -- allocate temporary array instead */
