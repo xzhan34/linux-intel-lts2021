@@ -8,6 +8,7 @@
 #include <linux/crc32.h>
 
 #include "abi/iov_actions_mmio_abi.h"
+#include "abi/iov_version_abi.h"
 #include "gt/intel_gt_regs.h"
 #include "gt/uc/abi/guc_actions_vf_abi.h"
 #include "gt/uc/abi/guc_klvs_abi.h"
@@ -406,6 +407,42 @@ static u32 mmio_relay_header(u32 opcode, u32 magic)
 	       FIELD_PREP(VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_0_OPCODE, opcode);
 }
 
+static int vf_handshake_with_pf_mmio(struct intel_iov *iov)
+{
+	u32 major_wanted = IOV_VERSION_LATEST_MAJOR;
+	u32 minor_wanted = IOV_VERSION_LATEST_MINOR;
+	u32 request[VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_MAX_LEN] = {
+		mmio_relay_header(IOV_OPCODE_VF2PF_MMIO_HANDSHAKE, 0xF),
+		FIELD_PREP(VF2PF_MMIO_HANDSHAKE_REQUEST_MSG_1_MAJOR, major_wanted) |
+		FIELD_PREP(VF2PF_MMIO_HANDSHAKE_REQUEST_MSG_1_MINOR, minor_wanted),
+	};
+	u32 response[VF2GUC_MMIO_RELAY_SERVICE_RESPONSE_MSG_MAX_LEN];
+	u32 major, minor;
+	int ret;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	ret = guc_send_mmio_relay(iov_to_guc(iov), request, ARRAY_SIZE(request),
+				  response, ARRAY_SIZE(response));
+	if (unlikely(ret < 0))
+		goto failed;
+
+	major = FIELD_GET(VF2PF_MMIO_HANDSHAKE_RESPONSE_MSG_1_MAJOR, response[1]);
+	minor = FIELD_GET(VF2PF_MMIO_HANDSHAKE_RESPONSE_MSG_1_MINOR, response[1]);
+	if (unlikely(major != major_wanted || minor != minor_wanted)) {
+		ret = -ENOPKG;
+		goto failed;
+	}
+
+	IOV_DEBUG(iov, "Using ABI %u.%02u\n", major, minor);
+	return 0;
+
+failed:
+	IOV_PROBE_ERROR(iov, "Unable to confirm ABI version %u.%02u (%pe)\n",
+			major_wanted, minor_wanted, ERR_PTR(ret));
+	return -ECONNREFUSED;
+}
+
 static int vf_get_runtime_info_mmio(struct intel_iov *iov)
 {
 	u32 request[VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_MAX_LEN];
@@ -484,6 +521,12 @@ int intel_iov_query_runtime(struct intel_iov *iov, bool early)
 	int err;
 
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	if (early) {
+		err = vf_handshake_with_pf_mmio(iov);
+		if (unlikely(err))
+			goto failed;
+	}
 
 	if (early)
 		err = vf_get_runtime_info_mmio(iov);
