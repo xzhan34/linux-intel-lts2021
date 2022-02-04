@@ -428,6 +428,12 @@ struct i915_address_space {
 
 	/* Per tile active users of this VM */
 	atomic_t active_contexts_gt[I915_MAX_GT];
+
+	/* PASID for Address Translation Services */
+	struct iommu_sva *sva;
+	u32 pasid;
+	/* Indicates if address space has a valid PASID bounded to IOMMU */
+	bool has_pasid:1;
 };
 
 /*

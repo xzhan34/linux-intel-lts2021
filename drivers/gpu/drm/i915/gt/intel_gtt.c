@@ -185,6 +185,7 @@ static void __i915_vm_release(struct work_struct *work)
 	struct i915_address_space *vm =
 		container_of(work, struct i915_address_space, rcu.work);
 
+	i915_destroy_pasid(vm);
 	i915_svm_unbind_mm(vm);
 	vm->cleanup(vm);
 	i915_address_space_fini(vm);

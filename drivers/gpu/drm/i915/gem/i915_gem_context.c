@@ -92,6 +92,7 @@
 #include "i915_user_extensions.h"
 #include "i915_gem_ioctls.h"
 #include "i915_debugger.h"
+#include "i915_addr_trans_svc.h"
 
 #define ALL_L3_SLICES(dev) (1 << NUM_L3_SLICES(dev)) - 1
 
@@ -1295,6 +1296,7 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 	GEM_BUG_ON(id == 0); /* reserved for invalid/unassigned ppgtt */
 	args->vm_id = id;
 	i915_debugger_vm_create(file_priv->client, &ppgtt->vm);
+
 	return 0;
 
 err_put:
@@ -1345,7 +1347,21 @@ static int i915_gem_vm_setparam_ioctl(struct drm_device *dev, void *data,
 		/* FIXME: Ensure ppgtt is empty before switching */
 		if (!i915_has_svm(file_priv->dev_priv)) {
 			err = -ENOTSUPP;
-		} else if (args->value) {
+			break;
+		}
+
+		/* If ATS is enabled, create PASID for the process */
+		if (args->value && i915_ats_enabled(vm->i915) &&
+		    i915_vm_page_fault_enabled(vm)) {
+			if (i915_create_pasid(vm))
+				drm_err(&vm->i915->drm,
+					"Failed to create PASID for ATS operations\n");
+		} else if (is_vm_pasid_active(vm)) {
+			/* Destroy any associated pasid to vm */
+			i915_destroy_pasid(vm);
+		}
+
+		if (args->value) {
 			err = intel_memory_regions_add_svm(file_priv->dev_priv);
 			if (!err)
 				err = i915_svm_bind_mm(vm);

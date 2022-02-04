@@ -15,6 +15,11 @@ bool i915_ats_enabled(struct drm_i915_private *dev_priv)
 	return test_bit(INTEL_FLAG_ATS_ENABLED, &dev_priv->flags);
 }
 
+bool is_vm_pasid_active(struct i915_address_space *vm)
+{
+	return (i915_ats_enabled(vm->i915) && vm->has_pasid);
+}
+
 void i915_enable_ats(struct drm_i915_private *i915)
 {
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
@@ -67,4 +72,52 @@ void i915_disable_ats(struct drm_i915_private *i915)
 	 */
 	pci_disable_ats(pdev);
 	clear_bit(INTEL_FLAG_ATS_ENABLED, &i915->flags);
+}
+
+/* PASID value contains 20-bit wide */
+void i915_destroy_pasid(struct i915_address_space *vm)
+{
+	if (!i915_ats_enabled(vm->i915))
+		return;
+
+	if (vm->sva && is_vm_pasid_active(vm)) {
+		iommu_sva_unbind_device(vm->sva);
+		vm->has_pasid = false;
+		vm->sva = NULL;
+	}
+}
+
+int i915_create_pasid(struct i915_address_space *vm)
+{
+	struct drm_i915_private *i915 = vm->i915;
+	struct iommu_sva *sva_handle;
+	u32 pasid;
+	int err;
+
+	if (!i915_ats_enabled(i915))
+		return -EINVAL;
+
+	sva_handle = iommu_sva_bind_device(vm->dma, current->mm, NULL);
+	if (IS_ERR(sva_handle)) {
+		err = PTR_ERR(sva_handle);
+		drm_err(&i915->drm,
+			"Binding address space to the device in order to use PASID failed with error %d\n",
+			err);
+		return err;
+	}
+
+	pasid = i915_get_pasid(sva_handle);
+	if (pasid == IOMMU_PASID_INVALID) {
+		drm_err(&i915->drm,
+			"Invalid PASID created - need to unbind the device and disable ATS %d\n",
+			pasid);
+		return -EINVAL;
+	}
+
+	/* update address space sva and pasid */
+	vm->sva = sva_handle;
+	vm->pasid = pasid;
+	vm->has_pasid = true;
+
+	return 0;
 }
