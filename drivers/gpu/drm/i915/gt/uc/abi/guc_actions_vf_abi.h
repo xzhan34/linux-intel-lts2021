@@ -239,4 +239,77 @@
 #define GUC2VF_RELAY_FROM_PF_EVENT_MSG_n_RELAY_DATAx	GUC_HXG_EVENT_MSG_n_DATAn
 #define GUC2VF_RELAY_FROM_PF_EVENT_MSG_NUM_RELAY_DATA	60u
 
+/**
+ * DOC: VF2GUC_MMIO_RELAY_SERVICE
+ *
+ * The VF2GUC_MMIO_RELAY_SERVICE action allows to send early MMIO VF/PF messages
+ * from the VF to the PF.
+ *
+ * Note that support for the sending such messages to the PF is not guaranteed
+ * and might be disabled or blocked in the future releases.
+ *
+ * The value of **MAGIC** used in the GUC_HXG_TYPE_REQUEST_ shall be generated
+ * by the VF and value of **MAGIC** included in GUC_HXG_TYPE_RESPONSE_SUCCESS_
+ * shall be the same.
+ *
+ * In case of GUC_HXG_TYPE_RESPONSE_FAILURE_, **MAGIC** shall be encoded in upper
+ * bits of **HINT** field.
+ *
+ * This action may take longer time to completion and VFs should expect intermediate
+ * `HXG Busy`_ response message.
+ *
+ * This action is only available over MMIO.
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_HOST_                                |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_REQUEST_                                 |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:24 | **MAGIC** - MMIO VF/PF message magic number (like CRC)       |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 23:16 | **OPCODE** - MMIO VF/PF message opcode                       |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  15:0 | ACTION = _`GUC_ACTION_VF2GUC_MMIO_RELAY_SERVICE` = 0x5005    |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | **DATA1** - optional MMIO VF/PF payload data (or zero)       |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 2 |  31:0 | **DATA2** - optional MMIO VF/PF payload data (or zero)       |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 3 |  31:0 | **DATA3** - optional MMIO VF/PF payload data (or zero)       |
+ *  +---+-------+--------------------------------------------------------------+
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_GUC_                                 |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_RESPONSE_SUCCESS_                        |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:24 | **MAGIC** - must match value from the REQUEST                |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  23:0 | **DATA0** - MMIO VF/PF response data                         |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | **DATA1** - MMIO VF/PF response data (or zero)               |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 2 |  31:0 | **DATA2** - MMIO VF/PF response data (or zero)               |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 3 |  31:0 | **DATA3** - MMIO VF/PF response data (or zero)               |
+ *  +---+-------+--------------------------------------------------------------+
+ */
+#define GUC_ACTION_VF2GUC_MMIO_RELAY_SERVICE		0x5005
+
+#define VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_MIN_LEN	(GUC_HXG_REQUEST_MSG_MIN_LEN)
+#define VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_MAX_LEN	(GUC_HXG_REQUEST_MSG_MIN_LEN + 3u)
+#define VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_0_MAGIC	(0xf << 24)
+#define VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_0_OPCODE	(0xff << 16)
+#define VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_n_DATAn	GUC_HXG_REQUEST_MSG_n_DATAn
+
+#define VF2GUC_MMIO_RELAY_SERVICE_RESPONSE_MSG_MIN_LEN	(GUC_HXG_RESPONSE_MSG_MIN_LEN)
+#define VF2GUC_MMIO_RELAY_SERVICE_RESPONSE_MSG_MAX_LEN	(GUC_HXG_RESPONSE_MSG_MIN_LEN + 3u)
+#define VF2GUC_MMIO_RELAY_SERVICE_RESPONSE_MSG_0_MAGIC	(0xf << 24)
+#define VF2GUC_MMIO_RELAY_SERVICE_RESPONSE_MSG_0_DATA0	(0xffffff << 0)
+#define VF2GUC_MMIO_RELAY_SERVICE_RESPONSE_MSG_n_DATAn	GUC_HXG_RESPONSE_MSG_n_DATAn
+
 #endif /* _ABI_GUC_ACTIONS_VF_ABI_H */
