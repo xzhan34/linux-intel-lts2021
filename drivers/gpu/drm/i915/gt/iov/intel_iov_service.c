@@ -6,6 +6,7 @@
 #include <linux/bitfield.h>
 
 #include "abi/iov_actions_abi.h"
+#include "abi/iov_actions_mmio_abi.h"
 #include "abi/iov_errors_abi.h"
 #include "abi/iov_messages_abi.h"
 #include "abi/iov_version_abi.h"
@@ -369,6 +370,68 @@ static int send_mmio_relay_error(struct intel_iov *iov,
 	return intel_guc_send(iov_to_guc(iov), request, ARRAY_SIZE(request));
 }
 
+static int send_mmio_relay_reply(struct intel_iov *iov,
+				 u32 vfid, u32 magic, u32 data[4])
+{
+	u32 request[PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_LEN] = {
+		FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, GUC_ACTION_PF2GUC_MMIO_RELAY_SUCCESS),
+		FIELD_PREP(PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_1_VFID, vfid),
+		FIELD_PREP(PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_2_MAGIC, magic) |
+		FIELD_PREP(PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_2_DATA0, data[0]),
+		FIELD_PREP(PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_n_DATAx, data[1]),
+		FIELD_PREP(PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_n_DATAx, data[2]),
+		FIELD_PREP(PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_n_DATAx, data[3]),
+	};
+
+	return intel_guc_send(iov_to_guc(iov), request, ARRAY_SIZE(request));
+}
+
+static int reply_mmio_relay_handshake(struct intel_iov *iov,
+				      u32 vfid, u32 magic, const u32 *msg)
+{
+	u32 data[PF2GUC_MMIO_RELAY_SUCCESS_REQUEST_MSG_NUM_DATA + 1] = { };
+	u32 wanted_major = FIELD_GET(VF2PF_MMIO_HANDSHAKE_REQUEST_MSG_1_MAJOR, msg[1]);
+	u32 wanted_minor = FIELD_GET(VF2PF_MMIO_HANDSHAKE_REQUEST_MSG_1_MINOR, msg[1]);
+	u32 major = 0, minor = 0;
+	int fault = 0;
+
+	IOV_DEBUG(iov, "VF%u wants ABI version %u.%02u\n", vfid, wanted_major, wanted_minor);
+
+	/* XXX for now we only support single major version (latest) */
+
+	if (!wanted_major && !wanted_minor) {
+		major = IOV_VERSION_LATEST_MAJOR;
+		minor = IOV_VERSION_LATEST_MINOR;
+	} else if (wanted_major > IOV_VERSION_LATEST_MAJOR) {
+		major = IOV_VERSION_LATEST_MAJOR;
+		minor = IOV_VERSION_LATEST_MINOR;
+	} else if (wanted_major < IOV_VERSION_LATEST_MAJOR) {
+		fault = ENOPKG;
+	} else {
+		GEM_BUG_ON(wanted_major != IOV_VERSION_LATEST_MAJOR);
+		GEM_BUG_ON(IOV_VERSION_LATEST_MAJOR != 1);
+
+		if (unlikely(!msg[0] || msg[2] || msg[3])) {
+			fault = EPROTO;
+		} else {
+			major = wanted_major;
+			minor = min_t(u32, IOV_VERSION_LATEST_MINOR, wanted_minor);
+		}
+	}
+
+	if (fault)
+		return send_mmio_relay_error(iov, vfid, magic, fault);
+
+	IOV_DEBUG(iov, "VF%u will use ABI version %u.%02u\n", vfid, major, minor);
+
+	data[1] = FIELD_PREP(VF2PF_MMIO_HANDSHAKE_RESPONSE_MSG_1_MAJOR, major) |
+		  FIELD_PREP(VF2PF_MMIO_HANDSHAKE_RESPONSE_MSG_1_MINOR, minor);
+
+	return send_mmio_relay_reply(iov, vfid, magic, data);
+}
+
 /**
  * intel_iov_service_process_mmio_relay - Process MMIO Relay notification.
  * @iov: the IOV struct
@@ -406,6 +469,9 @@ int intel_iov_service_process_mmio_relay(struct intel_iov *iov, const u32 *msg,
 	wakeref = intel_runtime_pm_get(rpm);
 
 	switch (opcode) {
+	case IOV_OPCODE_VF2PF_MMIO_HANDSHAKE:
+		err = reply_mmio_relay_handshake(iov, vfid, magic, msg + 2);
+		break;
 	default:
 		IOV_DEBUG(iov, "unsupported request %#x from VF%u\n",
 				opcode, vfid);
