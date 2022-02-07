@@ -1083,11 +1083,19 @@ static int eb_lock_persistent_vmas(struct i915_execbuffer *eb)
 	if (err)
 		return err;
 
-	list_for_each_entry(vma, &vm->non_priv_vm_bind_list,
-			    non_priv_vm_bind_link) {
-		err = i915_gem_object_lock(vma->obj, &eb->ww);
-		if (err)
-			return err;
+	if (eb->i915->params.enable_non_private_objects) {
+		list_for_each_entry(vma, &vm->non_priv_vm_bind_list,
+				    non_priv_vm_bind_link) {
+			err = i915_gem_object_lock(vma->obj, &eb->ww);
+			if (err)
+				return err;
+		}
+	} else {
+		list_for_each_entry(vma, &vm->vm_bind_list, vm_bind_link) {
+			err = i915_gem_object_lock(vma->obj, &eb->ww);
+			if (err)
+				return err;
+		}
 	}
 
 	return 0;
