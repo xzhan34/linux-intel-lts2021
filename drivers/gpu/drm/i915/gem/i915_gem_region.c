@@ -40,7 +40,9 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 	pgoff_t num_pages; /* implicitly limited by sg_alloc_table */
 	int ret;
 
-	if (!safe_conversion(&num_pages, obj->base.size >> PAGE_SHIFT))
+	if (!safe_conversion(&num_pages,
+			     round_up(obj->base.size, mem->min_page_size) >>
+			     ilog2(mem->min_page_size)))
 		 return ERR_PTR(-E2BIG);
 
 	if (obj->base.size > mem->total)
@@ -82,6 +84,9 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 			u64 len;
 
 			if (offset != prev_end || sg->length >= max_segment) {
+				/* Check we have not overflown our prealloc */
+				GEM_BUG_ON(st->nents >= num_pages);
+
 				if (st->nents) {
 					sg_dma_len(sg) = sg->length;
 					sg_page_sizes |= sg->length;
