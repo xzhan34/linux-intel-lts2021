@@ -150,6 +150,7 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	mutex_init(&obj->mm.get_page.lock);
 	INIT_RADIX_TREE(&obj->mm.get_dma_page.radix, GFP_KERNEL | __GFP_NOWARN);
 	mutex_init(&obj->mm.get_dma_page.lock);
+	INIT_LIST_HEAD(&obj->priv_obj_link);
 
 	i915_drm_client_init_bo(obj);
 }
@@ -411,6 +412,12 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 			obj->ops->delayed_free(obj);
 			continue;
 		}
+
+		spin_lock(&i915->vm_priv_obj_lock);
+		if (obj->vm && obj->vm != I915_BO_INVALID_PRIV_VM)
+			list_del_init(&obj->priv_obj_link);
+		spin_unlock(&i915->vm_priv_obj_lock);
+
 		__i915_gem_free_object(obj);
 
 		/* But keep the pointer alive for RCU-protected lookups */

@@ -209,6 +209,12 @@ struct drm_i915_gem_object {
 
 	const struct drm_i915_gem_object_ops *ops;
 
+	/* VM pointer if the object is private to a VM; NULL otherwise */
+	struct i915_address_space *vm;
+/* Invalid VM pointer value if VM is released */
+#define I915_BO_INVALID_PRIV_VM		ERR_PTR(-EACCES)
+	struct list_head priv_obj_link;
+
 	struct {
 		/**
 		 * @vma.lock: protect the list/tree of vmas

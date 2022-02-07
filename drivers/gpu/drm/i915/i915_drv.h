@@ -833,6 +833,9 @@ struct drm_i915_private {
 		struct file *mmap_singleton;
 	} gem;
 
+	/* protects VMs' priv_obj_list from concurrent VM and BO release */
+	spinlock_t vm_priv_obj_lock;
+
 	u8 pch_ssc_use;
 
 	/* For i915gm/i945gm vblank irq workaround */

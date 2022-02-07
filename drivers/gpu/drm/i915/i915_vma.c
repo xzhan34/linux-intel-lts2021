@@ -254,6 +254,7 @@ vma_create(struct drm_i915_gem_object *obj,
 	spin_unlock(&obj->vma.lock);
 
 	INIT_LIST_HEAD(&vma->vm_bind_link);
+	INIT_LIST_HEAD(&vma->non_priv_vm_bind_link);
 	return vma;
 
 err_unlock:

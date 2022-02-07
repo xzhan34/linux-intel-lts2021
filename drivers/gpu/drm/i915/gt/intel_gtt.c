@@ -100,7 +100,15 @@ int map_pt_dma_locked(struct i915_address_space *vm, struct drm_i915_gem_object 
 
 static void __i915_vm_close(struct i915_address_space *vm)
 {
+	struct drm_i915_gem_object *obj, *on;
 	struct i915_vma *vma, *vn;
+
+	spin_lock(&vm->i915->vm_priv_obj_lock);
+	list_for_each_entry_safe(obj, on, &vm->priv_obj_list, priv_obj_link) {
+		list_del_init(&obj->priv_obj_link);
+		obj->vm = I915_BO_INVALID_PRIV_VM;
+	}
+	spin_unlock(&vm->i915->vm_priv_obj_lock);
 
 	i915_gem_vm_unbind_all(vm);
 
@@ -130,6 +138,7 @@ void i915_address_space_fini(struct i915_address_space *vm)
 
 	drm_mm_takedown(&vm->mm);
 	mutex_destroy(&vm->mutex);
+	i915_gem_object_put(vm->root_obj);
 	GEM_BUG_ON(!RB_EMPTY_ROOT(&vm->va.rb_root));
 	mutex_destroy(&vm->vm_bind_lock);
 }
@@ -255,6 +264,10 @@ void i915_address_space_init(struct i915_address_space *vm, int subclass)
 	INIT_LIST_HEAD(&vm->vm_bind_list);
 	INIT_LIST_HEAD(&vm->vm_bound_list);
 	mutex_init(&vm->vm_bind_lock);
+	INIT_LIST_HEAD(&vm->non_priv_vm_bind_list);
+	vm->root_obj = i915_gem_object_create_internal(vm->i915, PAGE_SIZE);
+	GEM_BUG_ON(IS_ERR(vm->root_obj));
+	INIT_LIST_HEAD(&vm->priv_obj_list);
 
 	i915_active_init(&vm->active, __i915_vm_active, __i915_vm_retire, 0);
 }

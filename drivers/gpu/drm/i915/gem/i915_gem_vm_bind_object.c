@@ -57,6 +57,7 @@ static void i915_gem_vm_bind_remove(struct i915_vma *vma)
 	GEM_BUG_ON(list_empty(&vma->vm_bind_link));
 
 	list_del_init(&vma->vm_bind_link);
+	list_del_init(&vma->non_priv_vm_bind_link);
 	i915_vm_bind_it_remove(vma, &vma->vm->va);
 }
 
@@ -163,6 +164,11 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 		goto put_obj;
 	}
 
+	if (obj->vm && obj->vm != vm) {
+		ret = -EPERM;
+		goto put_obj;
+	}
+
 	ret = i915_gem_vm_bind_lock_interruptible(vm);
 	if (ret)
 		goto put_obj;
@@ -180,6 +186,14 @@ retry:
 	if (va->flags & PRELIM_I915_GEM_VM_BIND_IMMEDIATE) {
 		u64 pin_flags = va->start | PIN_OFFSET_FIXED | PIN_USER;
 
+		/* Always take vm_priv lock here (just like execbuff path) even
+		 * for shared BOs, this will prevent the eviction/shrinker logic
+		 * from evicint private BOs of the VM.
+		 */
+		ret = i915_gem_vm_priv_lock(vm, &ww);
+		if (ret)
+			goto out_ww;
+
 		ret = i915_gem_object_lock(vma->obj, &ww);
 		if (ret)
 			goto out_ww;
@@ -193,6 +207,9 @@ retry:
 
 	list_add_tail(&vma->vm_bind_link, &vm->vm_bind_list);
 	i915_vm_bind_it_insert(vma, &vm->va);
+	if (!obj->vm)
+		list_add_tail(&vma->non_priv_vm_bind_link,
+			      &vm->non_priv_vm_bind_list);
 
 out_ww:
 	if (ret == -EDEADLK) {

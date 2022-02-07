@@ -177,6 +177,7 @@ struct create_ext {
 	struct drm_i915_private *i915;
 	struct drm_i915_gem_object *vanilla_object;
 	unsigned long flags;
+	u32 vm_id;
 };
 
 static void repr_placements(char *buf, size_t size,
@@ -329,9 +330,24 @@ static int create_setparam(struct i915_user_extension __user *base, void *data)
 	return __create_setparam(&ext.param, data);
 }
 
+static int ext_set_vm_private(struct i915_user_extension __user *base,
+			      void *data)
+{
+	struct prelim_drm_i915_gem_create_ext_vm_private ext;
+	struct create_ext *ext_data = data;
+
+	if (copy_from_user(&ext, base, sizeof(ext)))
+		return -EFAULT;
+
+	ext_data->vm_id = ext.vm_id;
+
+	return 0;
+}
+
 static int ext_set_protected(struct i915_user_extension __user *base, void *data);
 static const i915_user_extension_fn prelim_create_extensions[] = {
 	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_GEM_CREATE_EXT_SETPARAM)] = create_setparam,
+	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_GEM_CREATE_EXT_VM_PRIVATE)] = ext_set_vm_private,
 	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_GEM_CREATE_EXT_PROTECTED_CONTENT)] = ext_set_protected,
 };
 
@@ -368,6 +384,15 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		goto object_free;
 
+	if (ext_data.vm_id) {
+		obj->vm = i915_address_space_lookup(file->driver_priv,
+						    ext_data.vm_id);
+		if (unlikely(!obj->vm)) {
+			ret = -ENOENT;
+			goto object_free;
+		}
+	}
+
 	if (!placements_ext) {
 		enum intel_memory_type mem_type = INTEL_MEMORY_SYSTEM;
 
@@ -377,13 +402,21 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 
 	ret = setup_object(obj, args->size);
 	if (ret)
-		goto object_free;
+		goto vm_put;
+
+	if (obj->vm) {
+		list_add_tail(&obj->priv_obj_link, &obj->vm->priv_obj_list);
+		obj->base.resv = obj->vm->root_obj->base.resv;
+		i915_vm_put(obj->vm);
+	}
 
 	/* Add any flag set by create_ext options */
 	obj->flags |= ext_data.flags;
 
 	return i915_gem_publish(obj, file, &args->size, &args->handle);
-
+vm_put:
+	if (obj->vm)
+		i915_vm_put(obj->vm);
 object_free:
 	if (obj->mm.n_placements > 1)
 		kfree(placements_ext);
@@ -565,6 +598,15 @@ i915_gem_create_ext_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		goto object_free;
 
+	if (ext_data.vm_id) {
+		obj->vm = i915_address_space_lookup(file->driver_priv,
+						    ext_data.vm_id);
+		if (unlikely(!obj->vm)) {
+			ret = -ENOENT;
+			goto object_free;
+		}
+	}
+
 	if (!placements_ext) {
 		struct intel_memory_region *mr =
 			intel_memory_region_by_type(i915, INTEL_MEMORY_SYSTEM);
@@ -574,13 +616,21 @@ i915_gem_create_ext_ioctl(struct drm_device *dev, void *data,
 
 	ret = setup_object(obj, args->size);
 	if (ret)
-		goto object_free;
+		goto vm_put;
+
+	if (obj->vm) {
+		list_add_tail(&obj->priv_obj_link, &obj->vm->priv_obj_list);
+		obj->base.resv = obj->vm->root_obj->base.resv;
+		i915_vm_put(obj->vm);
+	}
 
 	/* Add any flag set by create_ext options */
 	obj->flags |= ext_data.flags;
 
 	return i915_gem_publish(obj, file, &args->size, &args->handle);
-
+vm_put:
+	if (obj->vm)
+		i915_vm_put(obj->vm);
 object_free:
 	if (obj->mm.n_placements > 1)
 		kfree(placements_ext);

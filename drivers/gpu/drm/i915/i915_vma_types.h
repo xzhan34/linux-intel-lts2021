@@ -295,6 +295,8 @@ struct i915_vma {
 	struct list_head vm_link;
 
 	struct list_head vm_bind_link; /* Link in persistent VMA list */
+	/* Link in non-private persistent VMA list */
+	struct list_head non_priv_vm_bind_link;
 
 	/** Interval tree structures for persistent vma */
 	struct rb_node rb;

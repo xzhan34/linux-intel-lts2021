@@ -219,6 +219,8 @@ struct drm_i915_private *mock_gem_device(void)
 	__clear_bit(I915_WEDGED, &to_gt(i915)->reset.flags);
 	intel_engines_driver_register(i915);
 
+	spin_lock_init(&i915->vm_priv_obj_lock);
+
 	i915->do_release = true;
 	ida_init(&i915->selftest.mock_region_instances);
 
