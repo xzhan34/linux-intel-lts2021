@@ -28,6 +28,7 @@ void i915_enable_ats(struct drm_i915_private *i915)
 	if (!i915->params.address_translation_services)
 		return;
 
+	i915->pasid_counter = 0;
 	if (!pci_ats_supported(pdev)) {
 		drm_info(&i915->drm,
 			 "There is no Address Translation Services (ATS) support for the device\n");
@@ -70,6 +71,7 @@ void i915_disable_ats(struct drm_i915_private *i915)
 	 * we need to call the following function after final resolution in the
 	 * kernel - "iommu_dev_disable_feature(&pdev->dev, IOMMU_DEV_FEAT_SVA)"
 	 */
+	WRITE_ONCE(i915->pasid_counter, 0);
 	pci_disable_ats(pdev);
 	clear_bit(INTEL_FLAG_ATS_ENABLED, &i915->flags);
 }
@@ -81,6 +83,7 @@ void i915_destroy_pasid(struct i915_address_space *vm)
 		return;
 
 	if (vm->sva && is_vm_pasid_active(vm)) {
+		WRITE_ONCE(vm->i915->pasid_counter, vm->i915->pasid_counter - 1);
 		iommu_sva_unbind_device(vm->sva);
 		vm->has_pasid = false;
 		vm->sva = NULL;
@@ -91,8 +94,8 @@ int i915_create_pasid(struct i915_address_space *vm)
 {
 	struct drm_i915_private *i915 = vm->i915;
 	struct iommu_sva *sva_handle;
-	u32 pasid;
 	int err;
+	u32 pasid;
 
 	if (!i915_ats_enabled(i915))
 		return -EINVAL;
@@ -119,5 +122,13 @@ int i915_create_pasid(struct i915_address_space *vm)
 	vm->pasid = pasid;
 	vm->has_pasid = true;
 
+	/* Update pasid global counter */
+	WRITE_ONCE(vm->i915->pasid_counter, vm->i915->pasid_counter + 1);
+
 	return 0;
+}
+
+int i915_global_pasid_counter(struct drm_i915_private *i915)
+{
+	return i915->pasid_counter;
 }

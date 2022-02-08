@@ -32,6 +32,7 @@ bool i915_ats_enabled(struct drm_i915_private *dev_priv);
 int i915_create_pasid(struct i915_address_space *vm);
 void i915_destroy_pasid(struct i915_address_space *vm);
 bool is_vm_pasid_active(struct i915_address_space *vm);
+int i915_global_pasid_counter(struct drm_i915_private *i915);
 
 #else /* CONFIG_DRM_I915_ATS */
 struct i915_ats_priv { };
@@ -44,6 +45,8 @@ static inline int i915_create_pasid(struct i915_address_space *vm)
 static inline void i915_destroy_pasid(struct i915_address_space *vm) { }
 static inline bool is_vm_pasid_active(struct i915_address_space *vm)
 { return false; }
+static inline int i915_global_pasid_counter(struct drm_i915_private *i915)
+{ return -EOPNOTSUPP; }
 
 #endif /* CONFIG_DRM_I915_ATS */
 #endif /* __I915_ADDR_TRANS_SVC_H__ */

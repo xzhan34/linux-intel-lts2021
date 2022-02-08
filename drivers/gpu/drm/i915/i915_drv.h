@@ -980,6 +980,7 @@ struct drm_i915_private {
 	/* Address translation service support */
 	struct i915_ats_priv *ats_priv;
 	unsigned long flags;
+	int pasid_counter;
 #define INTEL_FLAG_ATS_ENABLED		0
 };
 
