@@ -66,7 +66,8 @@ static inline int pf_get_status(struct intel_iov *iov)
 static inline struct mutex *pf_provisioning_mutex(struct intel_iov *iov)
 {
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
-	return &iov->pf.provisioning.lock;
+	/* always use mutex from the root tile */
+	return &to_gt(iov_to_i915(iov))->iov.pf.provisioning.lock;
 }
 
 #define IOV_ERROR(_iov, _fmt, ...) \
