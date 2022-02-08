@@ -33,8 +33,12 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 	intel_engine_pm_get(ce->engine);
 
 	count = div_u64(round_up(vma->size, block_size), block_size);
-	size = (1 + 8 * count) * sizeof(u32);
+	if (GRAPHICS_VER(i915) >= 12)
+		size = (1 + 12 * count) * sizeof(u32);
+	else
+		size = (1 + 8 * count) * sizeof(u32);
 	size = round_up(size, PAGE_SIZE);
+
 	pool = intel_gt_get_buffer_pool(ce->engine->gt, size, I915_MAP_WC);
 	if (IS_ERR(pool)) {
 		err = PTR_ERR(pool);
@@ -72,7 +76,19 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 
 		GEM_BUG_ON(size >> PAGE_SHIFT > S16_MAX);
 
-		if (GRAPHICS_VER(i915) >= 8) {
+		if (GRAPHICS_VER(i915) >= 12) {
+			*cmd++ = XY_FAST_COLOR_BLT | BLT_COLOR_DEPTH_32 | (11 - 2);
+			*cmd++ = PAGE_SIZE - 1;
+			*cmd++ = 0;
+			*cmd++ = size >> PAGE_SHIFT << 16 | PAGE_SIZE / 4;
+			*cmd++ = lower_32_bits(offset);
+			*cmd++ = upper_32_bits(offset);
+			*cmd++ = 0;
+			*cmd++ = value;
+			*cmd++ = 0;
+			*cmd++ = 0;
+			*cmd++ = 0;
+		} else if (GRAPHICS_VER(i915) >= 8) {
 			*cmd++ = XY_COLOR_BLT_CMD | BLT_WRITE_RGBA | (7 - 2);
 			*cmd++ = BLT_DEPTH_32 | BLT_ROP_COLOR_COPY | PAGE_SIZE;
 			*cmd++ = 0;
