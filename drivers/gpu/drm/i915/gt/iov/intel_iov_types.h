@@ -6,6 +6,8 @@
 #ifndef __INTEL_IOV_TYPES_H__
 #define __INTEL_IOV_TYPES_H__
 
+#include <linux/mutex.h>
+
 /**
  * struct intel_iov_config - IOV configuration data.
  */
@@ -15,9 +17,11 @@ struct intel_iov_config {
 /**
  * struct intel_iov_provisioning - IOV provisioning data.
  * @configs: flexible array with configuration data for PF and VFs.
+ * @lock: protects provisionining data
  */
 struct intel_iov_provisioning {
 	struct intel_iov_config *configs;
+	struct mutex lock;
 };
 
 #define VFID(n)		(n)

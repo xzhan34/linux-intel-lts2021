@@ -46,6 +46,7 @@ void intel_iov_provisioning_init_early(struct intel_iov *iov)
 	}
 
 	iov->pf.provisioning.configs = configs;
+	mutex_init(&iov->pf.provisioning.lock);
 }
 
 /**
@@ -59,5 +60,6 @@ void intel_iov_provisioning_release(struct intel_iov *iov)
 {
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
 
+	mutex_destroy(&iov->pf.provisioning.lock);
 	kfree(fetch_and_zero(&iov->pf.provisioning.configs));
 }
