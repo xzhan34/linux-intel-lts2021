@@ -1124,7 +1124,6 @@ static const struct intel_device_info dg2_info = {
 static const struct intel_device_info ats_m_info = {
 	DG2_FEATURES,
 	.display = { 0 },
-	.require_force_probe = 1,
 	.tuning_thread_rr_after_dep = 1,
 };
 
