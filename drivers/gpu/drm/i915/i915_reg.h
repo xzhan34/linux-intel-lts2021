@@ -9043,4 +9043,7 @@ enum skl_power_gate {
 #define CPORT_MBDB_CSRS_END (CPORT_MBDB_CSRS + 0x1000)
 #define CPORT_MBDB_INT_ENABLE_MASK _MMIO(CPORT_MBDB_CSRS + 0x8)
 
+/* PASID valid, ATS enabled bits */
+#define PASID_ENABLE_MASK				REG_GENMASK(31, 30)
+
 #endif /* _I915_REG_H_ */

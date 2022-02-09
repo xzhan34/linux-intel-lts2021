@@ -2772,6 +2772,18 @@ static inline void update_um_queues_regs(struct intel_context *ce)
 	if (HAS_UM_QUEUES(ce->engine->i915)) {
 		ce->lrc_reg_state[PVC_CTX_ASID] = ce->vm->asid;
 
+		if (is_vm_pasid_active(ce->vm)) {
+			ce->lrc_reg_state[PVC_CTX_PASID] = ce->vm->pasid |
+				PASID_ENABLE_MASK;
+
+			DRM_DEBUG("Update the LRCA with CS_CTX_PASID:\n"
+				  "pasid = %d, pasid_enabled = %d\n"
+				  "ats_enabled = %d\n",
+				  ce->vm->pasid,
+				  is_vm_pasid_active(ce->vm),
+				  i915_ats_enabled(ce->engine->i915));
+		}
+
 		if (INTEL_INFO(ce->engine->i915)->has_access_counter && ctx) {
 			ce->lrc_reg_state[PVC_CTX_ACC_CTR_THOLD] =
 				(ctx->acc_notify << ACC_NOTIFY_S) |
