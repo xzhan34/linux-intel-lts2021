@@ -6,13 +6,14 @@
 #include <linux/sort.h>
 #include <drm/drm_cache.h>
 
+#include "gem/i915_gem_context.h"
+#include "gem/i915_gem_internal.h"
+#include "gem/i915_gem_lmem.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_engine_user.h"
 
 #include "i915_selftest.h"
 
-#include "gem/i915_gem_context.h"
-#include "gem/i915_gem_internal.h"
 #include "selftests/igt_flush_test.h"
 #include "selftests/i915_random.h"
 #include "selftests/mock_drm.h"
@@ -24,6 +25,18 @@ static int wrap_ktime_compare(const void *A, const void *B)
 	const ktime_t *a = A, *b = B;
 
 	return ktime_compare(*a, *b);
+}
+
+static struct drm_i915_gem_object *
+perf_object_create(struct drm_i915_private *i915, unsigned long sz)
+{
+	struct drm_i915_gem_object *obj;
+
+	obj = i915_gem_object_create_lmem(i915, sz, 0);
+	if (IS_ERR(obj))
+		obj = i915_gem_object_create_internal(i915, sz);
+
+	return obj;
 }
 
 static int __perf_fill_blt(struct drm_i915_gem_object *obj)
@@ -68,8 +81,9 @@ static int __perf_fill_blt(struct drm_i915_gem_object *obj)
 			return err;
 
 		sort(t, ARRAY_SIZE(t), sizeof(*t), wrap_ktime_compare, NULL);
-		pr_info("%s: blt %zd KiB fill: %lld MiB/s\n",
+		pr_info("%s(%s): blt %zd KiB fill: %lld MiB/s\n",
 			engine->name,
+			obj->mm.region->name,
 			obj->base.size >> 10,
 			div64_u64(mul_u32_u32(4 * obj->base.size,
 					      1000 * 1000 * 1000),
@@ -92,7 +106,7 @@ static int perf_fill_blt(void *arg)
 		struct drm_i915_gem_object *obj;
 		int err;
 
-		obj = i915_gem_object_create_internal(i915, sizes[i]);
+		obj = perf_object_create(i915, sizes[i]);
 		if (IS_ERR(obj))
 			return PTR_ERR(obj);
 
@@ -148,8 +162,9 @@ static int __perf_copy_blt(struct drm_i915_gem_object *src,
 			return err;
 
 		sort(t, ARRAY_SIZE(t), sizeof(*t), wrap_ktime_compare, NULL);
-		pr_info("%s: blt %zd KiB copy: %lld MiB/s\n",
+		pr_info("%s(%s): blt %zd KiB copy: %lld MiB/s\n",
 			engine->name,
+			src->mm.region->name,
 			src->base.size >> 10,
 			div64_u64(mul_u32_u32(4 * src->base.size,
 					      1000 * 1000 * 1000),
@@ -172,11 +187,11 @@ static int perf_copy_blt(void *arg)
 		struct drm_i915_gem_object *src, *dst;
 		int err;
 
-		src = i915_gem_object_create_internal(i915, sizes[i]);
+		src = perf_object_create(i915, sizes[i]);
 		if (IS_ERR(src))
 			return PTR_ERR(src);
 
-		dst = i915_gem_object_create_internal(i915, sizes[i]);
+		dst = perf_object_create(i915, sizes[i]);
 		if (IS_ERR(dst)) {
 			err = PTR_ERR(dst);
 			goto err_src;
