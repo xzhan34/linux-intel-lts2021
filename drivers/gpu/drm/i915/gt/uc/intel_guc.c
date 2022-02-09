@@ -1307,8 +1307,8 @@ static int guc_send_invalidate_tlb(struct intel_guc *guc, u32 *action, u32 size)
 		 */
 		if (gt->reset.flags == 0 &&
 		    rstcnt == atomic_read(&gt->reset.engines_reset_count))
-			drm_err(&gt->i915->drm,
-				"tlb invalidation response timed out for seqno %u\n", seqno);
+			drm_info(&gt->i915->drm,
+				 "tlb invalidation response timed out for seqno %u\n", seqno);
 
 		err = -ETIME;
 	}
