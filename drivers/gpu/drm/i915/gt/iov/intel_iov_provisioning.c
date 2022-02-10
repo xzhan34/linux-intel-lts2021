@@ -1794,6 +1794,12 @@ static u32 encode_config(u32 *cfg, const struct intel_iov_config *config)
 	cfg[n++] = MAKE_GUC_KLV(VF_CFG_NUM_DOORBELLS);
 	cfg[n++] = config->num_dbs;
 
+	cfg[n++] = MAKE_GUC_KLV(VF_CFG_EXEC_QUANTUM);
+	cfg[n++] = config->exec_quantum;
+
+	cfg[n++] = MAKE_GUC_KLV(VF_CFG_PREEMPT_TIMEOUT);
+	cfg[n++] = config->preempt_timeout;
+
 	return n;
 }
 
