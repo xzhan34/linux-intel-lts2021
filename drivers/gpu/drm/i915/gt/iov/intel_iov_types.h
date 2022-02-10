@@ -80,6 +80,19 @@ struct intel_iov_provisioning {
 #define PFID		VFID(0)
 
 /**
+ * struct intel_iov_data - Data related to one VF.
+ */
+struct intel_iov_data {
+};
+
+/**
+ * struct intel_iov_state - Placeholder for all VFs data.
+ */
+struct intel_iov_state {
+	struct intel_iov_data *data;
+};
+
+/**
  * struct intel_iov_runtime_regs - Register runtime info shared with VFs.
  * @size: size of the regs and value arrays.
  * @regs: pointer to static array with register offsets.
@@ -116,6 +129,7 @@ struct intel_iov_relay {
  * @pf.sysfs: sysfs data.
  * @pf.provisioning: provisioning data.
  * @pf.service: placeholder for service data.
+ * @pf.state: placeholder for VFs data.
  * @relay: data related to VF/PF communication based on GuC Relay messages.
  */
 struct intel_iov {
@@ -123,6 +137,7 @@ struct intel_iov {
 		struct intel_iov_sysfs sysfs;
 		struct intel_iov_provisioning provisioning;
 		struct intel_iov_service service;
+		struct intel_iov_state state;
 	} pf;
 
 	struct intel_iov_relay relay;
