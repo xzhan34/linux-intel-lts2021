@@ -60,6 +60,32 @@ void intel_iov_state_release(struct intel_iov *iov)
 	kfree(fetch_and_zero(&iov->pf.state.data));
 }
 
+static void pf_reset_vf_state(struct intel_iov *iov, u32 vfid)
+{
+	iov->pf.state.data[vfid].state = 0;
+}
+
+/**
+ * intel_iov_state_reset - Reset VFs data.
+ * @iov: the IOV struct
+ *
+ * Reset VFs data.
+ * This function can only be called on PF.
+ */
+void intel_iov_state_reset(struct intel_iov *iov)
+{
+	u16 n;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (!iov->pf.state.data)
+		return;
+
+	for (n = 0; n < 1 + pf_get_totalvfs(iov); n++) {
+		pf_reset_vf_state(iov, n);
+	}
+}
+
 static int guc_action_vf_control_cmd(struct intel_guc *guc, u32 vfid, u32 cmd)
 {
 	u32 request[PF2GUC_VF_CONTROL_REQUEST_MSG_LEN] = {
