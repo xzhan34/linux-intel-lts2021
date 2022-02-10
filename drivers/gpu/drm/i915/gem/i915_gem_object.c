@@ -841,6 +841,8 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 			goto out;
 	}
 
+	trace_i915_gem_object_migrate(obj, id);
+
 	swap(obj->base.size, donor->base.size);
 	swap(obj->base.filp, donor->base.filp);
 	swap(obj->flags, donor->flags);

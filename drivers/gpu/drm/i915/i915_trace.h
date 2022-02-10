@@ -814,6 +814,35 @@ TRACE_EVENT(intel_gt_pagefault,
 		      RING_FAULT_LEVEL(__entry->fault_reg))
 );
 
+TRACE_EVENT(i915_gem_object_migrate,
+	    TP_PROTO(struct drm_i915_gem_object *obj,
+			enum intel_region_id region),
+	    TP_ARGS(obj, region),
+
+	    TP_STRUCT__entry(
+			     __field(struct drm_i915_private*, dev)
+			     __field(struct drm_i915_gem_object*, obj)
+			     __field(u64, size)
+			     __field(u32, src)
+			     __field(u32, dst)
+			     __field(bool, has_pages)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->dev = to_i915(obj->base.dev);
+			   __entry->obj = obj;
+			   __entry->size = obj->base.size;
+			   __entry->src = obj->mm.region.mem->id;
+			   __entry->dst = region;
+			   __entry->has_pages = i915_gem_object_has_pages(obj);
+			   ),
+
+	    TP_printk("dev %p migrate object %p [size %llx] %s %s from %s to %s",
+		      __entry->dev, __entry->obj, __entry->size,
+		      __entry->has_pages ? "with" : "without", "backing storage",
+		      intel_memory_region_id2str(__entry->src),
+		      intel_memory_region_id2str(__entry->dst))
+);
 #endif /* _I915_TRACE_H_ */
 
 /* This part must be outside protection */

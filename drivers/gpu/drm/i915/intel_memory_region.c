@@ -868,6 +868,25 @@ void intel_memory_regions_driver_release(struct drm_i915_private *i915)
 	}
 }
 
+const char *intel_memory_region_id2str(enum intel_region_id id)
+{
+	static const char * const regions[] = {
+		[INTEL_REGION_SMEM] = "smem",
+		[INTEL_REGION_LMEM_0] = "lmem",
+		[INTEL_REGION_LMEM_1] = "lmem1",
+		[INTEL_REGION_LMEM_2] = "lmem2",
+		[INTEL_REGION_LMEM_3] = "lmem3",
+		[INTEL_REGION_STOLEN_SMEM] = "stolen smem",
+		[INTEL_REGION_STOLEN_LMEM] = "stolen lmem",
+		[INTEL_REGION_UNKNOWN] = "unknown",
+	};
+
+	if (id > INTEL_REGION_UNKNOWN || !regions[id])
+		return "invalid memory region";
+
+	return regions[id];
+}
+
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftests/intel_memory_region.c"
 #include "selftests/mock_region.c"

@@ -174,4 +174,6 @@ intel_memory_region_set_name(struct intel_memory_region *mem,
 
 int intel_memory_region_reserve(struct intel_memory_region *mem,
 				u64 offset, u64 size);
+
+const char *intel_memory_region_id2str(enum intel_region_id id);
 #endif
