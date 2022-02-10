@@ -907,6 +907,10 @@ static bool multi_lrc_submit(struct i915_request *rq)
 		intel_context_is_banned(ce);
 }
 
+static void nop_submission_tasklet(struct tasklet_struct *t)
+{
+}
+
 static int guc_dequeue_one_context(struct intel_guc *guc)
 {
 	struct i915_sched_engine * const sched_engine = guc->sched_engine;
@@ -916,6 +920,8 @@ static int guc_dequeue_one_context(struct intel_guc *guc)
 	int ret;
 
 	lockdep_assert_held(&sched_engine->lock);
+
+	GEM_BUG_ON(intel_gt_is_wedged(guc_to_gt(guc)));
 
 	if (guc->stalled_request) {
 		submit = true;
@@ -1018,7 +1024,7 @@ add_request:
 	return submit;
 
 deadlk:
-	sched_engine->tasklet.callback = NULL;
+	sched_engine->tasklet.callback = nop_submission_tasklet;
 	tasklet_disable_nosync(&sched_engine->tasklet);
 	return false;
 
@@ -1511,8 +1517,15 @@ static void disable_submission(struct intel_guc *guc)
 	if (__tasklet_is_enabled(&sched_engine->tasklet)) {
 		GEM_BUG_ON(!guc->ct.enabled);
 		__tasklet_disable_sync_once(&sched_engine->tasklet);
-		sched_engine->tasklet.callback = NULL;
+		sched_engine->tasklet.callback = nop_submission_tasklet;
 	}
+}
+
+static bool
+__enable_submission_tasklet(struct i915_sched_engine * const sched_engine)
+{
+	return !__tasklet_is_enabled(&sched_engine->tasklet) &&
+	       __tasklet_enable(&sched_engine->tasklet);
 }
 
 static void enable_submission(struct intel_guc *guc)
@@ -1523,8 +1536,7 @@ static void enable_submission(struct intel_guc *guc)
 	spin_lock_irqsave(&guc->sched_engine->lock, flags);
 	sched_engine->tasklet.callback = guc_submission_tasklet;
 	wmb();	/* Make sure callback visible */
-	if (!__tasklet_is_enabled(&sched_engine->tasklet) &&
-	    __tasklet_enable(&sched_engine->tasklet)) {
+	if (__enable_submission_tasklet(sched_engine)) {
 		GEM_BUG_ON(!guc->ct.enabled);
 
 		/* And kick in case we missed a new request submission. */
@@ -1889,9 +1901,19 @@ void intel_guc_submission_cancel_requests(struct intel_guc *guc)
 
 void intel_guc_submission_reset_finish(struct intel_guc *guc)
 {
-	/* Reset called during driver load or during wedge? */
-	if (unlikely(!guc_submission_initialized(guc) ||
-		     intel_gt_is_wedged(guc_to_gt(guc)))) {
+	/* Reset called during driver load */
+	if (unlikely(!guc_submission_initialized(guc)))
+		return;
+
+	/*
+	 * if the device is wedged, we still need to re-enable the tasklet to
+	 * allow for it to run, otherwise it won't be killable if there is a
+	 * pending scheduled run.
+	 */
+	if (intel_gt_is_wedged(guc_to_gt(guc)) || !intel_guc_is_fw_running(guc)) {
+		guc->sched_engine->tasklet.callback = nop_submission_tasklet;
+		wmb(); /* Make sure callback visible */
+		__enable_submission_tasklet(guc->sched_engine);
 		return;
 	}
 
@@ -4130,7 +4152,7 @@ static int guc_resume(struct intel_engine_cs *engine)
 
 static bool guc_sched_engine_disabled(struct i915_sched_engine *sched_engine)
 {
-	return !sched_engine->tasklet.callback;
+	return sched_engine->tasklet.callback != guc_submission_tasklet;
 }
 
 static void guc_set_default_submission(struct intel_engine_cs *engine)
