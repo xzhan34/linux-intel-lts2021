@@ -147,11 +147,12 @@ TRACE_EVENT(i915_gem_object_pread,
 );
 
 TRACE_EVENT(i915_gem_object_fault,
-	    TP_PROTO(struct drm_i915_gem_object *obj, u64 index, bool gtt, bool write),
-	    TP_ARGS(obj, index, gtt, write),
+	    TP_PROTO(struct drm_i915_gem_object *obj, unsigned long addr, u64 index, bool gtt, bool write),
+	    TP_ARGS(obj, addr, index, gtt, write),
 
 	    TP_STRUCT__entry(
 			     __field(struct drm_i915_gem_object *, obj)
+			     __field(unsigned long, addr)
 			     __field(u64, index)
 			     __field(bool, gtt)
 			     __field(bool, write)
@@ -159,14 +160,16 @@ TRACE_EVENT(i915_gem_object_fault,
 
 	    TP_fast_assign(
 			   __entry->obj = obj;
+			   __entry->addr = addr;
 			   __entry->index = index;
 			   __entry->gtt = gtt;
 			   __entry->write = write;
 			   ),
 
-	    TP_printk("obj=%p, %s index=%llu %s",
+	    TP_printk("CPU page fault on obj=%p, %s address %lx (page index=%llu) %s",
 		      __entry->obj,
 		      __entry->gtt ? "GTT" : "CPU",
+		      __entry->addr,
 		      __entry->index,
 		      __entry->write ? ", writable" : "")
 );

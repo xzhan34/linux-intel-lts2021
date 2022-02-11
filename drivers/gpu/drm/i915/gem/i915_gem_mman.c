@@ -255,10 +255,14 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 	struct drm_i915_gem_object *obj = mmo->obj;
 	struct drm_device *dev = obj->base.dev;
 	struct drm_i915_private *i915 = to_i915(dev);
+	pgoff_t page_offset = (vmf->address - area->vm_start) >> PAGE_SHIFT;
+	bool write = area->vm_flags & VM_WRITE;
 	struct i915_gem_ww_ctx ww;
 	resource_size_t iomap;
 	int err;
 	vm_fault_t ret;
+
+	trace_i915_gem_object_fault(obj, vmf->address, page_offset, false, write);
 
 	atomic_inc(&i915->active_fault_handlers);
 
@@ -340,7 +344,7 @@ static vm_fault_t vm_fault_gtt(struct vm_fault *vmf)
 	/* We don't use vmf->pgoff since that has the fake offset */
 	page_offset = (vmf->address - area->vm_start) >> PAGE_SHIFT;
 
-	trace_i915_gem_object_fault(obj, page_offset, true, write);
+	trace_i915_gem_object_fault(obj, vmf->address, page_offset, true, write);
 
 	wakeref = intel_runtime_pm_get(rpm);
 
