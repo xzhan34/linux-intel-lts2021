@@ -2060,6 +2060,13 @@ static u32 encode_config(u32 *cfg, const struct intel_iov_config *config)
 	cfg[n++] = MAKE_GUC_KLV(VF_CFG_PREEMPT_TIMEOUT);
 	cfg[n++] = config->preempt_timeout;
 
+#define __encode_threshold(K, ...) \
+	cfg[n++] = MAKE_GUC_KLV(VF_CFG_THRESHOLD_##K); \
+	cfg[n++] = config->thresholds[IOV_THRESHOLD_##K];
+
+	IOV_THRESHOLDS(__encode_threshold)
+#undef __encode_threshold
+
 	return n;
 }
 
