@@ -306,6 +306,13 @@ static int pf_provision_sample_period(struct intel_iov *iov, u32 value)
 				    &iov->pf.provisioning.policies.sample_period, value);
 }
 
+static int pf_reprovision_sample_period(struct intel_iov *iov)
+{
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	return pf_provision_sample_period(iov, iov->pf.provisioning.policies.sample_period);
+}
+
 /**
  * intel_iov_provisioning_set_sample_period - Set 'sample_period' policy.
  * @iov: the IOV struct
@@ -2318,6 +2325,7 @@ static void pf_reprovision_pf(struct intel_iov *iov)
 	mutex_lock(pf_provisioning_mutex(iov));
 	pf_reprovision_sched_if_idle(iov);
 	pf_reprovision_reset_engine(iov);
+	pf_reprovision_sample_period(iov);
 	pf_reprovision_exec_quantum(iov, PFID);
 	pf_reprovision_preempt_timeout(iov, PFID);
 	iov->pf.provisioning.self_done = true;
