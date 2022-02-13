@@ -1328,6 +1328,12 @@ static const char* exec_quantum_unit(u32 exec_quantum)
 	return exec_quantum ? "ms" : "(inifinity)";
 }
 
+static int pf_push_config_exec_quantum(struct intel_iov* iov, unsigned int id, u32 exec_quantum)
+{
+	return guc_update_vf_klv32(iov_to_guc(iov), id,
+				   GUC_KLV_VF_CFG_EXEC_QUANTUM_KEY, exec_quantum);
+}
+
 static int pf_provision_exec_quantum(struct intel_iov *iov, unsigned int id,
 				     u32 exec_quantum)
 {
@@ -1340,8 +1346,7 @@ static int pf_provision_exec_quantum(struct intel_iov *iov, unsigned int id,
 	if (exec_quantum == config->exec_quantum)
 		return 0;
 
-	err = guc_update_vf_klv32(iov_to_guc(iov), id,
-				  GUC_KLV_VF_CFG_EXEC_QUANTUM_KEY, exec_quantum);
+	err = pf_push_config_exec_quantum(iov, id, exec_quantum);
 	if (unlikely(err))
 		return err;
 
@@ -1350,6 +1355,14 @@ static int pf_provision_exec_quantum(struct intel_iov *iov, unsigned int id,
 	IOV_DEBUG(iov, "VF%u provisioned with %u%s execution quantum\n",
 		  id, exec_quantum, exec_quantum_unit(exec_quantum));
 	return 0;
+}
+
+static int pf_reprovision_exec_quantum(struct intel_iov *iov, unsigned int id)
+{
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	return pf_push_config_exec_quantum(iov, id,
+					   iov->pf.provisioning.configs[id].exec_quantum);
 }
 
 /**
@@ -1411,6 +1424,13 @@ static const char* preempt_timeout_unit(u32 preempt_timeout)
 	return preempt_timeout ? "us" : "(inifinity)";
 }
 
+static int pf_push_config_preempt_timeout(struct intel_iov *iov, unsigned int id,
+					  u32 preempt_timeout)
+{
+	return guc_update_vf_klv32(iov_to_guc(iov), id,
+				   GUC_KLV_VF_CFG_PREEMPT_TIMEOUT_KEY, preempt_timeout);
+}
+
 static int pf_provision_preempt_timeout(struct intel_iov *iov, unsigned int id,
 					u32 preempt_timeout)
 {
@@ -1423,9 +1443,7 @@ static int pf_provision_preempt_timeout(struct intel_iov *iov, unsigned int id,
 	if (preempt_timeout == config->preempt_timeout)
 		return 0;
 
-	err = guc_update_vf_klv32(iov_to_guc(iov), id,
-				  GUC_KLV_VF_CFG_PREEMPT_TIMEOUT_KEY,
-				  preempt_timeout);
+	err = pf_push_config_preempt_timeout(iov, id, preempt_timeout);
 	if (unlikely(err))
 		return err;
 
@@ -1434,6 +1452,14 @@ static int pf_provision_preempt_timeout(struct intel_iov *iov, unsigned int id,
 	IOV_DEBUG(iov, "VF%u provisioned with %u%s preemption timeout\n",
 		  id, preempt_timeout, preempt_timeout_unit(preempt_timeout));
 	return 0;
+}
+
+static int pf_reprovision_preempt_timeout(struct intel_iov *iov, unsigned int id)
+{
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	return pf_push_config_preempt_timeout(iov, id,
+					      iov->pf.provisioning.configs[id].preempt_timeout);
 }
 
 /**
@@ -1999,6 +2025,8 @@ static void pf_reprovision_pf(struct intel_iov *iov)
 	mutex_lock(pf_provisioning_mutex(iov));
 	pf_reprovision_sched_if_idle(iov);
 	pf_reprovision_reset_engine(iov);
+	pf_reprovision_exec_quantum(iov, PFID);
+	pf_reprovision_preempt_timeout(iov, PFID);
 	mutex_unlock(pf_provisioning_mutex(iov));
 }
 
