@@ -168,6 +168,13 @@ static int pf_provision_sched_if_idle(struct intel_iov *iov, bool enable)
 				     &iov->pf.provisioning.policies.sched_if_idle, enable);
 }
 
+static int pf_reprovision_sched_if_idle(struct intel_iov *iov)
+{
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	return pf_provision_sched_if_idle(iov, iov->pf.provisioning.policies.sched_if_idle);
+}
+
 /**
  * intel_iov_provisioning_set_sched_if_idle - Set 'sched_if_idle' policy.
  * @iov: the IOV struct
@@ -216,6 +223,13 @@ static int pf_provision_reset_engine(struct intel_iov *iov, bool enable)
 
 	return pf_update_bool_policy(iov, GUC_KLV_VGT_POLICY_RESET_AFTER_VF_SWITCH_KEY,
 				     &iov->pf.provisioning.policies.reset_engine, enable);
+}
+
+static int pf_reprovision_reset_engine(struct intel_iov *iov)
+{
+	lockdep_assert_held(pf_provisioning_mutex(iov));
+
+	return pf_provision_reset_engine(iov, iov->pf.provisioning.policies.reset_engine);
 }
 
 /**
@@ -1978,6 +1992,16 @@ void intel_iov_provisioning_restart(struct intel_iov *iov)
 		pf_start_reprovisioning_worker(iov);
 }
 
+static void pf_reprovision_pf(struct intel_iov *iov)
+{
+	IOV_DEBUG(iov, "reprovisioning PF\n");
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	pf_reprovision_sched_if_idle(iov);
+	pf_reprovision_reset_engine(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+}
+
 /*
  * pf_do_reprovisioning - Push again provisioning of the resources.
  * @iov: the IOV struct from within the GT to be affected
@@ -1987,6 +2011,9 @@ static void pf_do_reprovisioning(struct intel_iov *iov)
 	struct intel_runtime_pm *rpm = iov_to_gt(iov)->uncore->rpm;
 	unsigned int numvfs = pf_get_numvfs(iov);
 	intel_wakeref_t wakeref;
+
+	with_intel_runtime_pm(rpm, wakeref)
+		pf_reprovision_pf(iov);
 
 	if (!numvfs)
 		return;
