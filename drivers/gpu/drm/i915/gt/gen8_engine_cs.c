@@ -280,7 +280,8 @@ int gen12_emit_flush_xcs(struct i915_request *rq, u32 mode)
 		    (rq->engine->class == VIDEO_DECODE_CLASS ||
 		     rq->engine->class == VIDEO_ENHANCEMENT_CLASS)) {
 			aux_inv = rq->execution_mask &
-				~GENMASK(_BCS(I915_MAX_BCS - 1), BCS0);
+				~GENMASK(_BCS(I915_MAX_BCS - 1), BCS0) &
+				~BIT(GSC0);
 			if (aux_inv)
 				cmd += 4;
 		}
