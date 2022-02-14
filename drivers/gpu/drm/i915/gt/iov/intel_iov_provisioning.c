@@ -66,12 +66,6 @@ void intel_iov_provisioning_release(struct intel_iov *iov)
 	kfree(fetch_and_zero(&iov->pf.provisioning.configs));
 }
 
-static struct mutex *pf_provisioning_mutex(struct intel_iov *iov)
-{
-	GEM_BUG_ON(!intel_iov_is_pf(iov));
-	return &iov->pf.provisioning.lock;
-}
-
 /*
  * Return: number of klvs that were successfully parsed and saved,
  *         negative error code on failure.

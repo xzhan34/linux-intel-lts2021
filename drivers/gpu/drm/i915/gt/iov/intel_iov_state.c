@@ -113,6 +113,15 @@ static int pf_trigger_vf_flr_finish(struct intel_iov *iov, u32 vfid)
 	return err;
 }
 
+static int pf_process_vf_flr_finish(struct intel_iov *iov, u32 vfid)
+{
+	mutex_lock(pf_provisioning_mutex(iov));
+	/* XXX clear resources */
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return pf_trigger_vf_flr_finish(iov, vfid);
+}
+
 /* Return: true if more processing is needed */
 static bool pf_process_vf(struct intel_iov *iov, u32 vfid)
 {
@@ -139,7 +148,7 @@ static bool pf_process_vf(struct intel_iov *iov, u32 vfid)
 	}
 
 	if (test_and_clear_bit(IOV_VF_NEEDS_FLR_FINISH, state)) {
-		err = pf_trigger_vf_flr_finish(iov, vfid);
+		err = pf_process_vf_flr_finish(iov, vfid);
 		if (err == -EBUSY) {
 			set_bit(IOV_VF_NEEDS_FLR_FINISH, state);
 			return true;

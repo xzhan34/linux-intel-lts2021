@@ -58,6 +58,12 @@ static inline int pf_get_status(struct intel_iov *iov)
 	return i915_sriov_pf_status(iov_to_i915(iov));
 }
 
+static inline struct mutex *pf_provisioning_mutex(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	return &iov->pf.provisioning.lock;
+}
+
 #define IOV_ERROR(_iov, _fmt, ...) \
 	drm_notice(&iov_to_i915(_iov)->drm, "IOV: " _fmt, ##__VA_ARGS__)
 #define IOV_PROBE_ERROR(_iov, _fmt, ...) \
