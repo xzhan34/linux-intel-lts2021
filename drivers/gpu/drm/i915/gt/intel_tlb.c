@@ -5,6 +5,7 @@
 
 #include "i915_drv.h"
 #include "i915_perf_oa_regs.h"
+#include "i915_trace.h"
 #include "intel_engine_pm.h"
 #include "intel_gt.h"
 #include "intel_gt_mcr.h"
@@ -233,6 +234,7 @@ void intel_gt_invalidate_tlb_full(struct intel_gt *gt, u32 seqno)
 	if (tlb_seqno_passed(gt, seqno))
 		return;
 
+	trace_intel_tlb_invalidate(gt, 0, 0);
 	with_intel_gt_pm_if_awake(gt, wakeref) {
 		struct intel_guc *guc = &gt->uc.guc;
 
@@ -345,6 +347,8 @@ bool intel_gt_invalidate_tlb_range(struct intel_gt *gt,
 
 	if (intel_gt_is_wedged(gt))
 		return true;
+
+	trace_intel_tlb_invalidate(gt, start, length);
 
 	vm_total = BIT_ULL(INTEL_INFO(gt->i915)->ppgtt_size);
 	/* Align start and length */

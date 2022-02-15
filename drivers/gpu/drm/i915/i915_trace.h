@@ -915,6 +915,30 @@ TRACE_EVENT(i915_mm_fault,
 		      __entry->engine_instance, __entry->fault_level,
 		      intel_pagefault_type2str(__entry->fault_type), __entry->pdata)
 );
+
+TRACE_EVENT(intel_tlb_invalidate,
+	    TP_PROTO(struct intel_gt *gt, u64 start, u64 len),
+	    TP_ARGS(gt, start, len),
+
+	    TP_STRUCT__entry(
+			     __field(struct drm_i915_private*, dev)
+			     __field(u32, id)
+			     __field(u64, start)
+			     __field(u64, len)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->dev = gt->i915;
+			   __entry->id = gt->info.id;
+			   __entry->start = start;
+			   __entry->len = len;
+			   ),
+
+	    TP_printk("dev %p gt%d %s TLB invalidation, start %llx len %llx",
+		      __entry->dev, __entry->id,
+		      (__entry->len) ? "range" : "full",
+		      __entry->start, __entry->len)
+);
 #endif /* _I915_TRACE_H_ */
 
 /* This part must be outside protection */
