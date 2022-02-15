@@ -21,24 +21,17 @@
 #include "uc/intel_guc.h"
 #include "uc/intel_guc_fwif.h"
 
-struct recoverable_page_fault_info {
-       u64 page_addr;
-       u32 asid;
-       u16 pdata;
-       u8 vfid;
-       u8 access_type;
-       u8 fault_type;
-       u8 fault_level;
-       u8 engine_class;
-       u8 engine_instance;
-       u8 fault_unsuccessful;
-};
-
 enum access_type {
 	ACCESS_TYPE_READ = 0,
 	ACCESS_TYPE_WRITE = 1,
 	ACCESS_TYPE_ATOMIC = 2,
 	ACCESS_TYPE_RESERVED = 3,
+};
+
+enum fault_type {
+	NOT_PRESENT = 0,
+	WRITE_ACCESS_VIOLATION = 1,
+	ATOMIC_ACCESS_VIOLATION = 2,
 };
 
 void intel_gt_pagefault_process_cat_error_msg(struct intel_gt *gt, u32 guc_ctx_id)
@@ -350,6 +343,9 @@ handle_i915_mm_fault(struct intel_guc *guc,
 	vma = i915_find_vma(vm, info->page_addr);
 	if (vma)
 		vma = i915_vma_tryget(vma);
+
+	trace_i915_mm_fault(gt->i915, vm, vma, info);
+
 	if (!vma) {
 		/* Each EU thread may trigger its own pf to the same address! */
 		if (!vm->invalidate_tlb_scratch)
@@ -610,4 +606,33 @@ int intel_pagefault_req_process_msg(struct intel_guc *guc,
 
 	dma_fence_work_commit_imm_if(&reply->base, !reply->dump);
 	return 0;
+}
+
+const char *intel_pagefault_type2str(unsigned int type)
+{
+	static const char * const faults[] = {
+		[NOT_PRESENT] = "not present",
+		[WRITE_ACCESS_VIOLATION] = "write access violation",
+		[ATOMIC_ACCESS_VIOLATION] = "atomic access violation",
+	};
+
+	if (type > ATOMIC_ACCESS_VIOLATION || !faults[type])
+		return "invalid fault type";
+
+	return faults[type];
+}
+
+const char *intel_access_type2str(unsigned int type)
+{
+	static const char * const access[] = {
+		[ACCESS_TYPE_READ] = "read",
+		[ACCESS_TYPE_WRITE] = "write",
+		[ACCESS_TYPE_ATOMIC] = "atomic",
+		[ACCESS_TYPE_RESERVED] = "reserved",
+	};
+
+	if (type > ACCESS_TYPE_RESERVED || !access[type])
+		return "invalid access type";
+
+	return access[type];
 }
