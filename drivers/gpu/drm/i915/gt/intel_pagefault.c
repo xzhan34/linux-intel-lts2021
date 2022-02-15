@@ -786,6 +786,8 @@ static int handle_i915_acc(struct intel_guc *guc,
 
 	if (i915_gem_object_is_userptr(vma->obj))
 		i915_gem_object_userptr_submit_done(vma->obj);
+
+	trace_intel_access_counter(gt, info);
 put_vma:
 	i915_vma_put(vma);
 	__i915_vma_put(vma);

@@ -939,6 +939,40 @@ TRACE_EVENT(intel_tlb_invalidate,
 		      (__entry->len) ? "range" : "full",
 		      __entry->start, __entry->len)
 );
+
+TRACE_EVENT(intel_access_counter,
+	    TP_PROTO(struct intel_gt *gt, struct acc_info *info),
+	    TP_ARGS(gt, info),
+
+	    TP_STRUCT__entry(
+			     __field(u32, dev)
+			     __field(u32, id)
+			     __field(u32, region_type)
+			     __field(u32, sub_region_hit_vector)
+			     __field(u32, asid)
+			     __field(u32, engine_class)
+			     __field(u32, engine_instance)
+			     __field(u64, vaddr_base)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->dev = gt->i915->drm.primary->index;
+			   __entry->id = gt->info.id;
+			   __entry->region_type = info->granularity;
+			   __entry->sub_region_hit_vector = info->sub_granularity;
+			   __entry->asid = info->asid;
+			   __entry->engine_class = info->engine_class;
+			   __entry->engine_instance = info->engine_instance;
+			   __entry->vaddr_base = info->va_range_base;
+			   ),
+
+	    TP_printk("dev%u gt%u asid%d %d KB Region/%d KB sub-region %s[%d], VA_BASE: %llx, sub-region hit vector %x",
+		      __entry->dev, __entry->id, __entry->asid,
+		      granularity_in_byte(__entry->region_type) / SZ_1K,
+		      sub_granularity_in_byte(__entry->region_type) / SZ_1K,
+		      intel_engine_class_repr(__entry->engine_class),
+		      __entry->engine_instance, __entry->vaddr_base, __entry->sub_region_hit_vector)
+);
 #endif /* _I915_TRACE_H_ */
 
 /* This part must be outside protection */
