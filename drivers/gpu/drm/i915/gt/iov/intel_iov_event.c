@@ -7,6 +7,27 @@
 #include "intel_iov_event.h"
 #include "intel_iov_utils.h"
 
+/**
+ * intel_iov_event_reset - Reset event data for VF.
+ * @iov: the IOV struct
+ * @vfid: VF identifier
+ *
+ * This function is for PF only.
+ */
+void intel_iov_event_reset(struct intel_iov *iov, u32 vfid)
+{
+	int e;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(vfid > pf_get_totalvfs(iov));
+
+	if (unlikely(!iov->pf.state.data))
+		return;
+
+	for (e = 0; e < IOV_THRESHOLD_MAX; e++)
+		iov->pf.state.data[vfid].adverse_events[e] = 0;
+}
+
 static int threshold_key_to_enum(u32 threshold)
 {
 	switch (threshold) {

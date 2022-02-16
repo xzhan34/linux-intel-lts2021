@@ -4,6 +4,7 @@
  */
 
 #include "intel_iov.h"
+#include "intel_iov_event.h"
 #include "intel_iov_state.h"
 #include "intel_iov_utils.h"
 #include "gt/uc/abi/guc_actions_pf_abi.h"
@@ -156,6 +157,8 @@ static void pf_clear_vf_ggtt_entries(struct intel_iov *iov, u32 vfid)
 
 static int pf_process_vf_flr_finish(struct intel_iov *iov, u32 vfid)
 {
+	intel_iov_event_reset(iov, vfid);
+
 	mutex_lock(pf_provisioning_mutex(iov));
 	pf_clear_vf_ggtt_entries(iov, vfid);
 	mutex_unlock(pf_provisioning_mutex(iov));
