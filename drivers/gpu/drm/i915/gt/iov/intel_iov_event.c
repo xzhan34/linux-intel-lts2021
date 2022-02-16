@@ -7,13 +7,36 @@
 #include "intel_iov_event.h"
 #include "intel_iov_utils.h"
 
+static int threshold_key_to_enum(u32 threshold)
+{
+	switch (threshold) {
+#define __iov_threshold_key_to_enum(K, ...) \
+	case GUC_KLV_VF_CFG_THRESHOLD_##K##_KEY: return IOV_THRESHOLD_##K;
+	IOV_THRESHOLDS(__iov_threshold_key_to_enum)
+#undef __iov_threshold_key_to_enum
+	}
+	return -1; /* not found */
+}
+
+static void pf_update_event_counter(struct intel_iov *iov, u32 vfid,
+				    enum intel_iov_threshold e)
+{
+	++iov->pf.state.data[vfid].adverse_events[e];
+}
+
 static int pf_handle_vf_threshold_event(struct intel_iov *iov, u32 vfid, u32 threshold)
 {
+	int e = threshold_key_to_enum(threshold);
+
 	if (unlikely(!vfid || vfid > pf_get_totalvfs(iov)))
 		return -EINVAL;
 
-	/* FIXME do some processing */
+	if (unlikely(GEM_WARN_ON(e < 0)))
+		return -EINVAL;
+
 	IOV_DEBUG(iov, "VF%u threshold %04x\n", vfid, threshold);
+
+	pf_update_event_counter(iov, vfid, e);
 
 	return 0;
 }
