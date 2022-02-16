@@ -76,3 +76,47 @@ int intel_iov_event_process_guc2pf(struct intel_iov *iov,
 
 	return pf_handle_vf_threshold_event(iov, vfid, threshold);
 }
+
+/**
+ * intel_iov_event_print_events - Print adverse events.
+ * @iov: the IOV struct
+ * @p: the DRM printer
+ *
+ * Print adverse events counters for all VFs.
+ * VFs with no events are ignored.
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_event_print_events(struct intel_iov *iov, struct drm_printer *p)
+{
+	unsigned int n, total_vfs = pf_get_totalvfs(iov);
+	const struct intel_iov_data *data;
+	int e;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (unlikely(!iov->pf.state.data))
+		return -ENODATA;
+
+	for (n = 1; n <= total_vfs; n++) {
+		data = &iov->pf.state.data[n];
+
+		for (e = 0; e < IOV_THRESHOLD_MAX; e++)
+			if (data->adverse_events[e])
+				break;
+		if (e >= IOV_THRESHOLD_MAX)
+			continue;
+
+#define __format_iov_threshold(...) "%s:%u "
+#define __value_iov_threshold(K, N, ...) , #N, data->adverse_events[IOV_THRESHOLD_##K]
+
+		drm_printf(p, "VF%u:\t" IOV_THRESHOLDS(__format_iov_threshold) "\n",
+			   n IOV_THRESHOLDS(__value_iov_threshold));
+
+#undef __format_iov_threshold
+#undef __value_iov_threshold
+
+	}
+
+	return 0;
+}
