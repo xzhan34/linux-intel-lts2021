@@ -227,6 +227,7 @@ void intel_uncore_mmio_debug_init_early(struct drm_i915_private *i915);
 void intel_uncore_init_early(struct intel_uncore *uncore,
 			     struct intel_gt *gt);
 int intel_uncore_setup_mmio(struct intel_uncore *uncore, phys_addr_t phys_addr);
+int intel_uncore_wait_for_lmem(struct intel_uncore *uncore);
 int intel_uncore_init_mmio(struct intel_uncore *uncore);
 void intel_uncore_prune_engine_fw_domains(struct intel_uncore *uncore,
 					  struct intel_gt *gt);

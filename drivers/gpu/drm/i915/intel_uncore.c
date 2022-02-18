@@ -2635,6 +2635,46 @@ static int sanity_check_mmio_access(struct intel_uncore *uncore)
 	return 0;
 }
 
+static bool __lmem_is_init(struct intel_uncore *uncore)
+{
+	return __raw_uncore_read32(uncore, GU_CNTL) & LMEM_INIT;
+}
+
+int intel_uncore_wait_for_lmem(struct intel_uncore *uncore)
+{
+	struct drm_i915_private *i915 = uncore->i915;
+	unsigned long timeout, start;
+
+	if (!IS_DGFX(i915))
+		return 0;
+
+	if (__lmem_is_init(uncore))
+		return 0;
+
+	drm_info(&i915->drm, "Waiting for local memory initialisation...\n");
+
+	start = jiffies;
+	timeout = start + msecs_to_jiffies(60 * 1000); /* 60s! */
+	do { /* Wait until the user gives up, we have nothing better to do */
+		if (signal_pending(current))
+			return -EINTR;
+
+		/*
+		 * During the boot phase though, there may be no user. In which
+		 * case we have to impose a timeout.
+		 */
+		if (time_after(jiffies, timeout))
+			return -ETIME;
+
+		msleep(10);
+	} while (!__lmem_is_init(uncore));
+
+	drm_dbg(&i915->drm, "Waited %ums for lmem initialisation\n",
+		jiffies_to_msecs(jiffies - start));
+
+	return 0;
+}
+
 int intel_uncore_init_mmio(struct intel_uncore *uncore)
 {
 	struct drm_i915_private *i915 = uncore->i915;
@@ -2650,11 +2690,9 @@ int intel_uncore_init_mmio(struct intel_uncore *uncore)
 	 * keep the GT powered down; we won't be able to communicate with it
 	 * and we should not continue with driver initialization.
 	 */
-	if (IS_DGFX(i915) &&
-	    !(__raw_uncore_read32(uncore, GU_CNTL) & LMEM_INIT)) {
-		drm_err(&i915->drm, "LMEM not initialized by firmware\n");
-		return -ENODEV;
-	}
+	ret = intel_uncore_wait_for_lmem(uncore);
+	if (ret)
+		return ret;
 
 	if (GRAPHICS_VER(i915) > 5 && !intel_vgpu_active(i915))
 		uncore->flags |= UNCORE_HAS_FORCEWAKE;
