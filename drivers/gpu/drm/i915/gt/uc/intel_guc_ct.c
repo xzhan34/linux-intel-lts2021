@@ -819,6 +819,9 @@ int intel_guc_ct_send(struct intel_guc_ct *ct, const u32 *action, u32 len,
 		return ct_send_nb(ct, action, len, flags);
 
 	ret = ct_send(ct, action, len, response_buf, response_buf_size, &status);
+	if (I915_SELFTEST_ONLY(flags & INTEL_GUC_CT_SEND_SELFTEST))
+		return ret;
+
 	if (unlikely(ret < 0)) {
 		if (ret != -ENODEV)
 			CT_ERROR(ct, "Sending action %#x failed (%pe) status=%#X\n",
