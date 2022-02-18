@@ -10,6 +10,7 @@
 #include <linux/spinlock.h>
 #include <drm/drm_mm.h>
 #include "i915_reg.h"
+#include "i915_selftest.h"
 #include "intel_wakeref.h"
 
 /**
@@ -77,6 +78,8 @@ struct intel_iov_provisioning {
 	struct intel_iov_spare_config spare;
 	struct intel_iov_config *configs;
 	struct mutex lock;
+
+	I915_SELFTEST_DECLARE(bool self_done);
 };
 
 #define VFID(n)		(n)

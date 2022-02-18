@@ -2148,6 +2148,7 @@ void intel_iov_provisioning_restart(struct intel_iov *iov)
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
 
 	iov->pf.provisioning.num_pushed = 0;
+	iov->pf.provisioning.self_done = false;
 
 	if (pf_get_status(iov) > 0)
 		pf_start_reprovisioning_worker(iov);
@@ -2162,6 +2163,7 @@ static void pf_reprovision_pf(struct intel_iov *iov)
 	pf_reprovision_reset_engine(iov);
 	pf_reprovision_exec_quantum(iov, PFID);
 	pf_reprovision_preempt_timeout(iov, PFID);
+	iov->pf.provisioning.self_done = true;
 	mutex_unlock(pf_provisioning_mutex(iov));
 }
 
@@ -2367,3 +2369,64 @@ int intel_iov_provisioning_print_dbs(struct intel_iov *iov, struct drm_printer *
 
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+
+static int pf_push_self_config(struct intel_iov *iov)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	u64 ggtt_start = intel_wopcm_guc_size(&iov_to_gt(iov)->wopcm);
+	u64 ggtt_size = GUC_GGTT_TOP - ggtt_start;
+	int err = 0;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(intel_wopcm_guc_size(&iov_to_gt(iov)->wopcm) > GUC_GGTT_TOP);
+
+	err |= guc_update_vf_klv64(guc, PFID, GUC_KLV_VF_CFG_GGTT_START_KEY, ggtt_start);
+	err |= guc_update_vf_klv64(guc, PFID, GUC_KLV_VF_CFG_GGTT_SIZE_KEY, ggtt_size);
+
+	err |= guc_update_vf_klv32(guc, PFID, GUC_KLV_VF_CFG_BEGIN_CONTEXT_ID_KEY, 0);
+	err |= guc_update_vf_klv32(guc, PFID, GUC_KLV_VF_CFG_NUM_CONTEXTS_KEY, GUC_MAX_CONTEXT_ID);
+
+	err |= guc_update_vf_klv32(guc, PFID, GUC_KLV_VF_CFG_BEGIN_DOORBELL_ID_KEY, 0);
+	err |= guc_update_vf_klv32(guc, PFID, GUC_KLV_VF_CFG_NUM_DOORBELLS_KEY, GUC_NUM_DOORBELLS);
+
+	return err ? -EREMOTEIO : 0;
+}
+
+/**
+ * intel_iov_provisioning_force_vgt_mode - Turn on GuC virtualization mode.
+ * @iov: the IOV struct
+ *
+ * By default GuC starts in 'native' mode and enables 'virtualization' mode
+ * only after it receives from the PF some VF's configuration data. While this
+ * happens naturally while PF begins VFs provisioning, we might need this sooner
+ * during selftests. This function will perform minimal provisioning steps to
+ * let GuC believe it has to switch 'virtualization' mode.
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_force_vgt_mode(struct intel_iov *iov)
+{
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	assert_rpm_wakelock_held(iov_to_gt(iov)->uncore->rpm);
+
+	if (pf_get_status(iov) < 0)
+		return -EIO;
+
+	if (iov->pf.provisioning.self_done)
+		return 0;
+
+	err = pf_push_self_config(iov);
+	if (err) {
+		IOV_ERROR(iov, "Failed to force VGT mode (%pe)\n", ERR_PTR(err));
+		return err;
+	}
+
+	iov->pf.provisioning.self_done = true;
+	return 0;
+}
+
+#endif /* CONFIG_DRM_I915_SELFTEST */
