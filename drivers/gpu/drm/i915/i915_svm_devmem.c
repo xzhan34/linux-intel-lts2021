@@ -8,6 +8,7 @@
 
 #include "i915_svm.h"
 #include "intel_memory_region.h"
+#include "i915_trace.h"
 
 struct i915_devmem_migrate {
 	struct drm_i915_private *i915;
@@ -363,6 +364,7 @@ int i915_gem_vm_prefetch_ioctl(struct drm_device *dev, void *data,
 
 	i915_gem_ww_ctx_init(&ww, true);
 
+	trace_i915_vm_prefetch(i915, 0, args->start, args->length, mem->id);
 retry:
 	for (addr = args->start, end = args->start + size; addr < end;) {
 		struct vm_area_struct *vma;
