@@ -85,6 +85,7 @@
 #include "intel_pm.h"
 #include "intel_region_ttm.h"
 #include "intel_sideband.h"
+#include "intel_vsec.h"
 #include "vlv_suspend.h"
 
 static const struct drm_driver driver;
@@ -702,6 +703,8 @@ static void i915_driver_register(struct drm_i915_private *dev_priv)
 
 	if (i915_switcheroo_register(dev_priv))
 		drm_err(&dev_priv->drm, "Failed to register vga switcheroo!\n");
+
+	intel_vsec_init(dev_priv);
 }
 
 /**
