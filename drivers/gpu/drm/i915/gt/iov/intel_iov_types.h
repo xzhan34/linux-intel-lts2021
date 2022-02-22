@@ -167,6 +167,11 @@ struct intel_iov_relay {
 	spinlock_t lock;
 	struct list_head pending_relays;
 	u32 last_fence;
+
+	I915_SELFTEST_DECLARE(struct {
+		bool disable_strict : 1;
+		bool enable_loopback : 1;
+	} selftest);
 };
 
 /**
