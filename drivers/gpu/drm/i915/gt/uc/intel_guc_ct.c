@@ -1006,9 +1006,9 @@ static int ct_handle_response(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 		break;
 	}
 	if (!found) {
-		CT_ERROR(ct, "Unsolicited response (fence %u)\n", fence);
-		CT_ERROR(ct, "Could not find fence=%u, last_fence=%u\n", fence,
-			 ct->requests.last_fence);
+		CT_ERROR(ct, "Unsolicited response message %#x (fence %u len %u)\n",
+			 hxg[0], fence, len);
+		CT_ERROR(ct, "Last used fence was %u\n", ct->requests.last_fence);
 		list_for_each_entry(req, &ct->requests.pending, link)
 			CT_ERROR(ct, "request %u awaits response\n",
 				 req->fence);
