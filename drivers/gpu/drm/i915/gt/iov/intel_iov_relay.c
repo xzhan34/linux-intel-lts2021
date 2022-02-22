@@ -6,6 +6,7 @@
 #include <linux/bitfield.h>
 
 #include "abi/iov_actions_abi.h"
+#include "abi/iov_actions_selftest_abi.h"
 #include "abi/iov_errors_abi.h"
 #include "abi/iov_messages_abi.h"
 #include "gt/intel_gt.h"
@@ -16,6 +17,10 @@
 #include "intel_runtime_pm.h"
 #include "i915_drv.h"
 #include "i915_gem.h"
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+static int relay_selftest_process_msg(struct intel_iov_relay *, u32, u32, const u32 *, u32);
+#endif
 
 static struct intel_iov *relay_to_iov(struct intel_iov_relay *relay)
 {
@@ -544,6 +549,10 @@ static int relay_process_msg(struct intel_iov_relay *relay, u32 origin,
 	u32 relay_type;
 	int err;
 
+	if (I915_SELFTEST_ONLY(!relay_selftest_process_msg(relay, origin, relay_id,
+							   relay_msg, relay_len)))
+		return 0;
+
 	if (unlikely(relay_len < GUC_HXG_MSG_MIN_LEN))
 		return -EPROTO;
 
@@ -668,3 +677,7 @@ int intel_iov_relay_process_guc2vf(struct intel_iov_relay *relay, const u32 *msg
 				 msg + GUC2VF_RELAY_FROM_PF_EVENT_MSG_MIN_LEN,
 				 len - GUC2VF_RELAY_FROM_PF_EVENT_MSG_MIN_LEN);
 }
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#include "selftests/selftest_util_iov_relay.c"
+#endif
