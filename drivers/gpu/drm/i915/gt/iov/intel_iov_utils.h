@@ -72,4 +72,26 @@ static inline void pf_update_status(struct intel_iov *iov, int status, const cha
 	i915_sriov_pf_abort(iov_to_i915(iov), status);
 }
 
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#define IOV_SELFTEST_ERROR(_iov, _fmt, ...) \
+	IOV_ERROR((_iov), "selftest/%s: " _fmt, __func__, ##__VA_ARGS__)
+
+#define intel_iov_live_subtests(T, data) ({ \
+	typecheck(struct intel_iov *, data); \
+	__i915_subtests(__func__, \
+			__intel_iov_live_setup, __intel_iov_live_teardown, \
+			T, ARRAY_SIZE(T), data); \
+})
+
+static inline int __intel_iov_live_setup(void *data)
+{
+	return __intel_gt_live_setup(iov_to_gt(data));
+}
+
+static inline int __intel_iov_live_teardown(int err, void *data)
+{
+	return __intel_gt_live_teardown(err, iov_to_gt(data));
+}
+#endif /* IS_ENABLED(CONFIG_DRM_I915_SELFTEST) */
+
 #endif /* __INTEL_IOV_UTILS_H__ */
