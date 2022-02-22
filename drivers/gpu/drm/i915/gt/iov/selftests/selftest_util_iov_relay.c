@@ -86,3 +86,19 @@ static int relay_selftest_process_msg(struct intel_iov_relay *relay, u32 origin,
 
 	return relay_send_success(relay, origin, relay_id, 0);
 }
+
+static int relay_selftest_guc_send_nb(struct intel_guc *guc, const u32 *msg, u32 len, u32 g2h)
+{
+	struct intel_iov_relay *relay = &guc_to_gt(guc)->iov.relay;
+
+	if (unlikely(!IS_ERR_OR_NULL(relay->selftest.host2guc))) {
+		int ret = relay->selftest.host2guc(relay, msg, len);
+
+		if (ret != -ENOTTY) {
+			relay->selftest.host2guc = ERR_PTR(ret < 0 ? ret : 0);
+			return ret;
+		}
+	}
+
+	return intel_guc_send_nb(guc, msg, len, g2h);
+}

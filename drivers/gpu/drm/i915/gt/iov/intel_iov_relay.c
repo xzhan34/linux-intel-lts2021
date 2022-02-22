@@ -20,6 +20,10 @@
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 static int relay_selftest_process_msg(struct intel_iov_relay *, u32, u32, const u32 *, u32);
+static int relay_selftest_guc_send_nb(struct intel_guc *, const u32 *, u32, u32);
+#define intel_guc_send    relay_selftest_override_not_available
+#define intel_guc_ct_send relay_selftest_override_not_available
+#define intel_guc_send_nb relay_selftest_guc_send_nb
 #endif
 
 static struct intel_iov *relay_to_iov(struct intel_iov_relay *relay)
@@ -618,6 +622,17 @@ int intel_iov_relay_process_guc2pf(struct intel_iov_relay *relay, const u32 *msg
 {
 	u32 origin, relay_id;
 
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+	if (unlikely(!IS_ERR_OR_NULL(relay->selftest.guc2pf))) {
+		int ret = relay->selftest.guc2pf(relay, msg, len);
+
+		if (ret != -ENOTTY) {
+			relay->selftest.guc2pf = ERR_PTR(ret < 0 ? ret : 0);
+			return ret;
+		}
+	}
+#endif
+
 	if (unlikely(!IS_SRIOV_PF(relay_to_i915(relay)) &&
 		     !I915_SELFTEST_ONLY(relay->selftest.disable_strict)))
 		return -EPERM;
@@ -663,6 +678,17 @@ int intel_iov_relay_process_guc2vf(struct intel_iov_relay *relay, const u32 *msg
 	struct drm_i915_private *i915 = relay_to_i915(relay);
 	u32 relay_id;
 
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+	if (unlikely(!IS_ERR_OR_NULL(relay->selftest.guc2vf))) {
+		int ret = relay->selftest.guc2vf(relay, msg, len);
+
+		if (ret != -ENOTTY) {
+			relay->selftest.guc2vf = ERR_PTR(ret < 0 ? ret : 0);
+			return ret;
+		}
+	}
+#endif
+
 	if (unlikely(!IS_SRIOV_VF(i915)) &&
 		     !(I915_SELFTEST_ONLY(relay->selftest.disable_strict) ||
 		       I915_SELFTEST_ONLY(relay->selftest.enable_loopback)))
@@ -689,5 +715,8 @@ int intel_iov_relay_process_guc2vf(struct intel_iov_relay *relay, const u32 *msg
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#undef intel_guc_send
+#undef intel_guc_send_nb
+#undef intel_guc_ct_send
 #include "selftests/selftest_util_iov_relay.c"
 #endif

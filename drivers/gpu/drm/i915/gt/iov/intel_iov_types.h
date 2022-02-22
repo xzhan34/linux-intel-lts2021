@@ -169,6 +169,10 @@ struct intel_iov_relay {
 	u32 last_fence;
 
 	I915_SELFTEST_DECLARE(struct {
+		int (*host2guc)(struct intel_iov_relay *, const u32 *, u32);
+		int (*guc2pf)(struct intel_iov_relay *, const u32 *, u32);
+		int (*guc2vf)(struct intel_iov_relay *, const u32 *, u32);
+		void *data;
 		bool disable_strict : 1;
 		bool enable_loopback : 1;
 	} selftest);
