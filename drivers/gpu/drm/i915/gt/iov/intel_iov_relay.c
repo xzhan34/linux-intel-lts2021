@@ -719,4 +719,5 @@ int intel_iov_relay_process_guc2vf(struct intel_iov_relay *relay, const u32 *msg
 #undef intel_guc_send_nb
 #undef intel_guc_ct_send
 #include "selftests/selftest_util_iov_relay.c"
+#include "selftests/selftest_mock_iov_relay.c"
 #endif
