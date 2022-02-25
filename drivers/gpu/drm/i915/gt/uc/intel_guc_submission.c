@@ -4569,7 +4569,15 @@ static void guc_default_vfuncs(struct intel_engine_cs *engine)
 	engine->request_alloc = guc_request_alloc;
 	engine->remove_active_request = remove_from_context;
 
-	engine->reset.prepare = guc_engine_reset_prepare;
+	/*
+	 * guc_engine_reset_prepare causes media workload hang for PVC
+	 * A0. Disable this for PVC A0 steppings.
+	 */
+	if (IS_PVC_BD_STEP(engine->gt->i915, STEP_A0, STEP_B0))
+		engine->reset.prepare = guc_reset_nop;
+	else
+		engine->reset.prepare = guc_engine_reset_prepare;
+
 	engine->reset.rewind = guc_rewind_nop;
 	engine->reset.cancel = guc_reset_nop;
 	engine->reset.finish = guc_reset_nop;

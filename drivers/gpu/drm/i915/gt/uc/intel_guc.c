@@ -349,10 +349,15 @@ static u32 guc_ctl_wa_flags(struct intel_guc *guc)
 	if (IS_DG2(gt->i915))
 		flags |= GUC_WA_DUAL_QUEUE;
 
-	/* Wa_22011802037: graphics version 11/12 */
-	if (IS_MTL_GRAPHICS_STEP(gt->i915, M, STEP_A0, STEP_B0) ||
+	/*
+	 * Wa_22011802037: graphics version 11/12
+	 * GUC_WA_PRE_PARSER causes media workload hang for PVC A0 and PCIe
+	 * errors. Disable this for PVC A0 steppings.
+	 */
+	if ((IS_MTL_GRAPHICS_STEP(gt->i915, M, STEP_A0, STEP_B0) ||
 	    (GRAPHICS_VER(gt->i915) >= 11 &&
-	    GRAPHICS_VER_FULL(gt->i915) < IP_VER(12, 70)))
+	    GRAPHICS_VER_FULL(gt->i915) < IP_VER(12, 70))) &&
+	    !IS_PVC_BD_STEP(gt->i915, STEP_A0, STEP_B0))
 		flags |= GUC_WA_PRE_PARSER;
 
 	/* Wa_16011777198:dg2 */
@@ -363,10 +368,12 @@ static u32 guc_ctl_wa_flags(struct intel_guc *guc)
 	/*
 	 * Wa_22012727170:dg2_g10[a0-c0), dg2_g11[a0..), pvc[ctxt_a0..ctxt_b0)
 	 * Wa_22012727685:dg2_g11[a0..)
+	 *
+	 * This WA is applicable to PVC CT A0, but causes media regressions. 
+	 * Drop the WA for PVC.
 	 */
 	if (IS_DG2_GRAPHICS_STEP(gt->i915, G10, STEP_A0, STEP_C0) ||
-	    IS_DG2_GRAPHICS_STEP(gt->i915, G11, STEP_A0, STEP_FOREVER) ||
-	    IS_PVC_CT_STEP(gt->i915, STEP_A0, STEP_B0))
+	    IS_DG2_GRAPHICS_STEP(gt->i915, G11, STEP_A0, STEP_FOREVER))
 		flags |= GUC_WA_CONTEXT_ISOLATION;
 
 	/* Wa_16015675438, Wa_18020744125 */
