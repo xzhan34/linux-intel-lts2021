@@ -38,8 +38,9 @@ static bool can_release_pages(struct drm_i915_gem_object *obj)
 	return swap_available() || obj->mm.madv == I915_MADV_DONTNEED;
 }
 
-static bool drop_pages(struct drm_i915_gem_object *obj,
-		       unsigned long shrink, bool trylock_vm)
+static int drop_pages(struct drm_i915_gem_object *obj,
+		      struct i915_gem_ww_ctx *ww, unsigned long shrink,
+		      bool trylock_vm)
 {
 	unsigned long flags;
 
@@ -51,10 +52,7 @@ static bool drop_pages(struct drm_i915_gem_object *obj,
 	if (trylock_vm)
 		flags |= I915_GEM_OBJECT_UNBIND_VM_TRYLOCK;
 
-	if (i915_gem_object_unbind(obj, flags) == 0)
-		return true;
-
-	return false;
+	return i915_gem_object_unbind(obj, ww, flags);
 }
 
 static void try_to_writeback(struct drm_i915_gem_object *obj,
@@ -214,14 +212,16 @@ i915_gem_shrink(struct i915_gem_ww_ctx *ww,
 					goto skip;
 			}
 
-			if (drop_pages(obj, shrink, trylock_vm) &&
-			    !__i915_gem_object_put_pages(obj)) {
-				try_to_writeback(obj, shrink);
-				count += obj->base.size >> PAGE_SHIFT;
+			err = drop_pages(obj, ww, shrink, trylock_vm);
+			if (!err) {
+				if (!__i915_gem_object_put_pages(obj)) {
+					try_to_writeback(obj, shrink);
+					count += obj->base.size >> PAGE_SHIFT;
+				}
 			}
 
-			/* If error is not EINTR, skip object */
-			if (err != -EINTR)
+			/* If error is not EDEADLK or EINTR, skip object */
+			if (err != -EDEADLK && err != -EINTR)
 				err = 0;
 
 			if (!ww)

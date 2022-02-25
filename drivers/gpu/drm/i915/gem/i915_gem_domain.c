@@ -225,6 +225,7 @@ i915_gem_object_set_to_gtt_domain(struct drm_i915_gem_object *obj, bool write)
 /**
  * Changes the cache-level of an object across all VMA.
  * @obj: object to act on
+ * @ww: locking context
  * @cache_level: new cache level to set for the object
  *
  * After this function returns, the object will be in the new cache-level
@@ -238,6 +239,7 @@ i915_gem_object_set_to_gtt_domain(struct drm_i915_gem_object *obj, bool write)
  * that all direct access to the scanout remains coherent.
  */
 int i915_gem_object_set_cache_level(struct drm_i915_gem_object *obj,
+				    struct i915_gem_ww_ctx *ww,
 				    enum i915_cache_level cache_level)
 {
 	int ret;
@@ -259,7 +261,7 @@ int i915_gem_object_set_cache_level(struct drm_i915_gem_object *obj,
 	}
 
 	/* The cache-level will be applied when each vma is rebound. */
-	return i915_gem_object_unbind(obj,
+	return i915_gem_object_unbind(obj, ww,
 				      I915_GEM_OBJECT_UNBIND_ACTIVE |
 				      I915_GEM_OBJECT_UNBIND_BARRIER);
 }
@@ -353,7 +355,7 @@ int i915_gem_set_caching_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		goto out;
 
-	ret = i915_gem_object_set_cache_level(obj, level);
+	ret = i915_gem_object_set_cache_level(obj, NULL, level);
 	i915_gem_object_unlock(obj);
 
 out:
@@ -392,7 +394,7 @@ i915_gem_object_pin_to_display_plane(struct drm_i915_gem_object *obj,
 	 * of uncaching, which would allow us to flush all the LLC-cached data
 	 * with that bit in the PTE to main memory with just one PIPE_CONTROL.
 	 */
-	ret = i915_gem_object_set_cache_level(obj,
+	ret = i915_gem_object_set_cache_level(obj, NULL,
 					      HAS_WT(i915) ?
 					      I915_CACHE_WT : I915_CACHE_NONE);
 	if (ret)

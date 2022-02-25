@@ -1261,7 +1261,7 @@ static int lmem_pages_migrate_one(struct i915_gem_ww_ctx *ww,
 	if (err)
 		return err;
 
-	err = i915_gem_object_prepare_move(obj);
+	err = i915_gem_object_prepare_move(obj, ww);
 	if (err)
 		return err;
 

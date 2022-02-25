@@ -1410,7 +1410,7 @@ static void intel_evict_lmem(struct drm_i915_private *i915)
 				if (!i915_gem_object_has_pages(obj))
 					break;
 
-				if (!i915_gem_object_unbind(obj, 0))
+				if (!i915_gem_object_unbind(obj, &ww, 0))
 					__i915_gem_object_put_pages(obj);
 			}
 

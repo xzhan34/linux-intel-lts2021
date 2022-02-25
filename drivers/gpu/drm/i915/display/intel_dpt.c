@@ -263,7 +263,7 @@ intel_dpt_create(struct intel_framebuffer *fb)
 
 	ret = i915_gem_object_lock_interruptible(dpt_obj, NULL);
 	if (!ret) {
-		ret = i915_gem_object_set_cache_level(dpt_obj, I915_CACHE_NONE);
+		ret = i915_gem_object_set_cache_level(dpt_obj, NULL, I915_CACHE_NONE);
 		i915_gem_object_unlock(dpt_obj);
 	}
 	if (ret) {

@@ -481,7 +481,8 @@ static void i915_gem_free_object(struct drm_gem_object *gem_obj)
 		queue_work(i915->wq, &i915->mm.free_work);
 }
 
-int i915_gem_object_prepare_move(struct drm_i915_gem_object *obj)
+int i915_gem_object_prepare_move(struct drm_i915_gem_object *obj,
+				 struct i915_gem_ww_ctx *ww)
 {
 	int err;
 
@@ -506,7 +507,7 @@ int i915_gem_object_prepare_move(struct drm_i915_gem_object *obj)
 	if (err)
 		return err;
 
-	return i915_gem_object_unbind(obj,
+	return i915_gem_object_unbind(obj, ww,
 				      I915_GEM_OBJECT_UNBIND_ACTIVE);
 }
 
@@ -687,11 +688,11 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 		if (err)
 			goto out;
 
-		err = i915_gem_object_unbind(donor, 0);
+		err = i915_gem_object_unbind(donor, ww, 0);
 		if (err)
 			goto out;
 
-		err = i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE);
+		err = i915_gem_object_unbind(obj, ww, I915_GEM_OBJECT_UNBIND_ACTIVE);
 		if (err)
 			goto out;
 	}

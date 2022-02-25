@@ -50,6 +50,7 @@
 #include "gem/i915_gem_pm.h"
 #include "gem/i915_gem_region.h"
 #include "gem/i915_gem_userptr.h"
+#include "gem/i915_gem_vm_bind.h"
 #include "gt/intel_engine_user.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
@@ -122,10 +123,43 @@ i915_gem_get_aperture_ioctl(struct drm_device *dev, void *data,
 	return 0;
 }
 
+static int i915_vma_unbind_persistent(struct i915_vma *vma,
+				      struct i915_gem_ww_ctx *ww,
+				      unsigned long flags)
+{
+	int ret;
+
+	/* VM already locked */
+	if (ww && ww == i915_gem_get_locking_ctx(vma->vm->root_obj)) {
+		/* locked for other than unbinding? */
+		if (!vma->vm->root_obj->evict_locked)
+			return -EBUSY;
+
+		/* locked for unbinding */
+		goto already_locked;
+	}
+
+	if (!ww)
+		ret = i915_gem_vm_priv_trylock(vma->vm);
+	else
+		ret = i915_gem_vm_priv_lock_to_evict(vma->vm, ww);
+	if (ret)
+		return ret;
+
+already_locked:
+	ret = i915_vma_unbind(vma);
+	if (!ww)
+		i915_gem_vm_priv_unlock(vma->vm);
+
+	return ret;
+}
+
 int i915_gem_object_unbind(struct drm_i915_gem_object *obj,
+			   struct i915_gem_ww_ctx *ww,
 			   unsigned long flags)
 {
-	struct intel_runtime_pm *rpm = &to_i915(obj->base.dev)->runtime_pm;
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct intel_runtime_pm *rpm = &i915->runtime_pm;
 	intel_wakeref_t wakeref = 0;
 	LIST_HEAD(still_in_list);
 	struct i915_vma *vma;
@@ -172,26 +206,31 @@ try_again:
 		/* Prevent vma being freed by i915_vma_parked as we unbind */
 		vma = __i915_vma_get(vma);
 		spin_unlock(&obj->vma.lock);
+		if (!vma)
+			goto close_vm;
 
-		if (vma) {
+		if (!(flags & I915_GEM_OBJECT_UNBIND_ACTIVE) &&
+		    i915_vma_is_active(vma)) {
 			ret = -EBUSY;
-			if (flags & I915_GEM_OBJECT_UNBIND_ACTIVE ||
-			    !i915_vma_is_active(vma)) {
-				if (flags & I915_GEM_OBJECT_UNBIND_VM_TRYLOCK) {
-					if (mutex_trylock(&vma->vm->mutex)) {
-						ret = __i915_vma_unbind(vma);
-						mutex_unlock(&vma->vm->mutex);
-					} else {
-						ret = -EBUSY;
-					}
-				} else {
-					ret = i915_vma_unbind(vma);
-				}
-			}
-
-			__i915_vma_put(vma);
+			goto put_vma;
 		}
 
+		if (i915_vma_is_persistent(vma) &&
+		    !i915->params.enable_non_private_objects) {
+			ret = i915_vma_unbind_persistent(vma, ww, flags);
+		} else if (flags & I915_GEM_OBJECT_UNBIND_VM_TRYLOCK) {
+			if (mutex_trylock(&vma->vm->mutex)) {
+				ret = __i915_vma_unbind(vma);
+				mutex_unlock(&vma->vm->mutex);
+			} else {
+				ret = -EBUSY;
+			}
+		} else {
+			ret = i915_vma_unbind(vma);
+		}
+put_vma:
+		__i915_vma_put(vma);
+close_vm:
 		i915_vm_close(vm);
 		spin_lock(&obj->vma.lock);
 	}

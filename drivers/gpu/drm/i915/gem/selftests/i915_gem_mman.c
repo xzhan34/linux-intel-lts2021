@@ -1349,7 +1349,7 @@ static int __igt_mmap_revoke(struct drm_i915_private *i915,
 	 * for other objects. Ergo we have to revoke the previous mmap PTE
 	 * access as it no longer points to the same object.
 	 */
-	err = i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE);
+	err = i915_gem_object_unbind(obj, NULL, I915_GEM_OBJECT_UNBIND_ACTIVE);
 	if (err) {
 		pr_err("Failed to unbind object!\n");
 		goto out_unmap;

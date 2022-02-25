@@ -278,7 +278,7 @@ static int i915_gem_object_userptr_unbind(struct drm_i915_gem_object *obj,
 	struct sg_table *pages;
 	int err;
 
-	err = i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE);
+	err = i915_gem_object_unbind(obj, ww, I915_GEM_OBJECT_UNBIND_ACTIVE);
 	if (err)
 		return err;
 

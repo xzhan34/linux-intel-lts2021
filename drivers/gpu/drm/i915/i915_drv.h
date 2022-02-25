@@ -1518,6 +1518,7 @@ i915_gem_object_ggtt_pin(struct drm_i915_gem_object *obj,
 }
 
 int i915_gem_object_unbind(struct drm_i915_gem_object *obj,
+			   struct i915_gem_ww_ctx *ww,
 			   unsigned long flags);
 #define I915_GEM_OBJECT_UNBIND_ACTIVE BIT(0)
 #define I915_GEM_OBJECT_UNBIND_BARRIER BIT(1)

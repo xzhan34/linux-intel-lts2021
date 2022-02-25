@@ -236,7 +236,7 @@ int i915_gem_object_attach_phys(struct drm_i915_gem_object *obj, int align)
 	if (!i915_gem_object_has_struct_page(obj))
 		return 0;
 
-	err = i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE);
+	err = i915_gem_object_unbind(obj, NULL, I915_GEM_OBJECT_UNBIND_ACTIVE);
 	if (err)
 		return err;
 

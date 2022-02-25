@@ -372,7 +372,7 @@ next:
 		if (!i915_gem_object_has_pages(obj))
 			goto unlock;
 
-		err = i915_gem_object_unbind(obj, 0);
+		err = i915_gem_object_unbind(obj, ww, 0);
 		if (err == 0)
 			err = __i915_gem_object_put_pages(obj);
 		if (err == 0) {
