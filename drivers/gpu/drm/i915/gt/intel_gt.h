@@ -108,6 +108,66 @@ int intel_gt_tiles_init(struct drm_i915_private *i915);
 	     (id__)++) \
 		for_each_if(((gt__) = (i915__)->gt[(id__)]))
 
+static inline bool pvc_needs_rc6_wa(struct drm_i915_private *i915)
+{
+	if (!i915->params.enable_rc6)
+		return false;
+
+	if (!i915->params.rc6_ignore_steppings)
+		return false;
+
+	if (i915->quiesce_gpu)
+		return false;
+
+	return (IS_PVC_BD_STEP(i915, STEP_B0, STEP_FOREVER) && i915->remote_tiles > 0);
+}
+
+/* Wa_16015496043 Hold forcewake on GT0 & GT1 to disallow rc6 */
+static inline void _pvc_wa_disallow_rc6(struct drm_i915_private *i915, bool enable, bool rpm_awake)
+{
+	unsigned int id;
+	struct intel_gt *gt;
+	intel_wakeref_t wakeref;
+	void (*intel_uncore_forcewake)(struct intel_uncore *uncore,
+				       enum forcewake_domains fw_domains);
+
+	if (!pvc_needs_rc6_wa(i915))
+		return;
+
+	intel_uncore_forcewake = enable ? intel_uncore_forcewake_get :
+						intel_uncore_forcewake_put;
+
+	for_each_gt(gt, i915, id) {
+		/* FIXME Remove static check and add dynamic check to avoid rpm helper */
+		if (!rpm_awake) {
+			with_intel_runtime_pm(gt->uncore->rpm, wakeref)
+				intel_uncore_forcewake(gt->uncore, FORCEWAKE_GT);
+		} else {
+			intel_uncore_forcewake(gt->uncore, FORCEWAKE_GT);
+		}
+	}
+}
+
+static inline void pvc_wa_disallow_rc6(struct drm_i915_private *i915)
+{
+	_pvc_wa_disallow_rc6(i915, true, false);
+}
+
+static inline void pvc_wa_allow_rc6(struct drm_i915_private *i915)
+{
+	_pvc_wa_disallow_rc6(i915, false, false);
+}
+
+static inline void pvc_wa_disallow_rc6_if_awake(struct drm_i915_private *i915)
+{
+	_pvc_wa_disallow_rc6(i915, true, true);
+}
+
+static inline void pvc_wa_allow_rc6_if_awake(struct drm_i915_private *i915)
+{
+	_pvc_wa_disallow_rc6(i915, false, true);
+}
+
 void intel_gt_info_print(const struct intel_gt_info *info,
 			 struct drm_printer *p);
 

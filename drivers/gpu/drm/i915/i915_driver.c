@@ -1072,6 +1072,7 @@ static void i915_driver_register(struct drm_i915_private *dev_priv)
 		drm_err(&dev_priv->drm, "Failed to register vga switcheroo!\n");
 
 	intel_vsec_init(dev_priv);
+	pvc_wa_allow_rc6(dev_priv);
 }
 
 /**
@@ -1257,6 +1258,8 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	i915_read_dev_uid(i915);
 
+	pvc_wa_disallow_rc6(i915);
+
 	ret = i915_driver_hw_probe(i915);
 	if (ret < 0)
 		goto out_cleanup_mmio;
@@ -1324,6 +1327,7 @@ out_cleanup_hw:
 	i915_gem_drain_freed_objects(i915);
 	i915_ggtt_driver_late_release(i915);
 out_cleanup_mmio:
+	pvc_wa_allow_rc6(i915);
 	i915_driver_mmio_release(i915);
 out_runtime_pm_put:
 	enable_rpm_wakeref_asserts(&i915->runtime_pm);
@@ -1346,6 +1350,8 @@ void i915_driver_remove(struct drm_i915_private *i915)
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
 
 	disable_rpm_wakeref_asserts(&i915->runtime_pm);
+
+	pvc_wa_disallow_rc6(i915);
 
 	/*
 	 * If device is quiesced set device to offline status
@@ -1398,6 +1404,7 @@ static void i915_driver_release(struct drm_device *dev)
 	i915_ggtt_driver_release(dev_priv);
 	i915_gem_drain_freed_objects(dev_priv);
 	i915_ggtt_driver_late_release(dev_priv);
+	pvc_wa_allow_rc6(dev_priv);
 
 	i915_driver_mmio_release(dev_priv);
 
