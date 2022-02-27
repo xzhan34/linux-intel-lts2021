@@ -703,6 +703,14 @@ static const struct avs_spec skl_desc = {
 	.sram_base_offset = SKL_ADSP_SRAM_BASE_OFFSET,
 	.sram_window_size = SKL_ADSP_SRAM_WINDOW_SIZE,
 	.rom_status = SKL_ADSP_SRAM_BASE_OFFSET,
+	.hipc_req_offset = SKL_ADSP_REG_HIPCI,
+	.hipc_req_ext_offset = SKL_ADSP_REG_HIPCIE,
+	.hipc_req_busy_mask = SKL_ADSP_HIPCI_BUSY,
+	.hipc_ack_offset = SKL_ADSP_REG_HIPCIE,
+	.hipc_ack_done_mask = SKL_ADSP_HIPCIE_DONE,
+	.hipc_rsp_offset = SKL_ADSP_REG_HIPCT,
+	.hipc_rsp_busy_mask = SKL_ADSP_HIPCT_BUSY,
+	.hipc_ctl_offset = SKL_ADSP_REG_HIPCCTL,
 };
 
 static const struct avs_spec apl_desc = {
@@ -719,6 +727,14 @@ static const struct avs_spec apl_desc = {
 	.sram_base_offset = APL_ADSP_SRAM_BASE_OFFSET,
 	.sram_window_size = APL_ADSP_SRAM_WINDOW_SIZE,
 	.rom_status = APL_ADSP_SRAM_BASE_OFFSET,
+	.hipc_req_offset = SKL_ADSP_REG_HIPCI,
+	.hipc_req_ext_offset = SKL_ADSP_REG_HIPCIE,
+	.hipc_req_busy_mask = SKL_ADSP_HIPCI_BUSY,
+	.hipc_ack_offset = SKL_ADSP_REG_HIPCIE,
+	.hipc_ack_done_mask = SKL_ADSP_HIPCIE_DONE,
+	.hipc_rsp_offset = SKL_ADSP_REG_HIPCT,
+	.hipc_rsp_busy_mask = SKL_ADSP_HIPCT_BUSY,
+	.hipc_ctl_offset = SKL_ADSP_REG_HIPCCTL,
 };
 
 static const struct pci_device_id avs_ids[] = {
