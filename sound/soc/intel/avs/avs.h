@@ -84,7 +84,16 @@ struct avs_spec {
 	const u64 attributes;		/* bitmask of AVS_PLATATTR_* */
 	const u32 sram_base_offset;
 	const u32 sram_window_size;
+
 	const u32 rom_status;
+	const u32 hipc_req_offset;
+	const u32 hipc_req_ext_offset;
+	const u32 hipc_req_busy_mask;
+	const u32 hipc_ack_offset;
+	const u32 hipc_ack_done_mask;
+	const u32 hipc_rsp_offset;
+	const u32 hipc_rsp_busy_mask;
+	const u32 hipc_ctl_offset;
 };
 
 struct avs_fw_entry {
