@@ -286,12 +286,20 @@ int selftest_live_iov_events(struct drm_i915_private *i915)
 		return -EHOSTDOWN;
 
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
-		struct intel_iov *iov = &to_gt(i915)->iov;
+		struct intel_gt *gt;
+		unsigned int id;
 
-		err = intel_iov_provisioning_force_vgt_mode(iov);
-		if (err)
-			break;
-		err = i915_subtests(tests, iov);
+		for_each_gt(gt, i915, id) {
+			struct intel_iov *iov = &gt->iov;
+
+			pr_info(DRIVER_NAME ": Running subtests on gt%d\n", gt->info.id);
+			err = intel_iov_provisioning_force_vgt_mode(iov);
+			if (err)
+				break;
+			err = i915_subtests(tests, &gt->iov);
+			if (err)
+				break;
+		}
 	}
 
 	return err;
