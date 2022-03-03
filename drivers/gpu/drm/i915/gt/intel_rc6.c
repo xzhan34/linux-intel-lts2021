@@ -792,7 +792,9 @@ void intel_rc6_enable(struct intel_rc6 *rc6)
 void intel_rc6_unpark(struct intel_rc6 *rc6)
 {
 	struct intel_uncore *uncore = rc6_to_uncore(rc6);
+	struct drm_i915_private *i915 = rc6_to_i915(rc6);
 
+	pvc_wa_disallow_rc6_if_awake(i915);
 	if (!rc6->enabled)
 		return;
 
@@ -803,8 +805,10 @@ void intel_rc6_unpark(struct intel_rc6 *rc6)
 void intel_rc6_park(struct intel_rc6 *rc6)
 {
 	struct intel_uncore *uncore = rc6_to_uncore(rc6);
+	struct drm_i915_private *i915 = rc6_to_i915(rc6);
 	unsigned int target;
 
+	pvc_wa_allow_rc6_if_awake(i915);
 	if (!rc6->enabled)
 		return;
 
