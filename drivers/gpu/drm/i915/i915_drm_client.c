@@ -13,6 +13,7 @@
 
 #include "gem/i915_gem_context.h"
 #include "gt/intel_engine_user.h"
+#include "gt/intel_gt.h"
 
 #include "i915_drm_client.h"
 #include "i915_drv.h"
@@ -561,10 +562,12 @@ static void __rcu_i915_drm_client_free(struct work_struct *wrk)
 {
 	struct i915_drm_client *client =
 		container_of(wrk, typeof(*client), rcu.work);
+	struct drm_i915_private *i915 = client->clients->i915;
 
 	__i915_drm_client_unregister(client);
 
 	xa_erase(&client->clients->xarray, client->id);
+	pvc_wa_allow_rc6(i915);
 	i915_uuid_cleanup(client);
 
 	kfree(client);
@@ -575,6 +578,7 @@ i915_drm_client_add(struct i915_drm_clients *clients,
 		    struct task_struct *task,
 		    struct drm_i915_file_private *file)
 {
+	struct drm_i915_private *i915 = clients->i915;
 	struct i915_drm_client *client;
 	int ret;
 
@@ -591,6 +595,7 @@ i915_drm_client_add(struct i915_drm_clients *clients,
 
 	client->clients = clients;
 	INIT_RCU_WORK(&client->rcu, __rcu_i915_drm_client_free);
+	pvc_wa_disallow_rc6(i915);
 
 	i915_debugger_wait_on_discovery(clients->i915, NULL);
 
