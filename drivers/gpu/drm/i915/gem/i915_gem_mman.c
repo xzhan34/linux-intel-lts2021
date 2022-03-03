@@ -893,8 +893,11 @@ static void vm_open(struct vm_area_struct *vma)
 {
 	struct i915_mmap_offset *mmo = vma->vm_private_data;
 	struct drm_i915_gem_object *obj = mmo->obj;
+	struct drm_i915_private *i915;
 
 	GEM_BUG_ON(!obj);
+	i915 = to_i915(obj->base.dev);
+	pvc_wa_disallow_rc6(i915);
 	i915_gem_object_get(obj);
 }
 
@@ -902,8 +905,11 @@ static void vm_close(struct vm_area_struct *vma)
 {
 	struct i915_mmap_offset *mmo = vma->vm_private_data;
 	struct drm_i915_gem_object *obj = mmo->obj;
+	struct drm_i915_private *i915;
 
 	GEM_BUG_ON(!obj);
+	i915 = to_i915(obj->base.dev);
+	pvc_wa_allow_rc6(i915);
 	i915_gem_object_put(obj);
 }
 
@@ -965,6 +971,7 @@ int i915_gem_update_vma_info(struct drm_i915_gem_object *obj,
 			     struct i915_mmap_offset *mmo,
 			     struct vm_area_struct *vma)
 {
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct file *anon;
 
 	if (i915_gem_object_is_readonly(obj)) {
@@ -978,6 +985,7 @@ int i915_gem_update_vma_info(struct drm_i915_gem_object *obj,
 	if (IS_ERR(anon))
 		return PTR_ERR(anon);
 
+	pvc_wa_disallow_rc6(i915);
 	vma->vm_flags |= VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP;
 	vma->vm_private_data = mmo;
 
