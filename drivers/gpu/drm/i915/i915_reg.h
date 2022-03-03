@@ -8311,6 +8311,10 @@ enum skl_power_gate {
 							   _ICL_PIPE_DSS_CTL2_PB, \
 							   _ICL_PIPE_DSS_CTL2_PC)
 
+#define XEHPSDV_MTCFG_ADDR			_MMIO(0x101800)
+#define   TILE_COUNT				REG_GENMASK(15, 8)
+#define   TILE_NUMBER				REG_GENMASK(7, 0)
+
 #define GEN12_GSMBASE			_MMIO(0x108100)
 #define GEN12_DSMBASE			_MMIO(0x1080C0)
 

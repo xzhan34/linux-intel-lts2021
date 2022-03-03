@@ -1039,21 +1039,53 @@ static const struct intel_device_info adl_p_info = {
 	.media.ver = 12, \
 	.media.rel = 50
 
+#define REMOTE_TILE_FEATURES \
+	.has_remote_tiles = 1
+
+#define XE_HP_SDV_ENGINES \
+	BIT(RCS0) | BIT(BCS0) | \
+	BIT(VECS0) | BIT(VECS1) | BIT(VECS2) | BIT(VECS3) | \
+	BIT(VCS0) | BIT(VCS1) | BIT(VCS2) | BIT(VCS3) | \
+	BIT(VCS4) | BIT(VCS5) | BIT(VCS6) | BIT(VCS7) | \
+	BIT(CCS0) | BIT(CCS1) | BIT(CCS2) | BIT(CCS3) \
+
+static const struct intel_gt_definition xehp_sdv_extra_gt[] = {
+	{
+		.type = GT_TILE,
+		.name = "Remote Tile GT 1",
+		.mapping_base = SZ_16M,
+		.engine_mask = XE_HP_SDV_ENGINES,
+
+	},
+	{
+		.type = GT_TILE,
+		.name = "Remote Tile GT 2",
+		.mapping_base = SZ_16M * 2,
+		.engine_mask = XE_HP_SDV_ENGINES,
+
+	},
+	{
+		.type = GT_TILE,
+		.name = "Remote Tile GT 3",
+		.mapping_base = SZ_16M * 3,
+		.engine_mask = XE_HP_SDV_ENGINES,
+
+	},
+	{}
+};
+
 __maybe_unused
 static const struct intel_device_info xehpsdv_info = {
 	XE_HP_FEATURES,
 	XE_HPM_FEATURES,
 	DGFX_FEATURES,
+	REMOTE_TILE_FEATURES,
 	PLATFORM(INTEL_XEHPSDV),
 	.display = { },
+	.extra_gt_list = xehp_sdv_extra_gt,
 	.has_64k_pages = 1,
 	.has_media_ratio_mode = 1,
-	.platform_engine_mask =
-		BIT(RCS0) | BIT(BCS0) |
-		BIT(VECS0) | BIT(VECS1) | BIT(VECS2) | BIT(VECS3) |
-		BIT(VCS0) | BIT(VCS1) | BIT(VCS2) | BIT(VCS3) |
-		BIT(VCS4) | BIT(VCS5) | BIT(VCS6) | BIT(VCS7) |
-		BIT(CCS0) | BIT(CCS1) | BIT(CCS2) | BIT(CCS3),
+	.platform_engine_mask = XE_HP_SDV_ENGINES,
 	.require_force_probe = 1,
 };
 
@@ -1097,20 +1129,35 @@ static const struct intel_device_info ats_m_info = {
 	.has_mslice_steering = 0, \
 	.has_one_eu_per_fuse_bit = 1
 
+#define PVC_ENGINES \
+	BIT(BCS0) | \
+	BIT(VCS0) | \
+	BIT(CCS0) | BIT(CCS1) | BIT(CCS2) | BIT(CCS3)
+
+static const struct intel_gt_definition pvc_extra_gt[] = {
+	{
+		.type = GT_TILE,
+		.name = "Remote Tile GT",
+		.mapping_base = SZ_16M,
+		.engine_mask = PVC_ENGINES,
+
+	},
+	{}
+};
+
 __maybe_unused
 static const struct intel_device_info pvc_info = {
 	XE_HPC_FEATURES,
 	XE_HPM_FEATURES,
 	DGFX_FEATURES,
+	REMOTE_TILE_FEATURES,
 	.graphics.rel = 60,
 	.media.rel = 60,
 	PLATFORM(INTEL_PONTEVECCHIO),
 	.display = { 0 },
 	.has_flat_ccs = 0,
-	.platform_engine_mask =
-		BIT(BCS0) |
-		BIT(VCS0) |
-		BIT(CCS0) | BIT(CCS1) | BIT(CCS2) | BIT(CCS3),
+	.extra_gt_list = pvc_extra_gt,
+	.platform_engine_mask = PVC_ENGINES,
 	.require_force_probe = 1,
 };
 

@@ -905,15 +905,18 @@ void intel_gt_driver_late_release_all(struct drm_i915_private *i915)
 	}
 }
 
-static int intel_gt_tile_setup(struct intel_gt *gt, phys_addr_t phys_addr)
+static int intel_gt_tile_setup(struct intel_gt *gt,
+			unsigned int id,
+			phys_addr_t phys_addr)
 {
+	struct drm_i915_private *i915 = gt->i915;
 	int ret;
 
 	if (!gt_is_root(gt)) {
 		struct intel_uncore *uncore;
 		spinlock_t *irq_lock;
 
-		uncore = drmm_kzalloc(&gt->i915->drm, sizeof(*uncore), GFP_KERNEL);
+		uncore = drmm_kzalloc(&i915->drm, sizeof(*uncore), GFP_KERNEL);
 		if (!uncore)
 			return -ENOMEM;
 
@@ -935,7 +938,50 @@ static int intel_gt_tile_setup(struct intel_gt *gt, phys_addr_t phys_addr)
 
 	gt->phys_addr = phys_addr;
 
+	/* Which tile am I? default to zero on single tile systems */
+	if (HAS_REMOTE_TILES(i915)) {
+		u32 instance =
+			__raw_uncore_read32(gt->uncore, XEHPSDV_MTCFG_ADDR) &
+			TILE_NUMBER;
+
+		if (GEM_WARN_ON(instance != id))
+			return -ENXIO;
+	}
+
 	return 0;
+}
+
+static unsigned int gt_count(struct drm_i915_private *i915)
+{
+	unsigned int num_gt;
+	u32 mtcfg;
+
+	/*
+	 * We use raw MMIO reads at this point since the
+	 * MMIO vfuncs are not setup yet
+	 */
+	mtcfg = __raw_uncore_read32(&i915->uncore, XEHPSDV_MTCFG_ADDR);
+	num_gt = REG_FIELD_GET(TILE_COUNT, mtcfg) + 1;
+
+	/*
+	 * On XE_LPM+ platforms media engines are designed into separate tile
+	 */
+	if (MEDIA_VER(i915) >= 13)
+		num_gt++;
+
+	return num_gt;
+}
+
+static unsigned int gt_mask(struct drm_i915_private *i915)
+{
+	unsigned long mask;
+
+	if (!HAS_EXTRA_GT_LIST(i915))
+		mask = BIT(0);
+	else
+		mask = GENMASK(gt_count(i915) - 1, 0);
+
+	return mask;
 }
 
 int intel_gt_probe_all(struct drm_i915_private *i915)
@@ -945,7 +991,8 @@ int intel_gt_probe_all(struct drm_i915_private *i915)
 	const struct intel_gt_definition *gtdef;
 	phys_addr_t phys_addr;
 	unsigned int mmio_bar;
-	unsigned int i;
+	unsigned int i, num_gt;
+	unsigned long enabled_gt_mask;
 	int ret;
 
 	mmio_bar = GRAPHICS_VER(i915) == 2 ? GEN2_GTTMMADR_BAR : GTTMMADR_BAR;
@@ -961,18 +1008,22 @@ int intel_gt_probe_all(struct drm_i915_private *i915)
 	gt->info.engine_mask = INTEL_INFO(i915)->platform_engine_mask;
 
 	drm_dbg(&i915->drm, "Setting up %s\n", gt->name);
-	ret = intel_gt_tile_setup(gt, phys_addr);
+	ret = intel_gt_tile_setup(gt, 0, phys_addr);
 	if (ret)
 		return ret;
 
+	enabled_gt_mask = gt_mask(i915);
 	i915->gt[0] = gt;
 
-	if (!HAS_EXTRA_GT_LIST(i915))
-		return 0;
+	num_gt = gt_count(i915);
+	drm_info(&i915->drm, "GT count: %u\n", num_gt);
 
-	for (i = 1, gtdef = &INTEL_INFO(i915)->extra_gt_list[i - 1];
-	     gtdef->name != NULL;
-	     i++, gtdef = &INTEL_INFO(i915)->extra_gt_list[i - 1]) {
+	i = 1;
+	for_each_set_bit_from(i, &enabled_gt_mask, I915_MAX_GT) {
+		gtdef = &INTEL_INFO(i915)->extra_gt_list[i - 1];
+		if (!gtdef->name)
+			break;
+
 		gt = drmm_kzalloc(&i915->drm, sizeof(*gt), GFP_KERNEL);
 		if (!gt) {
 			ret = -ENOMEM;
@@ -996,11 +1047,11 @@ int intel_gt_probe_all(struct drm_i915_private *i915)
 
 		switch (gtdef->type) {
 		case GT_TILE:
-			ret = intel_gt_tile_setup(gt, phys_addr + gtdef->mapping_base);
+			ret = intel_gt_tile_setup(gt, i, phys_addr + gtdef->mapping_base);
 			break;
 
 		case GT_MEDIA:
-			ret = intel_sa_mediagt_setup(gt, phys_addr + gtdef->mapping_base,
+			ret = intel_sa_mediagt_setup(gt, i, phys_addr + gtdef->mapping_base,
 						     gtdef->gsi_offset);
 			break;
 
@@ -1016,6 +1067,8 @@ int intel_gt_probe_all(struct drm_i915_private *i915)
 
 		i915->gt[i] = gt;
 	}
+
+	i915->remote_tiles = num_gt - 1;
 
 	return 0;
 
