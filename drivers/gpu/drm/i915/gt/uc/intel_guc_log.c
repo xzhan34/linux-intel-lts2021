@@ -917,6 +917,7 @@ int intel_guc_log_dump(struct intel_guc_log *log, struct drm_printer *p,
 {
 	struct intel_guc *guc = log_to_guc(log);
 	struct intel_uc *uc = container_of(guc, struct intel_uc, guc);
+	struct drm_i915_private *i915 = guc_to_gt(guc)->i915;
 	struct drm_i915_gem_object *obj = NULL;
 	void *map;
 	u32 *page;
@@ -933,6 +934,7 @@ int intel_guc_log_dump(struct intel_guc_log *log, struct drm_printer *p,
 	if (!obj)
 		return 0;
 
+	pvc_wa_disallow_rc6(i915);
 	page = (u32 *)__get_free_page(GFP_KERNEL);
 	if (!page)
 		return -ENOMEM;
@@ -961,6 +963,7 @@ int intel_guc_log_dump(struct intel_guc_log *log, struct drm_printer *p,
 
 	i915_gem_object_unpin_map(obj);
 	free_page((unsigned long)page);
+	pvc_wa_allow_rc6(i915);
 
 	return 0;
 }
