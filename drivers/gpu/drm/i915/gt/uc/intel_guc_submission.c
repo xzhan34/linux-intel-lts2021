@@ -4908,7 +4908,7 @@ int intel_guc_engine_failure_process_msg(struct intel_guc *guc,
 	struct intel_engine_cs *engine;
 	struct intel_gt *gt = guc_to_gt(guc);
 	u8 guc_class, instance;
-	u32 reason;
+	u32 reason, gdrst;
 
 	if (unlikely(len != 3)) {
 		drm_err(&gt->i915->drm, "Invalid length %u", len);
@@ -4930,8 +4930,16 @@ int intel_guc_engine_failure_process_msg(struct intel_guc *guc,
 	 * This is an unexpected failure of a hardware feature. So, log a real
 	 * error message not just the informational that comes with the reset.
 	 */
-	drm_err(&gt->i915->drm, "GuC engine reset request failed on %d:%d (%s) because 0x%08X",
-		guc_class, instance, engine->name, reason);
+	gdrst = intel_uncore_read_fw(gt->uncore, GEN6_GDRST);
+	drm_err(&gt->i915->drm, "GuC engine reset request failed on %d:%d (%s) because 0x%X, GDRST = 0x%08X\n",
+		guc_class, instance, engine->name, reason, gdrst);
+
+	if (gdrst) {
+		int err = __intel_wait_for_register_fw(gt->uncore, GEN6_GDRST, ~0U, 0, 500, 0, NULL);
+		if (err)
+			drm_err(&gt->i915->drm, "i915 wait for GDRST also failed: %d [on %d:%d (%s)]\n",
+				err, guc_class, instance, engine->name);
+	}
 
 	intel_gt_handle_error(gt, engine->mask,
 			      I915_ERROR_CAPTURE,
