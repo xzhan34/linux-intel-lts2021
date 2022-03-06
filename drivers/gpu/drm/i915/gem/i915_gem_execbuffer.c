@@ -4135,6 +4135,14 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 	if (unlikely(err))
 		goto err_context;
 
+	/*
+	 * FIXME: for long run context, if the vm is faultable, we don't need
+	 * a suspend fence. Suspend fence is only used for non-faultable vm
+	 * to suspend the context. So theoretically we need to avoid allocating
+	 * suspend fence for such case. But it is tricky because suspend fence
+	 * is attached to ce not vm and a ce's vm can be changable during ce's
+	 * lifecycle.
+	 */
 	if (is_long_running) {
 		sfence = kzalloc(sizeof(*sfence), GFP_KERNEL);
 		if (!sfence) {

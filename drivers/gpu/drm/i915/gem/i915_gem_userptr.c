@@ -56,6 +56,7 @@ static int i915_sync_all_vmas(struct drm_i915_gem_object *obj)
 	struct i915_vma *vma, *next;
 	struct i915_address_space *vm = NULL;
 	int ret;
+	bool faultable_vm = false;
 	bool loop_done;
 
 	INIT_LIST_HEAD(&still_in_list);
@@ -63,8 +64,11 @@ static int i915_sync_all_vmas(struct drm_i915_gem_object *obj)
 restart:
 	spin_lock(&obj->vma.lock);
 	list_for_each_entry_safe(vma, next, &obj->vma.list, obj_link) {
-		if (!i915_vma_is_active(vma)) {
+		if (!i915_vma_is_active(vma) ||
+			i915_vm_page_fault_enabled(vma->vm)) {
 			list_move_tail(&vma->obj_link, &still_in_list);
+			if (i915_vm_page_fault_enabled(vma->vm))
+				faultable_vm = true;
 		} else {
 			if (i915_vma_is_persistent(vma)) {
 				vm = i915_vm_get(vma->vm);
@@ -81,8 +85,27 @@ restart:
 	list_splice_init(&still_in_list, &obj->vma.list);
 	spin_unlock(&obj->vma.lock);
 
-	if (loop_done)
+	if (loop_done) {
+		/*
+		 * If object is mapped to any faultable vm, unbind it in the
+		 * invalidate_work. GPU access of the object later will trigger
+		 * page fault handler which will rebind the object.
+		 * Note the userptr invalidate/revalidate process under faultable
+		 * vm is different from non-faultable vm in which case we suspend
+		 * context, unbind and rebind userptr in a worker. For faultable
+		 * vm, we don't need to suspend context and wait for suspend to
+		 * complete. Also if we do the same thing for faultable vm, there
+		 * will be a deadlock: GPU page fault handler need to wait for
+		 * any ongoing userptr invaliation to finish before it revalidate
+		 * userptr; while the userptr invalidation depends on context
+		 * suspend to finish, whereas a context with pending page fault
+		 * can't be suspended.
+		 */
+               if (faultable_vm)
+                       queue_work(system_unbound_wq, &obj->userptr.invalidate_work);
+
 		return 0;
+	}
 
 	if (vm) {
 		atomic_inc(&vm->invalidations);
@@ -97,6 +120,9 @@ restart:
 
 	if (!ret)
 		goto restart;
+
+	if (faultable_vm)
+		queue_work(system_unbound_wq, &obj->userptr.invalidate_work);
 
 	return ret;
 }
@@ -141,9 +167,12 @@ static bool i915_gem_userptr_invalidate(struct mmu_interval_notifier *mni,
 	/*
 	 * Notify execbuf that a rerun is needed. For non-persistent vmas
 	 * the mmu_interval_set_seq() is sufficient, but submissions on
-	 * long running contexts with pre-bound persistent vmas rely on the
-	 * vm_rebind_list being non-empty to restart, so we need to populate
-	 * that list under the notifier lock.
+	 * long running contexts with pre-bound persistent non-faultable
+	 * vmas rely on the vm_rebind_list being non-empty to restart,
+	 * so we need to populate that list under the notifier lock.
+	 * For persistent faultable vmas, object rebind is done in page
+	 * fault handler and it doesn't depend on vm_rebind_list, so no
+	 * need to populate vm_rebind_list for this case.
 	 */
 	mmu_interval_set_seq(mni, cur_seq);
 	if (current->flags & PF_EXITING) {
@@ -159,6 +188,9 @@ static bool i915_gem_userptr_invalidate(struct mmu_interval_notifier *mni,
 			continue;
 
 		vm = vma->vm;
+		if (i915_vm_page_fault_enabled(vm))
+			continue;
+
 		spin_lock(&vm->vm_rebind_lock);
 		if (list_empty(&vma->vm_rebind_link))
 			list_add_tail(&vma->vm_rebind_link,
@@ -351,6 +383,27 @@ static int i915_gem_object_userptr_unbind(struct drm_i915_gem_object *obj,
 	return err;
 }
 
+static void i915_gem_object_userptr_invalidate_work(struct work_struct *work)
+{
+	struct drm_i915_gem_object *obj =
+		container_of(work, typeof(*obj), userptr.invalidate_work);
+	struct i915_gem_ww_ctx ww;
+	int ret;
+
+	if (!kref_get_unless_zero(&obj->base.refcount))
+                return;
+
+	for_i915_gem_ww(&ww, ret, true) {
+		ret = i915_gem_object_lock(obj, &ww);
+		if (ret)
+			continue;
+
+		ret = i915_gem_object_userptr_unbind(obj, &ww);
+	}
+
+	i915_gem_object_put(obj);
+}
+
 static void
 lock_range(struct mm_struct *mm, unsigned long addr, unsigned long end)
 {
@@ -406,6 +459,12 @@ int i915_gem_object_userptr_submit_init(struct drm_i915_gem_object *obj)
 		return -EFAULT;
 
 	notifier_seq = mmu_interval_read_begin(&obj->userptr.notifier);
+	/*
+	 * For the faultable vm, userptr invalidation is done in a worker which can be
+	 * interrupted by GPU page fault (which triggers this (re)validate function).
+	 * Flush the invalidate worker here to wait for invalidation to finish.
+	 */
+	flush_work(&obj->userptr.invalidate_work);
 
 	for_i915_gem_ww(&ww, ret, true) {
 		ret = i915_gem_object_lock_interruptible(obj, &ww);
@@ -687,6 +746,7 @@ i915_gem_userptr_ioctl(struct drm_device *dev,
 	if (ret)
 		return ret;
 
+	INIT_WORK(&obj->userptr.invalidate_work, i915_gem_object_userptr_invalidate_work);
 	args->handle = handle;
 	return 0;
 #else
