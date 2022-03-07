@@ -324,10 +324,6 @@ void intel_engine_reset_pinned_contexts(struct intel_engine_cs *engine)
 
 	list_for_each_entry(ce, &engine->pinned_contexts_list,
 			    pinned_contexts_link) {
-		/* kernel context gets reset at __engine_unpark() */
-		if (ce == engine->kernel_context)
-			continue;
-
 		dbg_poison_ce(ce);
 		ce->ops->reset(ce);
 	}
