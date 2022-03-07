@@ -485,6 +485,59 @@ static int i915_rps_boost_info(struct seq_file *m, void *data)
 	return 0;
 }
 
+#ifdef CONFIG_PM
+
+static int i915_runtime_dump_child_status(struct device *dev, void *data)
+{
+	struct seq_file *m = data;
+	const char *rpm_status;
+
+	/* Early return if runtime_pm is disabled */
+	if (dev->power.disable_depth)
+		return 0;
+
+	switch (dev->power.runtime_status) {
+	case RPM_SUSPENDED:
+		rpm_status = "suspended";
+		break;
+	case RPM_SUSPENDING:
+		rpm_status = "suspending";
+		break;
+	case RPM_RESUMING:
+		rpm_status = "resuming";
+		break;
+	case RPM_ACTIVE:
+		rpm_status = "active";
+		break;
+	default:
+		rpm_status = "unknown";
+	}
+
+	seq_printf(m, "\t%s %s: Runtime status: %s\n", dev_driver_string(dev),
+		   dev_name(dev), rpm_status);
+
+	return 0;
+}
+
+static void config_pm_dump(struct seq_file *m) {
+	struct drm_i915_private *i915 = node_to_i915(m->private);
+	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
+
+	seq_printf(m, "Usage count: %d\n",
+		   atomic_read(&i915->drm.dev->power.usage_count));
+	seq_printf(m, "Runtime active children: %d\n",
+		   atomic_read(&i915->drm.dev->power.child_count));
+	device_for_each_child(&pdev->dev, m, i915_runtime_dump_child_status);
+}
+
+#else /* !CONFIG_PM */
+
+static int config_pm_dump(struct seq_file *m) {
+	seq_printf(m, "Device Power Management (CONFIG_PM) disabled\n");
+}
+
+#endif /* CONFIG_PM */
+
 static int i915_runtime_pm_status(struct seq_file *m, void *unused)
 {
 	struct drm_i915_private *dev_priv = node_to_i915(m->private);
@@ -499,12 +552,7 @@ static int i915_runtime_pm_status(struct seq_file *m, void *unused)
 	seq_printf(m, "GPU idle: %s\n", str_yes_no(!to_gt(dev_priv)->awake));
 	seq_printf(m, "IRQs disabled: %s\n",
 		   str_yes_no(!intel_irqs_enabled(dev_priv)));
-#ifdef CONFIG_PM
-	seq_printf(m, "Usage count: %d\n",
-		   atomic_read(&dev_priv->drm.dev->power.usage_count));
-#else
-	seq_printf(m, "Device Power Management (CONFIG_PM) disabled\n");
-#endif
+	config_pm_dump(m);
 	seq_printf(m, "PCI device power state: %s [%d]\n",
 		   pci_power_name(pdev->current_state),
 		   pdev->current_state);
