@@ -671,6 +671,10 @@ struct phy_device {
 	/* MACsec management functions */
 	const struct macsec_ops *macsec_ops;
 #endif
+	/* Use phydev->cur_link_an_mode to communicate the in-band
+	 * AN mode setting with phylink framework.
+	 */
+	u8 cur_link_an_mode;
 
 	ANDROID_KABI_RESERVE(1);
 	ANDROID_KABI_RESERVE(2);
