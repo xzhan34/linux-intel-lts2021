@@ -728,6 +728,24 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 				size = round_up(size, I915_GTT_PAGE_SIZE_2M);
 		}
 
+		/*
+		 * We observe GPU hangs if we place a batch (from userspace) at
+		 * the very top of the GTT, as the CS parser may prefetch past
+		 * the end of the GTT. In order to avoid this, we restrict
+		 * ourselves from assigning the last page of the GTT to
+		 * userspace. (They are free to assign the address to
+		 * themselves with softpin.)
+		 *
+		 * However, GGTT and ppGTT are not the only vm we handle. DPT
+		 * is used as an indirection page table for framebuffers,
+		 * and is only as large as the framebuffer itself. We cannot
+		 * reduce the effective DPT size as there are no spare pages.
+		 * To only restrict userspace buffers and not affect DPT
+		 * assignments, we only apply the restriction to PIN_USER.
+		 */
+		if (flags & PIN_USER)
+			end = min(end, vma->vm->total - I915_GTT_PAGE_SIZE);
+
 		ret = i915_gem_gtt_insert(vma->vm, &vma->node,
 					  size, alignment, color,
 					  start, end, flags);
