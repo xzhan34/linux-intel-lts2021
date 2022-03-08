@@ -11,6 +11,9 @@
 #include <linux/scatterlist.h>
 
 #include "gem/i915_gem_dmabuf.h"
+#include "gt/intel_gt.h"
+#include "gt/intel_gt_requests.h"
+
 #include "i915_drv.h"
 #include "i915_gem_lmem.h"
 #include "i915_gem_mman.h"
@@ -324,6 +327,7 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 	    !i915_gem_object_can_migrate(obj, INTEL_REGION_SMEM))
 		return -EOPNOTSUPP;
 
+	pvc_wa_disallow_rc6(ce->engine->i915);
 	for_i915_gem_ww(&ww, err, true) {
 		err = i915_gem_object_lock(obj, &ww);
 		if (err)
@@ -347,8 +351,10 @@ static void i915_gem_dmabuf_detach(struct dma_buf *dmabuf,
 				   struct dma_buf_attachment *attach)
 {
 	struct drm_i915_gem_object *obj = dma_buf_to_obj(dmabuf);
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 
 	i915_gem_object_unpin_pages(obj);
+	pvc_wa_allow_rc6(i915);
 }
 
 static const struct dma_buf_ops i915_dmabuf_ops =  {
