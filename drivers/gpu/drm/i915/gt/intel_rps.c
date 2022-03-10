@@ -2063,7 +2063,12 @@ u32 intel_rps_read_rpstat(struct intel_rps *rps)
 	struct drm_i915_private *i915 = rps_to_i915(rps);
 	i915_reg_t rpstat;
 
-	rpstat = (GRAPHICS_VER(i915) >= 12) ? GEN12_RPSTAT1 : GEN6_RPSTAT1;
+	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 70))
+		rpstat = MTL_MIRROR_TARGET_WP1;
+	else if (GRAPHICS_VER(i915) >= 12)
+		rpstat = GEN12_RPSTAT1;
+	else
+		rpstat = GEN6_RPSTAT1;
 
 	return intel_uncore_read(rps_to_gt(rps)->uncore, rpstat);
 }
