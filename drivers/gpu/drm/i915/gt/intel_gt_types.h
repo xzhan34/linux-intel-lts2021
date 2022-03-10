@@ -140,9 +140,6 @@ struct intel_gt {
 	struct intel_wakeref wakeref;
 	atomic_t user_wakeref;
 
-	struct list_head closed_vma;
-	spinlock_t closed_lock; /* guards the list of closed_vma */
-
 	ktime_t last_init_time;
 	struct intel_reset reset;
 
@@ -207,6 +204,7 @@ struct intel_gt {
 	 * or may be reclaimed by the shrinker before then.
 	 */
 	struct intel_gt_buffer_pool buffer_pool;
+	struct i915_vma_clock vma_clock;
 
 	struct i915_vma *scratch;
 

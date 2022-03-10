@@ -39,9 +39,6 @@ void intel_gt_common_init_early(struct intel_gt *gt)
 {
 	spin_lock_init(gt->irq_lock);
 
-	INIT_LIST_HEAD(&gt->closed_vma);
-	spin_lock_init(&gt->closed_lock);
-
 	init_llist_head(&gt->watchdog.list);
 	INIT_WORK(&gt->watchdog.work, intel_gt_watchdog_work);
 
@@ -54,6 +51,8 @@ void intel_gt_common_init_early(struct intel_gt *gt)
 
 	intel_uc_init_early(&gt->uc);
 	intel_rps_init_early(&gt->rps);
+
+	i915_vma_clock_init_early(&gt->vma_clock);
 }
 
 /* Preliminary initialization of Tile 0 */
@@ -742,6 +741,8 @@ out_fw:
 
 void intel_gt_driver_remove(struct intel_gt *gt)
 {
+	i915_vma_clock_flush(&gt->vma_clock);
+
 	__intel_gt_disable(gt);
 
 	intel_migrate_fini(&gt->migrate);

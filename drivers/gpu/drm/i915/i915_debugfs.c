@@ -824,6 +824,8 @@ gt_drop_caches(struct intel_gt *gt, u64 val)
 		ret = intel_gt_pm_wait_for_idle(gt);
 		if (ret)
 			return ret;
+
+		i915_vma_clock_flush(&gt->vma_clock);
 	}
 
 	if (val & DROP_RESET_ACTIVE && intel_gt_terminally_wedged(gt))
