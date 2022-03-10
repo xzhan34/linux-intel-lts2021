@@ -1101,8 +1101,8 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	strcpy(dst->name, name);
 	dst->next = NULL;
 
-	dst->gtt_offset = vma->node.start;
-	dst->gtt_size = vma->node.size;
+	dst->gtt_offset = i915_vma_offset(vma);
+	dst->gtt_size = i915_vma_size(vma);
 	dst->gtt_page_sizes = vma->page_sizes.gtt;
 	dst->num_pages = num_pages;
 	dst->page_count = 0;

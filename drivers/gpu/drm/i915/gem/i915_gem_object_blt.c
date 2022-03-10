@@ -69,7 +69,7 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 	}
 
 	rem = vma->size;
-	offset = vma->node.start;
+	offset = i915_vma_offset(vma);
 
 	do {
 		u32 size = min_t(u64, rem, block_size);
@@ -218,8 +218,8 @@ retry:
 
 	if (likely(!err))
 		err = ce->engine->emit_bb_start(rq,
-						batch->node.start,
-						batch->node.size,
+						i915_vma_offset(batch),
+						i915_vma_size(batch),
 						0);
 out_request:
 	if (unlikely(err))
@@ -306,8 +306,8 @@ struct i915_vma *intel_emit_vma_copy_blt(struct intel_context *ce,
 	}
 
 	rem = src->size;
-	src_offset = src->node.start;
-	dst_offset = dst->node.start;
+	src_offset = i915_vma_offset(src);
+	dst_offset = i915_vma_offset(dst);
 
 	do {
 		size = min_t(u64, rem, block_size);
@@ -445,7 +445,8 @@ retry:
 	}
 
 	err = rq->engine->emit_bb_start(rq,
-					batch->node.start, batch->node.size,
+					i915_vma_offset(batch),
+					i915_vma_size(batch),
 					0);
 
 out_request:

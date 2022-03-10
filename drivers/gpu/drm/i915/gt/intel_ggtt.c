@@ -599,7 +599,7 @@ static void aliasing_gtt_unbind_vma(struct i915_address_space *vm,
 				    struct i915_vma *vma)
 {
 	if (i915_vma_is_bound(vma, I915_VMA_GLOBAL_BIND))
-		vm->clear_range(vm, vma->node.start, vma->size);
+		vm->clear_range(vm, i915_ggtt_offset(vma), vma->size);
 
 	if (i915_vma_is_bound(vma, I915_VMA_LOCAL_BIND))
 		ppgtt_unbind_vma(&i915_vm_to_ggtt(vm)->alias->vm, vma);

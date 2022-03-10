@@ -246,6 +246,10 @@ static int lowlevel_hole(struct i915_address_space *vm,
 	if (!mock_vma)
 		return -ENOMEM;
 
+	__set_bit(DRM_MM_NODE_ALLOCATED_BIT, &mock_vma->node.flags);
+	if (i915_is_ggtt(vm))
+		__set_bit(I915_VMA_GGTT_BIT, __i915_vma_flags(mock_vma));
+
 	/* Keep creating larger objects until one cannot fit into the hole */
 	for (size = 12; (hole_end - hole_start) >> size; size++) {
 		I915_RND_SUBSTATE(prng, seed_prng);
@@ -1972,6 +1976,7 @@ end_ww:
 				goto end;
 
 			/* Prime the TLB with the dummy pages */
+			__set_bit(DRM_MM_NODE_ALLOCATED_BIT, &vma->node.flags);
 			for (i = 0; i < count; i++) {
 				vma->node.start = offset + i * PAGE_SIZE;
 				vm->insert_entries(vm, vma, I915_CACHE_NONE, 0);
@@ -1983,8 +1988,9 @@ end_ww:
 				}
 				i915_request_put(rq);
 			}
-
 			vma->ops->clear_pages(vma);
+			__clear_bit(DRM_MM_NODE_ALLOCATED_BIT,
+				    &vma->node.flags);
 
 			err = context_sync(ce);
 			if (err) {
@@ -2004,6 +2010,7 @@ end_ww:
 				goto end;
 
 			/* Replace the TLB with target batches */
+			__set_bit(DRM_MM_NODE_ALLOCATED_BIT, &vma->node.flags);
 			for (i = 0; i < count; i++) {
 				struct i915_request *rq;
 				u32 *cs = batch + i * 64 / sizeof(*cs);
@@ -2036,8 +2043,9 @@ end_ww:
 				i915_request_put(rq);
 			}
 			end_spin(batch, count - 1);
-
 			vma->ops->clear_pages(vma);
+			__clear_bit(DRM_MM_NODE_ALLOCATED_BIT,
+				    &vma->node.flags);
 
 			err = context_sync(ce);
 			if (err) {
