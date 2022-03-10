@@ -1444,7 +1444,7 @@ remap_tiled_color_plane_pages(struct drm_i915_gem_object *obj,
 static struct scatterlist *
 remap_contiguous_pages(struct drm_i915_gem_object *obj,
 		       pgoff_t obj_offset,
-		       unsigned int count,
+		       pgoff_t page_count,
 		       struct sg_table *st, struct scatterlist *sg)
 {
 	struct scatterlist *iter;
@@ -1454,24 +1454,44 @@ remap_contiguous_pages(struct drm_i915_gem_object *obj,
 	GEM_BUG_ON(!iter);
 
 	do {
-		unsigned int len;
+		unsigned long len;
 
-		len = min(sg_dma_len(iter) - (offset << PAGE_SHIFT),
-			  count << PAGE_SHIFT);
+		len = sg_dma_len(iter) - (offset << PAGE_SHIFT);
+		len = min(len, page_count << PAGE_SHIFT);
+		GEM_BUG_ON(overflows_type(len, sg->length));
+
 		sg_set_page(sg, NULL, len, 0);
 		sg_dma_address(sg) =
 			sg_dma_address(iter) + (offset << PAGE_SHIFT);
 		sg_dma_len(sg) = len;
 
 		st->nents++;
-		count -= len >> PAGE_SHIFT;
-		if (count == 0)
+		page_count -= len >> PAGE_SHIFT;
+		if (page_count == 0)
 			return sg;
 
 		sg = __sg_next(sg);
 		iter = __sg_next(iter);
 		offset = 0;
 	} while (1);
+}
+
+void intel_partial_pages_for_sg_table(struct drm_i915_gem_object *obj,
+				      struct sg_table *st,
+				      pgoff_t obj_offset,
+				      pgoff_t page_count,
+				      struct scatterlist **sgl)
+{
+	struct scatterlist *sg;
+
+	GEM_BUG_ON(!st);
+	st->nents = 0;
+
+	sg = remap_contiguous_pages(obj, obj_offset, page_count, st, st->sgl);
+	sg_mark_end(sg);
+
+	if (sgl)
+		*sgl = sg;
 }
 
 static struct scatterlist *
@@ -1576,30 +1596,23 @@ intel_partial_pages(const struct i915_ggtt_view *view,
 		    struct drm_i915_gem_object *obj)
 {
 	struct sg_table *st;
-	struct scatterlist *sg;
-	unsigned int count = view->partial.size;
-	int ret = -ENOMEM;
+	int ret;
 
 	st = kmalloc(sizeof(*st), GFP_KERNEL);
 	if (!st)
-		goto err_st_alloc;
+		return ERR_PTR(-ENOMEM);
 
-	ret = sg_alloc_table(st, count, GFP_KERNEL);
-	if (ret)
-		goto err_sg_alloc;
+	ret = sg_alloc_table(st, view->partial.size, GFP_KERNEL);
+	if (ret) {
+		kfree(st);
+		return ERR_PTR(ret);
+	}
 
-	st->nents = 0;
-
-	sg = remap_contiguous_pages(obj, view->partial.offset, count, st, st->sgl);
-	sg_mark_end(sg);
-	i915_sg_trim(st); /* Drop any unused tail entries. */
+	intel_partial_pages_for_sg_table(obj, st, view->partial.offset,
+					 view->partial.size, NULL);
+	i915_sg_trim(st);
 
 	return st;
-
-err_sg_alloc:
-	kfree(st);
-err_st_alloc:
-	return ERR_PTR(ret);
 }
 
 static int
