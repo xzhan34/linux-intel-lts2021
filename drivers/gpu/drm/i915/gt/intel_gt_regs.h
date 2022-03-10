@@ -24,6 +24,16 @@
 /* MTL workpoint reg to get core C state and actual freq of 3D, SAMedia */
 #define MTL_MIRROR_TARGET_WP1			_MMIO(0xc60)
 #define   MTL_CAGF_MASK				REG_GENMASK(8, 0)
+#define   MTL_CC0				0x0
+#define   MTL_CC6				0x3
+#define   MTL_CC_SHIFT				9
+#define   MTL_CC_MASK				(0xf << MTL_CC_SHIFT)
+
+/*
+ * MTL: This register contains the total MC6 residency time that SAMedia was
+ * since boot
+ */
+#define MTL_MEDIA_MC6                          _MMIO(0x138048)
 
 /* RPM unit config (Gen8+) */
 #define RPM_CONFIG0				_MMIO(0xd00)
