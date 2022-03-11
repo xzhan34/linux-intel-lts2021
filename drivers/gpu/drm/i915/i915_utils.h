@@ -486,4 +486,10 @@ void __mark_lock_used_irq(struct lockdep_map *lock);
 #endif
 #endif
 
+/* A poor man's -Wconversion: only allow variables of an exact type. */
+#define exact_type(T, n) \
+	BUILD_BUG_ON(!__builtin_constant_p(n) && !__builtin_types_compatible_p(T, typeof(n)))
+
+#define exactly_pgoff_t(n) exact_type(pgoff_t, n)
+
 #endif /* !__I915_UTILS_H */

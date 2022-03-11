@@ -24,8 +24,10 @@
  * spot such a local variable, please consider fixing!
  *
  * Aside from our own locals (for which we have no excuse!):
- * - sg_table embeds unsigned int for num_pages
- * - get_user_pages*() mixed ints with longs
+ * - sg_table embeds unsigned int for nents
+ *
+ * We can check for invalidly typed locals with typecheck(), see for example
+ * i915_gem_object_get_sg().
  */
 #define GEM_CHECK_SIZE_OVERFLOW(sz) \
 	GEM_WARN_ON((sz) >> PAGE_SHIFT > INT_MAX)
@@ -355,41 +357,69 @@ int i915_gem_object_set_tiling(struct drm_i915_gem_object *obj,
 struct scatterlist *
 __i915_gem_object_get_sg(struct drm_i915_gem_object *obj,
 			 struct i915_gem_object_page_iter *iter,
-			 unsigned int n,
-			 unsigned int *offset, bool allow_alloc, bool dma);
+			 pgoff_t  n,
+			 unsigned int *offset);
+
+#define __i915_gem_object_get_sg(obj, it, n, offset) ({ \
+	exactly_pgoff_t(n); \
+	(__i915_gem_object_get_sg)(obj, it, n, offset); \
+})
 
 static inline struct scatterlist *
-i915_gem_object_get_sg(struct drm_i915_gem_object *obj,
-		       unsigned int n,
-		       unsigned int *offset, bool allow_alloc)
+i915_gem_object_get_sg(struct drm_i915_gem_object *obj, pgoff_t n,
+		       unsigned int *offset)
 {
-	return __i915_gem_object_get_sg(obj, &obj->mm.get_page, n, offset, allow_alloc, false);
+	return __i915_gem_object_get_sg(obj, &obj->mm.get_page, n, offset);
 }
+
+#define i915_gem_object_get_sg(obj, n, offset) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_sg)(obj, n, offset); \
+})
 
 static inline struct scatterlist *
-i915_gem_object_get_sg_dma(struct drm_i915_gem_object *obj,
-			   unsigned int n,
-			   unsigned int *offset, bool allow_alloc)
+i915_gem_object_get_sg_dma(struct drm_i915_gem_object *obj, pgoff_t n,
+			   unsigned int *offset)
 {
-	return __i915_gem_object_get_sg(obj, &obj->mm.get_dma_page, n, offset, allow_alloc, true);
+	return __i915_gem_object_get_sg(obj, &obj->mm.get_dma_page, n, offset);
 }
 
-struct page *
-i915_gem_object_get_page(struct drm_i915_gem_object *obj,
-			 unsigned int n);
+#define i915_gem_object_get_sg_dma(obj, n, offset) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_sg_dma)(obj, n, offset); \
+})
 
 struct page *
-i915_gem_object_get_dirty_page(struct drm_i915_gem_object *obj,
-			       unsigned int n);
+i915_gem_object_get_page(struct drm_i915_gem_object *obj, pgoff_t n);
+
+#define i915_gem_object_get_page(obj, n) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_page)(obj, n); \
+})
+
+struct page *
+i915_gem_object_get_dirty_page(struct drm_i915_gem_object *obj, pgoff_t n);
+
+#define i915_gem_object_get_dirty_page(obj, n) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_dirty_page)(obj, n); \
+})
 
 dma_addr_t
-i915_gem_object_get_dma_address_len(struct drm_i915_gem_object *obj,
-				    unsigned long n,
+i915_gem_object_get_dma_address_len(struct drm_i915_gem_object *obj, pgoff_t n,
 				    unsigned int *len);
+#define i915_gem_object_get_dma_address_len(obj, n, len) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_dma_address_len)(obj, n, len); \
+})
 
 dma_addr_t
-i915_gem_object_get_dma_address(struct drm_i915_gem_object *obj,
-				unsigned long n);
+i915_gem_object_get_dma_address(struct drm_i915_gem_object *obj, pgoff_t n);
+
+#define i915_gem_object_get_dma_address(obj, n) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_dma_address)(obj, n); \
+})
 
 void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 				 struct sg_table *pages,

@@ -1529,12 +1529,13 @@ static inline bool use_reloc_gpu(struct i915_vma *vma)
 
 static unsigned long vma_phys_addr(struct i915_vma *vma, u32 offset)
 {
-	struct page *page;
+	pgoff_t idx = offset >> PAGE_SHIFT;
 	unsigned long addr;
+	struct page *page;
 
 	GEM_BUG_ON(vma->pages != vma->obj->mm.pages);
 
-	page = i915_gem_object_get_page(vma->obj, offset >> PAGE_SHIFT);
+	page = i915_gem_object_get_page(vma->obj, idx);
 	addr = PFN_PHYS(page_to_pfn(page));
 	GEM_BUG_ON(overflows_type(addr, u32)); /* expected dma32 */
 
