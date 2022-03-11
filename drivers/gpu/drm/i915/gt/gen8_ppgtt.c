@@ -1846,7 +1846,9 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 	 * generating any faults at all. On such platforms, mapping to scratch
 	 * page is handled in the page fault handler itself.
 	 */
-	if (!vm->has_scratch || i915_vm_page_fault_enabled(vm)) {
+	if (!vm->has_scratch ||
+	    i915_vm_page_fault_enabled(vm) ||
+	    is_vm_pasid_active(vm)) {
 		u64 invalid_pte;
 		memset(&invalid_pte, 0xAA, sizeof(u64));
 		for (i = 0; i <= vm->top; i++) {
