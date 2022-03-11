@@ -305,6 +305,12 @@ static u64 gen12_pte_encode(dma_addr_t addr,
 	if (flags & PTE_AE)
 		pte |= GEN12_USM_PPGTT_PTE_AE;
 
+	/*
+	 * Unconditionally set FF bit to 0 for now, regardless of if page is
+	 * present or not - This might change with further ATS works...
+	 */
+	pte &= ~GEN12_PPGTT_PTE_FF;
+
 	if (pat_index & 1)
 		pte |= GEN12_PPGTT_PTE_PAT0;
 

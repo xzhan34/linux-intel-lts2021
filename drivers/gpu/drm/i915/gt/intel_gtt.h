@@ -94,6 +94,7 @@ typedef u64 gen8_pte_t;
 #define GEN12_PPGTT_PTE_NC	BIT_ULL(5)
 #define GEN12_PPGTT_PTE_PAT1	BIT_ULL(4)
 #define GEN12_PPGTT_PTE_PAT0	BIT_ULL(3)
+#define GEN12_PPGTT_PTE_FF	BIT_ULL(2)
 
 /*
  *  DOC: GEN12 GGTT Table Entry format
@@ -390,6 +391,7 @@ struct i915_address_space {
 #define PTE_READ_ONLY	BIT(0)
 #define PTE_LM		BIT(1)
 #define PTE_AE		BIT(2)
+#define PTE_FF		BIT(3)
 
 	void (*allocate_va_range)(struct i915_address_space *vm,
 				  struct i915_vm_pt_stash *stash,
