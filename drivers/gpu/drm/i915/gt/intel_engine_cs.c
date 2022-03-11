@@ -2134,7 +2134,9 @@ static void engine_dump_request(struct i915_request *rq, struct drm_printer *m, 
 	print_request_ring(m, rq);
 
 	if (rq->context->lrc_reg_state) {
-		drm_printf(m, "Logical Ring Context:\n");
+		drm_printf(m, "Logical Ring Context [0x%08x,0x%08llx):\n",
+			   i915_ggtt_offset(rq->context->state),
+			   i915_ggtt_offset(rq->context->state) + rq->context->state->node.size);
 		hexdump(m, rq->context->lrc_reg_state, PAGE_SIZE);
 	}
 }
@@ -2262,8 +2264,12 @@ void intel_engine_dump(struct intel_engine_cs *engine,
 
 	intel_execlists_show_requests(engine, m, i915_request_show, 8);
 
-	drm_printf(m, "HWSP:\n");
-	hexdump(m, engine->status_page.addr, PAGE_SIZE);
+	if (engine->status_page.vma) {
+		drm_printf(m, "HWSP [0x%08x,0x%08llx):\n",
+				i915_ggtt_offset(engine->status_page.vma),
+				i915_ggtt_offset(engine->status_page.vma) + engine->status_page.vma->node.size);
+		hexdump(m, engine->status_page.addr, PAGE_SIZE);
+	}
 
 	drm_printf(m, "Idle? %s\n", str_yes_no(intel_engine_is_idle(engine)));
 
