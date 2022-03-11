@@ -120,11 +120,6 @@ static void rps_timer(struct timer_list *t)
 
 			busy += div_u64(max_busy[i], 1 << i);
 		}
-		GT_TRACE(rps_to_gt(rps),
-			 "busy:%lld [%d%%], max:[%lld, %lld, %lld], interval:%d\n",
-			 busy, (int)div64_u64(100 * busy, dt),
-			 max_busy[0], max_busy[1], max_busy[2],
-			 rps->pm_interval);
 
 		if (100 * busy > rps->power.up_threshold * dt &&
 		    rps->cur_freq < rps->max_freq_softlimit) {
@@ -138,6 +133,14 @@ static void rps_timer(struct timer_list *t)
 			schedule_work(&rps->work);
 		} else {
 			rps->last_adj = 0;
+		}
+
+		if (rps->pm_interval < BUSY_MAX_EI) {
+			GT_TRACE(rps_to_gt(rps),
+				 "busy:%lld [%d%%], max:[%lld, %lld, %lld], interval:%d\n",
+				 busy, (int)div64_u64(100 * busy, dt),
+				 max_busy[0], max_busy[1], max_busy[2],
+				 rps->pm_interval);
 		}
 
 		mod_timer(&rps->timer,
