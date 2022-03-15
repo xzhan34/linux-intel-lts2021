@@ -493,9 +493,6 @@ __execlists_schedule_in(struct i915_request *rq)
 	if (unlikely(intel_context_is_banned(ce) || bad_request(rq)))
 		reset_active(rq, engine);
 
-	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM))
-		lrc_check_regs(ce, engine, "before");
-
 	if (ce->tag) {
 		/* Use a fixed tag for OA and friends */
 		GEM_BUG_ON(ce->tag <= BITS_PER_LONG);
@@ -607,9 +604,6 @@ static void __execlists_schedule_out(struct i915_request * const rq,
 
 	CE_TRACE(ce, "schedule-out, ccid:%x\n", ce->lrc.ccid);
 	GEM_BUG_ON(ce->inflight != engine);
-
-	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM))
-		lrc_check_regs(ce, engine, "after");
 
 	/*
 	 * If we have just completed this context, the engine may now be
