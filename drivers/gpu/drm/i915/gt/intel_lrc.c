@@ -931,8 +931,6 @@ static void __lrc_init_regs(u32 *regs,
 
 	init_common_regs(regs, ce, engine, inhibit);
 	init_wa_bb_regs(regs, engine);
-
-	__reset_stop_ring(regs, engine);
 }
 
 void lrc_init_regs(const struct intel_context *ce,
