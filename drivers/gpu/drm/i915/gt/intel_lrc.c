@@ -62,6 +62,7 @@ static void set_offsets(u32 *regs,
 
 	while (*data) {
 		u8 count, flags;
+		u32 cmd;
 
 		if (*data & BIT(7)) { /* skip */
 			count = *data++ & ~BIT(7);
@@ -73,12 +74,12 @@ static void set_offsets(u32 *regs,
 		flags = *data >> 6;
 		data++;
 
-		*regs = MI_LOAD_REGISTER_IMM(count);
+		cmd = MI_LOAD_REGISTER_IMM(count);
 		if (flags & POSTED)
-			*regs |= MI_LRI_FORCE_POSTED;
+			cmd |= MI_LRI_FORCE_POSTED;
 		if (GRAPHICS_VER(engine->i915) >= 11)
-			*regs |= MI_LRI_LRM_CS_MMIO;
-		regs++;
+			cmd |= MI_LRI_LRM_CS_MMIO;
+		*regs++ = cmd;
 
 		GEM_BUG_ON(!count);
 		do {
