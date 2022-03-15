@@ -2708,10 +2708,15 @@ u32 intel_rps_read_rapl_pl1_frequency(struct intel_rps *rps)
 	return (rapl_freq >> 8) * GT_FREQUENCY_MULTIPLIER;
 }
 
+static u32 read_perf_limit_reasons(struct intel_gt *gt)
+{
+	return __rps_read_mmio(gt, intel_gt_perf_limit_reasons_reg(gt));
+}
+
 u32 intel_rps_read_throttle_reason_status(struct intel_rps *rps)
 {
 	struct intel_gt *gt = rps_to_gt(rps);
-	u32 status = __rps_read_mmio(gt, GT0_PERF_LIMIT_REASONS) & GT0_PERF_LIMIT_REASONS_MASK;
+	u32 status = read_perf_limit_reasons(gt) & GT0_PERF_LIMIT_REASONS_MASK;
 
 	return status;
 }
@@ -2719,7 +2724,7 @@ u32 intel_rps_read_throttle_reason_status(struct intel_rps *rps)
 u32 intel_rps_read_throttle_reason_pl1(struct intel_rps *rps)
 {
 	struct intel_gt *gt = rps_to_gt(rps);
-	u32 pl1 = __rps_read_mmio(gt, GT0_PERF_LIMIT_REASONS) & POWER_LIMIT_1_MASK;
+	u32 pl1 = read_perf_limit_reasons(gt) & POWER_LIMIT_1_MASK;
 
 	return pl1;
 }
@@ -2727,7 +2732,7 @@ u32 intel_rps_read_throttle_reason_pl1(struct intel_rps *rps)
 u32 intel_rps_read_throttle_reason_pl2(struct intel_rps *rps)
 {
 	struct intel_gt *gt = rps_to_gt(rps);
-	u32 pl2 = __rps_read_mmio(gt, GT0_PERF_LIMIT_REASONS) & POWER_LIMIT_2_MASK;
+	u32 pl2 = read_perf_limit_reasons(gt) & POWER_LIMIT_2_MASK;
 
 	return pl2;
 }
@@ -2735,7 +2740,7 @@ u32 intel_rps_read_throttle_reason_pl2(struct intel_rps *rps)
 u32 intel_rps_read_throttle_reason_pl4(struct intel_rps *rps)
 {
 	struct intel_gt *gt = rps_to_gt(rps);
-	u32 pl4 = __rps_read_mmio(gt, GT0_PERF_LIMIT_REASONS) & POWER_LIMIT_4_MASK;
+	u32 pl4 = read_perf_limit_reasons(gt) & POWER_LIMIT_4_MASK;
 
 	return pl4;
 }
@@ -2743,7 +2748,7 @@ u32 intel_rps_read_throttle_reason_pl4(struct intel_rps *rps)
 u32 intel_rps_read_throttle_reason_thermal(struct intel_rps *rps)
 {
 	struct intel_gt *gt = rps_to_gt(rps);
-	u32 thermal = __rps_read_mmio(gt, GT0_PERF_LIMIT_REASONS) & THERMAL_LIMIT_MASK;
+	u32 thermal = read_perf_limit_reasons(gt) & THERMAL_LIMIT_MASK;
 
 	return thermal;
 }
@@ -2751,7 +2756,7 @@ u32 intel_rps_read_throttle_reason_thermal(struct intel_rps *rps)
 u32 intel_rps_read_throttle_reason_prochot(struct intel_rps *rps)
 {
 	struct intel_gt *gt = rps_to_gt(rps);
-	u32 prochot = __rps_read_mmio(gt, GT0_PERF_LIMIT_REASONS) & PROCHOT_MASK;
+	u32 prochot = read_perf_limit_reasons(gt) & PROCHOT_MASK;
 
 	return prochot;
 }
@@ -2759,7 +2764,7 @@ u32 intel_rps_read_throttle_reason_prochot(struct intel_rps *rps)
 u32 intel_rps_read_throttle_reason_ratl(struct intel_rps *rps)
 {
 	struct intel_gt *gt = rps_to_gt(rps);
-	u32 ratl = __rps_read_mmio(gt, GT0_PERF_LIMIT_REASONS) & RATL_MASK;
+	u32 ratl = read_perf_limit_reasons(gt) & RATL_MASK;
 
 	return ratl;
 }
@@ -2767,7 +2772,7 @@ u32 intel_rps_read_throttle_reason_ratl(struct intel_rps *rps)
 u32 intel_rps_read_throttle_reason_vr_thermalert(struct intel_rps *rps)
 {
 	struct intel_gt *gt = rps_to_gt(rps);
-	u32 thermalert = __rps_read_mmio(gt, GT0_PERF_LIMIT_REASONS) & VR_THERMALERT_MASK;
+	u32 thermalert = read_perf_limit_reasons(gt) & VR_THERMALERT_MASK;
 
 	return thermalert;
 }
@@ -2775,7 +2780,7 @@ u32 intel_rps_read_throttle_reason_vr_thermalert(struct intel_rps *rps)
 u32 intel_rps_read_throttle_reason_vr_tdc(struct intel_rps *rps)
 {
 	struct intel_gt *gt = rps_to_gt(rps);
-	u32 tdc = __rps_read_mmio(gt, GT0_PERF_LIMIT_REASONS) & VR_TDC_MASK;
+	u32 tdc = read_perf_limit_reasons(gt) & VR_TDC_MASK;
 
 	return tdc;
 }

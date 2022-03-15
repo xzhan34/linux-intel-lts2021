@@ -92,6 +92,15 @@ static inline bool intel_gt_is_wedged(const struct intel_gt *gt)
 	return unlikely(test_bit(I915_WEDGED, &gt->reset.flags));
 }
 
+static inline
+i915_reg_t intel_gt_perf_limit_reasons_reg(struct intel_gt *gt)
+{
+	if (gt->type == GT_MEDIA)
+		return MTL_MEDIA_PERF_LIMIT_REASONS;
+
+	return GT0_PERF_LIMIT_REASONS;
+}
+
 static inline bool
 i915_is_level4_wa_active(struct intel_gt *gt)
 {
