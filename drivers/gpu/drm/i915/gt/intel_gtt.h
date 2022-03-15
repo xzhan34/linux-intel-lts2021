@@ -341,6 +341,8 @@ struct i915_address_space {
 
 	I915_SELFTEST_DECLARE(struct fault_attr fault_attr);
 	I915_SELFTEST_DECLARE(bool scrub_64K);
+
+	struct i915_active active;
 };
 
 /*
@@ -464,6 +466,15 @@ static inline struct dma_resv *i915_vm_resv_get(struct i915_address_space *vm)
 {
 	kref_get(&vm->resv_ref);
 	return &vm->_resv;
+}
+
+static inline struct i915_address_space *
+i915_vm_tryget(struct i915_address_space *vm)
+{
+	if (likely(kref_get_unless_zero(&vm->ref)))
+		return vm;
+
+	return NULL;
 }
 
 void i915_vm_release(struct kref *kref);

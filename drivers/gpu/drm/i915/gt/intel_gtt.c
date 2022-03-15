@@ -122,6 +122,8 @@ int i915_vm_lock_objects(struct i915_address_space *vm,
 
 void i915_address_space_fini(struct i915_address_space *vm)
 {
+	i915_active_fini(&vm->active);
+
 	drm_mm_takedown(&vm->mm);
 	mutex_destroy(&vm->mutex);
 }
@@ -182,6 +184,21 @@ void i915_vm_close(struct i915_address_space *vm)
 		i915_vm_put(vm);
 }
 
+static inline struct i915_address_space *active_to_vm(struct i915_active *ref)
+{
+	return container_of(ref, typeof(struct i915_address_space), active);
+}
+
+static int __i915_vm_active(struct i915_active *ref)
+{
+	return i915_vm_tryopen(active_to_vm(ref)) ? 0 : -ENOENT;
+}
+
+static void __i915_vm_retire(struct i915_active *ref)
+{
+	i915_vm_close(active_to_vm(ref));
+}
+
 void i915_address_space_init(struct i915_address_space *vm, int subclass)
 {
 	kref_init(&vm->ref);
@@ -227,6 +244,8 @@ void i915_address_space_init(struct i915_address_space *vm, int subclass)
 	vm->mm.head_node.color = I915_COLOR_UNEVICTABLE;
 
 	INIT_LIST_HEAD(&vm->bound_list);
+
+	i915_active_init(&vm->active, __i915_vm_active, __i915_vm_retire, 0);
 }
 
 void clear_pages(struct i915_vma *vma)
