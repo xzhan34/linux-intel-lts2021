@@ -1067,25 +1067,23 @@ static int perf_memcpy(void *arg)
 		SZ_64K,
 		SZ_4M,
 	};
-	struct intel_memory_region *src_mr, *dst_mr;
-	int src_id, dst_id;
-	int i, j, k;
+	struct intel_memory_region *smem = i915->mm.regions[INTEL_REGION_SMEM];
+	struct intel_memory_region *mr;
+	int i, j, id;
 	int ret;
 
-	for_each_memory_region(src_mr, i915, src_id) {
-		for_each_memory_region(dst_mr, i915, dst_id) {
-			for (i = 0; i < ARRAY_SIZE(sizes); ++i) {
-				for (j = 0; j < ARRAY_SIZE(types); ++j) {
-					for (k = 0; k < ARRAY_SIZE(types); ++k) {
-						ret = _perf_memcpy(src_mr,
-								   dst_mr,
-								   sizes[i],
-								   types[j],
-								   types[k]);
-						if (ret)
-							return ret;
-					}
-				}
+	for_each_memory_region(mr, i915, id) {
+		for (i = 0; i < ARRAY_SIZE(sizes); ++i) {
+			for (j = 0; j < ARRAY_SIZE(types); ++j) {
+				ret = _perf_memcpy(smem, mr, sizes[i],
+						   I915_MAP_WB, types[j]);
+				if (ret)
+					return ret;
+
+				ret = _perf_memcpy(mr, smem, sizes[i],
+						   types[j], I915_MAP_WB);
+				if (ret)
+					return ret;
 			}
 		}
 	}
