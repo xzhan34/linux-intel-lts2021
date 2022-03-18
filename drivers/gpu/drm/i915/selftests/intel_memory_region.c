@@ -952,16 +952,6 @@ static int wrap_ktime_compare(const void *A, const void *B)
 	return ktime_compare(*a, *b);
 }
 
-static void igt_memcpy_long(void *dst, const void *src, size_t size)
-{
-	unsigned long *tmp = dst;
-	const unsigned long *s = src;
-
-	size = size / sizeof(unsigned long);
-	while (size--)
-		*tmp++ = *s++;
-}
-
 static inline void igt_memcpy(void *dst, const void *src, size_t size)
 {
 	memcpy(dst, src, size);
@@ -985,10 +975,6 @@ static int _perf_memcpy(struct intel_memory_region *src_mr,
 		{
 			"memcpy",
 			igt_memcpy,
-		},
-		{
-			"memcpy_long",
-			igt_memcpy_long,
 		},
 		{
 			"memcpy_from_wc",
