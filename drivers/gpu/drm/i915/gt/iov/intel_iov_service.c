@@ -535,3 +535,7 @@ int intel_iov_service_process_mmio_relay(struct intel_iov *iov, const u32 *msg,
 	intel_runtime_pm_put(rpm, wakeref);
 	return err;
 }
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#include "selftests/selftest_mock_iov_service.c"
+#endif
