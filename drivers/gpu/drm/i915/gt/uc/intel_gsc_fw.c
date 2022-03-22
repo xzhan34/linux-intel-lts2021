@@ -23,7 +23,7 @@ static bool gsc_is_in_reset(struct intel_uncore *uncore)
 	       GSC_FIRMWARE_CURRENT_STATE_RESET;
 }
 
-static bool gsc_init_done(struct intel_uncore *uncore)
+bool intel_gsc_uc_fw_init_done(struct intel_uncore *uncore)
 {
 	u32 fw_status = intel_uncore_read(uncore, GSC_FW_STATUS_REG_OFFSET);
 
@@ -223,7 +223,7 @@ int intel_gsc_fw_upload(struct intel_gsc_uc *gsc)
 	int err;
 
 	/* check current fw status */
-	if (gsc_init_done(gt->uncore)) {
+	if (intel_gsc_uc_fw_init_done(gt->uncore)) {
 		if (GEM_WARN_ON(!intel_uc_fw_is_loaded(gsc_fw)))
 			intel_uc_fw_change_status(gsc_fw, INTEL_UC_FIRMWARE_TRANSFERRED);
 		return 0;
