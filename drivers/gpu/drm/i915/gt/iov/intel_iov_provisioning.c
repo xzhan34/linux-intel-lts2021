@@ -2947,8 +2947,6 @@ int intel_iov_provisioning_move_ggtt(struct intel_iov *iov, unsigned int id)
 
 #endif /* CONFIG_DRM_I915_DEBUG_IOV */
 
-#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
-
 static int pf_push_self_config(struct intel_iov *iov)
 {
 	struct intel_guc *guc = iov_to_guc(iov);
@@ -3006,5 +3004,6 @@ int intel_iov_provisioning_force_vgt_mode(struct intel_iov *iov)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftests/selftest_live_iov_provisioning.c"
-#endif /* CONFIG_DRM_I915_SELFTEST */
+#endif

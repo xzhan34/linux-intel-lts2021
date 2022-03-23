@@ -80,6 +80,7 @@
 #include "gt/intel_gt_regs.h"
 #include "gt/intel_rc6.h"
 #include "gt/iov/intel_iov.h"
+#include "gt/iov/intel_iov_provisioning.h"
 
 #include "pxp/intel_pxp_pm.h"
 

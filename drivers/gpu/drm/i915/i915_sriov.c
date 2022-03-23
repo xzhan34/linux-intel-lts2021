@@ -363,6 +363,12 @@ void i915_sriov_pf_confirm(struct drm_i915_private *i915)
 
 	dev_info(dev, "%d VFs could be associated with this PF\n", totalvfs);
 	pf_set_status(i915, totalvfs);
+
+	/*
+	 * FIXME: Temporary solution to force VGT mode in GuC throughout
+	 * the life cycle of the PF.
+	 */
+	intel_iov_provisioning_force_vgt_mode(&to_gt(i915)->iov);
 }
 
 /**
