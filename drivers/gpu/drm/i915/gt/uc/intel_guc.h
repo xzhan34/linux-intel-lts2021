@@ -451,6 +451,7 @@ int intel_guc_invalidate_tlb_page_selective_ctx(struct intel_guc *guc,
 						u64 start, u64 length, u32 ctxid);
 int intel_guc_invalidate_tlb_guc(struct intel_guc *guc,
 				 enum intel_guc_tlb_inval_mode mode);
+int intel_guc_invalidate_tlb_all(struct intel_guc *guc);
 
 static inline bool intel_guc_is_supported(const struct intel_guc *guc)
 {
