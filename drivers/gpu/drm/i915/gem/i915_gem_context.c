@@ -945,14 +945,13 @@ static int gem_context_register(struct i915_gem_context *ctx,
 	int ret;
 
 	ctx->file_priv = fpriv;
+	client = i915_drm_client_get(fpriv->client);
 
 	mutex_lock(&ctx->mutex);
 	vm = i915_gem_context_vm(ctx);
-	if (vm)
-		WRITE_ONCE(vm->file, fpriv); /* XXX */
+	if (vm && !vm->client)
+		WRITE_ONCE(vm->client, i915_drm_client_get(client)); /* XXX */
 	mutex_unlock(&ctx->mutex);
-
-	client = i915_drm_client_get(fpriv->client);
 
 	rcu_read_lock();
 	snprintf(ctx->name, sizeof(ctx->name), "%s[%d]",
@@ -1057,7 +1056,7 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 	if (IS_ERR(ppgtt))
 		return PTR_ERR(ppgtt);
 
-	ppgtt->vm.file = file_priv;
+	ppgtt->vm.client = i915_drm_client_get(file_priv->client);
 
 	if (args->extensions) {
 		err = i915_user_extensions(u64_to_user_ptr(args->extensions),

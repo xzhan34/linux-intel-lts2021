@@ -168,8 +168,8 @@ typedef u64 gen8_pte_t;
 
 enum i915_cache_level;
 
-struct drm_i915_file_private;
 struct drm_i915_gem_object;
+struct i915_drm_client;
 struct i915_fence_reg;
 struct i915_vma;
 struct intel_gt;
@@ -261,15 +261,16 @@ struct i915_address_space {
 	u32 poison; /* value used to fill the scratch page */
 
 	/*
-	 * Every address space belongs to a struct file - except for the global
-	 * GTT that is owned by the driver (and so @file is set to NULL). In
-	 * principle, no information should leak from one context to another
-	 * (or between files/processes etc) unless explicitly shared by the
-	 * owner. Tracking the owner is important in order to free up per-file
-	 * objects along with the file, to aide resource tracking, and to
-	 * assign blame.
+	 * Every address space belongs to a struct file, a single client -
+	 * except for the global GTT that is owned by the driver (and so @file
+	 * is set to NULL). In principle, no information should leak from one
+	 * context to another (or between files/processes etc) unless
+	 * explicitly shared by the owner. Tracking the owner is important in
+	 * order to free up per-file objects along with the file, to aide
+	 * resource tracking, and to assign blame.
 	 */
-	struct drm_i915_file_private *file;
+	struct i915_drm_client *client;
+
 	u64 total;		/* size addr space maps (ex. 2GB for ggtt) */
 	u64 reserved;		/* size addr space reserved */
 	u64 min_alignment[INTEL_MEMORY_STOLEN_LOCAL + 1];
