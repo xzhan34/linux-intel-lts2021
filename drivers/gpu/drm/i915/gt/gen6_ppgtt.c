@@ -247,6 +247,7 @@ err_scratch1:
 	i915_gem_object_put(vm->scratch[1]);
 err_scratch0:
 	i915_gem_object_put(vm->scratch[0]);
+	vm->scratch[0] = NULL;
 	return ret;
 }
 
@@ -265,15 +266,17 @@ static void gen6_ppgtt_cleanup(struct i915_address_space *vm)
 {
 	struct gen6_ppgtt *ppgtt = to_gen6_ppgtt(i915_vm_to_ppgtt(vm));
 
-	__i915_vma_put(ppgtt->vma);
+	if (ppgtt->vma)
+		__i915_vma_put(ppgtt->vma);
 
 	gen6_ppgtt_free_pd(ppgtt);
 	free_scratch(vm);
 
+	if (ppgtt->base.pd)
+		free_pd(&ppgtt->base.vm, ppgtt->base.pd);
+
 	mutex_destroy(&ppgtt->flush);
 	mutex_destroy(&ppgtt->pin_mutex);
-
-	free_pd(&ppgtt->base.vm, ppgtt->base.pd);
 }
 
 static int pd_vma_set_pages(struct i915_vma *vma)
@@ -423,6 +426,7 @@ struct i915_ppgtt *gen6_ppgtt_create(struct intel_gt *gt)
 {
 	struct i915_ggtt * const ggtt = gt->ggtt;
 	struct gen6_ppgtt *ppgtt;
+	struct i915_vma *vma;
 	int err;
 
 	ppgtt = kzalloc(sizeof(*ppgtt), GFP_KERNEL);
@@ -449,27 +453,23 @@ struct i915_ppgtt *gen6_ppgtt_create(struct intel_gt *gt)
 	ppgtt->base.pd = __alloc_pd(I915_PDES);
 	if (!ppgtt->base.pd) {
 		err = -ENOMEM;
-		goto err_free;
+		goto err_put;
 	}
 
 	err = gen6_ppgtt_init_scratch(ppgtt);
 	if (err)
-		goto err_pd;
+		goto err_put;
 
-	ppgtt->vma = pd_vma_create(ppgtt, GEN6_PD_SIZE);
-	if (IS_ERR(ppgtt->vma)) {
-		err = PTR_ERR(ppgtt->vma);
-		goto err_scratch;
+	vma = pd_vma_create(ppgtt, GEN6_PD_SIZE);
+	if (IS_ERR(vma)) {
+		err = PTR_ERR(vma);
+		goto err_put;
 	}
+	ppgtt->vma = vma;
 
 	return &ppgtt->base;
 
-err_scratch:
-	free_scratch(&ppgtt->base.vm);
-err_pd:
-	free_pd(&ppgtt->base.vm, ppgtt->base.pd);
-err_free:
-	mutex_destroy(&ppgtt->pin_mutex);
-	kfree(ppgtt);
+err_put:
+	i915_vm_put(&ppgtt->base.vm);
 	return ERR_PTR(err);
 }
