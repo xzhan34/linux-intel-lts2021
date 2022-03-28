@@ -550,6 +550,10 @@ err_submission:
 err_log_capture:
 	__uc_capture_load_err_log(uc);
 err_rps:
+	if (!i915_error_injected())
+		intel_klog_error_capture(uc_to_gt(uc),
+					 (intel_engine_mask_t) ~0U);
+
 	/* Return GT back to RPn */
 	intel_rps_lower_unslice(&uc_to_gt(uc)->rps);
 
