@@ -1375,6 +1375,14 @@ static void i915_pci_shutdown(struct pci_dev *pdev)
 	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
 
 	i915_driver_shutdown(i915);
+
+	/*
+	 * Shutdown is fast and dirty, just enough to make the system safe, and
+	 * may leave the driver in an inconsistent state. Make sure we no longer
+	 * access the device again.
+	 */
+	i915->do_release = false;
+	pci_set_drvdata(pdev, NULL);
 }
 
 static struct pci_driver i915_pci_driver = {
