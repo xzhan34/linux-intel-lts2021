@@ -104,7 +104,7 @@ static const i915_reg_t *get_runtime_regs(struct drm_i915_private *i915,
 {
 	const i915_reg_t *regs;
 
-	if (IS_METEORLAKE(i915)) {
+	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 70)) {
 		regs = mtl_runtime_regs;
 		*size = ARRAY_SIZE(mtl_runtime_regs);
 	} else if (IS_PONTEVECCHIO(i915)) {

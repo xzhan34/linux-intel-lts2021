@@ -533,12 +533,30 @@ static const i915_reg_t pvc_early_regs[] = {
 	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
 };
 
+static const i915_reg_t mtl_early_regs[] = {
+	RPM_CONFIG0,			/* _MMIO(0x0D00) */
+	XEHP_FUSE4,			/* _MMIO(0x9114) */
+	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */
+	HSW_PAVP_FUSE1,			/* _MMIO(0x911C) */
+	XEHP_EU_ENABLE,			/* _MMIO(0x9134) */
+	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
+	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
+	GEN12_GT_COMPUTE_DSS_ENABLE,	/* _MMIO(0x9144) */
+	XEHPC_GT_COMPUTE_DSS_ENABLE_EXT,/* _MMIO(0x9148) */
+	CTC_MODE,			/* _MMIO(0xA26C) */
+	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
+	MTL_GT_ACTIVITY_FACTOR,		/* _MMIO(0x138010) */
+};
+
 static const i915_reg_t *get_early_regs(struct drm_i915_private *i915,
 					unsigned int *size)
 {
 	const i915_reg_t *regs;
 
-	if (IS_PONTEVECCHIO(i915)) {
+	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 70)) {
+		regs = mtl_early_regs;
+		*size = ARRAY_SIZE(mtl_early_regs);
+	} else if (IS_PONTEVECCHIO(i915)) {
 		regs = pvc_early_regs;
 		*size = ARRAY_SIZE(pvc_early_regs);
 	} else if (IS_DG2(i915)) {
