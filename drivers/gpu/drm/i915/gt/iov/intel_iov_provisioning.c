@@ -2413,9 +2413,11 @@ static int pf_auto_provision(struct intel_iov *iov, unsigned int num_vfs)
 
 	pf_set_auto_provisioning(iov, true);
 
-	err = pf_auto_provision_ggtt(iov, num_vfs);
-	if (unlikely(err))
-		goto fail;
+	if (iov_to_gt(iov)->type != GT_MEDIA) {
+		err = pf_auto_provision_ggtt(iov, num_vfs);
+		if (unlikely(err))
+			goto fail;
+	}
 
 	err = pf_auto_provision_ctxs(iov, num_vfs);
 	if (unlikely(err))
