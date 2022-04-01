@@ -736,6 +736,7 @@ int intel_iov_provisioning_set_ggtt(struct intel_iov *iov, unsigned int id, u64 
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
 	GEM_BUG_ON(id > pf_get_totalvfs(iov));
 	GEM_BUG_ON(id == PFID);
+	GEM_BUG_ON(iov_to_gt(iov)->type == GT_MEDIA);
 
 	mutex_lock(pf_provisioning_mutex(iov));
 
@@ -770,6 +771,9 @@ u64 intel_iov_provisioning_get_ggtt(struct intel_iov *iov, unsigned int id)
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
 	GEM_BUG_ON(id > pf_get_totalvfs(iov));
 	GEM_BUG_ON(id == PFID);
+
+	if (iov_to_gt(iov)->type == GT_MEDIA)
+		node = &iov_get_root(iov)->pf.provisioning.configs[id].ggtt_region;
 
 	mutex_lock(pf_provisioning_mutex(iov));
 	size = drm_mm_node_allocated(node) ? node->size : 0;

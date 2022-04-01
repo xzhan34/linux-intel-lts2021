@@ -634,6 +634,9 @@ static umode_t vf_attr_is_visible(struct kobject *kobj,
 	if (attr == &lmem_quota_iov_attr.attr && !HAS_LMEM(iov_to_i915(iov)))
 		return 0;
 
+	if (attr == &ggtt_quota_iov_attr.attr && iov_to_gt(iov)->type == GT_MEDIA)
+		return attr->mode & 0444;
+
 	return attr->mode;
 }
 
