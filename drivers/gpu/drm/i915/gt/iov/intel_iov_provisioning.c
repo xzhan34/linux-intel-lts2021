@@ -633,7 +633,7 @@ static bool pf_is_valid_config_ggtt(struct intel_iov *iov, unsigned int id)
 	return drm_mm_node_allocated(&iov->pf.provisioning.configs[id].ggtt_region);
 }
 
-static int pf_push_config_ggtt(struct intel_iov *iov, unsigned int id, u64 start, u64 size)
+static int __pf_push_config_ggtt(struct intel_iov *iov, unsigned int id, u64 start, u64 size)
 {
 	struct intel_guc *guc = iov_to_guc(iov);
 	int err;
@@ -652,6 +652,21 @@ static int pf_push_config_ggtt(struct intel_iov *iov, unsigned int id, u64 start
 	return 0;
 }
 
+static int pf_push_config_ggtt(struct intel_iov *iov, unsigned int id, u64 start, u64 size)
+{
+	struct intel_gt *media_gt = iov_to_i915(iov)->media_gt;
+	int err, err2 = 0;
+
+	err = __pf_push_config_ggtt(iov, id, start, size);
+
+	if (media_gt) {
+		GEM_BUG_ON(!iov_is_root(iov));
+		err2 = __pf_push_config_ggtt(&media_gt->iov, id, start, size);
+	}
+
+	return err ?: err2;
+}
+
 static int pf_provision_ggtt(struct intel_iov *iov, unsigned int id, u64 size)
 {
 	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
@@ -660,6 +675,9 @@ static int pf_provision_ggtt(struct intel_iov *iov, unsigned int id, u64 size)
 	struct i915_ggtt *ggtt = iov_to_gt(iov)->ggtt;
 	u64 alignment = pf_get_ggtt_alignment(iov);
 	int err, ret;
+
+	if (iov_to_gt(iov)->type == GT_MEDIA)
+		return -ENODEV;
 
 	if (check_round_up_overflow(size, alignment, &size))
 		return -EOVERFLOW;
