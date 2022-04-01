@@ -141,3 +141,8 @@ config DRM_I915_TIMESLICE_DURATION
 	  /sys/class/drm/card?/engine/*/timeslice_duration_ms
 
 	  May be 0 to disable timeslicing.
+
+config DRM_I915_DEBUGGER_KFIFO
+	int "Select kfifo event queue size for EU debugger"
+	default 256
+	range 2 512

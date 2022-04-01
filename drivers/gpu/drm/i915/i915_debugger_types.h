@@ -8,6 +8,7 @@
 
 #include <linux/mutex.h>
 #include <linux/kref.h>
+#include <linux/kfifo.h>
 #include <uapi/drm/i915_drm.h>
 #include <linux/completion.h>
 #include <linux/wait.h>
@@ -133,7 +134,9 @@ struct i915_debugger {
 	spinlock_t ack_lock;
 	struct rb_root ack_tree;
 
-	const struct i915_debug_event *event;
+	DECLARE_KFIFO(event_fifo,
+		      struct i915_debug_event *,
+		      CONFIG_DRM_I915_DEBUGGER_KFIFO);
 };
 
 #endif /* __I915_DEBUGGER_TYPES_H__ */
