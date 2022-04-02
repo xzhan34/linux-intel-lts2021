@@ -2589,7 +2589,7 @@ u32 intel_iov_provisioning_get_tile_mask(struct intel_iov *iov, unsigned int id)
 }
 
 /* Return: number of configuration dwords written */
-static u32 encode_config(u32 *cfg, const struct intel_iov_config *config)
+static u32 encode_config_ggtt(u32 *cfg, const struct intel_iov_config *config)
 {
 	u32 n = 0;
 
@@ -2602,6 +2602,16 @@ static u32 encode_config(u32 *cfg, const struct intel_iov_config *config)
 		cfg[n++] = lower_32_bits(config->ggtt_region.size);
 		cfg[n++] = upper_32_bits(config->ggtt_region.size);
 	}
+
+	return n;
+}
+
+/* Return: number of configuration dwords written */
+static u32 encode_config(u32 *cfg, const struct intel_iov_config *config)
+{
+	u32 n = 0;
+
+	n += encode_config_ggtt(cfg, config);
 
 	cfg[n++] = MAKE_GUC_KLV(VF_CFG_BEGIN_CONTEXT_ID);
 	cfg[n++] = config->begin_ctx;
@@ -2714,6 +2724,13 @@ static int pf_push_configs(struct intel_iov *iov, unsigned int num)
 			u32 tile_mask = pf_get_vf_tile_mask(iov, n);
 
 			cfg_size += encode_tile_mask(cfg + cfg_size, tile_mask);
+		}
+
+		if (iov_to_gt(iov)->type == GT_MEDIA) {
+			struct intel_iov *root = iov_get_root(iov);
+			struct intel_iov_config *config = &root->pf.provisioning.configs[n];
+
+			cfg_size += encode_config_ggtt(cfg + cfg_size, config);
 		}
 
 		GEM_BUG_ON(cfg_size * sizeof(u32) > SZ_4K);
