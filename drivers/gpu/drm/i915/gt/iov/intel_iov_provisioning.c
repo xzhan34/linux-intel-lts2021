@@ -1792,6 +1792,39 @@ static u32 encode_config(u32 *cfg, const struct intel_iov_config *config)
 	return n;
 }
 
+static int pf_verify_config_klvs(struct intel_iov *iov, const u32 *cfg, u32 cfg_size)
+{
+	while (cfg_size) {
+		u32 key __maybe_unused = FIELD_GET(GUC_KLV_0_KEY, *cfg);
+		u32 len = FIELD_GET(GUC_KLV_0_LEN, *cfg);
+
+		GEM_BUG_ON(cfg_size < GUC_KLV_LEN_MIN);
+		cfg += GUC_KLV_LEN_MIN;
+		cfg_size -= GUC_KLV_LEN_MIN;
+		GEM_BUG_ON(cfg_size < len);
+
+		switch (len) {
+		case 1:
+			IOV_DEBUG(iov, "{ key %04x : 32b value %u }\n",
+				  key, cfg[0]);
+			break;
+		case 2:
+			IOV_DEBUG(iov, "{ key %04x : 64b value %#llx }\n",
+				  key, make_u64(cfg[1], cfg[0]));
+			break;
+		default:
+			IOV_DEBUG(iov, "{ key %04x : %u dwords value %*ph }\n",
+				  key, len, (int)(len * sizeof(u32)), cfg);
+			break;
+		}
+
+		cfg += len;
+		cfg_size -= len;
+	}
+
+	return 0;
+}
+
 static int pf_push_configs(struct intel_iov *iov, unsigned int num)
 {
 	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
@@ -1820,6 +1853,11 @@ static int pf_push_configs(struct intel_iov *iov, unsigned int num)
 			cfg_size = encode_config(cfg, &provisioning->configs[n]);
 
 		GEM_BUG_ON(cfg_size * sizeof(u32) > SZ_4K);
+		if (IS_ENABLED(CONFIG_DRM_I915_SELFTEST)) {
+			err = pf_verify_config_klvs(iov, cfg, cfg_size);
+			if (unlikely(err < 0))
+				goto fail;
+		}
 
 		if (cfg_size) {
 			err = guc_action_update_vf_cfg(guc, n, cfg_addr, cfg_size);
