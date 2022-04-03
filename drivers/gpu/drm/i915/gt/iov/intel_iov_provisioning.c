@@ -2480,6 +2480,15 @@ static int pf_validate_config(struct intel_iov *iov, unsigned int id)
 
 	/* we don't require doorbells, but will check if were assigned */
 
+	if (iov_to_gt(iov)->type == GT_MEDIA) {
+		struct intel_iov *root = iov_get_root(iov);
+
+		GEM_BUG_ON(iov_is_root(iov));
+		valid_ggtt = pf_is_valid_config_ggtt(root, id);
+		valid_any = valid_ctxs || valid_dbs;
+		valid_all = valid_any && valid_ggtt && valid_ctxs && pf_validate_config(root, id);
+	}
+
 	if (HAS_LMEM(iov_to_i915(iov))) {
 		valid_lmem = pf_is_config_valid_lmem(iov, id);
 		valid_any = valid_any || valid_lmem;
