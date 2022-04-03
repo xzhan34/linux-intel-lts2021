@@ -671,6 +671,7 @@ static int pf_guc_accepts_extended_update_config_hxg(void *arg)
 #define IOV_VF_CFG_KLVS(config) \
 	config(GGTT_START) \
 	config(GGTT_SIZE) \
+	config(LMEM_SIZE) \
 	config(NUM_CONTEXTS) \
 	config(BEGIN_CONTEXT_ID) \
 	config(NUM_DOORBELLS) \
