@@ -2640,4 +2640,5 @@ int intel_iov_provisioning_force_vgt_mode(struct intel_iov *iov)
 	return 0;
 }
 
+#include "selftests/selftest_live_iov_provisioning.c"
 #endif /* CONFIG_DRM_I915_SELFTEST */
