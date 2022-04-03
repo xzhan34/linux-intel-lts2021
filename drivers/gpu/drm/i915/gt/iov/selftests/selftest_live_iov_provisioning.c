@@ -676,6 +676,7 @@ static int pf_guc_accepts_extended_update_config_hxg(void *arg)
 	config(BEGIN_CONTEXT_ID) \
 	config(NUM_DOORBELLS) \
 	config(BEGIN_DOORBELL_ID) \
+	config(TILE_MASK) \
 	config(EXEC_QUANTUM) \
 	config(PREEMPT_TIMEOUT) \
 	IOV_THRESHOLDS(config_threshold) \
@@ -1051,17 +1052,22 @@ int selftest_live_iov_provisioning(struct drm_i915_private *i915)
 		return -EHOSTDOWN;
 
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
-		struct intel_iov *iov = &to_gt(i915)->iov;
+		struct intel_gt *gt;
+		unsigned int id;
 
-		err = intel_iov_provisioning_force_vgt_mode(iov);
-		if (err)
-			break;
-		err = intel_iov_live_subtests(pf_policy_tests, iov);
-		if (err)
-			break;
-		err = intel_iov_live_subtests(pf_config_tests, iov);
-		if (err)
-			break;
+		for_each_gt(gt, i915, id) {
+			struct intel_iov *iov = &gt->iov;
+
+			err = intel_iov_provisioning_force_vgt_mode(iov);
+			if (err)
+				break;
+			err = intel_iov_live_subtests(pf_policy_tests, iov);
+			if (err)
+				break;
+			err = intel_iov_live_subtests(pf_config_tests, iov);
+			if (err)
+				break;
+		}
 	}
 
 	return err;
