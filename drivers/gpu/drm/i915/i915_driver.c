@@ -447,11 +447,12 @@ ri_prefix##done:
  * part of an 'always on' power well by design, so we don't need to worry about
  * forcewake while reading it.
  */
-static void intel_ipver_early_init(struct drm_i915_private *i915)
+static void intel_ipver_early_init(struct drm_i915_private *i915,
+				   const struct intel_device_info *devinfo)
 {
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
 	void __iomem *addr;
-	u32 ver;
+	u32 ver = 0;
 
 	if (!HAS_GMD_ID(i915)) {
 		drm_WARN_ON(&i915->drm, INTEL_INFO(i915)->graphics.ver > 12);
@@ -467,6 +468,11 @@ static void intel_ipver_early_init(struct drm_i915_private *i915)
 	}
 
 	IP_VER_READ(i915_mmio_reg_offset(GMD_ID_GRAPHICS), graphics);
+	/* Wa_22012778468:mtl */
+	if (ver == 0x0 && devinfo->platform == INTEL_METEORLAKE) {
+		RUNTIME_INFO(i915)->graphics.ver = 12;
+		RUNTIME_INFO(i915)->graphics.rel = 70;
+	}
 	IP_VER_READ(i915_mmio_reg_offset(GMD_ID_DISPLAY), display);
 	IP_VER_READ(MTL_MEDIA_GSI_BASE + i915_mmio_reg_offset(GMD_ID_GRAPHICS),
 		    media);
@@ -1413,7 +1419,7 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 * initialization process (as soon as we can peek into the MMIO BAR),
 	 * even before we setup regular MMIO access.
 	 */
-	intel_ipver_early_init(i915);
+	intel_ipver_early_init(i915, match_info);
 
 	ret = i915_driver_early_probe(i915, match_info);
 	if (ret < 0)
