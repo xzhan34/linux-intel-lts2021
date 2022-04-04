@@ -707,10 +707,22 @@ static int gen12_vf_reset(struct intel_gt *gt,
 	if (unlikely(err)) {
 		drm_dbg(&gt->i915->drm, "VF reset not completed (%pe)\n",
 			ERR_PTR(err));
-	} else if (FIELD_GET(GUC_HXG_MSG_0_TYPE, response) != GUC_HXG_TYPE_RESPONSE_SUCCESS) {
+	} else if (FIELD_GET(GUC_HXG_MSG_0_TYPE, response) == GUC_HXG_TYPE_RESPONSE_SUCCESS) {
+		/* success - no need for action */
+	} else if (FIELD_GET(GUC_HXG_MSG_0_TYPE, response) == GUC_HXG_TYPE_RESPONSE_FAILURE) {
+		if (FIELD_GET(GUC_HXG_FAILURE_MSG_0_ERROR, response) ==
+		    INTEL_GUC_RESPONSE_VF_MIGRATED)
+			i915_sriov_vf_start_migration_recovery(gt->i915);
+			/*
+			 * We can ignore the fact that reset was not performed here, because the
+			 * post-migration recovery will start with another reset.
+			 */
+		else
+			drm_dbg(&gt->i915->drm, "VF reset returned failure, error=%#x (%#x)\n",
+				FIELD_GET(GUC_HXG_FAILURE_MSG_0_ERROR, response), response);
+	} else
 		drm_dbg(&gt->i915->drm, "VF reset not completed (%#x)\n",
 			response);
-	}
 	return 0;
 }
 
