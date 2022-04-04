@@ -535,7 +535,7 @@ static int init_ggtt(struct i915_ggtt *ggtt)
 		 * the only likely reason for failure to insert is a driver
 		 * bug, which we expect to cause other failures...
 		 */
-		ggtt->error_capture.size = I915_GTT_PAGE_SIZE;
+		ggtt->error_capture.size = 2 * I915_GTT_PAGE_SIZE;
 		ggtt->error_capture.color = I915_COLOR_UNEVICTABLE;
 		if (drm_mm_reserve_node(&ggtt->vm.mm, &ggtt->error_capture))
 			drm_mm_insert_node_in_range(&ggtt->vm.mm,
@@ -545,11 +545,20 @@ static int init_ggtt(struct i915_ggtt *ggtt)
 						    0, ggtt->mappable_end,
 						    DRM_MM_INSERT_LOW);
 	}
-	if (drm_mm_node_allocated(&ggtt->error_capture))
+	if (drm_mm_node_allocated(&ggtt->error_capture)) {
+		u64 start = ggtt->error_capture.start;
+		u64 end = ggtt->error_capture.start + ggtt->error_capture.size;
+
 		drm_dbg(&ggtt->vm.i915->drm,
 			"Reserved GGTT:[%llx, %llx] for use by error capture\n",
-			ggtt->error_capture.start,
-			ggtt->error_capture.start + ggtt->error_capture.size);
+			start, end);
+
+		/*
+		 * During error capture, memcpying from the GGTT is triggering a
+		 * prefetch of the following PTE, so fill it with a guard page.
+		 */
+		ggtt->vm.scratch_range(&ggtt->vm, start, end);
+	}
 
 	/*
 	 * The upper portion of the GuC address space has a sizeable hole
