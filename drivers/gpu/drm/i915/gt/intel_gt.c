@@ -1384,7 +1384,7 @@ static unsigned int gt_mask(struct drm_i915_private *i915)
 
 	if (!HAS_EXTRA_GT_LIST(i915))
 		mask = BIT(0);
-	else if (IS_SRIOV_VF(i915))
+	else if (IS_SRIOV_VF(i915) && HAS_REMOTE_TILES(i915))
 		mask = to_root_gt(i915)->iov.vf.config.tile_mask;
 	else
 		mask = GENMASK(gt_count(i915) - 1, 0);
