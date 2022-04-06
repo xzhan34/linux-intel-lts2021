@@ -1560,6 +1560,9 @@ IS_SUBPLATFORM(const struct drm_i915_private *i915,
 			    INTEL_INFO(dev_priv)->has_pxp) && \
 			    VDBOX_MASK(to_gt(dev_priv)))
 
+#define HAS_MEMORY_IRQ_STATUS(dev_priv) \
+	(INTEL_INFO(dev_priv)->has_iov_memirq && IS_SRIOV_VF(dev_priv))
+
 #define HAS_GMCH(dev_priv) (INTEL_INFO(dev_priv)->display.has_gmch)
 
 #define HAS_LSPCON(dev_priv) (IS_DISPLAY_VER(dev_priv, 9, 10))
