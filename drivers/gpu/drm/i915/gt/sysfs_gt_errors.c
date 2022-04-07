@@ -7,16 +7,25 @@
 #include "intel_gt_sysfs.h"
 #include "sysfs_gt_errors.h"
 
-struct ext_attr {
+#include "gt/intel_gt.h"
+#include "gt/intel_gt_requests.h"
+
+static ssize_t
+i915_sysfs_show(struct device *dev, struct device_attribute *attr, char *buf);
+
+typedef ssize_t (*show)(struct device *dev, struct device_attribute *attr, char *buf);
+
+struct i915_ext_attr {
 	struct device_attribute attr;
 	unsigned long id;
+	show i915_show;
 };
 
 static ssize_t gt_driver_error_show(struct device *dev,
 				    struct device_attribute *attr,
 				    char *buf)
 {
-	struct ext_attr *ea = container_of(attr, struct ext_attr, attr);
+	struct i915_ext_attr *ea = container_of(attr, struct i915_ext_attr, attr);
 	struct intel_gt *gt = kobj_to_gt(&dev->kobj);
 
 	if (GEM_WARN_ON(ea->id > ARRAY_SIZE(gt->errors.driver)))
@@ -29,7 +38,7 @@ static ssize_t sgunit_error_show(struct device *dev,
 			     struct device_attribute *attr,
 			     char *buf)
 {
-	struct ext_attr *ea = container_of(attr, struct ext_attr, attr);
+	struct i915_ext_attr *ea = container_of(attr, struct i915_ext_attr, attr);
 	struct intel_gt *gt = kobj_to_gt(&dev->kobj);
 
 	return sysfs_emit(buf, "%lu\n", gt->errors.sgunit[ea->id]);
@@ -39,7 +48,7 @@ static ssize_t soc_error_show(struct device *dev,
 			      struct device_attribute *attr,
 			      char *buf)
 {
-	struct ext_attr *ea = container_of(attr, struct ext_attr, attr);
+	struct i915_ext_attr *ea = container_of(attr, struct i915_ext_attr, attr);
 	struct intel_gt *gt = kobj_to_gt(&dev->kobj);
 
 	return sysfs_emit(buf, "%lu\n", xa_to_value(xa_load(&gt->errors.soc, ea->id)));
@@ -49,7 +58,7 @@ static ssize_t gt_error_show(struct device *dev,
 			     struct device_attribute *attr,
 			     char *buf)
 {
-	struct ext_attr *ea = container_of(attr, struct ext_attr, attr);
+	struct i915_ext_attr *ea = container_of(attr, struct i915_ext_attr, attr);
 	struct intel_gt *gt = kobj_to_gt(&dev->kobj);
 
 	return sysfs_emit(buf, "%lu\n", gt->errors.hw[ea->id]);
@@ -83,25 +92,45 @@ static ssize_t eu_attention_show(struct device *dev,
 	return sysfs_emit(buf, "%u\n", atomic_read(&gt->reset.eu_attention_count));
 }
 
+static ssize_t
+i915_sysfs_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	ssize_t value;
+	struct i915_ext_attr *ea = container_of(attr, struct i915_ext_attr, attr);
+	struct intel_gt *gt = kobj_to_gt(&dev->kobj);
+
+	pvc_wa_disallow_rc6(gt->i915);
+
+	value = ea->i915_show(dev, attr, buf);
+
+	pvc_wa_allow_rc6(gt->i915);
+
+	return value;
+}
+
 #define SGUNIT_SYSFS_ERROR_ATTR_RO(_name,  _id) \
-	struct ext_attr dev_attr_##_name = \
-	{ __ATTR(_name, 0444, sgunit_error_show, NULL), (_id)}
+	struct i915_ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, 0444, i915_sysfs_show, NULL), (_id), sgunit_error_show}
 
 #define SOC_SYSFS_ERROR_ATTR_RO(_name,  _id) \
-	struct ext_attr dev_attr_##_name = \
-	{ __ATTR(_name, 0444, soc_error_show, NULL), (_id)}
+	struct i915_ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, 0444, i915_sysfs_show, NULL), (_id), soc_error_show}
 
 #define GT_SYSFS_ERROR_ATTR_RO(_name,  _id) \
-	struct ext_attr dev_attr_##_name = \
-	{ __ATTR(_name, 0444, gt_error_show, NULL), (_id)}
+	struct i915_ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, 0444, i915_sysfs_show, NULL), (_id), gt_error_show}
 
 #define GSC_SYSFS_ERROR_ATTR_RO(_name,  _id) \
 	struct ext_attr dev_attr_##_name = \
 	{ __ATTR(_name, 0444, gsc_error_show, NULL), (_id)}
 
 #define GT_DRIVER_SYSFS_ERROR_ATTR_RO(_name,  _id) \
-	struct ext_attr dev_attr_##_name = \
-	{ __ATTR(_name, 0444, gt_driver_error_show, NULL), (_id)}
+	struct i915_ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, 0444, i915_sysfs_show, NULL), (_id), gt_driver_error_show}
+
+#define I915_DEVICE_ATTR_RO(_name, _id) \
+	struct i915_ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, 0444, i915_sysfs_show, NULL), (_id), _name##_show}
 
 static GSC_SYSFS_ERROR_ATTR_RO(gsc_correctable_sram_ecc, INTEL_GSC_HW_ERROR_COR_SRAM_ECC);
 static GSC_SYSFS_ERROR_ATTR_RO(gsc_nonfatal_mia_shutdown, INTEL_GSC_HW_ERROR_UNCOR_MIA_SHUTDOWN);
@@ -184,8 +213,8 @@ static SOC_SYSFS_ERROR_ATTR_RO(soc_fatal_hbm_ss1_13, SOC_ERR_INDEX(INTEL_GT_SOC_
 static SOC_SYSFS_ERROR_ATTR_RO(soc_fatal_hbm_ss1_14, SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_HBM_SS1_14));
 static SOC_SYSFS_ERROR_ATTR_RO(soc_fatal_hbm_ss1_15, SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_HBM_SS1_15));
 
-static DEVICE_ATTR_RO(engine_reset);
-static DEVICE_ATTR_RO(eu_attention);
+static I915_DEVICE_ATTR_RO(engine_reset, 0);
+static I915_DEVICE_ATTR_RO(eu_attention, 0);
 
 static GT_DRIVER_SYSFS_ERROR_ATTR_RO(driver_ggtt, INTEL_GT_DRIVER_ERROR_GGTT);
 static GT_DRIVER_SYSFS_ERROR_ATTR_RO(driver_engine_other, INTEL_GT_DRIVER_ERROR_ENGINE_OTHER);
@@ -211,8 +240,8 @@ static const struct attribute *gt_error_attrs[] = {
 	&dev_attr_fatal_slm.attr.attr,
 	&dev_attr_fatal_eu_ic.attr.attr,
 	&dev_attr_fatal_eu_grf.attr.attr,
-	&dev_attr_engine_reset.attr,
-	&dev_attr_eu_attention.attr,
+	&dev_attr_engine_reset.attr.attr,
+	&dev_attr_eu_attention.attr.attr,
 	&dev_attr_sgunit_correctable.attr.attr,
 	&dev_attr_sgunit_nonfatal.attr.attr,
 	&dev_attr_sgunit_fatal.attr.attr,

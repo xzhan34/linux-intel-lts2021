@@ -53,6 +53,40 @@
  *   2.5 / 0.00390625 -> 0x0280
  */
 
+static ssize_t
+i915_sysfs_show(struct device *dev,
+		struct device_attribute *attr, char *buf);
+
+static ssize_t
+i915_sysfs_store(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count);
+
+typedef ssize_t (*show)(struct device *dev, struct device_attribute *attr,
+		char *buf);
+typedef ssize_t (*store)(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count);
+
+struct i915_ext_attr {
+	struct device_attribute attr;
+	show i915_show;
+	store i915_store;
+};
+
+static ssize_t
+i915_kobj_sysfs_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf);
+
+typedef ssize_t (*kobj_show)(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf);
+typedef ssize_t (*kobj_store)(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf, size_t count);
+
+struct i915_kobj_ext_attr {
+	struct kobj_attribute attr;
+	kobj_show i915_kobj_show;
+	kobj_store i915_kobj_store;
+};
+
 #define U8_8_VAL_MASK           0xffff
 #define U8_8_SCALE_TO_VALUE     "0.00390625"
 
@@ -169,28 +203,41 @@ static ssize_t media_rc6_residency_ms_show(struct device *dev,
 	return scnprintf(buff, PAGE_SIZE, "%u\n", rc6_residency);
 }
 
+#define I915_DEVICE_ATTR_RO(_name, _show) \
+	struct i915_ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, 0444, i915_sysfs_show, NULL), _show, NULL}
+
+#define I915_DEVICE_ATTR_WO(_name, _store) \
+	struct i915_ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, 0200, NULL, i915_sysfs_store), NULL, _store}
+
+
+#define I915_DEVICE_ATTR_RW(_name, _mode, _show, _store) \
+	struct i915_ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, _mode, i915_sysfs_show, i915_sysfs_store),  _show, _store}
+
 /* sysfs dual-location rc6 files under directories <dev>/power/ and <dev>/gt/gt<i>/ */
 
-static DEVICE_ATTR_RW(rc6_enable);
-static DEVICE_ATTR_RO(rc6_residency_ms);
-static DEVICE_ATTR_RO(rc6p_residency_ms);
-static DEVICE_ATTR_RO(rc6pp_residency_ms);
-static DEVICE_ATTR_RO(media_rc6_residency_ms);
+static I915_DEVICE_ATTR_RW(rc6_enable, 0644, rc6_enable_show, rc6_enable_store);
+static I915_DEVICE_ATTR_RO(rc6_residency_ms, rc6_residency_ms_show);
+static I915_DEVICE_ATTR_RO(rc6p_residency_ms, rc6p_residency_ms_show);
+static I915_DEVICE_ATTR_RO(rc6pp_residency_ms, rc6pp_residency_ms_show);
+static I915_DEVICE_ATTR_RO(media_rc6_residency_ms, media_rc6_residency_ms_show);
 
 static struct attribute *rc6_attrs[] = {
-	&dev_attr_rc6_enable.attr,
-	&dev_attr_rc6_residency_ms.attr,
+	&dev_attr_rc6_enable.attr.attr,
+	&dev_attr_rc6_residency_ms.attr.attr,
 	NULL
 };
 
 static struct attribute *rc6p_attrs[] = {
-	&dev_attr_rc6p_residency_ms.attr,
-	&dev_attr_rc6pp_residency_ms.attr,
+	&dev_attr_rc6p_residency_ms.attr.attr,
+	&dev_attr_rc6pp_residency_ms.attr.attr,
 	NULL
 };
 
 static struct attribute *media_rc6_attrs[] = {
-	&dev_attr_media_rc6_residency_ms.attr,
+	&dev_attr_media_rc6_residency_ms.attr.attr,
 	NULL
 };
 
@@ -446,21 +493,24 @@ static ssize_t RPn_freq_mhz_show(struct device *dev,
 }
 
 /* sysfs dual-location files <dev>/vlv_rpe_freq_mhz and <dev>/gt/gt0/vlv_rpe_freq_mhz */
-static DEVICE_ATTR_RO(vlv_rpe_freq_mhz);
+static I915_DEVICE_ATTR_RO(vlv_rpe_freq_mhz, vlv_rpe_freq_mhz_show);
 
 /* sysfs dual-location files <dev>/gt_* and <dev>/gt/gt<i>/rps_* */
 
-#define INTEL_GT_RPS_SYSFS_ATTR(_name, __mode, __show, __store) \
-	static struct device_attribute dev_attr_gt_##_name =    \
-		__ATTR(gt_##_name, __mode, __show, __store);    \
-	static struct device_attribute dev_attr_rps_##_name =   \
-		__ATTR(rps_##_name, __mode, __show, __store)
+#define INTEL_GT_RPS_SYSFS_ATTR(_name, __mode, __show, __store, i915_show, i915_store) \
+	static struct i915_ext_attr dev_attr_gt_##_name =    \
+		{__ATTR(gt_##_name, __mode, __show, __store), i915_show, i915_store};    \
+	static struct i915_ext_attr dev_attr_rps_##_name =   \
+		{__ATTR(rps_##_name, __mode, __show, __store), i915_show, i915_store}
 
 /* Note: rps_ and gt_ share common show and store functions. */
 #define INTEL_GT_RPS_SYSFS_ATTR_RO(_name)				\
-		INTEL_GT_RPS_SYSFS_ATTR(_name, 0444, _name##_show, NULL)
+		INTEL_GT_RPS_SYSFS_ATTR(_name, 0444, i915_sysfs_show, NULL,\
+					_name##_show, NULL)
 #define INTEL_GT_RPS_SYSFS_ATTR_RW(_name)				\
-		INTEL_GT_RPS_SYSFS_ATTR(_name, 0644, _name##_show, _name##_store)
+		INTEL_GT_RPS_SYSFS_ATTR(_name, 0644, i915_sysfs_show,	\
+					i915_sysfs_store, _name##_show,	\
+					_name##_store)
 
 INTEL_GT_RPS_SYSFS_ATTR_RO(act_freq_mhz);
 INTEL_GT_RPS_SYSFS_ATTR_RO(cur_freq_mhz);
@@ -472,14 +522,14 @@ INTEL_GT_RPS_SYSFS_ATTR_RO(RP1_freq_mhz);
 INTEL_GT_RPS_SYSFS_ATTR_RO(RPn_freq_mhz);
 
 #define GEN6_ATTR(s) { \
-		&dev_attr_##s##_act_freq_mhz.attr, \
-		&dev_attr_##s##_cur_freq_mhz.attr, \
-		&dev_attr_##s##_boost_freq_mhz.attr, \
-		&dev_attr_##s##_max_freq_mhz.attr, \
-		&dev_attr_##s##_min_freq_mhz.attr, \
-		&dev_attr_##s##_RP0_freq_mhz.attr, \
-		&dev_attr_##s##_RP1_freq_mhz.attr, \
-		&dev_attr_##s##_RPn_freq_mhz.attr, \
+		&dev_attr_##s##_act_freq_mhz.attr.attr, \
+		&dev_attr_##s##_cur_freq_mhz.attr.attr, \
+		&dev_attr_##s##_boost_freq_mhz.attr.attr, \
+		&dev_attr_##s##_max_freq_mhz.attr.attr, \
+		&dev_attr_##s##_min_freq_mhz.attr.attr, \
+		&dev_attr_##s##_RP0_freq_mhz.attr.attr, \
+		&dev_attr_##s##_RP1_freq_mhz.attr.attr, \
+		&dev_attr_##s##_RPn_freq_mhz.attr.attr, \
 		NULL, \
 	}
 
@@ -600,32 +650,32 @@ static ssize_t throttle_reason_vr_tdc_show(struct device *dev,
 }
 
 /* dgfx sysfs files under directory <dev>/gt/gt<i>/ */
-static DEVICE_ATTR_RO(rapl_PL1_freq_mhz);
+static I915_DEVICE_ATTR_RO(rapl_PL1_freq_mhz, rapl_PL1_freq_mhz_show);
 
 /* gen12+ sysfs files under directory <dev>/gt/gt<i>/ */
 
-static DEVICE_ATTR_RO(punit_req_freq_mhz);
-static DEVICE_ATTR_RO(throttle_reason_status);
-static DEVICE_ATTR_RO(throttle_reason_pl1);
-static DEVICE_ATTR_RO(throttle_reason_pl2);
-static DEVICE_ATTR_RO(throttle_reason_pl4);
-static DEVICE_ATTR_RO(throttle_reason_thermal);
-static DEVICE_ATTR_RO(throttle_reason_prochot);
-static DEVICE_ATTR_RO(throttle_reason_ratl);
-static DEVICE_ATTR_RO(throttle_reason_vr_thermalert);
-static DEVICE_ATTR_RO(throttle_reason_vr_tdc);
+static I915_DEVICE_ATTR_RO(punit_req_freq_mhz, punit_req_freq_mhz_show);
+static I915_DEVICE_ATTR_RO(throttle_reason_status, throttle_reason_status_show);
+static I915_DEVICE_ATTR_RO(throttle_reason_pl1, throttle_reason_pl1_show);
+static I915_DEVICE_ATTR_RO(throttle_reason_pl2, throttle_reason_pl2_show);
+static I915_DEVICE_ATTR_RO(throttle_reason_pl4, throttle_reason_pl4_show);
+static I915_DEVICE_ATTR_RO(throttle_reason_thermal, throttle_reason_thermal_show);
+static I915_DEVICE_ATTR_RO(throttle_reason_prochot, throttle_reason_prochot_show);
+static I915_DEVICE_ATTR_RO(throttle_reason_ratl, throttle_reason_ratl_show);
+static I915_DEVICE_ATTR_RO(throttle_reason_vr_thermalert, throttle_reason_vr_thermalert_show);
+static I915_DEVICE_ATTR_RO(throttle_reason_vr_tdc, throttle_reason_vr_tdc_show);
 
 static const struct attribute *freq_attrs[] = {
-	&dev_attr_punit_req_freq_mhz.attr,
-	&dev_attr_throttle_reason_status.attr,
-	&dev_attr_throttle_reason_pl1.attr,
-	&dev_attr_throttle_reason_pl2.attr,
-	&dev_attr_throttle_reason_pl4.attr,
-	&dev_attr_throttle_reason_thermal.attr,
-	&dev_attr_throttle_reason_prochot.attr,
-	&dev_attr_throttle_reason_ratl.attr,
-	&dev_attr_throttle_reason_vr_thermalert.attr,
-	&dev_attr_throttle_reason_vr_tdc.attr,
+	&dev_attr_punit_req_freq_mhz.attr.attr,
+	&dev_attr_throttle_reason_status.attr.attr,
+	&dev_attr_throttle_reason_pl1.attr.attr,
+	&dev_attr_throttle_reason_pl2.attr.attr,
+	&dev_attr_throttle_reason_pl4.attr.attr,
+	&dev_attr_throttle_reason_thermal.attr.attr,
+	&dev_attr_throttle_reason_prochot.attr.attr,
+	&dev_attr_throttle_reason_ratl.attr.attr,
+	&dev_attr_throttle_reason_vr_thermalert.attr.attr,
+	&dev_attr_throttle_reason_vr_tdc.attr.attr,
 	NULL
 };
 
@@ -674,12 +724,12 @@ static ssize_t mem_RPn_freq_mhz_show(struct device *dev,
 	return sysfs_emit(buff, "%u\n", val);
 }
 
-static DEVICE_ATTR_RO(mem_RP0_freq_mhz);
-static DEVICE_ATTR_RO(mem_RPn_freq_mhz);
+static I915_DEVICE_ATTR_RO(mem_RP0_freq_mhz, mem_RP0_freq_mhz_show);
+static I915_DEVICE_ATTR_RO(mem_RPn_freq_mhz, mem_RPn_freq_mhz_show);
 
 static const struct attribute *mem_freq_attrs[] = {
-	&dev_attr_mem_RP0_freq_mhz.attr,
-	&dev_attr_mem_RPn_freq_mhz.attr,
+	&dev_attr_mem_RP0_freq_mhz.attr.attr,
+	&dev_attr_mem_RPn_freq_mhz.attr.attr,
 	NULL
 };
 
@@ -922,34 +972,34 @@ static ssize_t media_act_freq_mhz_show(struct device *dev,
 	return sysfs_emit(buff, "%u\n", val);
 }
 
-static DEVICE_ATTR_RW(base_freq_factor);
-static struct device_attribute dev_attr_base_freq_factor_scale =
-	__ATTR(base_freq_factor.scale, 0444, freq_factor_scale_show, NULL);
-static DEVICE_ATTR_RO(base_RP0_freq_mhz);
-static DEVICE_ATTR_RO(base_RPn_freq_mhz);
-static DEVICE_ATTR_RO(base_act_freq_mhz);
+static I915_DEVICE_ATTR_RW(base_freq_factor, 0644, base_freq_factor_show, base_freq_factor_store);
+static struct i915_ext_attr dev_attr_base_freq_factor_scale =
+	{__ATTR(base_freq_factor.scale, 0444, i915_sysfs_show, NULL), freq_factor_scale_show};
+static I915_DEVICE_ATTR_RO(base_RP0_freq_mhz, base_RP0_freq_mhz_show);
+static I915_DEVICE_ATTR_RO(base_RPn_freq_mhz, base_RPn_freq_mhz_show);
+static I915_DEVICE_ATTR_RO(base_act_freq_mhz, base_act_freq_mhz_show);
 
-static DEVICE_ATTR_RW(media_freq_factor);
-static struct device_attribute dev_attr_media_freq_factor_scale =
-	__ATTR(media_freq_factor.scale, 0444, freq_factor_scale_show, NULL);
-static DEVICE_ATTR_RO(media_RP0_freq_mhz);
-static DEVICE_ATTR_RO(media_RPn_freq_mhz);
-static DEVICE_ATTR_RO(media_act_freq_mhz);
+static I915_DEVICE_ATTR_RW(media_freq_factor, 0644, media_freq_factor_show, media_freq_factor_store);
+static struct i915_ext_attr dev_attr_media_freq_factor_scale =
+	{__ATTR(media_freq_factor.scale, 0444, i915_sysfs_show, NULL), freq_factor_scale_show};
+static I915_DEVICE_ATTR_RO(media_RP0_freq_mhz, media_RP0_freq_mhz_show);
+static I915_DEVICE_ATTR_RO(media_RPn_freq_mhz, media_RPn_freq_mhz_show);
+static I915_DEVICE_ATTR_RO(media_act_freq_mhz, media_act_freq_mhz_show);
 
 static const struct attribute *pvc_perf_power_attrs[] = {
-	&dev_attr_base_freq_factor.attr,
-	&dev_attr_base_freq_factor_scale.attr,
-	&dev_attr_base_RP0_freq_mhz.attr,
-	&dev_attr_base_RPn_freq_mhz.attr,
-	&dev_attr_base_act_freq_mhz.attr,
+	&dev_attr_base_freq_factor.attr.attr,
+	&dev_attr_base_freq_factor_scale.attr.attr,
+	&dev_attr_base_RP0_freq_mhz.attr.attr,
+	&dev_attr_base_RPn_freq_mhz.attr.attr,
+	&dev_attr_base_act_freq_mhz.attr.attr,
 	NULL
 };
 
 static const struct attribute *media_perf_power_attrs[] = {
-	&dev_attr_media_freq_factor.attr,
-	&dev_attr_media_freq_factor_scale.attr,
-	&dev_attr_media_RP0_freq_mhz.attr,
-	&dev_attr_media_RPn_freq_mhz.attr,
+	&dev_attr_media_freq_factor.attr.attr,
+	&dev_attr_media_freq_factor_scale.attr.attr,
+	&dev_attr_media_RP0_freq_mhz.attr.attr,
+	&dev_attr_media_RPn_freq_mhz.attr.attr,
 	NULL
 };
 
@@ -985,11 +1035,11 @@ static ssize_t sys_pwr_balance_show(struct device *dev,
 
 	return scnprintf(buf, PAGE_SIZE, "%d\n", val );
 }
-static DEVICE_ATTR_RW(sys_pwr_balance);
+static I915_DEVICE_ATTR_RW(sys_pwr_balance, 0644, sys_pwr_balance_show, sys_pwr_balance_store);
 
 /* sysfs file <dev>/sys_pwr_balance */
 static const struct attribute * const sys_pwr_balance_attrs[] = {
-	&dev_attr_sys_pwr_balance.attr,
+	&dev_attr_sys_pwr_balance.attr.attr,
 	NULL
 };
 
@@ -1001,8 +1051,9 @@ default_min_freq_mhz_show(struct kobject *kobj, struct kobj_attribute *attr, cha
 	return sysfs_emit(buf, "%d\n", gt->rps_defaults.min_freq);
 }
 
-static struct kobj_attribute default_min_freq_mhz =
-__ATTR(rps_min_freq_mhz, 0444, default_min_freq_mhz_show, NULL);
+static struct i915_kobj_ext_attr default_min_freq_mhz = {
+	__ATTR(rps_min_freq_mhz, 0444, i915_kobj_sysfs_show, NULL),
+	default_min_freq_mhz_show, NULL};
 
 static ssize_t
 default_max_freq_mhz_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -1012,8 +1063,9 @@ default_max_freq_mhz_show(struct kobject *kobj, struct kobj_attribute *attr, cha
 	return sysfs_emit(buf, "%d\n", gt->rps_defaults.max_freq);
 }
 
-static struct kobj_attribute default_max_freq_mhz =
-__ATTR(rps_max_freq_mhz, 0444, default_max_freq_mhz_show, NULL);
+static struct i915_kobj_ext_attr default_max_freq_mhz = {
+	__ATTR(rps_max_freq_mhz, 0444, i915_kobj_sysfs_show, NULL),
+	default_max_freq_mhz_show, NULL};
 
 static ssize_t
 default_boost_freq_mhz_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -1023,8 +1075,9 @@ default_boost_freq_mhz_show(struct kobject *kobj, struct kobj_attribute *attr, c
 	return sysfs_emit(buf, "%d\n", gt->rps_defaults.boost_freq);
 }
 
-static struct kobj_attribute default_boost_freq_mhz =
-__ATTR(rps_boost_freq_mhz, 0444, default_boost_freq_mhz_show, NULL);
+static struct i915_kobj_ext_attr default_boost_freq_mhz = {
+	__ATTR(rps_boost_freq_mhz, 0444, i915_kobj_sysfs_show, NULL),
+	default_boost_freq_mhz_show, NULL};
 
 static ssize_t
 default_media_freq_factor_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -1035,8 +1088,9 @@ default_media_freq_factor_show(struct kobject *kobj, struct kobj_attribute *attr
 			  media_ratio_mode_to_factor(gt->rps_defaults.media_ratio_mode));
 }
 
-static struct kobj_attribute default_media_freq_factor =
-__ATTR(media_freq_factor, 0444, default_media_freq_factor_show, NULL);
+static struct i915_kobj_ext_attr default_media_freq_factor = {
+	__ATTR(media_freq_factor, 0444, i915_kobj_sysfs_show, NULL),
+	default_media_freq_factor_show, NULL};
 
 static ssize_t
 default_base_freq_factor_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -1046,15 +1100,68 @@ default_base_freq_factor_show(struct kobject *kobj, struct kobj_attribute *attr,
 	return sysfs_emit(buf, "%d\n", gt->rps_defaults.base_freq_factor);
 }
 
-static struct kobj_attribute default_base_freq_factor =
-__ATTR(base_freq_factor, 0444, default_base_freq_factor_show, NULL);
+static struct i915_kobj_ext_attr default_base_freq_factor = {
+	__ATTR(base_freq_factor, 0444, i915_kobj_sysfs_show, NULL),
+	default_base_freq_factor_show, NULL};
 
 static const struct attribute * const rps_defaults_attrs[] = {
-	&default_min_freq_mhz.attr,
-	&default_max_freq_mhz.attr,
-	&default_boost_freq_mhz.attr,
+	&default_min_freq_mhz.attr.attr,
+	&default_max_freq_mhz.attr.attr,
+	&default_boost_freq_mhz.attr.attr,
 	NULL
 };
+
+static ssize_t
+i915_sysfs_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	ssize_t value;
+	struct i915_ext_attr *ea = container_of(attr, struct i915_ext_attr, attr);
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+
+	/* Wa_16015476723 & Wa_16015666671 */
+	pvc_wa_disallow_rc6(gt->i915);
+
+	value = ea->i915_show(dev, attr, buf);
+
+	pvc_wa_allow_rc6(gt->i915);
+
+	return value;
+}
+
+static ssize_t
+i915_sysfs_store(struct device *dev, struct device_attribute *attr, const char
+		 *buf, size_t count)
+{
+	struct i915_ext_attr *ea = container_of(attr, struct i915_ext_attr, attr);
+	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(dev, attr->attr.name);
+
+	/* Wa_16015476723 & Wa_16015666671 */
+	pvc_wa_disallow_rc6(gt->i915);
+
+	count = ea->i915_store(dev, attr, buf, count);
+
+	pvc_wa_allow_rc6(gt->i915);
+
+	return count;
+}
+
+static ssize_t
+i915_kobj_sysfs_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	ssize_t value;
+	struct i915_kobj_ext_attr *ea = container_of(attr, struct
+						     i915_kobj_ext_attr, attr);
+	struct intel_gt *gt = kobj_to_gt(kobj->parent);
+
+	/* Wa_16015476723 & Wa_16015666671 */
+	pvc_wa_disallow_rc6(gt->i915);
+
+	value = ea->i915_kobj_show(kobj, attr, buf);
+
+	pvc_wa_allow_rc6(gt->i915);
+
+	return value;
+}
 
 static int add_rps_defaults(struct intel_gt *gt)
 {
@@ -1083,19 +1190,19 @@ static int intel_sysfs_rps_init_gt(struct intel_gt *gt, struct kobject *kobj)
 			return ret;
 
 		set_default_base_freq_factor(gt);
-		ret = sysfs_create_file(gt->sysfs_defaults, &default_base_freq_factor.attr);
+		ret = sysfs_create_file(gt->sysfs_defaults, &default_base_freq_factor.attr.attr);
 		if (ret)
 			return ret;
 	}
 
 	if (IS_PVC_BD_STEP(gt->i915, STEP_B0, STEP_FOREVER)) {
-		ret = sysfs_create_file(kobj, &dev_attr_media_act_freq_mhz.attr);
+		ret = sysfs_create_file(kobj, &dev_attr_media_act_freq_mhz.attr.attr);
 		if (ret)
 			return ret;
 	}
 
 	if (IS_DGFX(gt->i915)) {
-		ret = sysfs_create_file(kobj, &dev_attr_rapl_PL1_freq_mhz.attr);
+		ret = sysfs_create_file(kobj, &dev_attr_rapl_PL1_freq_mhz.attr.attr);
 		if (ret)
 			return ret;
 	}
@@ -1111,7 +1218,7 @@ static int intel_sysfs_rps_init_gt(struct intel_gt *gt, struct kobject *kobj)
 		if (ret)
 			return ret;
 
-		ret = sysfs_create_file(gt->sysfs_defaults, &default_media_freq_factor.attr);
+		ret = sysfs_create_file(gt->sysfs_defaults, &default_media_freq_factor.attr.attr);
 		if (ret)
 			return ret;
 	}
@@ -1133,7 +1240,7 @@ static int intel_sysfs_rps_init(struct intel_gt *gt, struct kobject *kobj)
 		return ret;
 
 	if (IS_VALLEYVIEW(gt->i915) || IS_CHERRYVIEW(gt->i915)) {
-		ret = sysfs_create_file(kobj, &dev_attr_vlv_rpe_freq_mhz.attr);
+		ret = sysfs_create_file(kobj, &dev_attr_vlv_rpe_freq_mhz.attr.attr);
 		if (ret)
 			return ret;
 	}
