@@ -3078,6 +3078,19 @@ general_render_compute_wa_init(struct intel_engine_cs *engine, struct i915_wa_li
 			   _MASKED_BIT_ENABLE(ENABLE_PREFETCH_INTO_IC),
 			   0 /* write-only, so skip validation */,
 			   true);
+
+	if (!RCS_MASK(engine->gt)) {
+		/*
+		 * EUs on compute engines can generate hardware status page
+		 * updates to a fused off render engine. Avoid these by always
+		 * keeping full mask for the fused off part as the default
+		 * mask can let updates happen and that leads to write into
+		 * ggtt that is not backed up by a real hardware status page.
+		 *
+		 *  Wa_18020744125
+		 */
+		wa_write(wal, RING_HWSTAM(RENDER_RING_BASE), ~0);
+	}
 }
 
 static void
