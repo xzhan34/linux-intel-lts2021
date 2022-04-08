@@ -68,7 +68,7 @@ static ssize_t gsc_error_show(struct device *dev,
 			      struct device_attribute *attr,
 			      char *buf)
 {
-	struct ext_attr *ea = container_of(attr, struct ext_attr, attr);
+	struct i915_ext_attr *ea = container_of(attr, struct i915_ext_attr, attr);
 	struct intel_gt *gt = kobj_to_gt(&dev->kobj);
 
 	return sysfs_emit(buf, "%lu\n", gt->errors.gsc_hw[ea->id]);
@@ -121,8 +121,8 @@ i915_sysfs_show(struct device *dev, struct device_attribute *attr, char *buf)
 	{ __ATTR(_name, 0444, i915_sysfs_show, NULL), (_id), gt_error_show}
 
 #define GSC_SYSFS_ERROR_ATTR_RO(_name,  _id) \
-	struct ext_attr dev_attr_##_name = \
-	{ __ATTR(_name, 0444, gsc_error_show, NULL), (_id)}
+	struct i915_ext_attr dev_attr_##_name = \
+	{ __ATTR(_name, 0444, i915_sysfs_show, NULL), (_id), gsc_error_show}
 
 #define GT_DRIVER_SYSFS_ERROR_ATTR_RO(_name,  _id) \
 	struct i915_ext_attr dev_attr_##_name = \

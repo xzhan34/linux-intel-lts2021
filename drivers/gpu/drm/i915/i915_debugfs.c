@@ -60,14 +60,9 @@
 #include "intel_mchbar_regs.h"
 #include "intel_pm.h"
 
-static inline struct drm_i915_private *node_to_i915(struct drm_info_node *node)
+static int i915_capabilities_show(struct seq_file *m, void *data)
 {
-	return to_i915(node->minor->dev);
-}
-
-static int i915_capabilities(struct seq_file *m, void *data)
-{
-	struct drm_i915_private *i915 = node_to_i915(m->private);
+	struct drm_i915_private *i915 = m->private;
 	struct drm_printer p = drm_seq_file_printer(m);
 	struct intel_gt *gt;
 	unsigned int id;
@@ -311,9 +306,9 @@ evict_stats(struct seq_file *m,
 	evict_stat(m, name, "out", &stats->out);
 }
 
-static int i915_gem_object_info(struct seq_file *m, void *data)
+static int i915_gem_object_info_show(struct seq_file *m, void *data)
 {
-	struct drm_i915_private *i915 = node_to_i915(m->private);
+	struct drm_i915_private *i915 = m->private;
 	struct intel_memory_region *mr;
 	enum intel_region_id id;
 	struct intel_gt *gt;
@@ -395,14 +390,9 @@ static int i915_gpu_info_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations i915_gpu_info_fops = {
-	.owner = THIS_MODULE,
-	.open = i915_gpu_info_open,
-	.read = gpu_state_read,
-	.llseek = default_llseek,
-	.release = gpu_state_release,
-};
-
+DEFINE_I915_RAW_ATTRIBUTE(i915_gpu_info_fops, i915_gpu_info_open,
+			  gpu_state_release, gpu_state_read,
+			  NULL, default_llseek);
 static ssize_t
 i915_error_state_write(struct file *filp,
 		       const char __user *ubuf,
@@ -432,19 +422,14 @@ static int i915_error_state_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations i915_error_state_fops = {
-	.owner = THIS_MODULE,
-	.open = i915_error_state_open,
-	.read = gpu_state_read,
-	.write = i915_error_state_write,
-	.llseek = default_llseek,
-	.release = gpu_state_release,
-};
+DEFINE_I915_RAW_ATTRIBUTE(i915_error_state_fops, i915_error_state_open,
+			  gpu_state_release, gpu_state_read,
+			  i915_error_state_write, default_llseek);
 #endif
 
-static int i915_frequency_info(struct seq_file *m, void *unused)
+static int i915_frequency_info_show(struct seq_file *m, void *unused)
 {
-	struct drm_i915_private *i915 = node_to_i915(m->private);
+	struct drm_i915_private *i915 = m->private;
 	struct intel_gt *gt = to_gt(i915);
 	struct drm_printer p = drm_seq_file_printer(m);
 
@@ -477,9 +462,9 @@ static const char *swizzle_string(unsigned swizzle)
 	return "bug";
 }
 
-static int i915_swizzle_info(struct seq_file *m, void *data)
+static int i915_swizzle_info_show(struct seq_file *m, void *data)
 {
-	struct drm_i915_private *dev_priv = node_to_i915(m->private);
+	struct drm_i915_private *dev_priv = m->private;
 	struct intel_uncore *uncore = &dev_priv->uncore;
 	intel_wakeref_t wakeref;
 
@@ -530,9 +515,9 @@ static int i915_swizzle_info(struct seq_file *m, void *data)
 	return 0;
 }
 
-static int i915_rps_boost_info(struct seq_file *m, void *data)
+static int i915_rps_boost_info_show(struct seq_file *m, void *data)
 {
-	struct drm_i915_private *dev_priv = node_to_i915(m->private);
+	struct drm_i915_private *dev_priv = m->private;
 	struct intel_rps *rps = &to_gt(dev_priv)->rps;
 
 	seq_printf(m, "RPS enabled? %s\n", str_yes_no(intel_rps_is_enabled(rps)));
@@ -594,7 +579,7 @@ static int i915_runtime_dump_child_status(struct device *dev, void *data)
 }
 
 static void config_pm_dump(struct seq_file *m) {
-	struct drm_i915_private *i915 = node_to_i915(m->private);
+	struct drm_i915_private *i915 = m->private;
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
 
 	seq_printf(m, "Usage count: %d\n",
@@ -612,9 +597,9 @@ static int config_pm_dump(struct seq_file *m) {
 
 #endif /* CONFIG_PM */
 
-static int i915_runtime_pm_status(struct seq_file *m, void *unused)
+static int i915_runtime_pm_status_show(struct seq_file *m, void *unused)
 {
-	struct drm_i915_private *dev_priv = node_to_i915(m->private);
+	struct drm_i915_private *dev_priv = m->private;
 	struct pci_dev *pdev = to_pci_dev(dev_priv->drm.dev);
 
 	if (!HAS_RUNTIME_PM(dev_priv))
@@ -640,9 +625,9 @@ static int i915_runtime_pm_status(struct seq_file *m, void *unused)
 	return 0;
 }
 
-static int i915_engine_info(struct seq_file *m, void *unused)
+static int i915_engine_info_show(struct seq_file *m, void *unused)
 {
-	struct drm_i915_private *i915 = node_to_i915(m->private);
+	struct drm_i915_private *i915 = m->private;
 	struct intel_engine_cs *engine;
 	intel_wakeref_t wakeref;
 	struct drm_printer p;
@@ -804,11 +789,8 @@ static int i915_l4wa_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations i915_l4wa_fops = {
-	.owner = THIS_MODULE,
-	.open = i915_l4wa_open,
-	.release = i915_l4wa_release,
-};
+DEFINE_I915_RAW_ATTRIBUTE(i915_l4wa_fops, i915_l4wa_open,
+			  i915_l4wa_release, NULL, NULL, NULL);
 
 static int i915_wedged_get(void *data, u64 *val)
 {
@@ -847,9 +829,9 @@ static int i915_wedged_set(void *data, u64 val)
 	return 0;
 }
 
-DEFINE_SIMPLE_ATTRIBUTE(i915_wedged_fops,
-			i915_wedged_get, i915_wedged_set,
-			"%llu\n");
+DEFINE_I915_SIMPLE_ATTRIBUTE(i915_wedged_fops,
+			     i915_wedged_get, i915_wedged_set,
+			     "%llu\n");
 
 static int
 i915_perf_noa_delay_set(void *data, u64 val)
@@ -876,10 +858,10 @@ i915_perf_noa_delay_get(void *data, u64 *val)
 	return 0;
 }
 
-DEFINE_SIMPLE_ATTRIBUTE(i915_perf_noa_delay_fops,
-			i915_perf_noa_delay_get,
-			i915_perf_noa_delay_set,
-			"%llu\n");
+DEFINE_I915_SIMPLE_ATTRIBUTE(i915_perf_noa_delay_fops,
+			     i915_perf_noa_delay_get,
+			     i915_perf_noa_delay_set,
+			     "%llu\n");
 
 #define DROP_UNBOUND	BIT(0)
 #define DROP_BOUND	BIT(1)
@@ -1039,13 +1021,13 @@ i915_drop_caches_set(void *data, u64 val)
 	return 0;
 }
 
-DEFINE_SIMPLE_ATTRIBUTE(i915_drop_caches_fops,
-			i915_drop_caches_get, i915_drop_caches_set,
-			"0x%08llx\n");
+DEFINE_I915_SIMPLE_ATTRIBUTE(i915_drop_caches_fops,
+			     i915_drop_caches_get, i915_drop_caches_set,
+			     "0x%08llx\n");
 
-static int i915_sseu_status(struct seq_file *m, void *unused)
+static int i915_sseu_status_show(struct seq_file *m, void *unused)
 {
-	struct drm_i915_private *i915 = node_to_i915(m->private);
+	struct drm_i915_private *i915 = m->private;
 	struct intel_gt *gt = to_gt(i915);
 
 	return intel_sseu_status(m, gt);
@@ -1075,30 +1057,108 @@ static int i915_forcewake_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations i915_forcewake_fops = {
-	.owner = THIS_MODULE,
-	.open = i915_forcewake_open,
-	.release = i915_forcewake_release,
+int i915_debugfs_single_open(struct file *file, int (*show)(struct seq_file *, void *),
+			     void *data)
+{
+	struct drm_i915_private *i915 = data;
+	int ret;
+
+	ret = single_open(file, show, data);
+	if (!ret)
+		pvc_wa_disallow_rc6(i915);
+
+	return ret;
+}
+
+int i915_debugfs_single_release(struct inode *inode, struct file *file)
+{
+	struct drm_i915_private *i915 = inode->i_private;
+
+	pvc_wa_allow_rc6(i915);
+	return single_release(inode, file);
+}
+
+int i915_debugfs_raw_attr_open(struct inode *inode, struct file *file,
+			       int (*open)(struct inode*, struct file*))
+{
+	struct drm_i915_private *i915 = inode->i_private;
+	int ret = 0;
+
+	pvc_wa_disallow_rc6(i915);
+	if (open)
+		ret = open(inode, file);
+
+	if (ret)
+		pvc_wa_allow_rc6(i915);
+
+	return ret;
+}
+
+int i915_debugfs_raw_attr_close(struct inode *inode, struct file *file,
+				int (*close)(struct inode*, struct file*))
+{
+	struct drm_i915_private *i915 = inode->i_private;
+	int ret = 0;
+
+	if (close)
+		ret = close(inode, file);
+	pvc_wa_allow_rc6(i915);
+
+	return ret;
+}
+
+int i915_debugfs_simple_attr_open(struct inode *inode, struct file *file,
+				  int (*get)(void *, u64 *), int (*set)(void *, u64),
+				  const char *fmt)
+{
+	struct drm_i915_private *i915 = inode->i_private;
+	int ret;
+
+	ret = simple_attr_open(inode, file, get, set, fmt);
+	if (!ret)
+		pvc_wa_disallow_rc6(i915);
+
+	return ret;
+}
+
+int i915_debugfs_simple_attr_release(struct inode *inode, struct file *file)
+{
+	struct drm_i915_private *i915 = inode->i_private;
+	int ret = 0;
+
+	ret = simple_attr_release(inode, file);
+	pvc_wa_allow_rc6(i915);
+
+	return ret;
+}
+
+DEFINE_I915_RAW_ATTRIBUTE(i915_forcewake_fops, i915_forcewake_open,
+			  i915_forcewake_release, NULL, NULL, NULL);
+DEFINE_I915_SHOW_ATTRIBUTE(i915_capabilities);
+DEFINE_I915_SHOW_ATTRIBUTE(i915_gem_object_info);
+DEFINE_I915_SHOW_ATTRIBUTE(i915_frequency_info);
+DEFINE_I915_SHOW_ATTRIBUTE(i915_swizzle_info);
+DEFINE_I915_SHOW_ATTRIBUTE(i915_runtime_pm_status);
+DEFINE_I915_SHOW_ATTRIBUTE(i915_engine_info);
+DEFINE_I915_SHOW_ATTRIBUTE(i915_sseu_status);
+DEFINE_I915_SHOW_ATTRIBUTE(i915_rps_boost_info);
+DEFINE_I915_SHOW_ATTRIBUTE(workarounds);
+DEFINE_I915_SHOW_ATTRIBUTE(clear_lmem);
+
+static struct i915_debugfs_file i915_debugfs_list[] = {
+	{"i915_capabilities", &i915_capabilities_fops, NULL},
+	{"i915_gem_objects", &i915_gem_object_info_fops, NULL},
+	{"i915_frequency_info", &i915_frequency_info_fops, NULL},
+	{"i915_swizzle_info", &i915_swizzle_info_fops, NULL},
+	{"i915_runtime_pm_status", &i915_runtime_pm_status_fops, NULL},
+	{"i915_engine_info", &i915_engine_info_fops, NULL},
+	{"i915_sseu_status", &i915_sseu_status_fops, NULL},
+	{"i915_rps_boost_info", &i915_rps_boost_info_fops, NULL},
+	{"i915_workarounds", &workarounds_fops, NULL},
+	{"i915_clear_lmem", &clear_lmem_fops, NULL},
 };
 
-static const struct drm_info_list i915_debugfs_list[] = {
-	{"i915_capabilities", i915_capabilities, 0},
-	{"i915_gem_objects", i915_gem_object_info, 0},
-	{"i915_frequency_info", i915_frequency_info, 0},
-	{"i915_swizzle_info", i915_swizzle_info, 0},
-	{"i915_runtime_pm_status", i915_runtime_pm_status, 0},
-	{"i915_engine_info", i915_engine_info, 0},
-	{"i915_sseu_status", i915_sseu_status, 0},
-	{"i915_rps_boost_info", i915_rps_boost_info, 0},
-	{"i915_workarounds", workarounds_show, 0},
-	{"i915_clear_lmem", clear_lmem_show, 0},
-};
-#define I915_DEBUGFS_ENTRIES ARRAY_SIZE(i915_debugfs_list)
-
-static const struct i915_debugfs_files {
-	const char *name;
-	const struct file_operations *fops;
-} i915_debugfs_files[] = {
+static struct i915_debugfs_file i915_debugfs_files[] = {
 	{"i915_perf_noa_delay", &i915_perf_noa_delay_fops},
 	{"i915_wedged", &i915_wedged_fops},
 	{"i915_gem_drop_caches", &i915_drop_caches_fops},
@@ -1108,10 +1168,26 @@ static const struct i915_debugfs_files {
 #endif
 };
 
+void i915_register_debugfs_show_files(struct dentry *root,
+				      const struct i915_debugfs_file *files,
+				      unsigned long count, void *data)
+{
+	while (count--) {
+		umode_t mode = files->fops->write ? 0644 : 0444;
+
+		debugfs_create_file(files->name,
+				    mode, root, data,
+				    files->fops);
+		files++;
+	}
+}
+
 void i915_debugfs_register(struct drm_i915_private *dev_priv)
 {
 	struct drm_minor *minor = dev_priv->drm.primary;
-	int i;
+	const struct i915_debugfs_file *debugfs_list = i915_debugfs_list;
+	size_t debugfs_list_size = ARRAY_SIZE(i915_debugfs_list);
+	size_t i;
 
 	i915_debugfs_params(dev_priv);
 
@@ -1125,9 +1201,8 @@ void i915_debugfs_register(struct drm_i915_private *dev_priv)
 				    i915_debugfs_files[i].fops);
 	}
 
-	drm_debugfs_create_files(i915_debugfs_list,
-				 I915_DEBUGFS_ENTRIES,
-				 minor->debugfs_root, minor);
+	i915_register_debugfs_show_files(minor->debugfs_root, debugfs_list,
+					 debugfs_list_size, to_i915(minor->dev));
 
 	if (i915_is_mem_wa_enabled(dev_priv, I915_WA_USE_FLAT_PPGTT_UPDATE))
 		debugfs_create_file("i915_l4wa_disable", S_IWUSR | S_IRUGO, minor->debugfs_root,

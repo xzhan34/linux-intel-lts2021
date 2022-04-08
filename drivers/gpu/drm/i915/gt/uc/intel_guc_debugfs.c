@@ -5,6 +5,7 @@
 
 #include <drm/drm_print.h>
 
+#include "gt/intel_gt.h"
 #include "gt/intel_gt_debugfs.h"
 #include "gt/uc/intel_guc_ads.h"
 #include "gt/uc/intel_guc_ct.h"
@@ -16,7 +17,8 @@
 
 static int guc_info_show(struct seq_file *m, void *data)
 {
-	struct intel_guc *guc = m->private;
+	struct intel_gt *gt = m->private;
+	struct intel_guc *guc = &gt->uc.guc;
 	struct drm_printer p = drm_seq_file_printer(m);
 
 	if (!intel_guc_is_supported(guc))
@@ -39,7 +41,8 @@ DEFINE_INTEL_GT_DEBUGFS_ATTRIBUTE(guc_info);
 
 static int guc_registered_contexts_show(struct seq_file *m, void *data)
 {
-	struct intel_guc *guc = m->private;
+	struct intel_gt *gt = m->private;
+	struct intel_guc *guc = &gt->uc.guc;
 	struct drm_printer p = drm_seq_file_printer(m);
 
 	if (!intel_guc_submission_is_used(guc))
@@ -53,7 +56,8 @@ DEFINE_INTEL_GT_DEBUGFS_ATTRIBUTE(guc_registered_contexts);
 
 static int guc_slpc_info_show(struct seq_file *m, void *unused)
 {
-	struct intel_guc *guc = m->private;
+	struct intel_gt *gt = m->private;
+	struct intel_guc *guc = &gt->uc.guc;
 	struct intel_guc_slpc *slpc = &guc->slpc;
 	struct drm_printer p = drm_seq_file_printer(m);
 
@@ -66,14 +70,16 @@ DEFINE_INTEL_GT_DEBUGFS_ATTRIBUTE(guc_slpc_info);
 
 static bool intel_eval_slpc_support(void *data)
 {
-	struct intel_guc *guc = (struct intel_guc *)data;
+	struct intel_gt *gt = data;
+	struct intel_guc *guc = &gt->uc.guc;
 
 	return intel_guc_slpc_is_used(guc);
 }
 
 static int guc_sched_disable_delay_ms_get(void *data, u64 *val)
 {
-	struct intel_guc *guc = data;
+	struct intel_gt *gt = data;
+	struct intel_guc *guc = &gt->uc.guc;
 
 	if (!intel_guc_submission_is_used(guc))
 		return -ENODEV;
@@ -85,7 +91,8 @@ static int guc_sched_disable_delay_ms_get(void *data, u64 *val)
 
 static int guc_sched_disable_delay_ms_set(void *data, u64 val)
 {
-	struct intel_guc *guc = data;
+	struct intel_gt *gt = data;
+	struct intel_guc *guc = &gt->uc.guc;
 
 	if (!intel_guc_submission_is_used(guc))
 		return -ENODEV;
@@ -95,13 +102,14 @@ static int guc_sched_disable_delay_ms_set(void *data, u64 val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(guc_sched_disable_delay_ms_fops,
-			guc_sched_disable_delay_ms_get,
-			guc_sched_disable_delay_ms_set, "%lld\n");
+DEFINE_I915_GT_SIMPLE_ATTRIBUTE(guc_sched_disable_delay_ms_fops,
+				guc_sched_disable_delay_ms_get,
+				guc_sched_disable_delay_ms_set, "%lld\n");
 
 static int guc_sched_disable_gucid_threshold_get(void *data, u64 *val)
 {
-	struct intel_guc *guc = data;
+	struct intel_gt *gt = data;
+	struct intel_guc *guc = &gt->uc.guc;
 
 	if (!intel_guc_submission_is_used(guc))
 		return -ENODEV;
@@ -112,7 +120,8 @@ static int guc_sched_disable_gucid_threshold_get(void *data, u64 *val)
 
 static int guc_sched_disable_gucid_threshold_set(void *data, u64 val)
 {
-	struct intel_guc *guc = data;
+	struct intel_gt *gt = data;
+	struct intel_guc *guc = &gt->uc.guc;
 
 	if (!intel_guc_submission_is_used(guc))
 		return -ENODEV;
@@ -125,13 +134,14 @@ static int guc_sched_disable_gucid_threshold_set(void *data, u64 val)
 
 	return 0;
 }
-DEFINE_SIMPLE_ATTRIBUTE(guc_sched_disable_gucid_threshold_fops,
-			guc_sched_disable_gucid_threshold_get,
-			guc_sched_disable_gucid_threshold_set, "%lld\n");
+DEFINE_I915_GT_SIMPLE_ATTRIBUTE(guc_sched_disable_gucid_threshold_fops,
+				guc_sched_disable_gucid_threshold_get,
+				guc_sched_disable_gucid_threshold_set, "%lld\n");
 
 static int guc_stall_get(void *data, u64 *val)
 {
-	struct intel_guc *guc = data;
+	struct intel_gt *gt = data;
+	struct intel_guc *guc = &gt->uc.guc;
 
 	if (!intel_guc_submission_is_used(guc))
 		return -ENODEV;
@@ -144,7 +154,8 @@ static int guc_stall_get(void *data, u64 *val)
 static int guc_stall_set(void *data, u64 val)
 {
 #define INTEL_GUC_STALL_MAX 60000 /* in milliseconds */
-	struct intel_guc *guc = data;
+	struct intel_gt *gt = data;
+	struct intel_guc *guc = &gt->uc.guc;
 	enum intel_guc_scheduler_mode mode;
 
 	if (!intel_guc_submission_is_used(guc))
@@ -169,7 +180,7 @@ static int guc_stall_set(void *data, u64 val)
 
 	return intel_guc_set_schedule_mode(guc, mode, val);
 }
-DEFINE_SIMPLE_ATTRIBUTE(guc_stall_fops, guc_stall_get, guc_stall_set, "%lld\n");
+DEFINE_I915_GT_SIMPLE_ATTRIBUTE(guc_stall_fops, guc_stall_get, guc_stall_set, "%lld\n");
 
 void intel_guc_debugfs_register(struct intel_guc *guc, struct dentry *root)
 {
@@ -186,6 +197,6 @@ void intel_guc_debugfs_register(struct intel_guc *guc, struct dentry *root)
 	if (!intel_guc_is_supported(guc))
 		return;
 
-	intel_gt_debugfs_register_files(root, files, ARRAY_SIZE(files), guc);
+	intel_gt_debugfs_register_files(root, files, ARRAY_SIZE(files), guc_to_gt(guc));
 	intel_guc_log_debugfs_register(&guc->log, root);
 }
