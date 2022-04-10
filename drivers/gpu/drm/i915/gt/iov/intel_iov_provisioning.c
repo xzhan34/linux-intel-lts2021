@@ -17,6 +17,8 @@
 	(FIELD_PREP(GUC_KLV_0_KEY, GUC_KLV_##__K##_KEY) | \
 	 FIELD_PREP(GUC_KLV_0_LEN, GUC_KLV_##__K##_LEN))
 
+static int pf_verify_config_klvs(struct intel_iov *iov, const u32 *cfg, u32 cfg_size);
+
 static void pf_init_reprovisioning_worker(struct intel_iov *iov);
 static void pf_start_reprovisioning_worker(struct intel_iov *iov);
 static void pf_fini_reprovisioning_worker(struct intel_iov *iov);
@@ -410,16 +412,18 @@ static int guc_update_vf_klv32(struct intel_guc *guc, u32 vfid, u16 key, u32 val
 	const u32 len = 1; /* 32bit value fits into 1 klv dword */
 	const u32 cfg_size = (GUC_KLV_LEN_MIN + len);
 	struct i915_vma *vma;
-	u32 *cfg;
+	u32 *blob, *cfg;
 	int ret;
 
-	ret = intel_guc_allocate_and_map_vma(guc, cfg_size * sizeof(u32), &vma, (void **)&cfg);
+	ret = intel_guc_allocate_and_map_vma(guc, cfg_size * sizeof(u32), &vma, (void **)&blob);
 	if (unlikely(ret))
 		return ret;
 
+	cfg = blob;
 	*cfg++ = FIELD_PREP(GUC_KLV_0_KEY, key) | FIELD_PREP(GUC_KLV_0_LEN, len);
 	*cfg++ = value;
 
+	GEM_WARN_ON(pf_verify_config_klvs(&guc_to_gt(guc)->iov, blob, cfg_size));
 	ret = guc_action_update_vf_cfg(guc, vfid, intel_guc_ggtt_offset(guc, vma), cfg_size);
 
 	i915_vma_unpin_and_release(&vma, I915_VMA_RELEASE_MAP);
@@ -439,17 +443,19 @@ static int guc_update_vf_klv64(struct intel_guc *guc, u32 vfid, u16 key, u64 val
 	const u32 len = 2; /* 64bit value fits into 2 klv dwords */
 	const u32 cfg_size = (GUC_KLV_LEN_MIN + len);
 	struct i915_vma *vma;
-	u32 *cfg;
+	u32 *blob, *cfg;
 	int ret;
 
-	ret = intel_guc_allocate_and_map_vma(guc, cfg_size * sizeof(u32), &vma, (void **)&cfg);
+	ret = intel_guc_allocate_and_map_vma(guc, cfg_size * sizeof(u32), &vma, (void **)&blob);
 	if (unlikely(ret))
 		return ret;
 
+	cfg = blob;
 	*cfg++ = FIELD_PREP(GUC_KLV_0_KEY, key) | FIELD_PREP(GUC_KLV_0_LEN, len);
 	*cfg++ = lower_32_bits(value);
 	*cfg++ = upper_32_bits(value);
 
+	GEM_WARN_ON(pf_verify_config_klvs(&guc_to_gt(guc)->iov, blob, cfg_size));
 	ret = guc_action_update_vf_cfg(guc, vfid, intel_guc_ggtt_offset(guc, vma), cfg_size);
 
 	i915_vma_unpin_and_release(&vma, I915_VMA_RELEASE_MAP);
