@@ -631,6 +631,9 @@ struct drm_i915_gem_object {
 
 		/* list of clients which allocated/imported this object */
 		struct rb_root rb;
+
+		/* Whether this object currently resides in local memory */
+		bool resident:1;
 	} client;
 };
 

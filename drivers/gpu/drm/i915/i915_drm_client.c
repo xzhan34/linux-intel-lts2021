@@ -122,6 +122,17 @@ static ssize_t show_client_created_devm_bytes(struct device *kdev,
 			  atomic64_read(&client->created_devm_bytes));
 }
 
+static ssize_t show_client_resident_created_devm_bytes(struct device *kdev,
+						       struct device_attribute *attr,
+						       char *buf)
+{
+	struct i915_drm_client *client =
+		container_of(attr, typeof(*client), attr.resident_created_devm_bytes);
+
+	return sysfs_emit(buf, "%llu\n",
+			  atomic64_read(&client->resident_created_devm_bytes));
+}
+
 /*
  * The objs imported by a client via PRIME/FLINK which have a possible
  * placement in Local  Memory only are accounted. Their sizes are aggregated
@@ -136,6 +147,17 @@ static ssize_t show_client_imported_devm_bytes(struct device *kdev,
 
 	return sysfs_emit(buf, "%llu\n",
 			  atomic64_read(&client->imported_devm_bytes));
+}
+
+static ssize_t show_client_resident_imported_devm_bytes(struct device *kdev,
+							struct device_attribute *attr,
+							char *buf)
+{
+	struct i915_drm_client *client =
+		container_of(attr, typeof(*client), attr.resident_imported_devm_bytes);
+
+	return sysfs_emit(buf, "%llu\n",
+			  atomic64_read(&client->resident_imported_devm_bytes));
 }
 
 static const char * const uabi_class_names[] = {
@@ -257,12 +279,44 @@ int i915_drm_client_add_bo(struct i915_drm_client *client,
 		else
 			atomic64_add(obj->base.size,
 				     &client->created_devm_bytes);
+
+		if (obj->client.resident) {
+			if (cb->shared)
+				atomic64_add(obj->base.size,
+					     &client->resident_imported_devm_bytes);
+			else
+				atomic64_add(obj->base.size,
+					     &client->resident_created_devm_bytes);
+		}
 	}
 
 	cb->count++;
 	spin_unlock(&obj->client.lock);
 
 	return 0;
+}
+
+void i915_drm_client_make_resident(struct drm_i915_gem_object *obj,
+				   bool resident)
+{
+	struct i915_drm_client_bo *cb, *n;
+	int64_t sz;
+
+	sz = obj->base.size;
+	if (!resident)
+		sz = -sz;
+
+	spin_lock(&obj->client.lock);
+	if (obj->client.resident != resident) {
+		obj->client.resident = resident;
+		rbtree_postorder_for_each_entry_safe(cb, n, &obj->client.rb, node) {
+			if (cb->shared)
+				atomic64_add(sz, &cb->client->resident_imported_devm_bytes);
+			else
+				atomic64_add(sz, &cb->client->resident_created_devm_bytes);
+		}
+	}
+	spin_unlock(&obj->client.lock);
 }
 
 static struct i915_drm_client_bo *
@@ -289,6 +343,15 @@ void i915_drm_client_del_bo(struct i915_drm_client *client,
 		else
 			atomic64_sub(obj->base.size,
 				     &client->created_devm_bytes);
+
+		if (obj->client.resident) {
+			if (cb->shared)
+				atomic64_sub(obj->base.size,
+					     &client->resident_imported_devm_bytes);
+			else
+				atomic64_sub(obj->base.size,
+					     &client->resident_created_devm_bytes);
+		}
 
 		rb_erase(&cb->node, &obj->client.rb);
 		kfree(cb);
@@ -320,6 +383,16 @@ __client_register_sysfs_memory_stats(struct i915_drm_client *client)
 			"imported_bytes",
 			&client->attr.imported_devm_bytes,
 			show_client_imported_devm_bytes
+		},
+		{
+			"prelim_resident_created_bytes",
+			&client->attr.resident_created_devm_bytes,
+			show_client_resident_created_devm_bytes
+		},
+		{
+			"prelim_resident_imported_bytes",
+			&client->attr.resident_imported_devm_bytes,
+			show_client_resident_imported_devm_bytes
 		},
 	};
 	unsigned int i;

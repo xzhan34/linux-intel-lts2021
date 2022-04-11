@@ -3,13 +3,12 @@
  * Copyright © 2019 Intel Corporation
  */
 
-#include <uapi/drm/i915_drm.h>
-
-#include "intel_memory_region.h"
-#include "i915_gem_region.h"
 #include "i915_drv.h"
-#include "i915_trace.h"
+#include "i915_drm_client.h"
 #include "i915_gem_mman.h"
+#include "i915_gem_region.h"
+#include "i915_trace.h"
+#include "intel_memory_region.h"
 
 void
 i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
@@ -17,6 +16,7 @@ i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
 {
 	__intel_memory_region_put_pages_buddy(obj->mm.region.mem,
 					      &obj->mm.blocks);
+	i915_drm_client_make_resident(obj, false);
 
 	sg_free_table(pages);
 	kfree(pages);
@@ -107,6 +107,8 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 	sg_page_sizes |= sg->length;
 	sg_mark_end(sg);
 	i915_sg_trim(st);
+
+	i915_drm_client_make_resident(obj, true);
 
 	*page_sizes = sg_page_sizes;
 	return st;
