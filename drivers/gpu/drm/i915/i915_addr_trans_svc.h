@@ -9,7 +9,9 @@
 #include <linux/hmm.h>
 #include <linux/intel-iommu.h>
 #include <linux/pci-ats.h>
+#include "../../../../drivers/iommu/iommu-sva-lib.h"
 #include "i915_svm.h"
+#include "gt/intel_pagefault.h"
 #include "i915_drv.h"
 
 #include "gt/intel_gtt.h"
@@ -33,6 +35,8 @@ int i915_create_pasid(struct i915_address_space *vm);
 void i915_destroy_pasid(struct i915_address_space *vm);
 bool is_vm_pasid_active(struct i915_address_space *vm);
 int i915_global_pasid_counter(struct drm_i915_private *i915);
+int i915_handle_ats_fault_request(struct i915_address_space *vm,
+				  struct recoverable_page_fault_info *info);
 
 #else /* CONFIG_DRM_I915_ATS */
 struct i915_ats_priv { };
@@ -47,6 +51,9 @@ static inline bool is_vm_pasid_active(struct i915_address_space *vm)
 { return false; }
 static inline int i915_global_pasid_counter(struct drm_i915_private *i915)
 { return -EOPNOTSUPP; }
-
+static inline int
+i915_handle_ats_fault_request(struct i915_address_space *vm,
+			      struct recoverable_page_fault_info *info)
+{ return -EOPNOTSUPP; }
 #endif /* CONFIG_DRM_I915_ATS */
 #endif /* __I915_ADDR_TRANS_SVC_H__ */

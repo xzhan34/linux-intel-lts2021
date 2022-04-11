@@ -4,6 +4,7 @@
  */
 
 #include <linux/mm_types.h>
+#include <linux/mm.h>
 #include <linux/sched/mm.h>
 
 #include "i915_drv.h"
@@ -131,4 +132,65 @@ int i915_create_pasid(struct i915_address_space *vm)
 int i915_global_pasid_counter(struct drm_i915_private *i915)
 {
 	return i915->pasid_counter;
+}
+
+enum recoverable_page_fault_type {
+	FAULT_READ_NOT_PRESENT = 0x0,
+	FAULT_WRITE_NOT_PRESENT = 0x1,
+	FAULT_ATOMIC_NOT_PRESENT = 0x2,
+	FAULT_WRITE_ACCESS_VIOLATION = 0x5,
+	FAULT_ATOMIC_ACCESS_VIOLATION = 0xa,
+};
+
+int i915_handle_ats_fault_request(struct i915_address_space *vm,
+				  struct recoverable_page_fault_info *info)
+{
+	unsigned int fault_flags = FAULT_FLAG_REMOTE | FAULT_FLAG_USER;
+	enum recoverable_page_fault_type fault_type;
+	vm_fault_t ret = VM_FAULT_ERROR;
+	struct mm_struct *mm;
+	struct vm_area_struct *vma;
+	int status = 0;
+	unsigned int access_flags = 0;
+
+	/* ensure that a pasid is associated with the vm */
+	GEM_BUG_ON(!vm->pasid);
+
+	mm = iommu_sva_find(vm->pasid);
+	if (IS_ERR_OR_NULL(mm))
+		return !mm ? -EINVAL : PTR_ERR(mm);
+
+	mmap_read_lock(mm);
+	vma = find_vma(mm, info->page_addr);
+	if (!vma || info->page_addr < vma->vm_start)
+		goto end_request;
+
+	fault_type = (info->fault_type << 2) | info->access_type;
+
+	switch (fault_type & 0xF) {
+	case FAULT_READ_NOT_PRESENT:
+		access_flags |= VM_READ;
+		break;
+	case FAULT_WRITE_NOT_PRESENT:
+		access_flags |= VM_WRITE;
+		fault_flags |= FAULT_FLAG_WRITE;
+		break;
+	case FAULT_ATOMIC_NOT_PRESENT:
+	case FAULT_WRITE_ACCESS_VIOLATION:
+	default:
+		drm_err(&vm->i915->drm, "Invalid fault type request\n");
+		goto end_request;
+	}
+
+	if (access_flags & ~vma->vm_flags)
+		goto end_request;
+
+	ret = handle_mm_fault(vma, info->page_addr, fault_flags, NULL);
+	status = ret & VM_FAULT_ERROR ? -EINVAL : 0;
+
+end_request:
+	mmap_read_unlock(mm);
+	mmput(mm);
+
+	return status;
 }

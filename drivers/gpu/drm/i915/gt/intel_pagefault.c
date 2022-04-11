@@ -384,6 +384,18 @@ handle_i915_mm_fault(struct intel_guc *guc,
 	trace_i915_mm_fault(gt->i915, vm, vma, info);
 
 	if (!vma) {
+		/* Driver specific implementation of handling PRS */
+		if (is_vm_pasid_active(vm)) {
+			err = i915_handle_ats_fault_request(vm, info);
+			if (err) {
+				drm_err(&vm->i915->drm,
+					"Handling OS request for device to handle faulting failed error: %d\n",
+					err);
+				return ERR_PTR(err);
+			}
+			return 0;
+		}
+
 		/* Each EU thread may trigger its own pf to the same address! */
 		if (!vm->invalidate_tlb_scratch)
 			*dump = pf_coredump(gt, info);
