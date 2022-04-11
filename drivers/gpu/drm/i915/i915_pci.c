@@ -28,6 +28,7 @@
 #include <drm/drm_drv.h>
 #include <drm/i915_pciids.h>
 
+#include "gt/intel_gt.h"
 #include "gt/intel_gt_regs.h"
 #include "gt/intel_sa_media.h"
 
@@ -1407,6 +1408,8 @@ static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (err)
 		return err;
 
+	pvc_wa_disallow_rc6(pdev_to_i915(pdev));
+
 	if (i915_inject_probe_failure(pci_get_drvdata(pdev))) {
 		err = -ENODEV;
 		goto err_remove;
@@ -1424,9 +1427,11 @@ static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (err)
 		goto err_remove;
 
+	pvc_wa_allow_rc6(pdev_to_i915(pdev));
 	return 0;
 
 err_remove:
+	pvc_wa_allow_rc6(pdev_to_i915(pdev));
 	i915_pci_remove(pdev);
 	return err > 0 ? -ENOTTY : err;
 }
