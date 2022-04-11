@@ -180,6 +180,13 @@ int live_render_pg(void *arg)
 	if (gt->type == GT_MEDIA)
 		return 0;
 
+	/*
+	 * Wa_16015496043, Wa_16015476723 requires to hold forcewake (no rc6)
+	 * across all selftests, preventing this test from functioning.
+	 */
+	if (pvc_needs_rc6_wa(gt->i915))
+		return 0;
+
 	wakeref = intel_runtime_pm_get(gt->uncore->rpm);
 
 	/* skip if render c6 is disabled */
@@ -289,6 +296,13 @@ int live_media_pg(void *arg)
 	if ((MEDIA_VER(gt->i915) >= 13) && (gt->type == GT_PRIMARY))
 		return 0;
 
+	/*
+	 * Wa_16015496043, Wa_16015476723 requires to hold forcewake (no rc6)
+	 * across all selftests, preventing this test from functioning.
+	 */
+	if (pvc_needs_rc6_wa(gt->i915))
+		return 0;
+
 	wakeref = intel_runtime_pm_get(gt->uncore->rpm);
 
 	/* skip if media c6 is disabled */
@@ -355,6 +369,12 @@ int live_rc6_manual(void *arg)
 
 	/* bsw/byt use a PCU and decouple RC6 from our manual control */
 	if (IS_VALLEYVIEW(gt->i915) || IS_CHERRYVIEW(gt->i915))
+		return 0;
+	/*
+	 * Wa_16015496043, Wa_16015476723 requires to hold forcewake (no rc6)
+	 * across all selftests, preventing this test from functioning.
+	 */
+	if (pvc_needs_rc6_wa(gt->i915))
 		return 0;
 
 	has_power = librapl_supported(gt->i915);
