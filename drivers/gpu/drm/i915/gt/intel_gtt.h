@@ -337,6 +337,11 @@ struct i915_address_space {
 	struct i915_active_fence user_fence;
 	atomic_t invalidations;
 
+	struct {
+		struct i915_vma *vma;
+		struct drm_i915_gem_object *obj;
+	} mfence;
+
 	unsigned long flags;
 #define I915_VM_HAS_PERSISTENT_BINDS 0
 

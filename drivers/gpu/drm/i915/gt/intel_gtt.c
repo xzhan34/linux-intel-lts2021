@@ -119,6 +119,12 @@ static void __i915_vm_close(struct i915_address_space *vm)
 	list_for_each_entry_safe(vma, vn, &vm->bound_list, vm_link)
 		i915_vma_unpublish(vma);
 	mutex_unlock(&vm->mutex);
+
+	if (vm->mfence.obj) {
+		i915_gem_object_put(vm->mfence.obj);
+		vm->mfence.vma = NULL;
+		vm->mfence.obj = NULL;
+	}
 }
 
 /* lock the vm into the current ww, if we lock one, we lock all */

@@ -1519,11 +1519,33 @@ gen12_emit_indirect_ctx_rcs(const struct intel_context *ce, u32 *cs)
 	return cs;
 }
 
+/*
+ * Set memory fence address and call MI_MEM_FENCE as part of context
+ * restore to ensure that all the writes are flushed and the ring and
+ * batches in there are properly visible to the GPU.
+ */
+static u32 *gen12_emit_indirectctx_bb(const struct intel_context *ce, u32 *cs)
+{
+	u64 mfence_addr;
+
+	if (!HAS_MEM_FENCE_SUPPORT(ce->engine->i915) || !ce->vm->mfence.vma)
+		return cs;
+
+	mfence_addr = ce->vm->mfence.vma->node.start;
+	*cs++ = STATE_SYSTEM_MEM_FENCE_ADDRESS;
+	*cs++ = lower_32_bits(mfence_addr);
+	*cs++ = upper_32_bits(mfence_addr);
+	*cs++ = MI_MEM_FENCE | MI_ACQUIRE_ENABLE;
+
+	return cs;
+}
+
 static u32 *
 gen12_emit_indirect_ctx_xcs(const struct intel_context *ce, u32 *cs)
 {
 	cs = gen12_emit_timestamp_wa(ce, cs);
 	cs = gen12_emit_restore_scratch(ce, cs);
+	cs = gen12_emit_indirectctx_bb(ce, cs);
 
 	/* Wa_16013000631:dg2 */
 	if (IS_DG2_GRAPHICS_STEP(ce->engine->i915, G10, STEP_B0, STEP_C0) ||

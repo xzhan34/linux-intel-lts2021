@@ -15,6 +15,7 @@
 
 #include "display/intel_frontbuffer.h"
 
+#include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_ioctls.h"
 #include "gt/intel_context.h"
 #include "gt/intel_gpu_commands.h"
@@ -1170,6 +1171,51 @@ static int eb_validate_persistent_vmas(struct i915_execbuffer *eb)
 	return 0;
 }
 
+/*
+ * Memory fence address is fixed and reserved by KMD
+ * and hence is not available for UMDs to bind it either
+ * via soft-pinning or through vm_bind call.
+ */
+#define MFENCE_ADDR	0
+
+static int eb_mem_fence_init(struct i915_execbuffer *eb)
+{
+	struct i915_address_space *vm = eb->context->vm;
+	struct drm_i915_gem_object *obj = vm->mfence.obj;
+	struct i915_vma *vma;
+	int err;
+
+	if (vm->mfence.vma)
+		return 0;
+
+	if (!obj) {
+		obj = i915_gem_object_create_internal(vm->i915, PAGE_SIZE);
+		if (IS_ERR(obj))
+			return PTR_ERR(obj);
+
+		i915_gem_object_make_unshrinkable(obj);
+		vm->mfence.obj = obj;
+	}
+
+	vma = i915_vma_instance(obj, vm, NULL);
+	if (IS_ERR(vma))
+		return PTR_ERR(vma);
+
+	err = i915_gem_object_lock(obj, &eb->ww);
+	if (err)
+		return err;
+
+	err = i915_vma_pin_ww(vma, &eb->ww, 0, 0,
+			      MFENCE_ADDR | PIN_OFFSET_FIXED | PIN_USER | PIN_RESIDENT);
+	if (err)
+		return err;
+
+	vm->mfence.vma = vma;
+	__i915_vma_unpin(vma);
+
+	return 0;
+}
+
 static int eb_validate_vmas(struct i915_execbuffer *eb)
 {
 	unsigned int i;
@@ -1180,6 +1226,12 @@ static int eb_validate_vmas(struct i915_execbuffer *eb)
 	err = eb_lock_vmas(eb);
 	if (err)
 		return err;
+
+	if (HAS_MEM_FENCE_SUPPORT(eb->i915)) {
+		err = eb_mem_fence_init(eb);
+		if (err)
+			return err;
+	}
 
 	/* Ensure all persistent vmas are bound */
 	err = eb_validate_persistent_vmas(eb);

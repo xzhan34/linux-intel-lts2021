@@ -296,6 +296,9 @@ i915_param_named_unsafe(ulls_bcs0_pm_wa, bool, 0600,
 i915_param_named_unsafe(debug_pages, uint, 0400,
 			"Extra pages allocated for debug (default=0, Bit 31 indicates LMEM)");
 
+i915_param_named_unsafe(enable_mem_fence, bool, 0400,
+			"Set this true to enable MEM_FENCE workaround (default: false");
+
 static __always_inline void _print_param(struct drm_printer *p,
 					 const char *name,
 					 const char *type,
