@@ -172,7 +172,7 @@ void i915_vm_release(struct kref *kref)
 	GEM_BUG_ON(i915_is_ggtt(vm));
 	trace_i915_ppgtt_release(vm);
 
-	queue_rcu_work(vm->i915->wq, &vm->rcu);
+	queue_rcu_work(system_unbound_wq, &vm->rcu);
 }
 
 static void i915_vm_close_work(struct work_struct *wrk)
@@ -188,7 +188,7 @@ void i915_vm_close(struct i915_address_space *vm)
 {
 	GEM_BUG_ON(atomic_read(&vm->open) <= 0);
 	if (atomic_dec_and_test(&vm->open))
-		queue_work(vm->i915->wq, &vm->close_work);
+		queue_work(system_unbound_wq, &vm->close_work);
 	else
 		i915_vm_put(vm);
 }
