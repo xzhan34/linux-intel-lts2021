@@ -357,3 +357,37 @@ int intel_iov_state_process_guc2pf(struct intel_iov *iov,
 
 	return vfid ? pf_handle_vf_event(iov, vfid, eventid) : pf_handle_pf_event(iov, eventid);
 }
+
+/**
+ * intel_iov_state_start_flr - Start VF FLR sequence.
+ * @iov: the IOV struct
+ * @vfid: VF identifier
+ *
+ * This function is for PF only.
+ */
+void intel_iov_state_start_flr(struct intel_iov *iov, u32 vfid)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(vfid > pf_get_totalvfs(iov));
+	GEM_BUG_ON(!vfid);
+
+	pf_init_vf_flr(iov, vfid);
+}
+
+/**
+ * intel_iov_state_no_flr - Test if VF FLR is not in progress.
+ * @iov: the IOV struct
+ * @vfid: VF identifier
+ *
+ * This function is for PF only.
+ *
+ * Return: true if FLR is not pending or in progress.
+ */
+bool intel_iov_state_no_flr(struct intel_iov *iov, u32 vfid)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	GEM_BUG_ON(vfid > pf_get_totalvfs(iov));
+	GEM_BUG_ON(!vfid);
+
+	return !test_bit(IOV_VF_FLR_IN_PROGRESS, &iov->pf.state.data[vfid].state);
+}

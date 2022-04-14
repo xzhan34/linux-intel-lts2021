@@ -10,6 +10,7 @@
 
 #include "gt/intel_gt_pm.h"
 #include "gt/iov/intel_iov_provisioning.h"
+#include "gt/iov/intel_iov_state.h"
 #include "gt/iov/intel_iov_utils.h"
 
 /* safe for use before register access via uncore is completed */
@@ -382,6 +383,34 @@ fail:
 	return err;
 }
 
+static void pf_start_vfs_flr(struct intel_iov *iov, unsigned int num_vfs)
+{
+	unsigned int n;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	for (n = 1; n <= num_vfs; n++)
+		intel_iov_state_start_flr(iov, n);
+}
+
+#define I915_VF_FLR_TIMEOUT_MS 500
+
+static void pf_wait_vfs_flr(struct intel_iov *iov, unsigned int num_vfs)
+{
+	unsigned int timeout_ms = I915_VF_FLR_TIMEOUT_MS;
+	unsigned int n;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	for (n = 1; n <= num_vfs; n++) {
+		if (wait_for(intel_iov_state_no_flr(iov, n), timeout_ms)) {
+			IOV_ERROR(iov, "VF%u FLR didn't complete within %u ms\n",
+				  n, timeout_ms);
+			timeout_ms /= 2;
+		}
+	}
+}
+
 /**
  * i915_sriov_pf_disable_vfs - Disable VFs.
  * @i915: the i915 struct
@@ -411,6 +440,9 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 		return 0;
 
 	pci_disable_sriov(pdev);
+
+	pf_start_vfs_flr(&to_gt(i915)->iov, num_vfs);
+	pf_wait_vfs_flr(&to_gt(i915)->iov, num_vfs);
 
 	pf_update_guc_clients(&to_gt(i915)->iov, 0);
 	intel_iov_provisioning_auto(&to_gt(i915)->iov, 0);
