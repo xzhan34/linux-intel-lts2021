@@ -1524,4 +1524,17 @@ i915_coherent_map_type(struct drm_i915_private *i915,
 		return I915_MAP_WC;
 }
 
+static inline void i915_write_barrier(struct drm_i915_private *i915)
+{
+	/*
+	 * We need a MMIO write as barrier to lmem. A following lmem write
+	 * will stall until all previous writes are pushed to lmem.
+	 *
+	 * We don't need to use a local uncore. A mmio write to a root
+	 * tile register also ensures remote tile lmem writes are
+	 * pushed.
+	 */
+	raw_reg_write(i915->uncore.regs, SOFTWARE_FLAGS_SPR33, 0);
+}
+
 #endif

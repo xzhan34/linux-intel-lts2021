@@ -896,6 +896,9 @@
 #define BALANCE_LEG_DISABLE_SHIFT	23
 #define BALANCE_LEG_DISABLE(port)	(1 << (23 + (port)))
 
+/* Reserved for fencing host writes to lmem*/
+#define SOFTWARE_FLAGS_SPR33		_MMIO(0x4F084)
+
 /*
  * Fence registers
  * [0-7]  @ 0x2000 gen2,gen3

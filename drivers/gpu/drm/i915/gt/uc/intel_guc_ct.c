@@ -434,7 +434,7 @@ static int ct_write(struct intel_guc_ct *ct,
 	 * make sure H2G buffer update and LRC tail update (if this triggering a
 	 * submission) are visible before updating the descriptor tail
 	 */
-	intel_guc_write_barrier(ct_to_guc(ct));
+	i915_write_barrier(ct_to_i915(ct));
 
 	/* update local copies */
 	ctb->tail = tail;

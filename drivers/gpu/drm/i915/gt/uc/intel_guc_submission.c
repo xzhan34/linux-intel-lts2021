@@ -806,7 +806,7 @@ static void write_wqi(struct intel_context *ce, u32 wqi_size)
 	/*
 	 * Ensure WQI are visible before updating tail
 	 */
-	intel_guc_write_barrier(ce_to_guc(ce));
+	i915_write_barrier(ce->engine->i915);
 
 	ce->parallel.guc.wqi_tail = (ce->parallel.guc.wqi_tail + wqi_size) &
 		(WQ_SIZE - 1);
