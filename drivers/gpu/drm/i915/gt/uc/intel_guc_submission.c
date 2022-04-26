@@ -773,6 +773,9 @@ static int guc_add_request(struct intel_guc *guc, struct i915_request *rq)
 
 static inline void guc_set_lrc_tail(struct i915_request *rq)
 {
+	/* Ensure writes to ring are pushed before tail pointer is updated */
+	i915_write_barrier(rq->engine->i915);
+
 	rq->context->lrc_reg_state[CTX_RING_TAIL] =
 		intel_ring_set_tail(rq->ring, rq->tail);
 }
@@ -2643,17 +2646,9 @@ static void prepare_context_registration_info_v70(struct intel_context *ce,
 						  struct guc_ctxt_registration_info *info)
 {
 	struct intel_engine_cs *engine = ce->engine;
-	struct intel_guc *guc = &engine->gt->uc.guc;
 	u32 ctx_id = ce->guc_id.id;
 
 	GEM_BUG_ON(!engine->mask);
-
-	/*
-	 * Ensure LRC + CT vmas are is same region as write barrier is done
-	 * based on CT vma region.
-	 */
-	GEM_BUG_ON(i915_gem_object_is_lmem(guc->ct.vma->obj) !=
-		   i915_gem_object_is_lmem(ce->ring->vma->obj));
 
 	memset(info, 0, sizeof(*info));
 	info->context_idx = ctx_id;
