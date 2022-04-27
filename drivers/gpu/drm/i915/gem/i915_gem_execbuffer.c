@@ -2260,9 +2260,19 @@ repeat:
 		goto out;
 	}
 
+	/* No relocations when vm is a vm-bind vm */
+	if (test_bit(I915_VM_HAS_PERSISTENT_BINDS, &eb->context->vm->flags)) {
+		err = -EINVAL;
+		drm_dbg(&eb->i915->drm,
+			"Found relocations in a vm-bind vm.\n");
+		goto out;
+	}
+
 	/* We may process another execbuffer during the unlock... */
 	eb_release_vmas(eb, false);
+
 	i915_gem_ww_ctx_fini(&eb->ww);
+	i915_gem_vm_bind_unlock(eb->context->vm);
 
 	/*
 	 * We take 3 passes through the slowpatch.
@@ -2288,6 +2298,11 @@ repeat:
 		err = 0;
 	}
 
+	/*
+	 * FIXME: Should lock interruptible, but needs to return with the
+	 * lock held.
+	 */
+	i915_gem_vm_bind_lock(eb->context->vm);
 	if (!err)
 		err = eb_reinit_userptr(eb);
 
