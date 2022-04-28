@@ -975,6 +975,21 @@ static bool __check_red_cl(const void *vaddr)
 	return memchr_inv(s, CONTEXT_REDZONE, 64) == NULL;
 }
 
+static void hexdump(struct drm_printer *m, const void *buf, size_t len)
+{
+	const size_t rowsize = 8 * sizeof(u32);
+	size_t pos;
+
+	for (pos = 0; pos < len; pos += rowsize) {
+		char line[128];
+
+		hex_dump_to_buffer(buf + pos, len - pos, rowsize, sizeof(u32), line, sizeof(line),
+				   false);
+		drm_printf(m, "[%04zx] %s\n", pos, line);
+
+	}
+}
+
 static bool lrc_check_regs(const struct intel_context *ce,
 			   const struct intel_engine_cs *engine)
 {
@@ -1039,10 +1054,13 @@ check_redzone(struct intel_context *ce)
 	 */
 	if (!__check_red_cl(vaddr) ||
 	    !__check_red_cl(vaddr + ALIGN_DOWN(lower_32_bits(now) % len, 64))) {
+		struct drm_printer p = drm_debug_printer(__func__);
+
 		drm_err_once(&engine->i915->drm,
 			     "%s context redzone overwritten @ %zu!\n",
 			     engine->name,
 			     memchr_inv(vaddr, CONTEXT_REDZONE, len) - vaddr);
+		hexdump(&p, vaddr, REDZONE_KTIME);
 		*last = KTIME_MAX; /* never check again */
 	}
 
