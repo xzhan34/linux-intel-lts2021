@@ -1667,6 +1667,7 @@ void intel_guc_submission_pause(struct intel_guc *guc)
 	struct i915_sched_engine * const sched_engine = guc->sched_engine;
 
 	tasklet_disable_nosync(&sched_engine->tasklet);
+	guc_submission_unwind_all(guc, 0);
 }
 
 /**
