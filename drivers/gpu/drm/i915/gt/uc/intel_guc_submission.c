@@ -1012,7 +1012,7 @@ add_request:
 		ret = guc_add_request(guc, last);
 		if (unlikely(ret == -EPIPE)) {
 			goto deadlk;
-		} else if (ret == -EBUSY) {
+		} else if (ret == -EBUSY || ret == -EREMCHG) {
 			goto schedule_tasklet;
 		} else if (ret != 0) {
 			GEM_WARN_ON(ret);	/* Unexpected */
@@ -2179,8 +2179,13 @@ static void guc_submit_request(struct i915_request *rq)
 
 	if (need_tasklet(guc, rq))
 		queue_request(sched_engine, rq, rq_prio(rq));
-	else if (guc_bypass_tasklet_submit(guc, rq) == -EBUSY)
-		tasklet_hi_schedule(&sched_engine->tasklet);
+	else {
+		int ret;
+
+		ret = guc_bypass_tasklet_submit(guc, rq);
+		if (ret == -EBUSY || ret == -EREMCHG)
+			tasklet_hi_schedule(&sched_engine->tasklet);
+	}
 
 	spin_unlock_irqrestore(&sched_engine->lock, flags);
 }
