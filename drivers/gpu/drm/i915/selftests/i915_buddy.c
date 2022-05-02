@@ -812,6 +812,154 @@ err_fini:
 	return err;
 }
 
+static int igt_buddy_alloc_range_small_misaligned(void *arg)
+{
+	static const struct { u16 start, size; } ranges[] = {
+		{ 0, 1 },
+		{ 0, 4095 },
+		{ 0, 4096 },
+		{ 0, 4097 },
+
+		{ 1, 1 },
+		{ 1, 4094 },
+		{ 1, 4095 },
+		{ 1, 4096 },
+
+		{ 4094, 1 },
+		{ 4094, 2 },
+		{ 4094, 3 },
+
+		{ 4095, 1 },
+		{ 4095, 2 },
+	};
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(ranges); i++) {
+		struct i915_buddy_block *block;
+		struct i915_buddy_mm mm;
+		LIST_HEAD(blocks);
+		int err;
+
+		err = i915_buddy_init(&mm, 0, 4096, 4096);
+		if (err)
+			return err;
+
+		/* We expect to round to the block and so reserve the whole mm */
+		err = i915_buddy_alloc_range(&mm, &blocks,
+					     ranges[i].start, ranges[i].size);
+		if (err) {
+			pr_err("min buddy_alloc_range(%d, %d) failed(%d)\n",
+			       err, ranges[i].start, ranges[i].size);
+			goto out;
+		}
+
+		err = -EINVAL;
+
+		if (!list_is_singular(&blocks)) {
+			pr_err("More than one block returned from a singular buddy!\n");
+			goto out;
+		}
+
+		block = list_first_entry(&blocks, struct i915_buddy_block, link);
+
+		if (i915_buddy_block_offset(block) != 0) {
+			pr_err("Reservation was not extended to 0\n");
+			goto out;
+		}
+
+		if (i915_buddy_block_size(&mm, block) != 4096) {
+			pr_err("Reservation was not extended to 4096\n");
+			goto out;
+		}
+
+		err = 0;
+out:
+		i915_buddy_free_list(&mm, &blocks);
+		i915_buddy_fini(&mm);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
+static int igt_buddy_alloc_range_misaligned(void *arg)
+{
+	u64 start, size, chunk_size;
+	struct i915_buddy_mm mm;
+	LIST_HEAD(blocks);
+	u64 offset;
+	int err;
+
+	igt_mm_config(&size, &chunk_size);
+
+	pr_info("buddy_init with offset=%llx, size=%llx, chunk_size=%llx\n", size / 2, size, chunk_size);
+
+	start = size / 2;
+	err = i915_buddy_init(&mm, start, start + size, chunk_size);
+	if (err) {
+		pr_err("buddy_init failed(%d)\n", err);
+		return err;
+	}
+
+	offset = 0; /* alloc_range is always relative to the buddy */
+	for_each_prime_number_from(size, 1, ULONG_MAX - 1) {
+		LIST_HEAD(tmp);
+
+		err = i915_buddy_alloc_range(&mm, &tmp, offset, size);
+		if (err == -ENOMEM) {
+			pr_info("alloc_range hit -ENOMEM with size=%llx\n",
+				size);
+			break;
+		}
+
+		if (!err) {
+			struct i915_buddy_block *block;
+
+			block = list_first_entry_or_null(&tmp,
+							 struct i915_buddy_block,
+							 link);
+			if (!block) {
+				if (offset + size > start) {
+					pr_err("alloc_range has no blocks\n");
+					err = -EINVAL;
+					break;
+				}
+			} else {
+				u64 expected = start + round_down(offset, chunk_size);
+
+				if (i915_buddy_block_offset(block) != expected) {
+					pr_err("alloc_range start offset mismatch, found=%llx, expected=%llx\n",
+					       i915_buddy_block_offset(block), expected);
+					err = -EINVAL;
+				}
+
+				if (!err)
+					err = igt_check_blocks(&mm, &tmp, size, true);
+
+				list_splice_tail(&tmp, &blocks);
+			}
+
+			if (err)
+				break;
+		}
+
+		offset += size;
+		if (offset > 2 * size)
+			break;
+
+		cond_resched();
+	}
+
+	if (err == -ENOMEM)
+		err = 0;
+
+	i915_buddy_free_list(&mm, &blocks);
+	i915_buddy_fini(&mm);
+
+	return err;
+}
+
 static int igt_buddy_alloc_limit(void *arg)
 {
 	struct i915_buddy_block *block;
@@ -868,6 +1016,8 @@ int i915_buddy_mock_selftests(void)
 		SUBTEST(igt_buddy_alloc_pathological),
 		SUBTEST(igt_buddy_alloc_smoke),
 		SUBTEST(igt_buddy_alloc_range),
+		SUBTEST(igt_buddy_alloc_range_small_misaligned),
+		SUBTEST(igt_buddy_alloc_range_misaligned),
 		SUBTEST(igt_buddy_alloc_limit),
 	};
 

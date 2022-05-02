@@ -346,19 +346,16 @@ int i915_buddy_alloc_range(struct i915_buddy_mm *mm,
 	int err;
 	int i;
 
-	if (size < mm->chunk_size)
-		return -EINVAL;
-
-	if (!IS_ALIGNED(size | start, mm->chunk_size))
-		return -EINVAL;
-
-	if (range_overflows(start, size, mm->size))
+	if (GEM_WARN_ON(start + size <= start))
 		return -EINVAL;
 
 	for (i = 0; i < mm->n_roots; ++i)
 		list_add_tail(&mm->roots[i]->tmp_link, &dfs);
 
-	end = start + size - 1;
+	end = start + size;
+	start = round_down(start, mm->chunk_size);
+	end = round_up(end, mm->chunk_size);
+	end -= 1; /* inclusive bounds testing */
 
 	do {
 		u64 block_start;
