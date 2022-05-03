@@ -16,6 +16,7 @@ struct i915_uuid_resource;
 struct i915_address_space;
 struct i915_vma;
 struct intel_engine_cs;
+struct intel_context;
 
 #if IS_ENABLED(CONFIG_DRM_I915_DEBUGGER)
 
@@ -62,6 +63,9 @@ void i915_debugger_context_param_engines(struct i915_gem_context *ctx);
 int i915_debugger_handle_engine_attention(struct intel_engine_cs *engine);
 
 bool i915_debugger_prevents_hangcheck(struct intel_engine_cs *engine);
+bool i915_debugger_active_on_context(struct intel_context *context);
+
+bool i915_debugger_context_guc_debugged(struct intel_context *context);
 
 long i915_debugger_attention_poll_interval(struct intel_engine_cs *engine);
 
@@ -118,6 +122,16 @@ i915_debugger_handle_engine_attention(struct intel_engine_cs *engine)
 
 static inline bool
 i915_debugger_prevents_hangcheck(struct intel_engine_cs *engine)
+{
+	return false;
+}
+
+static inline bool i915_debugger_active_on_context(struct intel_context *context)
+{
+	return false;
+}
+
+static inline bool i915_debugger_context_guc_debugged(struct intel_context *context)
 {
 	return false;
 }

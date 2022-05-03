@@ -109,6 +109,7 @@
 #include <linux/interrupt.h>
 #include <linux/string_helpers.h>
 
+#include "i915_debugger.h"
 #include "i915_drv.h"
 #include "i915_trace.h"
 #include "i915_vgpu.h"
@@ -2320,13 +2321,10 @@ static u32 active_ccid(struct intel_engine_cs *engine)
 	return ENGINE_READ_FW(engine, RING_EXECLIST_STATUS_HI);
 }
 
-static void execlists_capture(struct intel_engine_cs *engine)
+static bool execlists_capture(struct intel_engine_cs *engine)
 {
 	struct execlists_capture *cap;
 	struct i915_request *rq;
-
-	if (!IS_ENABLED(CONFIG_DRM_I915_CAPTURE_ERROR))
-		return;
 
 	rq = active_context(engine, active_ccid(engine));
 
@@ -2336,10 +2334,24 @@ static void execlists_capture(struct intel_engine_cs *engine)
 	 * save a lot of time around forced-preemption by just cancelling the
 	 * guilty request and not capturing the error state.
 	 */
-	if (!rq ||
-	    intel_context_is_closed(rq->context) ||
-	    intel_context_is_banned(rq->context))
-		return;
+	if (!rq)
+		return true;
+
+	if (intel_context_is_banned(rq->context))
+		return true;
+
+	/*
+	 * We return false because we don't want to reset at the preemption
+	 * point when the debugger is active on the context.
+	 */
+	if (i915_debugger_active_on_context(rq->context))
+		return false;
+
+	if (!IS_ENABLED(CONFIG_DRM_I915_CAPTURE_ERROR))
+		return true;
+
+	if (intel_context_is_closed(rq->context))
+		return true;
 
 	/*
 	 * We need to _quickly_ capture the engine state before we reset.
@@ -2348,7 +2360,7 @@ static void execlists_capture(struct intel_engine_cs *engine)
 	 */
 	cap = capture_regs(engine);
 	if (!cap)
-		return;
+		return true;
 
 	rq = active_request(rq->context->timeline, rq);
 	cap->rq = i915_request_get_rcu(rq);
@@ -2380,13 +2392,15 @@ static void execlists_capture(struct intel_engine_cs *engine)
 
 	INIT_WORK(&cap->work, execlists_capture_work);
 	schedule_work(&cap->work);
-	return;
+	return true;
 
 err_rq:
 	i915_request_put(cap->rq);
 err_free:
 	i915_gpu_coredump_put(cap->error);
 	kfree(cap);
+
+	return true;
 }
 
 static noinline void execlists_reset(struct intel_engine_cs *engine)
@@ -2417,8 +2431,15 @@ static noinline void execlists_reset(struct intel_engine_cs *engine)
 	tasklet_disable_nosync(&engine->sched_engine->tasklet);
 
 	ring_set_paused(engine, 1); /* Freeze the current request in place */
-	execlists_capture(engine);
-	intel_engine_reset(engine, msg);
+
+	/*
+	 * We can either reset the engine or just
+	 * release the semaphore on the engine
+	 */
+	if (execlists_capture(engine))
+		intel_engine_reset(engine, msg);
+	else
+		ring_set_paused(engine, 0);
 
 	tasklet_enable(&engine->sched_engine->tasklet);
 	clear_and_wake_up_bit(bit, lock);

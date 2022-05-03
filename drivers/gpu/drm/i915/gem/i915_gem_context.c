@@ -970,6 +970,12 @@ static void __assign_scheduling_policy(struct intel_context *context,
 	intel_context_init_schedule_policy(context);
 }
 
+static void __apply_debugger(struct intel_context *context, void *client)
+{
+	if (i915_debugger_context_guc_debugged(context))
+		intel_context_disable_preemption_timeout(context);
+}
+
 static int gem_context_register(struct i915_gem_context *ctx,
 				struct drm_i915_file_private *fpriv,
 				u32 *id)
@@ -1006,6 +1012,8 @@ static int gem_context_register(struct i915_gem_context *ctx,
 
 	/* Set the default scheduling values from the engine */
 	context_apply_all(ctx, __assign_scheduling_policy, client);
+	/* Apply any debugger overrides to the context */
+	context_apply_all(ctx, __apply_debugger, client);
 
 	spin_lock_irq(&i915->gem.contexts.lock);
 	list_add_tail_rcu(&ctx->link, &i915->gem.contexts.list);
