@@ -1052,12 +1052,25 @@ static struct i915_vma *guc_vma_from_obj(struct intel_guc *guc,
 struct i915_vma *intel_guc_allocate_vma_with_bias(struct intel_guc *guc,
 						  u32 size, u32 bias)
 {
+	/*
+	 * All objects may trigger the I915_WA_FORCE_SMEM_OBJECT depending on
+	 * the platform. For the few cases this isn't desired,
+	 * __intel_guc_allocate_vma_with_bias() has to be used directly
+	 */
+	bool force_smem = i915_is_mem_wa_enabled(guc_to_gt(guc)->i915,
+						 I915_WA_FORCE_SMEM_OBJECT);
+
+	return __intel_guc_allocate_vma_with_bias(guc, size, bias, force_smem);
+}
+
+struct i915_vma *__intel_guc_allocate_vma_with_bias(struct intel_guc *guc,
+						    u32 size, u32 bias, bool force_smem)
+{
 	struct intel_gt *gt = guc_to_gt(guc);
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
 
-	if (HAS_LMEM(gt->i915) &&
-	    !i915_is_mem_wa_enabled(gt->i915, I915_WA_FORCE_SMEM_OBJECT))
+	if (HAS_LMEM(gt->i915) && !force_smem)
 		obj = intel_gt_object_create_lmem(gt, size,
 						  I915_BO_CPU_CLEAR |
 						  I915_BO_ALLOC_CONTIGUOUS);
@@ -1107,10 +1120,21 @@ struct i915_vma *intel_guc_allocate_vma(struct intel_guc *guc, u32 size)
 int intel_guc_allocate_and_map_vma(struct intel_guc *guc, u32 size,
 				   struct i915_vma **out_vma, void **out_vaddr)
 {
+	bool force_smem = i915_is_mem_wa_enabled(guc_to_gt(guc)->i915,
+						 I915_WA_FORCE_SMEM_OBJECT);
+
+	return __intel_guc_allocate_and_map_vma(guc, size, force_smem,
+						out_vma, out_vaddr);
+}
+
+int __intel_guc_allocate_and_map_vma(struct intel_guc *guc, u32 size,
+				     bool force_smem,
+				     struct i915_vma **out_vma, void **out_vaddr)
+{
 	struct i915_vma *vma;
 	void *vaddr;
 
-	vma = intel_guc_allocate_vma(guc, size);
+	vma = __intel_guc_allocate_vma_with_bias(guc, size, 0, force_smem);
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 

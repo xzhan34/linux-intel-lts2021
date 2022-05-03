@@ -248,7 +248,7 @@ int intel_guc_ct_init(struct intel_guc_ct *ct)
 	GEM_BUG_ON(ct->vma);
 
 	blob_size = 2 * CTB_DESC_SIZE + CTB_H2G_BUFFER_SIZE + CTB_G2H_BUFFER_SIZE;
-	err = intel_guc_allocate_and_map_vma(guc, blob_size, &ct->vma, &blob);
+	err = __intel_guc_allocate_and_map_vma(guc, blob_size, true, &ct->vma, &blob);
 	if (unlikely(err)) {
 		CT_PROBE_ERROR(ct, "Failed to allocate %u for CTB data (%pe)\n",
 			       blob_size, ERR_PTR(err));

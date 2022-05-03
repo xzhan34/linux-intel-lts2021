@@ -403,9 +403,13 @@ int intel_guc_suspend(struct intel_guc *guc);
 int intel_guc_resume(struct intel_guc *guc);
 struct i915_vma *intel_guc_allocate_vma_with_bias(struct intel_guc *guc,
 						  u32 size, u32 bias);
+struct i915_vma *__intel_guc_allocate_vma_with_bias(struct intel_guc *guc,
+						    u32 size, u32 bias, bool force_smem);
 struct i915_vma *intel_guc_allocate_vma(struct intel_guc *guc, u32 size);
 int intel_guc_allocate_and_map_vma(struct intel_guc *guc, u32 size,
 				   struct i915_vma **out_vma, void **out_vaddr);
+int __intel_guc_allocate_and_map_vma(struct intel_guc *guc, u32 size, bool force_smem,
+				     struct i915_vma **out_vma, void **out_vaddr);
 int intel_guc_self_cfg32(struct intel_guc *guc, u16 key, u32 value);
 int intel_guc_self_cfg64(struct intel_guc *guc, u16 key, u64 value);
 
