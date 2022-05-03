@@ -29,6 +29,11 @@
 struct i915_address_space;
 struct i915_gem_ww_ctx;
 
+void intel_context_update_schedule_policy(struct intel_context *ce);
+void intel_context_init_schedule_policy(struct intel_context *ce);
+void intel_context_reset_preemption_timeout(struct intel_context *ce);
+void intel_context_disable_preemption_timeout(struct intel_context *ce);
+
 void intel_context_init(struct intel_context *ce,
 			struct intel_engine_cs *engine);
 void intel_context_fini(struct intel_context *ce);

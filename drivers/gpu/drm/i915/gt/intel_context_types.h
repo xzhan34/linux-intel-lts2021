@@ -165,6 +165,22 @@ struct intel_context {
 		} runtime;
 	} stats;
 
+	/**
+	 * @schedule_policy - used to collect some context related scheduling
+	 * parameters.
+	 */
+	struct {
+		u32 preempt_timeout_ms;
+		u32 timeslice_duration_ms;
+
+		/**
+		 * @preempt_disable_count: counts the users of the preemption
+		 * timeout. When it's '0' the default value is taken from the
+		 * engine.props structure.
+		 */
+		atomic_t preempt_disable_count;
+	} schedule_policy;
+
 	unsigned int active_count; /* protected by timeline->mutex */
 
 	atomic_t pin_count;

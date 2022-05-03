@@ -964,6 +964,12 @@ void i915_gem_init__contexts(struct drm_i915_private *i915)
 	init_contexts(&i915->gem.contexts);
 }
 
+static void __assign_scheduling_policy(struct intel_context *context,
+				       void *client)
+{
+	intel_context_init_schedule_policy(context);
+}
+
 static int gem_context_register(struct i915_gem_context *ctx,
 				struct drm_i915_file_private *fpriv,
 				u32 *id)
@@ -997,6 +1003,9 @@ static int gem_context_register(struct i915_gem_context *ctx,
 	spin_unlock(&client->ctx_lock);
 
 	context_apply_all(ctx, __apply_client, client);
+
+	/* Set the default scheduling values from the engine */
+	context_apply_all(ctx, __assign_scheduling_policy, client);
 
 	spin_lock_irq(&i915->gem.contexts.lock);
 	list_add_tail_rcu(&ctx->link, &i915->gem.contexts.list);
