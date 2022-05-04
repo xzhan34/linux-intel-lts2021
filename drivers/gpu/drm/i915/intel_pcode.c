@@ -132,7 +132,7 @@ static bool skl_pcode_try_request(struct intel_uncore *uncore, u32 mbox,
 				  u32 request, u32 reply_mask, u32 reply,
 				  u32 *status)
 {
-	*status = __snb_pcode_rw(uncore, mbox, &request, NULL, 500, 0, true);
+	*status = __snb_pcode_rw(uncore, mbox, &request, NULL, 500, 20, true);
 
 	return *status || ((request & reply_mask) == reply);
 }

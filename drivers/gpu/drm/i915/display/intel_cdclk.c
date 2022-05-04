@@ -1774,8 +1774,8 @@ static void bxt_set_cdclk(struct drm_i915_private *dev_priv,
 		intel_crtc_wait_for_next_vblank(intel_crtc_for_pipe(dev_priv, pipe));
 
 	if (DISPLAY_VER(dev_priv) >= 11) {
-		ret = snb_pcode_write(&dev_priv->uncore, SKL_PCODE_CDCLK_CONTROL,
-				      cdclk_config->voltage_level);
+		ret = snb_pcode_write_timeout(&dev_priv->uncore, SKL_PCODE_CDCLK_CONTROL,
+					      cdclk_config->voltage_level, 500, 20);
 	} else {
 		/*
 		 * The timeout isn't specified, the 2ms used here is based on
