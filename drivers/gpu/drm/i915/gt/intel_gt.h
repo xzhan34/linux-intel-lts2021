@@ -113,9 +113,6 @@ static inline bool pvc_needs_rc6_wa(struct drm_i915_private *i915)
 	if (!i915->params.enable_rc6)
 		return false;
 
-	if (!i915->params.rc6_ignore_steppings)
-		return false;
-
 	if (i915->quiesce_gpu)
 		return false;
 
