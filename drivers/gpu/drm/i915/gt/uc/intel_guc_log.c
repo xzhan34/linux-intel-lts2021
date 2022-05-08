@@ -701,7 +701,7 @@ out_unlock:
 
 bool intel_guc_log_relay_created(const struct intel_guc_log *log)
 {
-	return log->buf_addr;
+	return log->relay.buf_in_use;
 }
 
 int intel_guc_log_relay_open(struct intel_guc_log *log)
