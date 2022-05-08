@@ -100,6 +100,21 @@ void i915_gem_object_migrate_finish(struct drm_i915_gem_object *obj)
 	obj->mm.migrate.fence = NULL;
 }
 
+unsigned int i915_gem_get_pat_index(struct drm_i915_private *i915,
+				    enum i915_cache_level level)
+{
+	if (drm_WARN_ON(&i915->drm, level >= I915_MAX_CACHE_LEVEL))
+		return 0;
+
+	return INTEL_INFO(i915)->cachelevel_to_pat[level];
+}
+
+bool i915_gem_object_has_cache_level(const struct drm_i915_gem_object *obj,
+				     enum i915_cache_level lvl)
+{
+	return obj->pat_index == i915_gem_get_pat_index(obj_to_i915(obj), lvl);
+}
+
 struct drm_i915_gem_object *i915_gem_object_alloc(void)
 {
 	struct drm_i915_gem_object *obj;
@@ -180,7 +195,8 @@ static bool i915_gem_object_use_llc(struct drm_i915_gem_object *obj)
 void i915_gem_object_set_cache_coherency(struct drm_i915_gem_object *obj,
 					 unsigned int cache_level)
 {
-	obj->cache_level = cache_level;
+	obj->pat_index = i915_gem_get_pat_index(obj_to_i915(obj),
+						cache_level);
 
 	if (cache_level != I915_CACHE_NONE)
 		obj->cache_coherent = (I915_BO_CACHE_COHERENT_FOR_READ |
@@ -1282,10 +1298,10 @@ static int i915_alloc_vm_range(struct i915_vma *vma)
 
 static inline void i915_insert_vma_pages(struct i915_vma *vma, bool is_lmem)
 {
-	enum i915_cache_level cache_level = I915_CACHE_NONE;
-
 	intel_flat_ppgtt_allocate_requests(vma, false);
-	vma->vm->insert_entries(vma->vm, NULL, vma, cache_level,
+	vma->vm->insert_entries(vma->vm, NULL, vma,
+				i915_gem_get_pat_index(vma->vm->i915,
+						       I915_CACHE_NONE),
 				is_lmem ? PTE_LM : 0);
 	intel_flat_ppgtt_request_pool_clean(vma);
 

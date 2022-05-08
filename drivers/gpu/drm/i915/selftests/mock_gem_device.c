@@ -125,6 +125,7 @@ struct drm_i915_private *mock_gem_device(void)
 	struct drm_i915_private *i915;
 	struct i915_ggtt *ggtt;
 	struct pci_dev *pdev;
+	unsigned int i;
 
 	pdev = kzalloc(sizeof(*pdev), GFP_KERNEL);
 	if (!pdev)
@@ -177,6 +178,10 @@ struct drm_i915_private *mock_gem_device(void)
 		I915_GTT_PAGE_SIZE_4K |
 		I915_GTT_PAGE_SIZE_64K |
 		I915_GTT_PAGE_SIZE_2M;
+
+	/* simply use legacy cache level for mock device */
+	for (i = 0; i < I915_MAX_CACHE_LEVEL; i++)
+		mkwrite_device_info(i915)->cachelevel_to_pat[i] = i;
 
 	intel_root_gt_init_early(i915);
 	mock_uncore_init(&i915->uncore, i915);

@@ -134,7 +134,7 @@ fake_dma_object(struct drm_i915_private *i915, u64 size)
 
 	obj->write_domain = I915_GEM_DOMAIN_CPU;
 	obj->read_domains = I915_GEM_DOMAIN_CPU;
-	obj->cache_level = I915_CACHE_NONE;
+	obj->pat_index = i915_gem_get_pat_index(i915, I915_CACHE_NONE);
 
 	/* Preallocate the "backing storage" */
 	if (i915_gem_object_pin_pages_unlocked(obj))
@@ -364,7 +364,8 @@ alloc_vm_end:
 
 			with_intel_runtime_pm(vm->gt->uncore->rpm, wakeref)
 				vm->insert_entries(vm, &stash, mock_vma,
-						   I915_CACHE_NONE, 0);
+						   i915_gem_get_pat_index(vm->i915, I915_CACHE_NONE),
+						   0);
 
 			i915_vm_free_pt_stash(vm, &stash);
 		}
@@ -1447,7 +1448,10 @@ static int igt_ggtt_page(void *arg)
 
 		ggtt->vm.insert_page(&ggtt->vm,
 				     i915_gem_object_get_dma_address(obj, 0),
-				     offset, I915_CACHE_NONE, 0);
+				     offset,
+				     i915_gem_get_pat_index(i915,
+							    I915_CACHE_NONE),
+				     0);
 	}
 
 	order = i915_random_order(count, &prng);
@@ -1610,7 +1614,7 @@ static int igt_gtt_reserve(void *arg)
 		err = i915_gem_gtt_reserve(&ggtt->vm, &vma->node,
 					   obj->base.size,
 					   total,
-					   obj->cache_level,
+					   obj->pat_index,
 					   0);
 		mutex_unlock(&ggtt->vm.mutex);
 		if (err) {
@@ -1662,7 +1666,7 @@ static int igt_gtt_reserve(void *arg)
 		err = i915_gem_gtt_reserve(&ggtt->vm, &vma->node,
 					   obj->base.size,
 					   total,
-					   obj->cache_level,
+					   obj->pat_index,
 					   0);
 		mutex_unlock(&ggtt->vm.mutex);
 		if (err) {
@@ -1709,7 +1713,7 @@ static int igt_gtt_reserve(void *arg)
 		err = i915_gem_gtt_reserve(&ggtt->vm, &vma->node,
 					   obj->base.size,
 					   offset,
-					   obj->cache_level,
+					   obj->pat_index,
 					   0);
 		mutex_unlock(&ggtt->vm.mutex);
 		if (err) {
@@ -1824,7 +1828,7 @@ static int igt_gtt_insert(void *arg)
 
 		mutex_lock(&ggtt->vm.mutex);
 		err = i915_gem_gtt_insert(&ggtt->vm, &vma->node,
-					  obj->base.size, 0, obj->cache_level,
+					  obj->base.size, 0, obj->pat_index,
 					  0, ggtt->vm.total,
 					  0);
 		mutex_unlock(&ggtt->vm.mutex);
@@ -1884,7 +1888,7 @@ static int igt_gtt_insert(void *arg)
 
 		mutex_lock(&ggtt->vm.mutex);
 		err = i915_gem_gtt_insert(&ggtt->vm, &vma->node,
-					  obj->base.size, 0, obj->cache_level,
+					  obj->base.size, 0, obj->pat_index,
 					  0, ggtt->vm.total,
 					  0);
 		mutex_unlock(&ggtt->vm.mutex);
@@ -1933,7 +1937,7 @@ static int igt_gtt_insert(void *arg)
 
 		mutex_lock(&ggtt->vm.mutex);
 		err = i915_gem_gtt_insert(&ggtt->vm, &vma->node,
-					  obj->base.size, 0, obj->cache_level,
+					  obj->base.size, 0, obj->pat_index,
 					  0, ggtt->vm.total,
 					  0);
 		mutex_unlock(&ggtt->vm.mutex);

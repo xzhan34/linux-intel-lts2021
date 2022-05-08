@@ -261,7 +261,7 @@ i915_vma_compare(struct i915_vma *vma,
 }
 
 int __i915_vma_bind(struct i915_vma *vma,
-		    enum i915_cache_level cache_level,
+		    unsigned int pat_index,
 		    u32 flags,
 		    struct i915_vma_work *work);
 int i915_vma_bind(struct i915_vma *vma, struct i915_gem_ww_ctx *ww);

@@ -383,7 +383,8 @@ static int i915_ttm_accel_move(struct ttm_buffer_object *bo,
 
 		intel_engine_pm_get(to_gt(i915)->migrate.context->engine);
 		ret = intel_context_migrate_clear(to_gt(i915)->migrate.context, NULL,
-						  dst_st->sgl, I915_CACHE_NONE,
+						  dst_st->sgl,
+						  i915_gem_get_pat_index(i915, I915_CACHE_NONE),
 						  dst_mem->mem_type >= I915_PL_LMEM0,
 						  0, &rq);
 
@@ -398,9 +399,11 @@ static int i915_ttm_accel_move(struct ttm_buffer_object *bo,
 
 		intel_engine_pm_get(to_gt(i915)->migrate.context->engine);
 		ret = intel_context_migrate_copy(to_gt(i915)->migrate.context,
-						 NULL, src_st->sgl, I915_CACHE_NONE,
+						 NULL, src_st->sgl,
+						 i915_gem_get_pat_index(i915, I915_CACHE_NONE),
 						 bo->resource->mem_type >= I915_PL_LMEM0,
-						 dst_st->sgl, I915_CACHE_NONE,
+						 dst_st->sgl,
+						 i915_gem_get_pat_index(i915, I915_CACHE_NONE),
 						 dst_mem->mem_type >= I915_PL_LMEM0,
 						 &rq);
 		if (!ret && rq) {

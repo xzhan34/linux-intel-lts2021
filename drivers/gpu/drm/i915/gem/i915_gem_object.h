@@ -20,6 +20,8 @@
 #include "i915_drm_client.h"
 #include "intel_memory_region.h"
 
+#define obj_to_i915(obj__) to_i915((obj__)->base.dev)
+
 static inline bool i915_gem_object_size_2big(u64 size)
 {
 	struct drm_i915_gem_object *obj;
@@ -30,6 +32,10 @@ static inline bool i915_gem_object_size_2big(u64 size)
 	return false;
 }
 
+unsigned int i915_gem_get_pat_index(struct drm_i915_private *i915,
+				    enum i915_cache_level level);
+bool i915_gem_object_has_cache_level(const struct drm_i915_gem_object *obj,
+				     enum i915_cache_level lvl);
 void i915_gem_init__objects(struct drm_i915_private *i915);
 u32 i915_gem_object_max_page_size(struct drm_i915_gem_object *obj);
 

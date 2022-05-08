@@ -343,13 +343,13 @@ static int emit_no_arbitration(struct i915_request *rq)
 
 static int emit_pte(struct i915_request *rq,
 		    struct sgt_dma *it,
-		    enum i915_cache_level cache_level,
+		    unsigned int pat_index,
 		    bool is_lmem,
 		    u64 offset,
 		    int length)
 {
 	bool has_64K_pages = HAS_64K_PAGES(rq->engine->i915);
-	const u64 encode = rq->context->vm->pte_encode(0, cache_level,
+	const u64 encode = rq->context->vm->pte_encode(0, pat_index,
 						       is_lmem ? PTE_LM : 0);
 	struct intel_ring *ring = rq->ring;
 	int pkt, dword_length;
@@ -661,17 +661,17 @@ int
 intel_context_migrate_copy(struct intel_context *ce,
 			   struct dma_fence *await,
 			   struct scatterlist *src,
-			   enum i915_cache_level src_cache_level,
+			   unsigned int src_pat_index,
 			   bool src_is_lmem,
 			   struct scatterlist *dst,
-			   enum i915_cache_level dst_cache_level,
+			   unsigned int dst_pat_index,
 			   bool dst_is_lmem,
 			   struct i915_request **out)
 {
 	struct sgt_dma it_src = sg_sgt(src), it_dst = sg_sgt(dst), it_ccs;
 	struct drm_i915_private *i915 = ce->engine->i915;
 	u64 ccs_bytes_to_cpy = 0, bytes_to_cpy;
-	enum i915_cache_level ccs_cache_level;
+	unsigned int ccs_pat_index;
 	u32 src_offset, dst_offset;
 	u8 src_access, dst_access;
 	struct i915_request *rq;
@@ -695,12 +695,12 @@ intel_context_migrate_copy(struct intel_context *ce,
 		dst_sz = scatter_list_length(dst);
 		if (src_is_lmem) {
 			it_ccs = it_dst;
-			ccs_cache_level = dst_cache_level;
+			ccs_pat_index = dst_pat_index;
 			ccs_is_src = false;
 		} else if (dst_is_lmem) {
 			bytes_to_cpy = dst_sz;
 			it_ccs = it_src;
-			ccs_cache_level = src_cache_level;
+			ccs_pat_index = src_pat_index;
 			ccs_is_src = true;
 		}
 
@@ -761,7 +761,7 @@ intel_context_migrate_copy(struct intel_context *ce,
 		src_sz = calculate_chunk_sz(i915, src_is_lmem,
 					    bytes_to_cpy, ccs_bytes_to_cpy);
 
-		len = emit_pte(rq, &it_src, src_cache_level, src_is_lmem,
+		len = emit_pte(rq, &it_src, src_pat_index, src_is_lmem,
 			       src_offset, src_sz);
 		if (!len) {
 			err = -EINVAL;
@@ -772,7 +772,7 @@ intel_context_migrate_copy(struct intel_context *ce,
 			goto out_rq;
 		}
 
-		err = emit_pte(rq, &it_dst, dst_cache_level, dst_is_lmem,
+		err = emit_pte(rq, &it_dst, dst_pat_index, dst_is_lmem,
 			       dst_offset, len);
 		if (err < 0)
 			goto out_rq;
@@ -799,7 +799,7 @@ intel_context_migrate_copy(struct intel_context *ce,
 				goto out_rq;
 
 			ccs_sz = GET_CCS_BYTES(i915, len);
-			err = emit_pte(rq, &it_ccs, ccs_cache_level, false,
+			err = emit_pte(rq, &it_ccs, ccs_pat_index, false,
 				       ccs_is_src ? src_offset : dst_offset,
 				       ccs_sz);
 			if (err < 0)
@@ -947,7 +947,7 @@ int
 intel_context_migrate_clear(struct intel_context *ce,
 			    struct dma_fence *await,
 			    struct scatterlist *sg,
-			    enum i915_cache_level cache_level,
+			    unsigned int pat_index,
 			    bool is_lmem,
 			    u32 value,
 			    struct i915_request **out)
@@ -995,7 +995,7 @@ intel_context_migrate_clear(struct intel_context *ce,
 		if (err)
 			goto out_rq;
 
-		len = emit_pte(rq, &it, cache_level, is_lmem, offset, CHUNK_SZ);
+		len = emit_pte(rq, &it, pat_index, is_lmem, offset, CHUNK_SZ);
 		if (len <= 0) {
 			err = len;
 			goto out_rq;
@@ -1042,10 +1042,10 @@ int intel_migrate_copy(struct intel_migrate *m,
 		       struct i915_gem_ww_ctx *ww,
 		       struct dma_fence *await,
 		       struct scatterlist *src,
-		       enum i915_cache_level src_cache_level,
+		       unsigned int src_pat_index,
 		       bool src_is_lmem,
 		       struct scatterlist *dst,
-		       enum i915_cache_level dst_cache_level,
+		       unsigned int dst_pat_index,
 		       bool dst_is_lmem,
 		       struct i915_request **out)
 {
@@ -1066,8 +1066,8 @@ int intel_migrate_copy(struct intel_migrate *m,
 		goto out;
 
 	err = intel_context_migrate_copy(ce, await,
-					 src, src_cache_level, src_is_lmem,
-					 dst, dst_cache_level, dst_is_lmem,
+					 src, src_pat_index, src_is_lmem,
+					 dst, dst_pat_index, dst_is_lmem,
 					 out);
 
 	intel_context_unpin(ce);
@@ -1081,7 +1081,7 @@ intel_migrate_clear(struct intel_migrate *m,
 		    struct i915_gem_ww_ctx *ww,
 		    struct dma_fence *await,
 		    struct scatterlist *sg,
-		    enum i915_cache_level cache_level,
+		    unsigned int pat_index,
 		    bool is_lmem,
 		    u32 value,
 		    struct i915_request **out)
@@ -1102,7 +1102,7 @@ intel_migrate_clear(struct intel_migrate *m,
 	if (err)
 		goto out;
 
-	err = intel_context_migrate_clear(ce, await, sg, cache_level,
+	err = intel_context_migrate_clear(ce, await, sg, pat_index,
 					  is_lmem, value, out);
 
 	intel_context_unpin(ce);

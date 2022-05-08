@@ -191,14 +191,32 @@ static int vm_bind_ext_uuid(struct i915_user_extension __user *base,
 	return 0;
 }
 
+#define TGL_MAX_PAT_INDEX	3
+#define PVC_MAX_PAT_INDEX	7
+
 static int vm_bind_set_pat(struct i915_user_extension __user *base,
 			   void *data)
 {
 	struct prelim_drm_i915_vm_bind_ext_set_pat ext;
 	struct vm_bind_user_ext *arg = data;
+	struct drm_i915_private *i915 = arg->vm->i915;
+	__u64 max_pat_index;
 
 	if (copy_from_user(&ext, base, sizeof(ext)))
 		return -EFAULT;
+
+	if (IS_PONTEVECCHIO(i915))
+		max_pat_index = PVC_MAX_PAT_INDEX;
+	else if (GRAPHICS_VER(i915) >= 12)
+		max_pat_index = TGL_MAX_PAT_INDEX;
+	else
+		/* For legacy platforms pat_index is a value of
+		 * enum i915_cache_level
+		 */
+		max_pat_index = I915_CACHE_WT;
+
+	if (ext.pat_index > max_pat_index)
+		return -EINVAL;
 
 	/*
 	 * FIXME: Object should be locked here. And if the ioctl fails,
@@ -206,33 +224,11 @@ static int vm_bind_set_pat(struct i915_user_extension __user *base,
 	 */
 
 	/*
-	 * Convert pat index to cache type
-	 *
-	 * Only do the conversion for the default shared pat index (0..3) so that
-	 * the existing code will not be affected.
-	 *
-	 * For other pat index, there is no need to convert.
-	 *
+	 * By design, the UMD's are passing in the PAT indices which can
+	 * be directly used to set the corresponding bits in PTE.
 	 */
-	switch (ext.pat_index){
-		case 0:
-			arg->obj->cache_level = I915_CACHE_NONE;
-			break;
-		case 1:
-			arg->obj->cache_level = I915_CACHE_L3_LLC; /*TBD: WC type*/
-			break;
-		case 2:
-			arg->obj->cache_level = I915_CACHE_WT;
-			break;
-		case 3:
-			arg->obj->cache_level = I915_CACHE_L3_LLC; /* WB */
-			break;
-		default:
-			arg->obj->cache_level = ext.pat_index;
-			break;
-	}
-	DRM_DEBUG("vm_bind_set_pat: pat_index = %lld cache = %d \n",
-			ext.pat_index,  arg->obj->cache_level);
+	arg->obj->pat_index = ext.pat_index;
+
 	return 0;
 }
 

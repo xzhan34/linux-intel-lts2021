@@ -35,6 +35,8 @@
 #include "gt/intel_context_types.h"
 #include "gt/intel_sseu.h"
 
+#include "gem/i915_gem_object_types.h"
+
 struct drm_printer;
 struct drm_i915_private;
 struct intel_gt_definition;
@@ -286,6 +288,8 @@ struct intel_device_info {
 			u32 gamma_lut_tests;
 		} color;
 	} display;
+
+	unsigned int cachelevel_to_pat[I915_MAX_CACHE_LEVEL];
 };
 
 struct intel_runtime_info {

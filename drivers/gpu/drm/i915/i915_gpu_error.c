@@ -1309,7 +1309,9 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 
 			mutex_lock(&ggtt->error_mutex);
 			ggtt->vm.insert_page(&ggtt->vm, dma, slot,
-					     I915_CACHE_NONE, 0);
+					     i915_gem_get_pat_index(gt->i915,
+							I915_CACHE_NONE),
+					     0);
 			mb();
 
 			s = io_mapping_map_wc(&ggtt->iomap, slot, PAGE_SIZE);

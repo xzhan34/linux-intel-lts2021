@@ -40,25 +40,25 @@ static void gen8_set_pte(void __iomem *addr, gen8_pte_t pte)
 static void dpt_insert_page(struct i915_address_space *vm,
 			    dma_addr_t addr,
 			    u64 offset,
-			    enum i915_cache_level level,
+			    unsigned int pat_index,
 			    u32 flags)
 {
 	struct i915_dpt *dpt = i915_vm_to_dpt(vm);
 	gen8_pte_t __iomem *base = dpt->iomem;
 
 	gen8_set_pte(base + offset / I915_GTT_PAGE_SIZE,
-		     vm->pte_encode(addr, level, flags));
+		     vm->pte_encode(addr, pat_index, flags));
 }
 
 static void dpt_insert_entries(struct i915_address_space *vm,
 			       struct i915_vm_pt_stash *stash,
 			       struct i915_vma *vma,
-			       enum i915_cache_level level,
+			       unsigned int pat_index,
 			       u32 flags)
 {
 	struct i915_dpt *dpt = i915_vm_to_dpt(vm);
 	gen8_pte_t __iomem *base = dpt->iomem;
-	const gen8_pte_t pte_encode = vm->pte_encode(0, level, flags);
+	const gen8_pte_t pte_encode = vm->pte_encode(0, pat_index, flags);
 	struct sgt_iter sgt_iter;
 	dma_addr_t addr;
 	int i;
@@ -81,7 +81,7 @@ static void dpt_clear_range(struct i915_address_space *vm,
 static void dpt_bind_vma(struct i915_address_space *vm,
 			 struct i915_vm_pt_stash *stash,
 			 struct i915_vma *vma,
-			 enum i915_cache_level cache_level,
+			 unsigned int pat_index,
 			 u32 flags)
 {
 	struct drm_i915_gem_object *obj = vma->obj;
@@ -94,7 +94,7 @@ static void dpt_bind_vma(struct i915_address_space *vm,
 	if (i915_gem_object_is_lmem(obj))
 		pte_flags |= PTE_LM;
 
-	vma->vm->insert_entries(vma->vm, stash, vma, cache_level, pte_flags);
+	vma->vm->insert_entries(vma->vm, stash, vma, pat_index, pte_flags);
 
 	vma->page_sizes.gtt = I915_GTT_PAGE_SIZE;
 
@@ -297,7 +297,7 @@ intel_dpt_create(struct intel_framebuffer *fb)
 	vm->vma_ops.set_pages   = ggtt_set_pages;
 	vm->vma_ops.clear_pages = clear_pages;
 
-	vm->pte_encode = gen8_ggtt_pte_encode;
+	vm->pte_encode = vm->gt->ggtt->vm.pte_encode;
 
 	dpt->obj = dpt_obj;
 

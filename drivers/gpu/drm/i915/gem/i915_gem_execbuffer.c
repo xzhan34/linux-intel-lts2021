@@ -687,7 +687,7 @@ static inline int use_cpu_reloc(const struct reloc_cache *cache,
 
 	return (cache->has_llc ||
 		obj->cache_dirty ||
-		obj->cache_level != I915_CACHE_NONE);
+		!i915_gem_object_has_cache_level(obj, I915_CACHE_NONE));
 }
 
 static int eb_reserve_vma(struct i915_execbuffer *eb,
@@ -1553,8 +1553,10 @@ static void *reloc_iomap(struct drm_i915_gem_object *obj,
 	offset = cache->node.start;
 	if (drm_mm_node_allocated(&cache->node)) {
 		ggtt->vm.insert_page(&ggtt->vm,
-				     i915_gem_object_get_dma_address(obj, page),
-				     offset, I915_CACHE_NONE, 0);
+			i915_gem_object_get_dma_address(obj, page),
+			offset,
+			i915_gem_get_pat_index(ggtt->vm.i915, I915_CACHE_NONE),
+			0);
 	} else {
 		offset += page << PAGE_SHIFT;
 	}
@@ -2003,7 +2005,7 @@ eb_relocate_entry(struct i915_execbuffer *eb,
 		if (reloc->write_domain == I915_GEM_DOMAIN_INSTRUCTION &&
 		    GRAPHICS_VER(eb->i915) == 6) {
 			err = __i915_vma_bind(target->vma,
-					      target->vma->obj->cache_level,
+					      target->vma->obj->pat_index,
 					      PIN_GLOBAL,
 					      NULL);
 			if (err)

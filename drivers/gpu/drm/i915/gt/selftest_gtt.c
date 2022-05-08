@@ -457,6 +457,8 @@ pte_write_tearing(struct intel_context *ce,
 		  u64 align,
 		  struct rnd_state *prng)
 {
+	const unsigned int pat_index =
+		i915_gem_get_pat_index(ce->vm->i915, I915_CACHE_NONE);
 	const int use_64b = GRAPHICS_VER(ce->vm->i915) >= 8;
 	struct drm_i915_gem_object *batch;
 	struct i915_request *rq;
@@ -597,7 +599,7 @@ pte_write_tearing(struct intel_context *ce,
 			/* Flip the PTE between A and B */
 			if (i915_gem_object_is_lmem(vv[0]->obj))
 				pte_flags |= PTE_LM;
-			ce->vm->insert_entries(ce->vm, &stash, vv[0], I915_CACHE_NONE, pte_flags);
+			ce->vm->insert_entries(ce->vm, &stash, vv[0], pat_index, pte_flags);
 
 			i915_vm_free_pt_stash(ce->vm, &stash);
 
