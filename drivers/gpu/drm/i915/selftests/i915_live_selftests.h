@@ -67,5 +67,6 @@ selftest(iov_provisioning, selftest_live_iov_provisioning)
 selftest(iov_relay, selftest_live_iov_relay)
 selftest(semaphores, intel_semaphore_live_selftests)
 selftest(guc_doorbells, intel_guc_doorbells_live_selftests)
+selftest(iov_service, selftest_live_iov_service)
 /* Here be dragons: keep last to run last! */
 selftest(late_gt_pm, intel_gt_pm_late_selftests)

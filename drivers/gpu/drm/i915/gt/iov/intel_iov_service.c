@@ -229,7 +229,9 @@ static int reply_handshake(struct intel_iov *iov, u32 origin,
 	u32 wanted_major, wanted_minor;
 	u32 major, minor, mbz;
 
-	GEM_BUG_ON(!origin);
+	GEM_BUG_ON(!origin &&
+		   !I915_SELFTEST_ONLY(relay->selftest.enable_loopback));
+
 	if (unlikely(len != VF2PF_HANDSHAKE_REQUEST_MSG_LEN))
 		return -EMSGSIZE;
 
@@ -339,7 +341,7 @@ int intel_iov_service_process_msg(struct intel_iov *iov, u32 origin,
 	data = FIELD_GET(GUC_HXG_REQUEST_MSG_0_DATA0, msg[0]);
 	IOV_DEBUG(iov, "servicing action %#x:%u from %u\n", action, data, origin);
 
-	if (!origin)
+	if (!origin && !I915_SELFTEST_ONLY(iov->relay.selftest.enable_loopback))
 		return -EPROTO;
 
 	switch (action) {
@@ -538,4 +540,5 @@ int intel_iov_service_process_mmio_relay(struct intel_iov *iov, const u32 *msg,
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftests/selftest_mock_iov_service.c"
+#include "selftests/selftest_live_iov_service.c"
 #endif
