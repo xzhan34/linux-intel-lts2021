@@ -1088,7 +1088,8 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	if (try_qad_pin(vma, flags & I915_VMA_BIND_MASK))
 		return 0;
 
-	i915_debugger_wait_on_discovery(vma->vm->i915); /* wait for vm event */
+	i915_debugger_wait_on_discovery(vma->vm->i915, /* wait for vm event */
+					vma->vm->client);
 
 	err = vma_get_pages(vma);
 	if (err)

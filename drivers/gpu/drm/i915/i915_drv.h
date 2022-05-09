@@ -866,12 +866,12 @@ struct drm_i915_private {
 
 #if IS_ENABLED(CONFIG_DRM_I915_DEBUGGER)
 	struct {
-		struct mutex mutex;
-		struct i915_debugger __rcu *debugger;
+		spinlock_t lock; /* lock for list */
+		struct list_head list;
 		u64 session_count;
 
 		struct mutex eu_flush_lock;
-	} debug;
+	} debuggers;
 #endif
 
 	struct i915_hdcp_comp_master *hdcp_master;

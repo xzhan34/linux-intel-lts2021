@@ -621,7 +621,7 @@ static void context_close(struct i915_gem_context *ctx)
 
 	client = ctx->client;
 	if (client) {
-		i915_debugger_wait_on_discovery(ctx->client->clients->i915);
+		i915_debugger_wait_on_discovery(ctx->i915, client);
 		i915_debugger_context_destroy(ctx);
 	}
 
@@ -990,6 +990,8 @@ static int gem_context_register(struct i915_gem_context *ctx,
 
 	ctx->client = client;
 
+	i915_debugger_wait_on_discovery(i915, client);
+
 	spin_lock(&client->ctx_lock);
 	list_add_tail_rcu(&ctx->client_link, &client->ctx_list);
 	spin_unlock(&client->ctx_lock);
@@ -1096,8 +1098,6 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 	if (args->flags & PRELIM_I915_VM_CREATE_FLAGS_UNKNOWN)
 		return -EINVAL;
 
-	i915_debugger_wait_on_discovery(file_priv->dev_priv);
-
 	ppgtt = i915_ppgtt_create(to_gt(i915));
 	if (IS_ERR(ppgtt))
 		return PTR_ERR(ppgtt);
@@ -1111,6 +1111,8 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 		if (err)
 			goto err_put;
 	}
+
+	i915_debugger_wait_on_discovery(i915, ppgtt->vm.client);
 
 	err = xa_alloc(&file_priv->vm_xa, &id, &ppgtt->vm,
 		       xa_limit_32b, GFP_KERNEL);
@@ -1143,13 +1145,13 @@ int i915_gem_vm_destroy_ioctl(struct drm_device *dev, void *data,
 	if (args->extensions)
 		return -EINVAL;
 
-	i915_debugger_wait_on_discovery(file_priv->dev_priv);
+	i915_debugger_wait_on_discovery(to_i915(dev), file_priv->client);
 
 	vm = xa_erase(&file_priv->vm_xa, args->vm_id);
 	if (!vm)
 		return -ENOENT;
 
-	i915_debugger_vm_destroy(file_priv->client, vm);
+	i915_debugger_vm_destroy(vm->client, vm);
 	i915_vm_close(vm);
 
 	i915_gem_flush_free_objects(to_i915(dev));
@@ -1167,13 +1169,13 @@ static int get_ppgtt(struct drm_i915_file_private *file_priv,
 	if (!rcu_access_pointer(ctx->vm))
 		return -ENODEV;
 
-	i915_debugger_wait_on_discovery(ctx->i915);
-
 	rcu_read_lock();
 	vm = context_get_vm_rcu(ctx);
 	rcu_read_unlock();
 	if (!vm)
 		return -ENODEV;
+
+	i915_debugger_wait_on_discovery(vm->i915, vm->client);
 
 	err = xa_alloc(&file_priv->vm_xa, &id, vm, xa_limit_32b, GFP_KERNEL);
 	if (err)
@@ -2236,8 +2238,6 @@ int i915_gem_context_create_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		return ret;
 
-	i915_debugger_wait_on_discovery(i915);
-
 	ext_data.fpriv = file->driver_priv;
 	if (client_is_banned(ext_data.fpriv)) {
 		drm_dbg(&i915->drm,
@@ -2288,7 +2288,9 @@ int i915_gem_context_destroy_ioctl(struct drm_device *dev, void *data,
 	if (!args->ctx_id)
 		return -ENOENT;
 
-	i915_debugger_wait_on_discovery(file_priv->dev_priv);
+	i915_debugger_wait_on_discovery(file_priv->dev_priv,
+					file_priv->client);
+
 	ctx = xa_erase(&file_priv->context_xa, args->ctx_id);
 	if (!ctx)
 		return -ENOENT;
@@ -2447,7 +2449,7 @@ int i915_gem_context_setparam_ioctl(struct drm_device *dev, void *data,
 	if (!ctx)
 		return -ENOENT;
 
-	i915_debugger_wait_on_discovery(file_priv->dev_priv);
+	i915_debugger_wait_on_discovery(ctx->i915, ctx->client);
 	ret = ctx_setparam(file_priv, ctx, args, false);
 
 	i915_gem_context_put(ctx);

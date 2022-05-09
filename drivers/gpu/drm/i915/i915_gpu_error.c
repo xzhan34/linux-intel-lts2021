@@ -2621,7 +2621,8 @@ int i915_uuid_register_ioctl(struct drm_device *dev, void *data,
 		if (ret)
 			goto err;
 	}
-	i915_debugger_wait_on_discovery(to_i915(dev));
+
+	i915_debugger_wait_on_discovery(to_i915(dev), client);
 
 	xa_lock(&client->uuids_xa);
 	uuid_res_base = xa_load(&client->uuids_xa, uuid_arg->uuid_class);
@@ -2684,7 +2685,8 @@ int i915_uuid_unregister_ioctl(struct drm_device *dev, void *data,
 
 	if (uuid_arg->handle >= PRELIM_I915_UUID_CLASS_MAX_RESERVED)
 		return -EINVAL;
-	i915_debugger_wait_on_discovery(to_i915(dev));
+
+	i915_debugger_wait_on_discovery(to_i915(dev), client);
 
 	xa_lock(&client->uuids_xa);
 	uuid_res = xa_load(&client->uuids_xa, uuid_arg->handle);

@@ -346,41 +346,28 @@ static void i915_debugger_put(struct i915_debugger *debugger)
 }
 
 static inline bool
-__is_debugger_closed(const struct drm_i915_private * const i915,
-		     const struct i915_debugger * const debugger)
-{
-	return debugger != rcu_access_pointer(i915->debug.debugger);
-}
-
-
-static inline bool
 is_debugger_closed(const struct i915_debugger * const debugger)
 {
-	return __is_debugger_closed(debugger->i915, debugger);
+	return list_empty(&debugger->connection_link);
 }
 
 static void i915_debugger_detach(struct i915_debugger *debugger)
 {
 	struct drm_i915_private * const i915 = debugger->i915;
+	unsigned long flags;
 
-	mutex_lock(&i915->debug.mutex);
-	if (!__is_debugger_closed(i915, debugger)) {
-		rcu_replace_pointer(i915->debug.debugger, NULL, true);
-		DD_INFO(debugger, "detached");
+	spin_lock_irqsave(&i915->debuggers.lock, flags);
+	if (!is_debugger_closed(debugger)) {
+		DD_INFO(debugger, "session %llu detached", debugger->session);
+		list_del_init(&debugger->connection_link);
 	}
-	mutex_unlock(&i915->debug.mutex);
+	spin_unlock_irqrestore(&i915->debuggers.lock, flags);
 }
 
 static inline const struct i915_debug_event *
 event_pending(const struct i915_debugger * const debugger)
 {
 	return READ_ONCE(debugger->event);
-}
-
-static inline bool is_client_connected(const struct i915_debugger *debugger,
-				       const struct i915_drm_client *client)
-{
-	return READ_ONCE(client->debugger_session) == debugger->session;
 }
 
 static const char *get_driver_name(struct dma_fence *fence)
@@ -600,7 +587,7 @@ static void i915_debugger_close(struct i915_debugger *debugger)
 	i915_debugger_detach(debugger);
 
 	release_acks(debugger);
-	DD_INFO(debugger, "closed");
+	DD_INFO(debugger, "session %llu closed", debugger->session);
 
 	complete_all(&debugger->discovery);
 	wake_up_all(&debugger->write_done);
@@ -630,37 +617,77 @@ static ssize_t i915_debugger_read(struct file *file,
 	return 0;
 }
 
-static struct i915_debugger *i915_debugger_get(struct drm_i915_private *i915)
+static inline u64 client_session(const struct i915_drm_client *client)
 {
-	struct i915_debugger *debugger;
+	return client ? READ_ONCE(client->debugger_session) : 0;
+}
 
-	rcu_read_lock();
-	debugger = rcu_dereference(i915->debug.debugger);
-	if (debugger && !kref_get_unless_zero(&debugger->ref))
-		debugger = NULL;
-	rcu_read_unlock();
+#define for_each_debugger(debugger, head) \
+	list_for_each_entry(debugger, head, connection_link)
+
+static struct i915_debugger *
+i915_debugger_get(const struct i915_drm_client * const client)
+{
+	struct drm_i915_private *i915;
+	const u64 session = client_session(client);
+	struct i915_debugger *debugger, *iter;
+	unsigned long flags;
+
+	if (likely(!session))
+		return NULL;
+
+	i915 = client->clients->i915;
+	debugger = NULL;
+
+	spin_lock_irqsave(&i915->debuggers.lock, flags);
+	for_each_debugger(iter, &i915->debuggers.list) {
+		if (iter->session != session)
+			continue;
+
+		kref_get(&iter->ref);
+		debugger = iter;
+		break;
+	}
+	spin_unlock_irqrestore(&i915->debuggers.lock, flags);
+
+	return debugger;
+}
+
+static struct i915_debugger *
+i915_debugger_find_task_get(struct drm_i915_private *i915,
+			    struct task_struct *task)
+{
+	struct i915_debugger *debugger, *iter;
+	unsigned long flags;
+
+	debugger = NULL;
+
+	spin_lock_irqsave(&i915->debuggers.lock, flags);
+	for_each_debugger(iter, &i915->debuggers.list) {
+		if (!same_thread_group(iter->target_task, task))
+			continue;
+
+		kref_get(&iter->ref);
+		debugger = iter;
+		break;
+	}
+	spin_unlock_irqrestore(&i915->debuggers.lock, flags);
 
 	return debugger;
 }
 
 static inline bool client_debugged(const struct i915_drm_client * const client)
 {
-	struct drm_i915_private * const i915 = client->clients->i915;
 	struct i915_debugger *debugger;
-	bool debugged;
 
-	if (likely(!READ_ONCE(client->debugger_session)))
+	if (likely(!client_session(client)))
 		return false;
 
-	rcu_read_lock();
-	debugger = rcu_dereference(i915->debug.debugger);
+	debugger = i915_debugger_get(client);
 	if (debugger)
-		debugged = is_client_connected(debugger, client);
-	else
-		debugged = false;
-	rcu_read_unlock();
+		i915_debugger_put(debugger);
 
-	return debugged;
+	return debugger != NULL;
 }
 
 static int _i915_debugger_send_event(struct i915_debugger * const debugger,
@@ -1101,7 +1128,7 @@ static int engine_rcu_async_flush(struct intel_engine_cs *engine,
 		return 0;
 
 	intel_uncore_forcewake_get(uncore, fw);
-	mutex_lock(&i915->debug.eu_flush_lock);
+	mutex_lock(&i915->debuggers.eu_flush_lock);
 
 	psmi_ctrl = intel_uncore_read_fw(uncore, psmi_addr);
 	if (!(psmi_ctrl & GEN6_PSMI_SLEEP_MSG_DISABLE))
@@ -1132,7 +1159,7 @@ out:
 		intel_uncore_write_fw(uncore, psmi_addr,
 				      _MASKED_BIT_DISABLE(GEN6_PSMI_SLEEP_MSG_DISABLE));
 
-	mutex_unlock(&i915->debug.eu_flush_lock);
+	mutex_unlock(&i915->debuggers.eu_flush_lock);
 	intel_uncore_forcewake_put(uncore, fw);
 	intel_engine_pm_put(engine);
 
@@ -2089,11 +2116,10 @@ find_client_get(struct i915_debugger *debugger, unsigned long handle)
 	rcu_read_lock();
 	client = xa_load(&debugger->i915->clients.xarray, handle);
 	if (client) {
-		if (!is_client_connected(debugger, client) ||
-		    READ_ONCE(client->closed))
-			client = NULL;
-		else
+		if (client_session(client) == debugger->session)
 			client = i915_drm_client_get_rcu(client);
+		else
+			client = NULL;
 	}
 
 	rcu_read_unlock();
@@ -2429,13 +2455,15 @@ out:
 static void i915_debugger_discover_vm(struct i915_debugger *debugger,
 				      struct i915_drm_client *client)
 {
+	u64 session = client_session(client);
 	struct i915_address_space *vm;
 	unsigned long i;
 
 	if (!client->file) /* protect kernel internals */
 		return;
 
-	if (!is_client_connected(debugger, client))
+	if (GEM_WARN_ON(session &&
+			debugger->session != session))
 		return;
 
 	xa_for_each(&client->file->vm_xa, i, vm) {
@@ -2503,9 +2531,6 @@ i915_debugger_discover_contexts(struct i915_debugger *debugger,
 {
 	struct i915_gem_context *ctx;
 
-	if (!is_client_connected(debugger, client))
-		return;
-
 	rcu_read_lock();
 	list_for_each_entry_rcu(ctx, &client->ctx_list, client_link) {
 		if (!i915_gem_context_get_rcu(ctx))
@@ -2537,7 +2562,7 @@ i915_debugger_client_task_register(const struct i915_debugger * const debugger,
 	if (!READ_ONCE(client->closed) &&
 	    !is_debugger_closed(debugger) &&
 	    same_thread_group(debugger->target_task, task)) {
-		GEM_WARN_ON(client->debugger_session >= debugger->session);
+		GEM_WARN_ON(client_session(client) >= debugger->session);
 		WRITE_ONCE(client->debugger_session, debugger->session);
 		registered = true;
 	}
@@ -2560,7 +2585,7 @@ i915_debugger_register_client(const struct i915_debugger * const debugger,
 		client_task = get_pid_task(name->pid, PIDTYPE_PID);
 	} else {
 		/* XXX: clients->xarray can contain unregistered clients, should we wait or lock? */
-		DD_WARN(debugger, "client %d with no pid, will not be found by discovery\n",
+		DD_WARN(debugger, "client %u with no pid, will not be found by discovery\n",
 			 client->id);
 	}
 	rcu_read_unlock();
@@ -2569,6 +2594,9 @@ i915_debugger_register_client(const struct i915_debugger * const debugger,
 		return false;
 
 	registered = i915_debugger_client_task_register(debugger, client, client_task);
+	DD_INFO(debugger, "client %u, pid %d, session %llu, %s registered\n",
+		client->id, client_task->pid, client_session(client), registered ? "was" : "not");
+
 	put_task_struct(client_task);
 
 	return registered;
@@ -2694,9 +2722,10 @@ i915_debugger_open(struct drm_i915_private * const i915,
 		   struct prelim_drm_i915_debugger_open_param * const param)
 {
 	const u64 known_open_flags = PRELIM_DRM_I915_DEBUG_FLAG_FD_NONBLOCK;
-	struct i915_debugger *debugger;
+	struct i915_debugger *debugger, *iter;
 	struct task_struct *discovery_task;
 	unsigned long f_flags = 0;
+	unsigned long flags;
 	int debug_fd;
 	bool allowed;
 	int ret;
@@ -2723,6 +2752,7 @@ i915_debugger_open(struct drm_i915_private * const i915,
 
 	kref_init(&debugger->ref);
 	mutex_init(&debugger->lock);
+	INIT_LIST_HEAD(&debugger->connection_link);
 	atomic_long_set(&debugger->event_seqno, 0);
 
 	rwlock_init(&debugger->eu_lock);
@@ -2758,25 +2788,22 @@ i915_debugger_open(struct drm_i915_private * const i915,
 	if (param->flags & PRELIM_DRM_I915_DEBUG_FLAG_FD_NONBLOCK)
 		f_flags |= O_NONBLOCK;
 
-	mutex_lock(&i915->debug.mutex);
-	if (i915->debug.debugger) {
-		ret = -EBUSY;
-		goto err_unlock;
+	spin_lock_irqsave(&i915->debuggers.lock, flags);
+
+	for_each_debugger(iter, &i915->debuggers.list) {
+		if (same_thread_group(iter->target_task, debugger->target_task)) {
+			drm_info(&i915->drm, "pid %llu already debugged\n", param->pid);
+			ret = -EBUSY;
+			goto err_unlock;
+		}
 	}
 
 	/* XXX handle the overflow without bailing out */
-	if (i915->debug.session_count + 1 == 0) {
+	if (i915->debuggers.session_count + 1 == 0) {
 		drm_err(&i915->drm, "debugger connections exhausted. (you need module reload)\n");
 		ret = -EBUSY;
 		goto err_unlock;
 	}
-
-	debug_fd = anon_inode_getfd("[i915_debugger]", &fops, debugger, f_flags);
-	if (debug_fd < 0) {
-		ret = debug_fd;
-		goto err_unlock;
-	}
-
 
 	if (i915->params.debugger_log_level < 0)
 		debugger->debug_lvl = DD_DEBUG_LEVEL_WARN;
@@ -2785,16 +2812,25 @@ i915_debugger_open(struct drm_i915_private * const i915,
 					    DD_DEBUG_LEVEL_VERBOSE);
 
 	debugger->i915 = i915;
-	debugger->session = ++i915->debug.session_count;
-	rcu_assign_pointer(i915->debug.debugger, debugger);
-	mutex_unlock(&i915->debug.mutex);
+	debugger->session = ++i915->debuggers.session_count;
+	list_add_tail(&debugger->connection_link, &i915->debuggers.list);
+	spin_unlock_irqrestore(&i915->debuggers.lock, flags);
+
+	debug_fd = anon_inode_getfd("[i915_debugger]", &fops, debugger, f_flags);
+	if (debug_fd < 0) {
+		ret = debug_fd;
+		spin_lock_irqsave(&i915->debuggers.lock, flags);
+		list_del_init(&debugger->connection_link);
+		goto err_unlock;
+	}
 
 	complete(&debugger->read_done);
 	wake_up_process(discovery_task);
 
 	compute_engines_reschedule_heartbeat(debugger);
 
-	DD_INFO(debugger, "connected, debug level = %d", debugger->debug_lvl);
+	DD_INFO(debugger, "connected session %llu, debug level = %d",
+		debugger->session, debugger->debug_lvl);
 
 	if (debugger->debug_lvl >= DD_DEBUG_LEVEL_VERBOSE)
 		printk(KERN_WARNING "i915_debugger: verbose debug level exposing raw addresses!\n");
@@ -2804,7 +2840,7 @@ i915_debugger_open(struct drm_i915_private * const i915,
 	return debug_fd;
 
 err_unlock:
-	mutex_unlock(&i915->debug.mutex);
+	spin_unlock_irqrestore(&i915->debuggers.lock, flags);
 	discovery_thread_stop(discovery_task);
 err_put_task:
 	put_task_struct(debugger->target_task);
@@ -2842,35 +2878,37 @@ int i915_debugger_open_ioctl(struct drm_device *dev,
 
 void i915_debugger_init(struct drm_i915_private *i915)
 {
-	mutex_init(&i915->debug.mutex);
+	mutex_init(&i915->debuggers.eu_flush_lock);
 
-	mutex_init(&i915->debug.eu_flush_lock);
+	spin_lock_init(&i915->debuggers.lock);
+	INIT_LIST_HEAD(&i915->debuggers.list);
 }
 
 void i915_debugger_fini(struct drm_i915_private *i915)
 {
-	mutex_lock(&i915->debug.mutex);
-	rcu_replace_pointer(i915->debug.debugger, NULL, true);
-	mutex_unlock(&i915->debug.mutex);
+	GEM_WARN_ON(!list_empty(&i915->debuggers.list));
 
-	mutex_destroy(&i915->debug.eu_flush_lock);
+	mutex_destroy(&i915->debuggers.eu_flush_lock);
 }
 
-void i915_debugger_wait_on_discovery(struct drm_i915_private * const i915)
+void i915_debugger_wait_on_discovery(struct drm_i915_private *i915,
+				     struct i915_drm_client *client)
 {
 	const unsigned long waitjiffs = msecs_to_jiffies(5000);
 	struct i915_debugger *debugger;
 	long timeleft;
+	u64 session;
 
-	debugger = i915_debugger_get(i915);
+	session = client_session(client);
+	if (!session)
+		return;
+
+	debugger = i915_debugger_find_task_get(i915, current);
 	if (!debugger)
 		return;
 
-	if (is_debugger_closed(debugger))
-		goto out;
-
-	if (!same_thread_group(debugger->target_task, current))
-		goto out;
+	GEM_WARN_ON(!same_thread_group(debugger->target_task, current));
+	GEM_WARN_ON(debugger->session != session);
 
 	timeleft = wait_for_completion_interruptible_timeout(&debugger->discovery,
 							     waitjiffs);
@@ -2883,48 +2921,35 @@ void i915_debugger_wait_on_discovery(struct drm_i915_private * const i915)
 			"task %d waited too long for discovery to complete. Ignoring barrier.\n",
 			task_pid_nr(current));
 	}
-out:
+
 	i915_debugger_put(debugger);
 }
 
-void i915_debugger_client_register(struct i915_drm_client *client)
+void i915_debugger_client_register(struct i915_drm_client *client,
+				   struct task_struct *task)
 {
-	struct i915_debugger *debugger;
+	struct drm_i915_private * const i915 = client->clients->i915;
+	struct i915_debugger *iter;
+	unsigned long flags;
 
-	GEM_WARN_ON(client_debugged(client));
+	/*
+	 * Session count only grows and we cannot connect to
+	 * the same pid twice.
+	 */
+	spin_lock_irqsave(&i915->debuggers.lock, flags);
+	for_each_debugger(iter, &i915->debuggers.list) {
+		if (!same_thread_group(iter->target_task, task))
+			continue;
 
-	debugger = i915_debugger_get(client->clients->i915);
-	if (!debugger)
-		return;
-
-	i915_debugger_client_task_register(debugger, client, current);
-
-	i915_debugger_put(debugger);
+		WRITE_ONCE(client->debugger_session, iter->session);
+		break;
+	}
+	spin_unlock_irqrestore(&i915->debuggers.lock, flags);
 }
 
 void i915_debugger_client_release(struct i915_drm_client *client)
 {
 	WRITE_ONCE(client->debugger_session, 0);
-}
-
-static struct i915_debugger *
-i915_debugger_get_for_client(const struct i915_drm_client *client)
-{
-	struct i915_debugger *debugger;
-
-	if (!client_debugged(client))
-		return NULL;
-
-	debugger = i915_debugger_get(client->clients->i915);
-	if (!debugger)
-		return NULL;
-
-	if (is_client_connected(debugger, client))
-		return debugger;
-
-	i915_debugger_put(debugger);
-
-	return NULL;
 }
 
 static int send_engine_attentions(struct i915_debugger *debugger,
@@ -2976,29 +3001,25 @@ static int send_engine_attentions(struct i915_debugger *debugger,
 	return ret;
 }
 
-static void i915_debugger_send_engine_attention(struct intel_engine_cs *engine)
+static int i915_debugger_send_engine_attention(struct intel_engine_cs *engine)
 {
 	struct i915_debugger *debugger;
 	struct i915_drm_client *client;
 	struct intel_context *ce;
 	int ret;
 
-	debugger = i915_debugger_get(engine->i915);
-	if (!debugger)
-		return;
+	/* Anybody listening out for an event? */
+	if (list_empty_careful(&engine->i915->debuggers.list))
+		return -ENOTCONN;
 
+	/* Find the client seeking attention */
 	ce = engine_active_context_get(engine);
-	if (!ce) {
-		DD_INFO(debugger, "%s: no active context found\n", engine->name);
-		i915_debugger_put(debugger);
-		return;
-	}
+	if (!ce)
+		return -ENOENT;
 
 	if (!ce->client) {
-		DD_INFO(debugger, "%s: no active client found\n", engine->name);
 		intel_context_put(ce);
-		i915_debugger_put(debugger);
-		return;
+		return -ENOENT;
 	}
 
 	client = i915_drm_client_get(ce->client);
@@ -3014,8 +3035,8 @@ static void i915_debugger_send_engine_attention(struct intel_engine_cs *engine)
 	 * So the context that did raise the attention, has to
 	 * be the correct one.
 	 */
-	if (!is_client_connected(debugger, client)) {
-		DD_INFO(debugger, "%s: active client not connected\n", engine->name);
+	debugger = i915_debugger_get(client);
+	if (!debugger) {
 		ret = -ENOTCONN;
 	} else if (!completion_done(&debugger->discovery)) {
 		DD_INFO(debugger, "%s: discovery not yet done\n", engine->name);
@@ -3024,11 +3045,15 @@ static void i915_debugger_send_engine_attention(struct intel_engine_cs *engine)
 		ret = send_engine_attentions(debugger, engine, client, ce);
 	}
 
+	if (debugger) {
+		DD_INFO(debugger, "%s: i915_send_engine_attention: %d\n", engine->name, ret);
+		i915_debugger_put(debugger);
+	}
+
 	i915_drm_client_put(client);
 	intel_context_put(ce);
-	i915_debugger_put(debugger);
 
-	DD_INFO(debugger, "%s: i915_send_engine_attention: %d\n", engine->name, ret);
+	return ret;
 }
 
 static void
@@ -3042,7 +3067,7 @@ i915_debugger_send_client_event_ctor(const struct i915_drm_client *client,
 	struct i915_debugger *debugger;
 	struct i915_debug_event *event;
 
-	debugger = i915_debugger_get_for_client(client);
+	debugger = i915_debugger_get(client);
 	if (!debugger)
 		return;
 
@@ -3276,7 +3301,7 @@ void i915_debugger_vma_insert(struct i915_drm_client *client,
 {
 	struct i915_debugger *debugger;
 
-	debugger = i915_debugger_get_for_client(client);
+	debugger = i915_debugger_get(client);
 	if (!debugger)
 		return;
 
@@ -3293,7 +3318,7 @@ void i915_debugger_vma_evict(struct i915_drm_client *client,
 {
 	struct i915_debugger *debugger;
 
-	debugger = i915_debugger_get_for_client(client);
+	debugger = i915_debugger_get(client);
 	if (!debugger)
 		return;
 
@@ -3320,7 +3345,7 @@ void i915_debugger_vm_create(struct i915_drm_client *client,
 	if (GEM_WARN_ON(!vm))
 		return;
 
-	debugger = i915_debugger_get_for_client(client);
+	debugger = i915_debugger_get(client);
 	if (!debugger)
 		return;
 
@@ -3342,7 +3367,7 @@ void i915_debugger_vm_destroy(struct i915_drm_client *client,
 	if (GEM_WARN_ON(!vm))
 		return;
 
-	debugger = i915_debugger_get_for_client(client);
+	debugger = i915_debugger_get(client);
 	if (!debugger)
 		return;
 
@@ -3381,7 +3406,7 @@ void i915_debugger_context_param_vm(const struct i915_drm_client *client,
 		return;
 	}
 
-	debugger = i915_debugger_get_for_client(client);
+	debugger = i915_debugger_get(client);
 	if (!debugger)
 		return;
 
@@ -3408,7 +3433,7 @@ void i915_debugger_context_param_engines(struct i915_gem_context *ctx)
 	if (!client)
 		return;
 
-	debugger = i915_debugger_get_for_client(client);
+	debugger = i915_debugger_get(client);
 	if (!debugger)
 		return;
 
@@ -3519,16 +3544,13 @@ int i915_debugger_handle_engine_attention(struct intel_engine_cs *engine)
 		return ret;
 
 	/* We dont care if it fails reach this debugger at this time */
-	i915_debugger_send_engine_attention(engine);
+	ret = i915_debugger_send_engine_attention(engine);
 
-	/*
-	 * We do care if there is no debugger at all to resolve
-	 * the situation
-	 */
-	if (!rcu_access_pointer(engine->i915->debug.debugger))
-		return -ENODEV;
+	/* We can resolve on next tick as discovery not yet done */
+	if (ret == -EBUSY)
+		return 0;
 
-	return 0;
+	return ret;
 }
 
 bool i915_debugger_prevents_hangcheck(struct intel_engine_cs *engine)
@@ -3536,7 +3558,7 @@ bool i915_debugger_prevents_hangcheck(struct intel_engine_cs *engine)
 	if (!intel_engine_has_eu_attention(engine))
 		return false;
 
-	return rcu_access_pointer(engine->i915->debug.debugger);
+	return !list_empty(&engine->i915->debuggers.list);
 }
 
 #define i915_DEBUGGER_ATTENTION_INTERVAL 100
@@ -3547,7 +3569,7 @@ long i915_debugger_attention_poll_interval(struct intel_engine_cs *engine)
 	GEM_BUG_ON(!engine);
 
 	if (intel_engine_has_eu_attention(engine) &&
-	    rcu_access_pointer(engine->i915->debug.debugger))
+	    !list_empty(&engine->i915->debuggers.list))
 		delay = i915_DEBUGGER_ATTENTION_INTERVAL;
 
 	return delay;
