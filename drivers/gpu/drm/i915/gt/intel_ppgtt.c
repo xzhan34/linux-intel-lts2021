@@ -8,6 +8,7 @@
 #include "gem/i915_gem_lmem.h"
 
 #include "i915_trace.h"
+#include "intel_gt.h"
 #include "intel_gtt.h"
 #include "intel_tlb.h"
 #include "gen6_ppgtt.h"
@@ -213,6 +214,8 @@ static void vma_invalidate_tlb(struct i915_vma *vma)
 {
 	struct i915_address_space *vm = vma->vm;
 	struct drm_i915_gem_object *obj;
+	struct intel_gt *gt;
+	int id;
 
 	obj = vma->obj;
 	if (!obj)
@@ -226,7 +229,9 @@ static void vma_invalidate_tlb(struct i915_vma *vma)
 	 * the most recent TLB invalidation seqno, and if we have not yet
 	 * flushed the TLBs upon release, perform a full invalidation.
 	 */
-	WRITE_ONCE(obj->mm.tlb, intel_gt_next_invalidate_tlb_full(vm->gt));
+	for_each_gt(gt, vm->i915, id)
+		WRITE_ONCE(obj->mm.tlb[id],
+			   intel_gt_next_invalidate_tlb_full(vm->gt));
 }
 
 void ppgtt_unbind_vma(struct i915_address_space *vm, struct i915_vma *vma)

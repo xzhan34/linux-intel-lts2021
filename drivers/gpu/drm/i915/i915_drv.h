@@ -810,7 +810,6 @@ struct drm_i915_private {
 	/*
 	 * i915->gt[0] == &i915->gt0
 	 */
-#define I915_MAX_GT 4
 	struct intel_gt *gt[I915_MAX_GT];
 
 	/* Quick lookup of media GT (current platforms only have one) */

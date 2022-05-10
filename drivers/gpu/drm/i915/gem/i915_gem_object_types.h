@@ -16,6 +16,8 @@
 #include "i915_active.h"
 #include "i915_selftest.h"
 
+#include "gt/intel_gt_defines.h"
+
 struct drm_i915_gem_object;
 struct intel_fronbuffer;
 
@@ -593,7 +595,7 @@ struct drm_i915_gem_object {
 		 */
 		struct i915_active_fence migrate;
 
-		u32 tlb;
+		u32 tlb[I915_MAX_GT];
 	} mm;
 
 	struct {
