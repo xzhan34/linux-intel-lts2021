@@ -7,7 +7,7 @@
 #include <drm/drm_cache.h>
 
 #include "gt/intel_gt.h"
-#include "gt/intel_gt_pm.h"
+#include "gt/intel_tlb.h"
 
 #include "i915_drv.h"
 #include "i915_gem_object.h"
@@ -238,11 +238,8 @@ __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj)
 
 	if (test_and_clear_bit(I915_BO_WAS_BOUND_BIT, &obj->flags)) {
 		struct drm_i915_private *i915 = to_i915(obj->base.dev);
-		struct intel_gt *gt = to_gt(i915);
-		intel_wakeref_t wakeref;
 
-		with_intel_gt_pm_if_awake(gt, wakeref)
-			intel_gt_invalidate_tlbs(gt);
+		intel_gt_invalidate_tlb_full(to_gt(i915));
 	}
 
 	return pages;
