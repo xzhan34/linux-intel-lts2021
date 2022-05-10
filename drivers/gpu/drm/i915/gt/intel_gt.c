@@ -1142,6 +1142,66 @@ void intel_gt_driver_late_release_all(struct drm_i915_private *i915)
 	}
 }
 
+static int driver_flr(struct intel_gt *gt)
+{
+	struct drm_i915_private *i915 = gt->i915;
+	struct intel_uncore *uncore = gt->uncore;
+	int ret;
+
+	if (i915->params.force_driver_flr != 1)
+		return 0;
+
+	if (intel_uncore_read(uncore, GU_CNTL_PROTECTED) & DRIVERINT_FLR_DIS) {
+		drm_info_once(&i915->drm, "BIOS Disabled Driver-FLR\n");
+		return 0;
+	}
+
+	drm_dbg(&i915->drm, "Triggering Driver-FLR\n");
+
+	/*
+	 * As the fastest safe-measure, always clear GU_DEBUG's DRIVERFLR_STATUS
+	 * if it was still set from a prior attempt
+	 */
+	intel_uncore_write_fw(uncore, GU_DEBUG, DRIVERFLR_STATUS);
+
+	/* Trigger the actula Driver-FLR */
+	intel_uncore_rmw_fw(uncore, GU_CNTL, 0, DRIVERFLR);
+
+	ret = intel_wait_for_register_fw(uncore, GU_CNTL, DRIVERFLR, 0, 15);
+	if (ret) {
+		drm_err(&i915->drm, "Driver-FLR failed! %d\n", ret);
+		return ret;
+	}
+
+	ret = intel_wait_for_register_fw(uncore, GU_DEBUG,
+					 DRIVERFLR_STATUS, DRIVERFLR_STATUS,
+					 15);
+	if (ret) {
+		drm_err(&i915->drm, "wait for Driver-FLR completion failed! %d\n", ret);
+		return ret;
+	}
+
+	intel_uncore_write_fw(uncore, GU_DEBUG, DRIVERFLR_STATUS);
+
+	return 0;
+}
+
+static void driver_flr_fini(struct drm_device *dev, void *gt)
+{
+	driver_flr((struct intel_gt *)gt);
+}
+
+static int driver_flr_init(struct intel_gt *gt)
+{
+	int ret;
+
+	ret = driver_flr(gt);
+	if (ret)
+		return ret;
+
+	return drmm_add_action(&gt->i915->drm, driver_flr_fini, gt);
+}
+
 static int intel_gt_tile_setup(struct intel_gt *gt,
 			unsigned int id,
 			phys_addr_t phys_addr)
@@ -1174,6 +1234,12 @@ static int intel_gt_tile_setup(struct intel_gt *gt,
 		return ret;
 
 	gt->phys_addr = phys_addr;
+
+	if (!id) {
+		ret = driver_flr_init(gt);
+		if (ret)
+			return ret;
+	}
 
 	/* Which tile am I? default to zero on single tile systems */
 	if (HAS_REMOTE_TILES(i915)) {
