@@ -1463,9 +1463,6 @@ set_engines__load_balance(struct i915_user_extension __user *base, void *data)
 	if (!HAS_EXECLISTS(i915))
 		return -ENODEV;
 
-	if (intel_uc_uses_guc_submission(&to_gt(i915)->uc))
-		return -ENODEV; /* not implement yet */
-
 	if (get_user(idx, &ext->engine_index))
 		return -EFAULT;
 
@@ -1572,6 +1569,11 @@ set_engines__bond(struct i915_user_extension __user *base, void *data)
 		return -EINVAL;
 	}
 	virtual = set->engines->engines[idx]->engine;
+
+	if (intel_engine_uses_guc(virtual)) {
+		DRM_DEBUG("bonding extension not supported with GuC submission");
+		return -ENODEV;
+	}
 
 	err = check_user_mbz(&ext->flags);
 	if (err)

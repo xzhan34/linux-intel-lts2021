@@ -362,6 +362,8 @@ i915_gem_create_ext_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_object *obj;
 	int ret;
 
+	return -EINVAL;
+
 	if (args->flags)
 		return -EINVAL;
 
