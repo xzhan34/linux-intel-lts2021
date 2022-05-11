@@ -9,6 +9,7 @@
 
 #include "i915_trace.h"
 #include "intel_gtt.h"
+#include "intel_tlb.h"
 #include "gen6_ppgtt.h"
 #include "gen8_ppgtt.h"
 
@@ -206,10 +207,33 @@ void ppgtt_bind_vma(struct i915_address_space *vm,
 	i915_write_barrier(vm->i915);
 }
 
+static void vma_invalidate_tlb(struct i915_vma *vma)
+{
+	struct i915_address_space *vm = vma->vm;
+	struct drm_i915_gem_object *obj;
+
+	obj = vma->obj;
+	if (!obj)
+		return;
+
+	/*
+	 * Before we release the pages that were bound by this vma, we
+	 * must invalidate all the TLBs that may still have a reference
+	 * back to our physical address. It only needs to be done once,
+	 * so after updating the PTE to point away from the pages, record
+	 * the most recent TLB invalidation seqno, and if we have not yet
+	 * flushed the TLBs upon release, perform a full invalidation.
+	 */
+	WRITE_ONCE(obj->mm.tlb, intel_gt_next_invalidate_tlb_full(vm->gt));
+}
+
 void ppgtt_unbind_vma(struct i915_address_space *vm, struct i915_vma *vma)
 {
-	if (test_and_clear_bit(I915_VMA_ALLOC_BIT, __i915_vma_flags(vma)))
-		vm->clear_range(vm, i915_vma_offset(vma), vma->size);
+	if (!test_and_clear_bit(I915_VMA_ALLOC_BIT, __i915_vma_flags(vma)))
+		return;
+
+	vm->clear_range(vm, i915_vma_offset(vma), vma->size);
+	vma_invalidate_tlb(vma);
 }
 
 static unsigned long pd_count(u64 size, int shift)

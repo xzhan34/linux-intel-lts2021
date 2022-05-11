@@ -85,6 +85,14 @@ static int wait_for_invalidate(struct intel_gt *gt, struct reg_and_bit rb)
 						    NULL);
 }
 
+static bool tlb_seqno_passed(const struct intel_gt *gt, u32 seqno)
+{
+	u32 cur = intel_gt_tlb_seqno(gt);
+
+	/* Only skip if a *full* TLB invalidate barrier has passed */
+	return (s32)(cur - ALIGN(seqno, 2)) > 0;
+}
+
 static void mmio_invalidate_full(struct intel_gt *gt)
 {
 	static const i915_reg_t gen8_regs[] = {
@@ -211,7 +219,7 @@ static void mmio_invalidate_full(struct intel_gt *gt)
 	intel_uncore_forcewake_put_delayed(uncore, FORCEWAKE_ALL);
 }
 
-void intel_gt_invalidate_tlb_full(struct intel_gt *gt)
+void intel_gt_invalidate_tlb_full(struct intel_gt *gt, u32 seqno)
 {
 	intel_wakeref_t wakeref;
 
@@ -221,11 +229,18 @@ void intel_gt_invalidate_tlb_full(struct intel_gt *gt)
 	if (intel_gt_is_wedged(gt))
 		return;
 
+	if (tlb_seqno_passed(gt, seqno))
+		return;
+
 	with_intel_gt_pm_if_awake(gt, wakeref) {
 		mutex_lock(&gt->tlb.invalidate_lock);
+		if (tlb_seqno_passed(gt, seqno))
+			goto unlock;
 
 		mmio_invalidate_full(gt);
 
+		write_seqcount_invalidate(&gt->tlb.seqno);
+unlock:
 		mutex_unlock(&gt->tlb.invalidate_lock);
 	}
 }
@@ -233,6 +248,7 @@ void intel_gt_invalidate_tlb_full(struct intel_gt *gt)
 void intel_gt_init_tlb(struct intel_gt *gt)
 {
 	mutex_init(&gt->tlb.invalidate_lock);
+	seqcount_mutex_init(&gt->tlb.seqno, &gt->tlb.invalidate_lock);
 }
 
 void intel_gt_fini_tlb(struct intel_gt *gt)

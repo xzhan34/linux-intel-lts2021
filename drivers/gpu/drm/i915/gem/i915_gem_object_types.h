@@ -563,6 +563,8 @@ struct drm_i915_gem_object {
 		 * pages were last acquired.
 		 */
 		bool dirty:1;
+
+		u32 tlb;
 	} mm;
 
 	struct {

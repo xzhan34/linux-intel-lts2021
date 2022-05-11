@@ -212,6 +212,18 @@ static void unmap_object(struct drm_i915_gem_object *obj, void *ptr)
 		vunmap(ptr);
 }
 
+static void flush_tlb_invalidate(struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct intel_gt *gt = to_gt(i915);
+
+	if (!obj->mm.tlb)
+		return;
+
+	intel_gt_invalidate_tlb_full(gt, obj->mm.tlb);
+	obj->mm.tlb = 0;
+}
+
 struct sg_table *
 __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj)
 {
@@ -236,11 +248,7 @@ __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj)
 	__i915_gem_object_reset_page_iter(obj);
 	obj->mm.page_sizes.phys = obj->mm.page_sizes.sg = 0;
 
-	if (test_and_clear_bit(I915_BO_WAS_BOUND_BIT, &obj->flags)) {
-		struct drm_i915_private *i915 = to_i915(obj->base.dev);
-
-		intel_gt_invalidate_tlb_full(to_gt(i915));
-	}
+	flush_tlb_invalidate(obj);
 
 	return pages;
 }
