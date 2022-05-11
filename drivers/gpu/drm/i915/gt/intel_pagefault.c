@@ -21,6 +21,35 @@
 #include "uc/intel_guc.h"
 #include "uc/intel_guc_fwif.h"
 
+/**
+ * DOC: Recoverable page fault implications
+ *
+ * Modern GPU hardware support recoverable page fault. This has extensive
+ * implications to driver implementation.
+ *
+ * DMA fence is used extensively to track object activity for cross-device
+ * and cross-application synchronization. But if recoverable page fault is
+ * enabled, using of DMA fence can potentially induce deadlock: A pending
+ * page fault holds up the GPU work which holds up the dma fence signaling,
+ * and memory allocation is usually required to resolve a page fault, but
+ * memory allocation is not allowed to gate dma fence signaling.
+ *
+ * Non-long-run context usually uses DMA fence for GPU job/object completion
+ * tracking, thus faultable vm is not allowed for non-long-run context.
+ *
+ * Suspend fence is used to suspend long run context before we unbind
+ * BOs, in case of userptr invalidation, memory shrinking or eviction.
+ * For faultable vm, there is no need to use suspend fence: we directly
+ * unbind BOs w/o suspend context and BOs will be rebound during a recoverable
+ * page fault handling thereafter.
+ *
+ * DMA fences attached to vm's active are used to track vm's activity.
+ * i.e., driver wait on those dma fences for vm to be idle. This method
+ * is useful for non-faultable vm. For faultable vm, we don't support
+ * any DMA fence because of the deadlock described above. Thus, we can't attach
+ * any DMA fences, including suspend fence or request fence, to a faultable vm.
+ */
+
 enum access_type {
 	ACCESS_TYPE_READ = 0,
 	ACCESS_TYPE_WRITE = 1,
