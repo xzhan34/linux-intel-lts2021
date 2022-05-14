@@ -77,4 +77,10 @@ struct prelim_drm_i915_perf_oa_buffer_info {
 	__u64 rsvd;   /* mbz */
 };
 
+struct prelim_drm_i915_query_item {
+#define PRELIM_DRM_I915_QUERY			(1 << 16)
+#define PRELIM_DRM_I915_QUERY_MASK(x)		(x & 0xffff)
+/*#define PRELIM_DRM_I915_QUERY_NEW_STUFF	(PRELIM_DRM_I915_QUERY | <id>) */
+};
+
 #endif /* __I915_DRM_PRELIM_H__ */

@@ -594,8 +594,10 @@ static int query_hw_ip_version(struct drm_i915_private *i915,
 	return sizeof(ipver);
 }
 
-static int (* const i915_query_funcs[])(struct drm_i915_private *dev_priv,
-					struct drm_i915_query_item *query_item) = {
+typedef int (* const i915_query_funcs_table)(struct drm_i915_private *dev_priv,
+						    struct drm_i915_query_item *query_item);
+
+static i915_query_funcs_table i915_query_funcs[] = {
 	query_topology_info,
 	query_engine_info,
 	query_perf_config,
@@ -603,6 +605,14 @@ static int (* const i915_query_funcs[])(struct drm_i915_private *dev_priv,
 	query_hwconfig_blob,
 	query_geometry_subslices,
 	query_hw_ip_version,
+};
+
+static i915_query_funcs_table i915_query_funcs_prelim[] = {
+#define MAKE_TABLE_IDX(id)		[PRELIM_DRM_I915_QUERY_MASK(PRELIM_DRM_I915_QUERY_##id) - 1]
+
+	/* MAKE_TABLE_IDX(NEW_QUERY) = prelim_query_new_stuff; */
+
+#undef MAKE_TABLE_IDX
 };
 
 int i915_query_ioctl(struct drm_device *dev, void *data, struct drm_file *file)
@@ -618,7 +628,9 @@ int i915_query_ioctl(struct drm_device *dev, void *data, struct drm_file *file)
 
 	for (i = 0; i < args->num_items; i++, user_item_ptr++) {
 		struct drm_i915_query_item item;
+		i915_query_funcs_table *table;
 		unsigned long func_idx;
+		size_t table_size;
 		int ret;
 
 		if (copy_from_user(&item, user_item_ptr, sizeof(item)))
@@ -630,13 +642,21 @@ int i915_query_ioctl(struct drm_device *dev, void *data, struct drm_file *file)
 		if (overflows_type(item.query_id - 1, unsigned long))
 			return -EINVAL;
 
-		func_idx = item.query_id - 1;
+		if (item.query_id & PRELIM_DRM_I915_QUERY) {
+			table = i915_query_funcs_prelim;
+			table_size = ARRAY_SIZE(i915_query_funcs_prelim);
+			func_idx = PRELIM_DRM_I915_QUERY_MASK(item.query_id) - 1;
+		} else {
+			table = i915_query_funcs;
+			table_size = ARRAY_SIZE(i915_query_funcs);
+			func_idx = item.query_id - 1;
+		}
 
 		ret = -EINVAL;
-		if (func_idx < ARRAY_SIZE(i915_query_funcs)) {
-			func_idx = array_index_nospec(func_idx,
-						      ARRAY_SIZE(i915_query_funcs));
-			ret = i915_query_funcs[func_idx](dev_priv, &item);
+		if (func_idx < table_size) {
+			func_idx = array_index_nospec(func_idx, table_size);
+			if (table[func_idx])
+				ret = table[func_idx](dev_priv, &item);
 		}
 
 		/* Only write the length back to userspace if they differ. */
