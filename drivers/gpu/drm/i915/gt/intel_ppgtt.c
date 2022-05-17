@@ -198,7 +198,9 @@ void ppgtt_bind_vma(struct i915_address_space *vm,
 		pte_flags |= PTE_LM;
 
 	vm->insert_entries(vm, vma, cache_level, pte_flags);
-	wmb();
+
+	/* Flush the PTE writes to memory */
+	i915_write_barrier(vm->i915);
 }
 
 void ppgtt_unbind_vma(struct i915_address_space *vm, struct i915_vma *vma)
