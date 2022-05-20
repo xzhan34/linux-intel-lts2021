@@ -1769,9 +1769,8 @@ set_engines__parallel_submit(struct i915_user_extension __user *base, void *data
 		return -EINVAL;
 	}
 
-	siblings = kmalloc_array(num_siblings * width,
-				 sizeof(*siblings),
-				 GFP_KERNEL);
+	siblings = kmalloc(array3_size(num_siblings, width, sizeof(*siblings)),
+			   GFP_KERNEL);
 	if (!siblings)
 		return -ENOMEM;
 
