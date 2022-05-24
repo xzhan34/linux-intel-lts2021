@@ -2782,6 +2782,62 @@ hardware_error_type_to_str(const enum hardware_error hw_err)
 	drm_err_ratelimited(&(gt)->i915->drm, HW_ERR "GT%d detected " fmt, \
 			    (gt)->info.id, ##__VA_ARGS__)
 
+static void gen12_gt_fatal_hw_error_stats_update(struct intel_gt *gt,
+						 unsigned long errstat)
+{
+	u32 errbit, cnt;
+
+	for_each_set_bit(errbit, &errstat, GT_HW_ERROR_MAX_ERR_BITS) {
+		switch (errbit) {
+		case ARRAY_BIST_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_ARR_BIST]++;
+			log_gt_hw_err(gt, "Array BIST FATAL error\n");
+			break;
+		case L3_DOUBLE_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_L3_DOUB]++;
+			log_gt_hw_err(gt, "L3 Double FATAL error\n");
+			break;
+		case L3_ECC_CHK_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_L3_ECC_CHK]++;
+			log_gt_hw_err(gt, "L3 ECC Checker FATAL error\n");
+			break;
+		case GUC_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_GUC]++;
+			log_gt_hw_err(gt, "GUC SRAM FATAL error\n");
+			break;
+		case IDI_PAR_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_IDI_PAR]++;
+			log_gt_hw_err(gt, "IDI PARITY FATAL error\n");
+			break;
+		case SQIDI_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_SQIDI]++;
+			log_gt_hw_err(gt, "SQIDI FATAL error\n");
+			break;
+		case SAMPLER_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_SAMPLER]++;
+			log_gt_hw_err(gt, "SAMPLER FATAL error\n");
+			break;
+		case SLM_FAT_ERR:
+			cnt = intel_uncore_read(gt->uncore,
+						SLM_ECC_ERROR_CNTR(HARDWARE_ERROR_FATAL));
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_SLM] = cnt;
+			log_gt_hw_err(gt, "%u SLM FATAL error\n", cnt);
+			break;
+		case EU_IC_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_EU_IC]++;
+			log_gt_hw_err(gt, "EU IC FATAL error\n");
+			break;
+		case EU_GRF_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_EU_GRF]++;
+			log_gt_hw_err(gt, "EU GRF FATAL error\n");
+			break;
+		default:
+			log_gt_hw_err(gt, "UNKNOWN FATAL error\n");
+			break;
+		}
+	}
+}
+
 static void
 gen12_gt_correctable_hw_error_stats_update(struct intel_gt *gt,
 					   unsigned long errstat)
@@ -2853,6 +2909,9 @@ gen12_gt_hw_error_handler(struct intel_gt *gt,
 		drm_err_ratelimited(&gt->i915->drm,
 				    HW_ERR "detected Non-Fatal error\n");
 		break;
+	case HARDWARE_ERROR_FATAL:
+		gen12_gt_fatal_hw_error_stats_update(gt, errstat);
+		break;
 	default:
 		break;
 	}
@@ -2866,9 +2925,10 @@ gen12_hw_error_source_handler(struct intel_gt *gt,
 {
 	void __iomem * const regs = gt->uncore->regs;
 	const char *hw_err_str = hardware_error_type_to_str(hw_err);
+	unsigned long flags;
 	u32 errsrc;
 
-	spin_lock(gt->irq_lock);
+	spin_lock_irqsave(gt->irq_lock, flags);
 	errsrc = raw_reg_read(regs, DEV_ERR_STAT_REG(hw_err));
 
 	if (unlikely(!errsrc)) {
@@ -2886,7 +2946,7 @@ gen12_hw_error_source_handler(struct intel_gt *gt,
 	raw_reg_write(regs, DEV_ERR_STAT_REG(hw_err), errsrc);
 
 out_unlock:
-	spin_unlock(gt->irq_lock);
+	spin_unlock_irqrestore(gt->irq_lock, flags);
 }
 
 /*
@@ -4328,6 +4388,7 @@ static void dg1_irq_postinstall(struct drm_i915_private *dev_priv)
 
 		GEN3_IRQ_INIT(gt->uncore, GEN11_GU_MISC_, ~gu_misc_masked,
 			      gu_misc_masked);
+		intel_uncore_write(gt->uncore, GEN11_GFX_MSTR_IRQ, REG_GENMASK(30, 0));
 	}
 
 	if (HAS_DISPLAY(dev_priv)) {
@@ -4341,6 +4402,7 @@ static void dg1_irq_postinstall(struct drm_i915_private *dev_priv)
 				   GEN11_DISPLAY_IRQ_ENABLE);
 	}
 
+	intel_uncore_write(&dev_priv->uncore, DG1_MSTR_TILE_INTR, REG_GENMASK(3, 0));
 	dg1_master_intr_enable(to_gt(dev_priv)->uncore->regs);
 	intel_uncore_posting_read(to_gt(dev_priv)->uncore, DG1_MSTR_TILE_INTR);
 }
@@ -4972,6 +5034,41 @@ static void intel_irq_postinstall(struct drm_i915_private *dev_priv)
 }
 
 /**
+ * process_fatal_hw_errors - checks for the occurrence of fatal HW errors
+ * @dev_priv: i915 device instance
+ *
+ * This checks for the Fatal Errors that might have occurred in the previous boot of
+ * the driver which will initiate PCIe FLR reset of the device and cause the
+ * driver to reload.
+ */
+static void process_fatal_hw_errors(struct drm_i915_private *dev_priv)
+{
+	struct intel_gt *gt = to_gt(dev_priv);
+	void __iomem * const t0_regs = gt->uncore->regs;
+	u32 dev_pcieerr_status, master_ctl;
+	int i;
+
+	dev_pcieerr_status = raw_reg_read(t0_regs, DEV_PCIEERR_STATUS);
+	if (!dev_pcieerr_status)
+		return;
+
+	for_each_gt(gt, dev_priv, i) {
+		void __iomem *const regs = gt->uncore->regs;
+
+		if (dev_pcieerr_status & DEV_PCIEERR_IS_FATAL(i))
+			gen12_hw_error_source_handler(gt, HARDWARE_ERROR_FATAL);
+		/*
+		 * just to be safe enough log and clear other errors
+		 * if there were reported alongside fatal errors
+		 */
+		master_ctl = raw_reg_read(regs, GEN11_GFX_MSTR_IRQ);
+		raw_reg_write(regs, GEN11_GFX_MSTR_IRQ, master_ctl);
+		gen12_hw_error_irq_handler(gt, master_ctl);
+	}
+	raw_reg_write(t0_regs, DEV_PCIEERR_STATUS, dev_pcieerr_status);
+}
+
+/**
  * intel_irq_install - enables the hardware interrupt
  * @dev_priv: i915 device instance
  *
@@ -4986,6 +5083,9 @@ int intel_irq_install(struct drm_i915_private *dev_priv)
 {
 	int irq = to_pci_dev(dev_priv->drm.dev)->irq;
 	int ret;
+
+	if (IS_DGFX(dev_priv))
+		process_fatal_hw_errors(dev_priv);
 
 	/*
 	 * We enable some interrupt sources in our postinstall hooks, so mark

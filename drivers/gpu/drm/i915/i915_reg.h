@@ -5857,6 +5857,10 @@ enum hardware_error {
 	HARDWARE_ERROR_MAX,
 };
 
+#define DEV_PCIEERR_STATUS		_MMIO(0x100180)
+#define DEV_PCIEERR_TILE_STATUS_MASK	REG_GENMASK(2, 0)
+#define DEV_PCIEERR_TILE_STATUS(x)	(DEV_PCIEERR_TILE_STATUS_MASK << (x * 4))
+#define DEV_PCIEERR_IS_FATAL(x)		(REG_BIT(2) << (x * 4))
 #define _DEV_ERR_STAT_FATAL		0x100174
 #define _DEV_ERR_STAT_NONFATAL		0x100178
 #define _DEV_ERR_STAT_CORRECTABLE	0x10017c
@@ -5877,6 +5881,17 @@ enum hardware_error {
 #define  SAMPLER_COR_ERR		(12)
 #define  GUC_COR_ERR			(1)
 #define  L3_SNG_COR_ERR			(0)
+
+#define EU_GRF_FAT_ERR			(15)
+#define EU_IC_FAT_ERR			(14)
+#define SLM_FAT_ERR			(13)
+#define SAMPLER_FAT_ERR			(12)
+#define SQIDI_FAT_ERR			(9)
+#define IDI_PAR_FAT_ERR			(8)
+#define GUC_FAT_ERR			(6)
+#define L3_ECC_CHK_FAT_ERR		(5)
+#define L3_DOUBLE_FAT_ERR		(4)
+#define ARRAY_BIST_FAT_ERR		(1)
 
 #define GT_HW_ERROR_MAX_ERR_BITS	16
 
