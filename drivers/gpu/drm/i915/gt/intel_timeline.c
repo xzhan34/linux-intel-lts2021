@@ -223,8 +223,9 @@ int intel_timeline_pin(struct intel_timeline *tl, struct i915_gem_ww_ctx *ww)
 void intel_timeline_reset_seqno(const struct intel_timeline *tl)
 {
 	u32 *hwsp_seqno = (u32 *)tl->hwsp_seqno;
+
 	/* Must be pinned to be writable, and no requests in flight. */
-	GEM_BUG_ON(!atomic_read(&tl->pin_count));
+	GEM_BUG_ON(!&tl->hwsp_map);
 
 	memset(hwsp_seqno + 1, 0, TIMELINE_SEQNO_BYTES - sizeof(*hwsp_seqno));
 	WRITE_ONCE(*hwsp_seqno, tl->seqno);
@@ -260,7 +261,7 @@ void intel_timeline_enter(struct intel_timeline *tl)
 
 	spin_lock(&timelines->lock);
 	if (!atomic_fetch_inc(&tl->active_count))
-		list_add_rcu(&tl->link, &timelines->active_list);
+		list_add_tail_rcu(&tl->link, &timelines->active_list);
 	spin_unlock(&timelines->lock);
 
 	/*
@@ -269,7 +270,8 @@ void intel_timeline_enter(struct intel_timeline *tl)
 	 * the HWSP value matches our seqno so we don't proclaim
 	 * the next request as already complete.
 	 */
-	intel_timeline_reset_seqno(tl);
+	if (tl->hwsp_map)
+		intel_timeline_reset_seqno(tl);
 }
 
 bool intel_timeline_get_if_active(struct intel_timeline *tl)
