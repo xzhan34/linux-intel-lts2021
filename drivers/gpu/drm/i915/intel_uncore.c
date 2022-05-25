@@ -32,6 +32,7 @@
 #include "i915_trace.h"
 #include "i915_vgpu.h"
 #include "intel_pm.h"
+#include "intel_pcode.h"
 
 #define FORCEWAKE_ACK_TIMEOUT_MS 50
 #define GT_FIFO_TIMEOUT_MS	 10
@@ -2715,16 +2716,6 @@ int intel_uncore_init_mmio(struct intel_uncore *uncore)
 	int ret;
 
 	ret = sanity_check_mmio_access(uncore);
-	if (ret)
-		return ret;
-
-	/*
-	 * The boot firmware initializes local memory and assesses its health.
-	 * If memory training fails, the punit will have been instructed to
-	 * keep the GT powered down; we won't be able to communicate with it
-	 * and we should not continue with driver initialization.
-	 */
-	ret = intel_uncore_wait_for_lmem(uncore);
 	if (ret)
 		return ret;
 

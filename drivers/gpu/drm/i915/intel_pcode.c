@@ -211,13 +211,27 @@ out:
 
 int intel_pcode_init(struct intel_uncore *uncore)
 {
+	const long timeout_ms = 180 * 1000;
+
 	if (!IS_DGFX(uncore->i915))
 		return 0;
 
-	return skl_pcode_request(uncore, DG1_PCODE_STATUS,
+	if (__intel_wait_for_register_fw(uncore,
+					 GEN6_PCODE_MAILBOX,
+					 GEN6_PCODE_READY, 0,
+					 500, timeout_ms,
+					 NULL)) {
+		drm_warn(&uncore->i915->drm,
+			 "Firmware not idle; deferring module probe\n");
+		return -EPROBE_DEFER;
+	}
+
+	return skl_pcode_request(uncore,
+				 DG1_PCODE_STATUS,
 				 DG1_UNCORE_GET_INIT_STATUS,
 				 DG1_UNCORE_INIT_STATUS_COMPLETE,
-				 DG1_UNCORE_INIT_STATUS_COMPLETE, 180000);
+				 DG1_UNCORE_INIT_STATUS_COMPLETE,
+				 timeout_ms);
 }
 
 int snb_pcode_read_p(struct intel_uncore *uncore, u32 mbcmd, u32 p1, u32 p2, u32 *val)
