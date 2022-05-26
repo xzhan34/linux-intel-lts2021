@@ -93,7 +93,7 @@ static const struct attribute *addr_range_attrs[] = {
 
 void intel_gt_sysfs_register_mem(struct intel_gt *gt, struct kobject *parent)
 {
-	if (!IS_XEHPSDV(gt->i915))
+	if (!HAS_MEM_SPARING_SUPPORT(gt->i915))
 		return;
 
 	if (sysfs_create_files(parent, addr_range_attrs))

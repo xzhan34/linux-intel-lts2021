@@ -980,6 +980,10 @@
 #define GEN12_COMPUTE1_RING_BASE	0x1c000
 #define GEN12_COMPUTE2_RING_BASE	0x1e000
 #define GEN12_COMPUTE3_RING_BASE	0x26000
+#define SOC_XEHPSDV_BASE	0x00255000
+#define SOC_XEHPSDV_SLAVE_BASE	0x00256000
+#define SOC_PVC_BASE		0x00282000
+#define SOC_PVC_SLAVE_BASE	0x00283000
 #define BLT_RING_BASE		0x22000
 #define XEHPC_BCS1_RING_BASE	0x3e0000
 #define XEHPC_BCS2_RING_BASE	0x3e2000
@@ -5990,21 +5994,22 @@ enum gt_vctr_registers {
 
 #define GT_HW_ERROR_MAX_ERR_BITS	16
 
-#define _SOC_MASTER_LERRCORSTS		0x255294
-#define _SOC_SLAVE_LERRCORSTS		0x256294
-#define _SOC_MASTER_LERRUNCSTS		0x255280
-#define _SOC_SLAVE_LERRUNCSTS		0x256280
-#define SOC_LOCAL_ERR_STAT_SLAVE_REG(x)		_MMIO((x) > HARDWARE_ERROR_CORRECTABLE ? \
-							_SOC_SLAVE_LERRUNCSTS : \
-							_SOC_SLAVE_LERRCORSTS)
+#define _SOC_LERRCORSTS		0x000294
+#define _SOC_LERRUNCSTS		0x000280
+#define SOC_LOCAL_ERR_STAT_SLAVE_REG(base, x)	_MMIO((x) > HARDWARE_ERROR_CORRECTABLE ? \
+							base + _SOC_LERRUNCSTS : \
+							base + _SOC_LERRCORSTS)
 #define SOC_FABRIC_SS1_3		(7)
 #define SOC_FABRIC_SS1_2		(6)
 #define SOC_FABRIC_SS1_1		(5)
 #define SOC_FABRIC_SS1_0		(4)
 
-#define SOC_LOCAL_ERR_STAT_MASTER_REG(x)	_MMIO((x) > HARDWARE_ERROR_CORRECTABLE ? \
-							_SOC_MASTER_LERRUNCSTS : \
-							_SOC_MASTER_LERRCORSTS)
+#define SOC_LOCAL_ERR_STAT_MASTER_REG(base, x)	_MMIO((x) > HARDWARE_ERROR_CORRECTABLE ? \
+							base + _SOC_LERRUNCSTS : \
+							base + _SOC_LERRCORSTS)
+#define PVC_SOC_PSF_2			(13)
+#define PVC_SOC_PSF_1			(12)
+#define PVC_SOC_PSF_0			(11)
 #define SOC_PSF_CSC_2			(10)
 #define SOC_PSF_CSC_1			(9)
 #define SOC_PSF_CSC_0			(8)
@@ -6013,20 +6018,32 @@ enum gt_vctr_registers {
 #define SOC_FABRIC_SS0_1		(5)
 #define SOC_FABRIC_SS0_0		(4)
 
-#define _SOC_MASTER_GSYSEVTCTL		0x255264
-#define _SOC_SLAVE_GSYSEVTCTL		0x256264
-#define SOC_GSYSEVTCTL_REG(x)		_MMIO(_PICK_EVEN((x), \
-						_SOC_MASTER_GSYSEVTCTL, \
-						_SOC_SLAVE_GSYSEVTCTL))
-#define _SOC_MASTER_GCOERRSTS		0x255200
-#define _SOC_SLAVE_GCOERRSTS		0x256200
-#define _SOC_MASTER_GNFERRSTS		0x255210
-#define _SOC_SLAVE_GNFERRSTS		0x256210
-#define _SOC_MASTER_GFAERRSTS		0x255220
-#define _SOC_SLAVE_GFAERRSTS		0x256220
-#define SOC_GLOBAL_ERR_STAT_SLAVE_REG(x)	_MMIO(_PICK_EVEN((x), \
-							_SOC_SLAVE_GCOERRSTS, \
-							_SOC_SLAVE_GNFERRSTS))
+#define _SOC_GSYSEVTCTL		0x000264
+#define SOC_GSYSEVTCTL_REG(base, slave_base, x)	_MMIO(_PICK_EVEN((x), \
+							base + _SOC_GSYSEVTCTL, \
+							slave_base + _SOC_GSYSEVTCTL))
+#define _SOC_GCOERRSTS		0x000200
+#define _SOC_GNFERRSTS		0x000210
+#define _SOC_GFAERRSTS		0x000220
+#define SOC_GLOBAL_ERR_STAT_SLAVE_REG(base, x)	_MMIO(_PICK_EVEN((x), \
+							base + _SOC_GCOERRSTS, \
+							base + _SOC_GNFERRSTS))
+#define PVC_SOC_HBM_SS3_7		(16)
+#define PVC_SOC_HBM_SS3_6		(15)
+#define PVC_SOC_HBM_SS3_5		(14)
+#define PVC_SOC_HBM_SS3_4		(13)
+#define PVC_SOC_HBM_SS3_3		(12)
+#define PVC_SOC_HBM_SS3_2		(11)
+#define PVC_SOC_HBM_SS3_1		(10)
+#define PVC_SOC_HBM_SS3_0		(9)
+#define PVC_SOC_HBM_SS2_7		(8)
+#define PVC_SOC_HBM_SS2_6		(7)
+#define PVC_SOC_HBM_SS2_5		(6)
+#define PVC_SOC_HBM_SS2_4		(5)
+#define PVC_SOC_HBM_SS2_3		(4)
+#define PVC_SOC_HBM_SS2_2		(3)
+#define PVC_SOC_HBM_SS2_1		(2)
+#define PVC_SOC_HBM_SS2_0		(1)
 #define SOC_HBM_SS1_15			(17)
 #define SOC_HBM_SS1_14			(16)
 #define SOC_HBM_SS1_13			(15)
@@ -6046,9 +6063,21 @@ enum gt_vctr_registers {
 #define SOC_FABRIC_SS1_4		(1)
 #define SOC_IEH1_LOCAL_ERR_STATUS	(0)
 
-#define SOC_GLOBAL_ERR_STAT_MASTER_REG(x)	_MMIO(_PICK_EVEN((x), \
-							_SOC_MASTER_GCOERRSTS, \
-							_SOC_MASTER_GNFERRSTS))
+#define SOC_GLOBAL_ERR_STAT_MASTER_REG(base, x) _MMIO(_PICK_EVEN((x), \
+							base + _SOC_GCOERRSTS, \
+							base + _SOC_GNFERRSTS))
+#define PVC_SOC_MDFI_SOUTH		(6)
+#define PVC_SOC_MDFI_EAST		(4)
+#define PVC_SOC_CD0_MDFI		(18)
+#define PVC_SOC_CD0			(17)
+#define PVC_SOC_HBM_SS1_7		(17)
+#define PVC_SOC_HBM_SS1_6		(16)
+#define PVC_SOC_HBM_SS1_5		(15)
+#define PVC_SOC_HBM_SS1_4		(14)
+#define PVC_SOC_HBM_SS1_3		(13)
+#define PVC_SOC_HBM_SS1_2		(12)
+#define PVC_SOC_HBM_SS1_1		(11)
+#define PVC_SOC_HBM_SS1_0		(10)
 #define SOC_MDFI_SOUTH			(21)
 #define SOC_MDFI_WEST			(20)
 #define SOC_MDFI_EAST			(19)
