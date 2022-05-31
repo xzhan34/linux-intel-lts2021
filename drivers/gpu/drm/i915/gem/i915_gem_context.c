@@ -218,6 +218,8 @@ static void intel_context_set_gem(struct intel_context *ce,
 	RCU_INIT_POINTER(ce->gem_context, ctx);
 
 	ce->ring_size = SZ_16K;
+	if (ce->engine->class == COMPUTE_CLASS)
+		ce->ring_size = SZ_512K;
 
 	if (rcu_access_pointer(ctx->vm)) {
 		struct i915_address_space *vm;
