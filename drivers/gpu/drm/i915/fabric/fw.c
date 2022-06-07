@@ -122,6 +122,7 @@ enum {
 #define PSC_REGION_QUALIFIER	".PSC"
 
 #define PVC_FW_IMAGE  "i915/pvc_iaf_ver1.bin"
+#define PVC_FW_IMAGE_DEBUG_SIGNED  "i915/pvc_iaf_ver1d.bin"
 #define PVC_FW_IMAGE_EXPORT_LIMITED  "i915/pvc_iaf_ver1e.bin"
 /*
  * FW image
@@ -1824,6 +1825,12 @@ static const char *select_pvc_fw(struct fsubdev *sd)
 	}
 	switch (FIELD_GET(CP_DEV_EFUSE_VERSION_VARIANT_MASK, fuses)) {
 	case CP_DEV_EFUSE_VERSION_VARIANT_NORMAL:
+		/* WA: HSD-16011092478 */
+		if (IS_ANR_STEP(sd, ANR_ARI_STEP_A0, ANR_ARI_STEP_A_LAST)) {
+			sd_info(sd, "A0 firmware\n");
+			return PVC_FW_IMAGE_DEBUG_SIGNED;
+		}
+
 		return PVC_FW_IMAGE;
 
 	case CP_DEV_EFUSE_VERSION_VARIANT_EXPORT:
