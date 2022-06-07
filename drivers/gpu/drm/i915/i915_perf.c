@@ -219,6 +219,7 @@
 #include "i915_mm.h"
 #include "i915_perf.h"
 #include "i915_perf_oa_regs.h"
+#include "i915_perf_stall_cntr.h"
 
 #define OA_TAKEN(tail, head)	(((tail) - (head)) & (stream->oa_buffer.vma->size - 1))
 #define OAC_ENABLED(s) (HAS_OAC(s->perf->i915) && s->engine->class == COMPUTE_CLASS)
@@ -265,7 +266,7 @@
 #define DEFAULT_POLL_PERIOD_NS (NSEC_PER_SEC / DEFAULT_POLL_FREQUENCY_HZ)
 
 /* for sysctl proc_dointvec_minmax of dev.i915.perf_stream_paranoid */
-static u32 i915_perf_stream_paranoid = true;
+u32 i915_perf_stream_paranoid = true;
 
 /* The maximum exponent the hardware accepts is 63 (essentially it selects one
  * of the 64bit timestamp bits to trigger reports from) but there's currently
@@ -4903,12 +4904,16 @@ int i915_perf_open_ioctl(struct drm_device *dev, void *data,
 
 	known_open_flags = I915_PERF_FLAG_FD_CLOEXEC |
 			   I915_PERF_FLAG_FD_NONBLOCK |
+			   PRELIM_I915_PERF_FLAG_FD_EU_STALL |
 			   I915_PERF_FLAG_DISABLED;
 	if (param->flags & ~known_open_flags) {
 		drm_dbg(&perf->i915->drm,
 			"Unknown drm_i915_perf_open_param flag\n");
 		return -EINVAL;
 	}
+
+	if (param->flags & PRELIM_I915_PERF_FLAG_FD_EU_STALL)
+		return i915_open_eu_stall_cntr(perf->i915, param, file);
 
 	ret = read_properties_unlocked(perf,
 				       u64_to_user_ptr(param->properties_ptr),
@@ -6178,8 +6183,10 @@ int i915_perf_ioctl_version(void)
 	 * 1004: Add support for video decode and enhancement classes.
 	 *
 	 * 1005: Supports OAC and hence MI_REPORT_PERF_COUNTER for compute class.
+	 *
+	 * 1006: Added support for EU stall monitoring.
 	 */
-	return 1005;
+	return 1006;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

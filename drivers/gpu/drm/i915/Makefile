@@ -327,7 +327,7 @@ i915-y += \
 	display/vlv_dsi.o \
 	display/vlv_dsi_pll.o
 
-i915-y += i915_perf.o
+i915-y += i915_perf.o i915_perf_stall_cntr.o
 
 # Protected execution platform (PXP) support. Base support is required for HuC
 i915-y += \

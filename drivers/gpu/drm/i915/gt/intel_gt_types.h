@@ -441,6 +441,8 @@ struct intel_gt {
 	struct intel_mem_sparing_event mem_sparing;
 
 	struct i915_perf_gt perf;
+
+	struct i915_eu_stall_cntr_gt eu_stall_cntr;
 };
 
 struct intel_gt_definition {

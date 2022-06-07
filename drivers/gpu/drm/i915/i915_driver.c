@@ -93,6 +93,7 @@
 #include "i915_memcpy.h"
 #include "i915_pci.h"
 #include "i915_perf.h"
+#include "i915_perf_stall_cntr.h"
 #include "i915_query.h"
 #include "i915_suspend.h"
 #include "i915_switcheroo.h"
@@ -1026,6 +1027,8 @@ static int i915_driver_hw_probe(struct drm_i915_private *dev_priv)
 	ret = i915_perf_init(dev_priv);
 	if (ret)
 		return ret;
+
+	i915_perf_stall_cntr_init(dev_priv);
 
 	ret = i915_ggtt_probe_hw(dev_priv);
 	if (ret)

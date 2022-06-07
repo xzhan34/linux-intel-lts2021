@@ -1184,6 +1184,7 @@ static const struct intel_device_info ats_m_info = {
 	.has_access_counter = 1, \
 	.has_asid_tlb_invalidation = 1, \
 	.has_cache_clos = 1, \
+	.has_eu_stall_sampling = 1, \
 	.has_full_ps64 = 1, \
 	.has_guc_deprivilege = 1, \
 	.has_guc_programmable_mocs = 1, \

@@ -760,6 +760,7 @@ u32 *gen12_emit_fini_breadcrumb_xcs(struct i915_request *rq, u32 *cs)
 u32 *gen12_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 {
 	struct drm_i915_private *i915 = rq->engine->i915;
+	struct intel_gt *gt = rq->engine->gt;
 	u32 flags = (PIPE_CONTROL_CS_STALL |
 		     PIPE_CONTROL_TLB_INVALIDATE |
 		     PIPE_CONTROL_TILE_CACHE_FLUSH |
@@ -777,6 +778,29 @@ u32 *gen12_emit_fini_breadcrumb_rcs(struct i915_request *rq, u32 *cs)
 		flags &= ~PIPE_CONTROL_3D_ARCH_FLAGS;
 	else if (rq->engine->class == COMPUTE_CLASS)
 		flags &= ~PIPE_CONTROL_3D_ENGINE_FLAGS;
+
+	/*
+	 * Wa_14015275368:pvc
+	 * Add an additional pipe control with CS stall when
+	 * EU stall sampling is enabled
+	 */
+	if (IS_PONTEVECCHIO(i915)) {
+		if (gt->eu_stall_cntr.stream) {
+			cs = gen12_emit_pipe_control(cs, 0, PIPE_CONTROL_CS_STALL, 0);
+		} else {
+			/*
+			 * Reserve space for an additional pipe control as
+			 * EU stall sampling isn't enabled during driver load.
+			 * See measure_breadcrumb_dw()
+			 */
+			*cs++ = MI_NOOP;
+			*cs++ = MI_NOOP;
+			*cs++ = MI_NOOP;
+			*cs++ = MI_NOOP;
+			*cs++ = MI_NOOP;
+			*cs++ = MI_NOOP;
+		}
+	}
 
 	cs = gen12_emit_pipe_control(cs, PIPE_CONTROL0_HDC_PIPELINE_FLUSH, flags, 0);
 

@@ -22,6 +22,7 @@
 #include "i915_reg_defs.h"
 #include "intel_uncore.h"
 #include "intel_wakeref.h"
+#include "gt/intel_sseu.h"
 
 struct drm_i915_private;
 struct file;
@@ -504,6 +505,15 @@ struct i915_perf_gt {
 	 * @group: list of OA groups - one for each OA buffer.
 	 */
 	struct i915_perf_group *group;
+
+};
+
+struct i915_eu_stall_cntr_gt {
+	/* Lock to protect stream */
+	struct mutex lock;
+
+	/* Execution Unit (EU) stall counter stream */
+	struct i915_eu_stall_cntr_stream *stream;
 };
 
 struct i915_perf {
@@ -563,6 +573,42 @@ struct i915_perf {
 
 	/* oa unit ids */
 	u32 oa_unit_ids;
+};
+
+struct per_dss_buf {
+	u8 *vaddr;
+	u32 write;
+	u32 read;
+	bool line_drop;
+	/* lock to protect read and write pointers */
+	struct mutex lock;
+};
+
+/**
+ * struct i915_eu_stall_cntr_stream - state of EU stall counter stream FD
+ */
+struct i915_eu_stall_cntr_stream {
+	struct intel_gt *tile_gt;
+
+	/**
+	 * @enabled: Whether the stream is currently enabled.
+	 */
+	bool enabled;
+	bool pollin;
+	size_t per_dss_buf_size;
+	struct hrtimer poll_check_timer;
+	struct work_struct buf_check_work;
+	struct workqueue_struct *buf_check_wq;
+	wait_queue_head_t poll_wq;
+	u32 event_report_count;
+	u64 poll_period;
+
+	/**
+	 * State of the EU stall counter buffer.
+	 */
+	u8 *vaddr;
+	struct i915_vma *vma;
+	struct per_dss_buf dss_buf[I915_MAX_SS_FUSE_BITS];
 };
 
 #endif /* _I915_PERF_TYPES_H_ */

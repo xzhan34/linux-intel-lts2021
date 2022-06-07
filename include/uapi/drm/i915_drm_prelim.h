@@ -344,6 +344,60 @@ struct prelim_drm_i915_gem_mmap_offset {
 #define PRELIM_I915_PCI_BARRIER_MMAP_OFFSET (0x50 << PAGE_SHIFT)
 };
 
+enum prelim_drm_i915_eu_stall_property_id {
+	/**
+	 * This field specifies the Per DSS Memory Buffer Size.
+	 * Valid values are 128 KB, 256 KB, and 512 KB.
+	 */
+	PRELIM_DRM_I915_EU_STALL_PROP_BUF_SZ = 1001,
+
+	/**
+	 * This field specifies the sampling rate per tile
+	 * in multiples of 251 cycles. Valid values are 1 to 7.
+	 * If the value is 1, sampling interval is 251 cycles.
+	 * If the value is 7, sampling interval is 7 x 251 cycles.
+	 */
+	PRELIM_DRM_I915_EU_STALL_PROP_SAMPLE_RATE,
+
+	/**
+	 * This field specifies the EU stall data poll period
+	 * in nanoseconds. Minimum allowed value is 100 ms.
+	 * A default value is used by the driver if this field
+	 * is not specified.
+	 */
+	PRELIM_DRM_I915_EU_STALL_PROP_POLL_PERIOD,
+
+	PRELIM_DRM_I915_EU_STALL_PROP_ENGINE_CLASS,
+
+	PRELIM_DRM_I915_EU_STALL_PROP_ENGINE_INSTANCE,
+
+	/**
+	 * This field specifies the minimum number of
+	 * EU stall data rows to be present in the kernel
+	 * buffer for poll() to set POLLIN (data present).
+	 * A default value of 1 is used by the driver if this
+	 * field is not specified.
+	 */
+	PRELIM_DRM_I915_EU_STALL_PROP_EVENT_REPORT_COUNT,
+
+	PRELIM_DRM_I915_EU_STALL_PROP_MAX
+};
+
+/*
+ * Info that the driver adds to each entry in the EU stall counters data.
+ */
+struct prelim_drm_i915_stall_cntr_info {
+	__u16 subslice;
+	__u16 flags;
+/* EU stall data line dropped due to memory buffer being full */
+#define PRELIM_I915_EUSTALL_FLAG_OVERFLOW_DROP	(1 << 8)
+};
+
+struct prelim_drm_i915_perf_open_param {
+	/* PRELIM flags */
+#define PRELIM_I915_PERF_FLAG_FD_EU_STALL	(1 << 16)
+};
+
 struct prelim_drm_i915_gem_memory_class_instance {
 	__u16 memory_class; /* see enum prelim_drm_i915_gem_memory_class */
 	__u16 memory_instance;

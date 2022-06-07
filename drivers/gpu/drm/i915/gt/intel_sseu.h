@@ -49,6 +49,8 @@ struct drm_printer;
 #define GEN_MAX_SUBSLICE_STRIDE		GEN_SSEU_STRIDE(GEN_SS_MASK_SIZE)
 #define GEN_MAX_EU_STRIDE		GEN_SSEU_STRIDE(GEN_MAX_EUS_PER_SS)
 
+#define GEN_MAX_TILES		(2) /* PVC upper bound */
+
 #define GEN_DSS_PER_GSLICE	4
 #define GEN_DSS_PER_CSLICE	8
 #define GEN_DSS_PER_MSLICE	8
