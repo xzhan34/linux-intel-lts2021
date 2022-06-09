@@ -3,7 +3,8 @@
  * Copyright © 2022 Intel Corporation
  */
 
-#include "i915_sriov.h"
+#include <drm/i915_sriov.h>
+
 #include "gt/intel_tlb.h"
 #include "i915_sriov_sysfs.h"
 #include "i915_debugger.h"
@@ -820,6 +821,7 @@ int i915_sriov_pf_pause_vf(struct drm_i915_private *i915, unsigned int vfid)
 
 	return result;
 }
+EXPORT_SYMBOL_NS_GPL(i915_sriov_pf_pause_vf, I915);
 
 /**
  * i915_sriov_pf_resume_vf - Resume VF.
@@ -851,6 +853,275 @@ int i915_sriov_pf_resume_vf(struct drm_i915_private *i915, unsigned int vfid)
 
 	return result;
 }
+EXPORT_SYMBOL_NS_GPL(i915_sriov_pf_resume_vf, I915);
+
+/**
+ * i915_sriov_pf_wait_vf_flr_done - Wait for VF FLR completion.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ *
+ * This function will wait until VF FLR is processed by PF on all tiles (or
+ * until timeout occurs).
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int i915_sriov_pf_wait_vf_flr_done(struct drm_i915_private *i915, unsigned int vfid)
+{
+	struct intel_gt *gt;
+	unsigned int id;
+	int ret;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	for_each_gt(gt, i915, id) {
+		ret = wait_for(intel_iov_state_no_flr(&gt->iov, vfid), I915_VF_FLR_TIMEOUT_MS);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_NS_GPL(i915_sriov_pf_wait_vf_flr_done, I915);
+
+/**
+ * i915_sriov_pf_get_vf_tile_mask - Get mask of tiles that contain VF state.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: Mask of tiles that contain VF state.
+ */
+unsigned int i915_sriov_pf_get_vf_tile_mask(struct drm_i915_private *i915, unsigned int vfid)
+{
+	struct intel_iov *iov = &to_root_gt(i915)->iov;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	if (!HAS_REMOTE_TILES(i915))
+		return 1;
+
+	return intel_iov_provisioning_get_tile_mask(iov, vfid);
+}
+EXPORT_SYMBOL_NS_GPL(i915_sriov_pf_get_vf_tile_mask, I915);
+
+/**
+ * i915_sriov_pf_get_vf_ggtt_size - Get size needed to store VF GGTT.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ * @tile: tile identifier
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: Size in bytes.
+ */
+size_t
+i915_sriov_pf_get_vf_ggtt_size(struct drm_i915_private *i915, unsigned int vfid, unsigned int tile)
+{
+	struct intel_iov *iov = &i915->gt[tile]->iov;
+	ssize_t size;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	size = intel_iov_state_save_ggtt(iov, vfid, NULL, 0);
+	WARN_ON(size < 0);
+
+	return size;
+}
+EXPORT_SYMBOL_NS_GPL(i915_sriov_pf_get_vf_ggtt_size, I915);
+
+/**
+ * i915_sriov_pf_save_vf_ggtt - Save VF GGTT.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ * @tile: tile identifier
+ * @buf: buffer to save VF GGTT
+ * @size: size of buffer to save VF GGTT
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: Size of data written on success or a negative error code on failure.
+ */
+ssize_t
+i915_sriov_pf_save_vf_ggtt(struct drm_i915_private *i915, unsigned int vfid, unsigned int tile,
+			   void *buf, size_t size)
+{
+	struct intel_iov *iov = &i915->gt[tile]->iov;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	WARN_ON(buf == NULL && size == 0);
+
+	return intel_iov_state_save_ggtt(iov, vfid, buf, size);
+}
+EXPORT_SYMBOL_NS_GPL(i915_sriov_pf_save_vf_ggtt, I915);
+
+/**
+ * i915_sriov_pf_load_vf_ggtt - Load VF GGTT.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ * @tile: tile identifier
+ * @buf: buffer with VF GGTT
+ * @size: size of buffer with VF GGTT
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int
+i915_sriov_pf_load_vf_ggtt(struct drm_i915_private *i915, unsigned int vfid, unsigned int tile,
+			   const void *buf, size_t size)
+{
+	struct intel_iov *iov = &i915->gt[tile]->iov;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	return intel_iov_state_restore_ggtt(iov, vfid, buf, size);
+}
+EXPORT_SYMBOL_NS_GPL(i915_sriov_pf_load_vf_ggtt, I915);
+
+/**
+ * i915_sriov_pf_get_vf_lmem_size - Get size needed to store VF Local Memory.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ * @tile: tile identifier
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: Size in bytes.
+ */
+size_t
+i915_pf_get_vf_lmem_size(struct drm_i915_private *i915, unsigned int vfid, unsigned int tile)
+{
+	struct intel_iov *iov = &i915->gt[tile]->iov;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	return intel_iov_provisioning_get_lmem(iov, vfid);
+}
+EXPORT_SYMBOL_NS_GPL(i915_pf_get_vf_lmem_size, I915);
+
+/**
+ * i915_sriov_pf_save_vf_ggtt - Save VF Local Memory.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ * @tile: tile identifier
+ * @buf: buffer to save VF LMEM
+ * @offset: offset from the start of VF LMEM
+ * @size: size of buffer to save VF LMEM
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: Size of data written on success or a negative error code on failure.
+ */
+ssize_t
+i915_sriov_pf_save_vf_lmem(struct drm_i915_private *i915, unsigned int vfid, unsigned int tile,
+			   void *buf, loff_t offset, size_t size)
+{
+	struct intel_iov *iov = &i915->gt[tile]->iov;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	return intel_iov_state_save_lmem(iov, vfid, buf, offset, size);
+}
+EXPORT_SYMBOL_NS_GPL(i915_sriov_pf_save_vf_lmem, I915);
+
+/**
+ * i915_sriov_pf_load_vf_lmem - Load VF Local Memory.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ * @tile: tile identifier
+ * @buf: buffer with VF LMEM to load
+ * @offset: offset from the start of VF LMEM
+ * @size: size of buffer with VF LMEM
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int
+i915_sriov_pf_load_vf_lmem(struct drm_i915_private *i915, unsigned int vfid, unsigned int tile,
+			   const void *buf, loff_t offset, size_t size)
+{
+	struct intel_iov *iov = &i915->gt[tile]->iov;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	return intel_iov_state_restore_lmem(iov, vfid, buf, offset, size);
+}
+EXPORT_SYMBOL_NS_GPL(i915_sriov_pf_load_vf_lmem, I915);
+
+/**
+ * i915_pf_get_vf_fw_state_size - Get size needed to store GuC FW state.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ * @tile: tile identifier
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: Size in bytes.
+ */
+size_t
+i915_pf_get_vf_fw_state_size(struct drm_i915_private *i915, unsigned int vfid, unsigned int tile)
+{
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	return SZ_4K;
+}
+EXPORT_SYMBOL_NS_GPL(i915_pf_get_vf_fw_state_size, I915);
+
+/**
+ * i915_sriov_pf_save_vf_fw_state - Save GuC FW state.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ * @tile: tile identifier
+ * @buf: buffer to save GuC FW state
+ * @size: size of buffer to save GuC FW state
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: Size of data written on success or a negative error code on failure.
+ */
+ssize_t
+i915_sriov_pf_save_vf_fw_state(struct drm_i915_private *i915, unsigned int vfid, unsigned int tile,
+			       void *buf, size_t size)
+{
+	struct intel_iov *iov = &i915->gt[tile]->iov;
+	int ret;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	ret = intel_iov_state_save_vf(iov, vfid, buf, size);
+	if (ret)
+		return ret;
+
+	return SZ_4K;
+}
+EXPORT_SYMBOL_NS_GPL(i915_sriov_pf_save_vf_fw_state, I915);
+
+/**
+ * i915_sriov_pf_load_vf_fw_state - Load GuC FW state.
+ * @i915: the i915 struct
+ * @vfid: VF identifier
+ * @tile: tile identifier
+ * @buf: buffer with GuC FW state to load
+ * @size: size of buffer with GuC FW state
+ *
+ * This function shall be called only on PF.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int
+i915_sriov_pf_load_vf_fw_state(struct drm_i915_private *i915, unsigned int vfid, unsigned int tile,
+			       const void *buf, size_t size)
+{
+	struct intel_iov *iov = &i915->gt[tile]->iov;
+
+	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	return intel_iov_state_restore_vf(iov, vfid, buf, size);
+}
+EXPORT_SYMBOL_NS_GPL(i915_sriov_pf_load_vf_fw_state, I915);
 
 /**
  * i915_sriov_pf_clear_vf - Unprovision VF.
