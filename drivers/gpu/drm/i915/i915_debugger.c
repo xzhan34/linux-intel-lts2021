@@ -34,6 +34,26 @@
 #define from_event(T, event) container_of((event), typeof(*(T)), base)
 #define to_event(e) (&(e)->base)
 
+enum {
+	DISCONNECT_CLIENT_CLOSE   = 1,
+	DISCONNECT_SEND_TIMEOUT   = 2,
+	DISCONNECT_INTERNAL_ERR   = 3,
+};
+
+static const char *disconnect_reason_to_str(const int reason)
+{
+	switch (reason) {
+	case DISCONNECT_CLIENT_CLOSE:
+		return "client closed";
+	case DISCONNECT_SEND_TIMEOUT:
+		return "send timeout";
+	case DISCONNECT_INTERNAL_ERR:
+		return "internal error";
+	}
+
+	return "unknown";
+}
+
 static void __i915_debugger_print(const struct i915_debugger * const debugger,
 				  const int level,
 				  const char * const prefix,
@@ -310,10 +330,10 @@ static void i915_debugger_print_event(const struct i915_debugger * const debugge
 	};
 	debug_event_printer_t event_printer = NULL;
 
-	if (likely(debugger->debug_lvl < DD_DEBUG_LEVEL_INFO))
+	if (likely(debugger->debug_lvl < DD_DEBUG_LEVEL_VERBOSE))
 		return;
 
-	__i915_debugger_print(debugger, DD_DEBUG_LEVEL_INFO, prefix,
+	__i915_debugger_print(debugger, DD_DEBUG_LEVEL_VERBOSE, prefix,
 			      "%s:%s type=%u, flags=0x%08x, seqno=%llu, size=%llu\n",
 			      event_type_to_str(event->type),
 			      event_flags_to_str(event->flags),
@@ -582,16 +602,57 @@ static void release_acks(struct i915_debugger *debugger)
 	}
 }
 
-static void i915_debugger_close(struct i915_debugger *debugger)
+static void i915_debugger_disconnect__locked(struct i915_debugger *debugger,
+					    int reason)
 {
+	GEM_WARN_ON(!reason);
+	lockdep_assert_held(&debugger->lock);
+
 	i915_debugger_detach(debugger);
 
-	release_acks(debugger);
-	DD_INFO(debugger, "session %llu closed", debugger->session);
+	if (!debugger->disconnect_reason) {
+		debugger->disconnect_reason = reason;
+		release_acks(debugger);
+		DD_INFO(debugger, "disconnected: %s",
+			disconnect_reason_to_str(reason));
+	} else {
+		DD_INFO(debugger, "earlier disconnected with %s (now %d)",
+			disconnect_reason_to_str(debugger->disconnect_reason),
+			reason);
+	}
 
 	complete_all(&debugger->discovery);
 	wake_up_all(&debugger->write_done);
 	complete_all(&debugger->read_done);
+}
+
+static void i915_debugger_disconnect_timeout(struct i915_debugger *debugger)
+{
+	i915_debugger_disconnect__locked(debugger, DISCONNECT_SEND_TIMEOUT);
+}
+
+static void i915_debugger_disconnect_err(struct i915_debugger *debugger)
+{
+	mutex_lock(&debugger->lock);
+	i915_debugger_disconnect__locked(debugger, DISCONNECT_INTERNAL_ERR);
+	mutex_unlock(&debugger->lock);
+}
+
+static void i915_debugger_client_close(struct i915_debugger *debugger)
+{
+	mutex_lock(&debugger->lock);
+	i915_debugger_disconnect__locked(debugger, DISCONNECT_CLIENT_CLOSE);
+	mutex_unlock(&debugger->lock);
+}
+
+static int i915_debugger_disconnect_retcode(struct i915_debugger *debugger)
+{
+	GEM_WARN_ON(!debugger->disconnect_reason);
+
+	if (debugger->disconnect_reason == DISCONNECT_SEND_TIMEOUT)
+		return -ENXIO;
+
+	return -ENODEV;
 }
 
 static __poll_t i915_debugger_poll(struct file *file, poll_table *wait)
@@ -725,8 +786,8 @@ static int _i915_debugger_send_event(struct i915_debugger * const debugger,
 		u64 blocking_seqno;
 
 		if (is_debugger_closed(debugger)) {
-			DD_INFO(debugger, "disconnect on send: debugger was closed\n");
-			goto disconnect;
+			DD_INFO(debugger, "send: debugger was closed\n");
+			goto closed;
 		}
 
 		blocking_event = event_pending(debugger);
@@ -771,8 +832,9 @@ static int _i915_debugger_send_event(struct i915_debugger * const debugger,
 	} while (!expired);
 
 	if (event_pending(debugger) && !is_debugger_closed(debugger)) {
-		DD_INFO(debugger, "disconnect: send wait expired");
-		goto disconnect;
+		DD_INFO(debugger, "send: fifo full (no readers?). disconnecting");
+		i915_debugger_disconnect_timeout(debugger);
+		goto closed;
 	}
 
 	reinit_completion(&debugger->read_done);
@@ -781,7 +843,7 @@ static int _i915_debugger_send_event(struct i915_debugger * const debugger,
 	if (ack) {
 		if (IS_ERR(ack)) {
 			DD_ERR(debugger, "disconnect: ack not created %ld", PTR_ERR(ack));
-			goto disconnect;
+			goto disconnect_err;
 		}
 
 		if (!insert_ack(debugger, ack)) {
@@ -789,7 +851,7 @@ static int _i915_debugger_send_event(struct i915_debugger * const debugger,
 			       ack->event.seqno);
 			handle_ack(debugger, ack);
 			kfree(ack);
-			goto disconnect;
+			goto disconnect_err;
 		}
 
 		DEBUG_ACK(debugger, ack);
@@ -809,8 +871,8 @@ static int _i915_debugger_send_event(struct i915_debugger * const debugger,
 	mutex_lock(&debugger->lock);
 	do {
 		if (is_debugger_closed(debugger)) {
-			DD_INFO(debugger, "disconnect: debugger closed on waiting read");
-			goto disconnect;
+			DD_INFO(debugger, "send: debugger was closed on waiting read");
+			goto closed;
 		}
 
 		/* If it is not our event, we can safely return */
@@ -838,16 +900,18 @@ static int _i915_debugger_send_event(struct i915_debugger * const debugger,
 
 	/* If it is still our event pending, disconnect */
 	if (event_pending(debugger) == event) {
-		DD_INFO(debugger, "disconnect: timeout waiting for read");
-		goto disconnect;
+		DD_INFO(debugger, "send: timeout waiting for event to be read, disconnecting");
+		i915_debugger_disconnect_timeout(debugger);
+		goto closed;
 	}
 
 	mutex_unlock(&debugger->lock);
 	return 0;
 
-disconnect:
+disconnect_err:
+	i915_debugger_disconnect__locked(debugger, DISCONNECT_INTERNAL_ERR);
+closed:
 	mutex_unlock(&debugger->lock);
-	i915_debugger_close(debugger);
 
 	return -ENODEV;
 }
@@ -869,7 +933,7 @@ __i915_debugger_create_event(struct i915_debugger * const debugger,
 	event = kzalloc(size, gfp);
 	if (!event) {
 		DD_ERR(debugger, "unable to create event 0x%08x (ENOMEM), disconnecting", type);
-		i915_debugger_close(debugger);
+		i915_debugger_disconnect_err(debugger);
 		return NULL;
 	}
 
@@ -946,13 +1010,12 @@ static long i915_debugger_read_event(struct i915_debugger *debugger,
 	if (!buf)
 		return -ENOMEM;
 
+	ret = -ENODEV;
 	waits = 0;
 	mutex_lock(&debugger->lock);
 	do {
-		if (is_debugger_closed(debugger)) {
-			ret = -ENODEV;
-			goto unlock;
-		}
+		if (is_debugger_closed(debugger))
+			goto closed;
 
 		event = event_pending(debugger);
 		if (event)
@@ -971,14 +1034,12 @@ static long i915_debugger_read_event(struct i915_debugger *debugger,
 		mutex_lock(&debugger->lock);
 	} while (waits++ < 10);
 
+	if (is_debugger_closed(debugger))
+		goto closed;
+
 	if (!event) {
 		ret = -ETIMEDOUT;
 		complete(&debugger->read_done);
-		goto unlock;
-	}
-
-	if (is_debugger_closed(debugger)) {
-		ret = -ENODEV;
 		goto unlock;
 	}
 
@@ -1011,6 +1072,10 @@ static long i915_debugger_read_event(struct i915_debugger *debugger,
 out:
 	kfree(buf);
 	return ret;
+
+closed:
+	GEM_WARN_ON(ret != -ENODEV);
+	ret = i915_debugger_disconnect_retcode(debugger);
 
 unlock:
 	mutex_unlock(&debugger->lock);
@@ -2229,7 +2294,7 @@ static long i915_debugger_ioctl(struct file *file,
 	long ret;
 
 	if (is_debugger_closed(debugger)) {
-		ret = -ENODEV;
+		ret = i915_debugger_disconnect_retcode(debugger);
 		goto out;
 	}
 
@@ -2317,7 +2382,7 @@ static int __i915_debugger_alloc_handle(struct i915_debugger *debugger,
 
 	if (ret) {
 		DD_ERR(debugger, "xa_alloc_cyclic failed %d, disconnecting\n", ret);
-		i915_debugger_close(debugger);
+		i915_debugger_disconnect_err(debugger);
 	}
 
 	return ret;
@@ -2364,7 +2429,7 @@ static void __i915_debugger_vm_create(struct i915_debugger *debugger,
 		DD_ERR(debugger,
 		       "unable to allocate vm handle for client %u, disconnecting\n",
 		       client->id);
-		i915_debugger_close(debugger);
+		i915_debugger_disconnect_err(debugger);
 		return;
 	}
 
@@ -2435,7 +2500,7 @@ static void i915_debugger_discover_vma(struct i915_debugger *debugger,
 		__ev = krealloc(ev, used, GFP_KERNEL);
 		if (!__ev) {
 			DD_ERR(debugger, "could not allocate bind event, disconnecting\n");
-			goto out;
+			goto err;
 		}
 		ev = __ev;
 		size = used;
@@ -2447,7 +2512,10 @@ static void i915_debugger_discover_vma(struct i915_debugger *debugger,
 		i915_debugger_send_event(debugger, to_event(e));
 		__ev += e->base.size;
 	}
+	goto out;
 
+err:
+	i915_debugger_disconnect_err(debugger);
 out:
 	kfree(ev);
 }
@@ -2680,7 +2748,7 @@ static int i915_debugger_release(struct inode *inode, struct file *file)
 {
 	struct i915_debugger *debugger = file->private_data;
 
-	i915_debugger_close(debugger);
+	i915_debugger_client_close(debugger);
 	i915_debugger_put(debugger);
 	return 0;
 }
