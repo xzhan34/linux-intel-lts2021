@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config I915_VFIO_PCI
+	tristate "VFIO vendor-specific PCI driver for Intel Graphics"
+	depends on DRM_I915
+	help
+	  This option enables vendor-specific VFIO driver for Intel Graphics.
+	  In addition to generic VFIO PCI functionality, it implements VFIO
+	  migration uAPI (v1) allowing userspace to enable migration for
+	  Intel Graphics SR-IOV Virtual Functions.
