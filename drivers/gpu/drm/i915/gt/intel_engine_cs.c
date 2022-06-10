@@ -1723,7 +1723,7 @@ void __intel_engine_flush_submission(struct intel_engine_cs *engine, bool sync)
 
 	/* Synchronise and wait for the tasklet on another CPU */
 	if (sync)
-		tasklet_unlock_wait(t);
+		tasklet_unlock_spin_wait(t);
 }
 
 /**
