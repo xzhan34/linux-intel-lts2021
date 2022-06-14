@@ -469,6 +469,12 @@ i915_gem_pread_ioctl(struct drm_device *dev, void *data,
 	if (ret != -ENODEV)
 		goto out;
 
+	ret = -ENODEV;
+	if (obj->ops->pread)
+		ret = obj->ops->pread(obj, args);
+	if (ret != -ENODEV)
+		goto out;
+
 	ret = i915_gem_object_wait(obj,
 				   I915_WAIT_INTERRUPTIBLE,
 				   MAX_SCHEDULE_TIMEOUT);
@@ -999,11 +1005,8 @@ i915_gem_madvise_ioctl(struct drm_device *dev, void *data,
 		}
 	}
 
-	if (obj->mm.madv != __I915_MADV_PURGED) {
+	if (obj->mm.madv != __I915_MADV_PURGED)
 		obj->mm.madv = args->madv;
-		if (obj->ops->adjust_lru)
-			obj->ops->adjust_lru(obj);
-	}
 
 	if (i915_gem_object_has_pages(obj)) {
 		unsigned long flags;
@@ -1105,7 +1108,6 @@ err_unlock:
 	}
 
 	i915_gem_drain_freed_objects(dev_priv);
-
 	return ret;
 }
 

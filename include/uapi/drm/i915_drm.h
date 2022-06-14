@@ -683,9 +683,6 @@ typedef struct drm_i915_irq_wait {
  */
 #define I915_PARAM_HAS_EXEC_TIMELINE_FENCES 55
 
-/* Query if the kernel supports the I915_USERPTR_PROBE flag. */
-#define I915_PARAM_HAS_USERPTR_PROBE 56
-
 /* Must be kept compact -- no holes and well documented */
 
 typedef struct drm_i915_getparam {
@@ -861,56 +858,31 @@ struct drm_i915_gem_mmap_gtt {
 	__u64 offset;
 };
 
-/**
- * struct drm_i915_gem_mmap_offset - Retrieve an offset so we can mmap this buffer object.
- *
- * This struct is passed as argument to the `DRM_IOCTL_I915_GEM_MMAP_OFFSET` ioctl,
- * and is used to retrieve the fake offset to mmap an object specified by &handle.
- *
- * The legacy way of using `DRM_IOCTL_I915_GEM_MMAP` is removed on gen12+.
- * `DRM_IOCTL_I915_GEM_MMAP_GTT` is an older supported alias to this struct, but will behave
- * as setting the &extensions to 0, and &flags to `I915_MMAP_OFFSET_GTT`.
- */
 struct drm_i915_gem_mmap_offset {
-	/** @handle: Handle for the object being mapped. */
+	/** Handle for the object being mapped. */
 	__u32 handle;
-	/** @pad: Must be zero */
 	__u32 pad;
 	/**
-	 * @offset: The fake offset to use for subsequent mmap call
+	 * Fake offset to use for subsequent mmap call
 	 *
 	 * This is a fixed-size type for 32/64 compatibility.
 	 */
 	__u64 offset;
 
 	/**
-	 * @flags: Flags for extended behaviour.
+	 * Flags for extended behaviour.
 	 *
-	 * It is mandatory that one of the `MMAP_OFFSET` types
-	 * should be included:
-	 *
-	 * - `I915_MMAP_OFFSET_GTT`: Use mmap with the object bound to GTT. (Write-Combined)
-	 * - `I915_MMAP_OFFSET_WC`: Use Write-Combined caching.
-	 * - `I915_MMAP_OFFSET_WB`: Use Write-Back caching.
-	 * - `I915_MMAP_OFFSET_FIXED`: Use object placement to determine caching.
-	 *
-	 * On devices with local memory `I915_MMAP_OFFSET_FIXED` is the only valid
-	 * type. On devices without local memory, this caching mode is invalid.
-	 *
-	 * As caching mode when specifying `I915_MMAP_OFFSET_FIXED`, WC or WB will
-	 * be used, depending on the object placement on creation. WB will be used
-	 * when the object can only exist in system memory, WC otherwise.
+	 * It is mandatory that one of the MMAP_OFFSET types
+	 * (GTT, WC, WB, UC, etc) should be included.
 	 */
 	__u64 flags;
+#define I915_MMAP_OFFSET_GTT 0
+#define I915_MMAP_OFFSET_WC  1
+#define I915_MMAP_OFFSET_WB  2
+#define I915_MMAP_OFFSET_UC  3
 
-#define I915_MMAP_OFFSET_GTT	0
-#define I915_MMAP_OFFSET_WC	1
-#define I915_MMAP_OFFSET_WB	2
-#define I915_MMAP_OFFSET_UC	3
-#define I915_MMAP_OFFSET_FIXED	4
-
-	/**
-	 * @extensions: Zero-terminated chain of extensions.
+	/*
+	 * Zero-terminated chain of extensions.
 	 *
 	 * No current extensions defined; mbz.
 	 */
@@ -935,25 +907,6 @@ struct drm_i915_gem_mmap_offset {
  *	- I915_GEM_DOMAIN_GTT: Mappable aperture domain
  *
  * All other domains are rejected.
- *
- * Note that for discrete, starting from DG1, this is no longer supported, and
- * is instead rejected. On such platforms the CPU domain is effectively static,
- * where we also only support a single &drm_i915_gem_mmap_offset cache mode,
- * which can't be set explicitly and instead depends on the object placements,
- * as per the below.
- *
- * Implicit caching rules, starting from DG1:
- *
- *	- If any of the object placements (see &drm_i915_gem_create_ext_memory_regions)
- *	  contain I915_MEMORY_CLASS_DEVICE then the object will be allocated and
- *	  mapped as write-combined only.
- *
- *	- Everything else is always allocated and mapped as write-back, with the
- *	  guarantee that everything is also coherent with the GPU.
- *
- * Note that this is likely to change in the future again, where we might need
- * more flexibility on future devices, so making this all explicit as part of a
- * new &drm_i915_gem_create_ext extension is probable.
  */
 struct drm_i915_gem_set_domain {
 	/** @handle: Handle for the object. */
@@ -1451,35 +1404,6 @@ struct drm_i915_gem_busy {
  * ppGTT support, or if the object is used for scanout). Note that this might
  * require unbinding the object from the GTT first, if its current caching value
  * doesn't match.
- *
- * Note that this all changes on discrete platforms, starting from DG1, the
- * set/get caching is no longer supported, and is now rejected.  Instead the CPU
- * caching attributes(WB vs WC) will become an immutable creation time property
- * for the object, along with the GTT caching level. For now we don't expose any
- * new uAPI for this, instead on DG1 this is all implicit, although this largely
- * shouldn't matter since DG1 is coherent by default(without any way of
- * controlling it).
- *
- * Implicit caching rules, starting from DG1:
- *
- *     - If any of the object placements (see &drm_i915_gem_create_ext_memory_regions)
- *       contain I915_MEMORY_CLASS_DEVICE then the object will be allocated and
- *       mapped as write-combined only.
- *
- *     - Everything else is always allocated and mapped as write-back, with the
- *       guarantee that everything is also coherent with the GPU.
- *
- * Note that this is likely to change in the future again, where we might need
- * more flexibility on future devices, so making this all explicit as part of a
- * new &drm_i915_gem_create_ext extension is probable.
- *
- * Side note: Part of the reason for this is that changing the at-allocation-time CPU
- * caching attributes for the pages might be required(and is expensive) if we
- * need to then CPU map the pages later with different caching attributes. This
- * inconsistent caching behaviour, while supported on x86, is not universally
- * supported on other architectures. So for simplicity we opt for setting
- * everything at creation time, whilst also making it immutable, on discrete
- * platforms.
  */
 struct drm_i915_gem_caching {
 	/**
@@ -2234,29 +2158,12 @@ struct drm_i915_gem_userptr {
 	 * through the GTT. If the HW can't support readonly access, an error is
 	 * returned.
 	 *
-	 * I915_USERPTR_PROBE:
-	 *
-	 * Probe the provided @user_ptr range and validate that the @user_ptr is
-	 * indeed pointing to normal memory and that the range is also valid.
-	 * For example if some garbage address is given to the kernel, then this
-	 * should complain.
-	 *
-	 * Returns -EFAULT if the probe failed.
-	 *
-	 * Note that this doesn't populate the backing pages, and also doesn't
-	 * guarantee that the object will remain valid when the object is
-	 * eventually used.
-	 *
-	 * The kernel supports this feature if I915_PARAM_HAS_USERPTR_PROBE
-	 * returns a non-zero value.
-	 *
 	 * I915_USERPTR_UNSYNCHRONIZED:
 	 *
 	 * NOT USED. Setting this flag will result in an error.
 	 */
 	__u32 flags;
 #define I915_USERPTR_READ_ONLY 0x1
-#define I915_USERPTR_PROBE 0x2
 #define I915_USERPTR_UNSYNCHRONIZED 0x80000000
 	/**
 	 * @handle: Returned handle for the object.

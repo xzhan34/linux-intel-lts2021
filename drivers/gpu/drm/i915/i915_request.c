@@ -42,17 +42,22 @@
 
 #include "i915_active.h"
 #include "i915_drv.h"
+#include "i915_globals.h"
 #include "i915_trace.h"
 #include "intel_pm.h"
 
 struct execute_cb {
 	struct irq_work work;
 	struct i915_sw_fence *fence;
+	void (*hook)(struct i915_request *rq, struct dma_fence *signal);
 	struct i915_request *signal;
 };
 
-static struct kmem_cache *slab_requests;
-static struct kmem_cache *slab_execute_cbs;
+static struct i915_global_request {
+	struct i915_global base;
+	struct kmem_cache *slab_requests;
+	struct kmem_cache *slab_execute_cbs;
+} global;
 
 static const char *i915_fence_get_driver_name(struct dma_fence *fence)
 {
@@ -103,7 +108,7 @@ static signed long i915_fence_wait(struct dma_fence *fence,
 
 struct kmem_cache *i915_request_slab_cache(void)
 {
-	return slab_requests;
+	return global.slab_requests;
 }
 
 static void i915_fence_release(struct dma_fence *fence)
@@ -136,7 +141,7 @@ static void i915_fence_release(struct dma_fence *fence)
 
 	intel_context_put(rq->context);
 
-	kmem_cache_free(slab_requests, rq);
+	kmem_cache_free(global.slab_requests, rq);
 }
 
 const struct dma_fence_ops i915_fence_ops = {
@@ -153,7 +158,18 @@ static void irq_execute_cb(struct irq_work *wrk)
 	struct execute_cb *cb = container_of(wrk, typeof(*cb), work);
 
 	i915_sw_fence_complete(cb->fence);
-	kmem_cache_free(slab_execute_cbs, cb);
+	kmem_cache_free(global.slab_execute_cbs, cb);
+}
+
+static void irq_execute_cb_hook(struct irq_work *wrk)
+{
+	struct execute_cb *cb = container_of(wrk, typeof(*cb), work);
+
+	cb->hook(container_of(cb->fence, struct i915_request, submit),
+		 &cb->signal->fence);
+	i915_request_put(cb->signal);
+
+	irq_execute_cb(wrk);
 }
 
 static __always_inline void
@@ -451,20 +467,31 @@ static bool __request_in_flight(const struct i915_request *signal)
 static int
 __await_execution(struct i915_request *rq,
 		  struct i915_request *signal,
+		  void (*hook)(struct i915_request *rq,
+			       struct dma_fence *signal),
 		  gfp_t gfp)
 {
 	struct execute_cb *cb;
 
-	if (i915_request_is_active(signal))
+	if (i915_request_is_active(signal)) {
+		if (hook)
+			hook(rq, &signal->fence);
 		return 0;
+	}
 
-	cb = kmem_cache_alloc(slab_execute_cbs, gfp);
+	cb = kmem_cache_alloc(global.slab_execute_cbs, gfp);
 	if (!cb)
 		return -ENOMEM;
 
 	cb->fence = &rq->submit;
 	i915_sw_fence_await(cb->fence);
 	init_irq_work(&cb->work, irq_execute_cb);
+
+	if (hook) {
+		cb->hook = hook;
+		cb->signal = i915_request_get(signal);
+		cb->work.func = irq_execute_cb_hook;
+	}
 
 	/*
 	 * Register the callback first, then see if the signaler is already
@@ -804,7 +831,7 @@ request_alloc_slow(struct intel_timeline *tl,
 	rq = list_first_entry(&tl->requests, typeof(*rq), link);
 	i915_request_retire(rq);
 
-	rq = kmem_cache_alloc(slab_requests,
+	rq = kmem_cache_alloc(global.slab_requests,
 			      gfp | __GFP_RETRY_MAYFAIL | __GFP_NOWARN);
 	if (rq)
 		return rq;
@@ -817,7 +844,7 @@ request_alloc_slow(struct intel_timeline *tl,
 	retire_requests(tl);
 
 out:
-	return kmem_cache_alloc(slab_requests, gfp);
+	return kmem_cache_alloc(global.slab_requests, gfp);
 }
 
 static void __i915_request_ctor(void *arg)
@@ -828,6 +855,8 @@ static void __i915_request_ctor(void *arg)
 	i915_sched_node_init(&rq->sched);
 	i915_sw_fence_init(&rq->submit, submit_notify);
 	i915_sw_fence_init(&rq->semaphore, semaphore_notify);
+
+	dma_fence_init(&rq->fence, &i915_fence_ops, &rq->lock, 0, 0);
 
 	rq->capture_list = NULL;
 
@@ -876,7 +905,7 @@ __i915_request_create(struct intel_context *ce, gfp_t gfp)
 	 *
 	 * Do not use kmem_cache_zalloc() here!
 	 */
-	rq = kmem_cache_alloc(slab_requests,
+	rq = kmem_cache_alloc(global.slab_requests,
 			      gfp | __GFP_RETRY_MAYFAIL | __GFP_NOWARN);
 	if (unlikely(!rq)) {
 		rq = request_alloc_slow(tl, &ce->engine->request_pool, gfp);
@@ -903,12 +932,17 @@ __i915_request_create(struct intel_context *ce, gfp_t gfp)
 	rq->ring = ce->ring;
 	rq->execution_mask = ce->engine->mask;
 
+	kref_init(&rq->fence.refcount);
+	rq->fence.flags = 0;
+	rq->fence.error = 0;
+	INIT_LIST_HEAD(&rq->fence.cb_list);
+
 	ret = intel_timeline_get_seqno(tl, rq, &seqno);
 	if (ret)
 		goto err_free;
 
-	dma_fence_init(&rq->fence, &i915_fence_ops, &rq->lock,
-		       tl->fence_context, seqno);
+	rq->fence.context = tl->fence_context;
+	rq->fence.seqno = seqno;
 
 	RCU_INIT_POINTER(rq->timeline, tl);
 	rq->hwsp_seqno = tl->hwsp_seqno;
@@ -973,7 +1007,7 @@ err_unwind:
 
 err_free:
 	intel_context_put(ce);
-	kmem_cache_free(slab_requests, rq);
+	kmem_cache_free(global.slab_requests, rq);
 err_unreserve:
 	intel_context_unpin(ce);
 	return ERR_PTR(ret);
@@ -1176,7 +1210,7 @@ emit_semaphore_wait(struct i915_request *to,
 		goto await_fence;
 
 	/* Only submit our spinner after the signaler is running! */
-	if (__await_execution(to, from, gfp))
+	if (__await_execution(to, from, NULL, gfp))
 		goto await_fence;
 
 	if (__emit_semaphore_wait(to, from, from->fence.seqno))
@@ -1207,14 +1241,16 @@ static int intel_timeline_sync_set_start(struct intel_timeline *tl,
 
 static int
 __i915_request_await_execution(struct i915_request *to,
-			       struct i915_request *from)
+			       struct i915_request *from,
+			       void (*hook)(struct i915_request *rq,
+					    struct dma_fence *signal))
 {
 	int err;
 
 	GEM_BUG_ON(intel_context_is_barrier(from->context));
 
 	/* Submit both requests at the same time */
-	err = __await_execution(to, from, I915_FENCE_GFP);
+	err = __await_execution(to, from, hook, I915_FENCE_GFP);
 	if (err)
 		return err;
 
@@ -1327,7 +1363,9 @@ i915_request_await_external(struct i915_request *rq, struct dma_fence *fence)
 
 int
 i915_request_await_execution(struct i915_request *rq,
-			     struct dma_fence *fence)
+			     struct dma_fence *fence,
+			     void (*hook)(struct i915_request *rq,
+					  struct dma_fence *signal))
 {
 	struct dma_fence **child = &fence;
 	unsigned int nchild = 1;
@@ -1358,7 +1396,8 @@ i915_request_await_execution(struct i915_request *rq,
 
 		if (dma_fence_is_i915(fence))
 			ret = __i915_request_await_execution(rq,
-							     to_request(fence));
+							     to_request(fence),
+							     hook);
 		else
 			ret = i915_request_await_external(rq, fence);
 		if (ret < 0)
@@ -1384,7 +1423,7 @@ await_request_submit(struct i915_request *to, struct i915_request *from)
 							&from->submit,
 							I915_FENCE_GFP);
 	else
-		return __i915_request_await_execution(to, from);
+		return __i915_request_await_execution(to, from, NULL);
 }
 
 static int
@@ -2069,15 +2108,26 @@ enum i915_request_state i915_test_request_state(struct i915_request *rq)
 #include "selftests/i915_request.c"
 #endif
 
-void i915_request_module_exit(void)
+static void i915_global_request_shrink(void)
 {
-	kmem_cache_destroy(slab_execute_cbs);
-	kmem_cache_destroy(slab_requests);
+	kmem_cache_shrink(global.slab_execute_cbs);
+	kmem_cache_shrink(global.slab_requests);
 }
 
-int __init i915_request_module_init(void)
+static void i915_global_request_exit(void)
 {
-	slab_requests =
+	kmem_cache_destroy(global.slab_execute_cbs);
+	kmem_cache_destroy(global.slab_requests);
+}
+
+static struct i915_global_request global = { {
+	.shrink = i915_global_request_shrink,
+	.exit = i915_global_request_exit,
+} };
+
+int __init i915_global_request_init(void)
+{
+	global.slab_requests =
 		kmem_cache_create("i915_request",
 				  sizeof(struct i915_request),
 				  __alignof__(struct i915_request),
@@ -2085,19 +2135,20 @@ int __init i915_request_module_init(void)
 				  SLAB_RECLAIM_ACCOUNT |
 				  SLAB_TYPESAFE_BY_RCU,
 				  __i915_request_ctor);
-	if (!slab_requests)
+	if (!global.slab_requests)
 		return -ENOMEM;
 
-	slab_execute_cbs = KMEM_CACHE(execute_cb,
+	global.slab_execute_cbs = KMEM_CACHE(execute_cb,
 					     SLAB_HWCACHE_ALIGN |
 					     SLAB_RECLAIM_ACCOUNT |
 					     SLAB_TYPESAFE_BY_RCU);
-	if (!slab_execute_cbs)
+	if (!global.slab_execute_cbs)
 		goto err_requests;
 
+	i915_global_register(&global.base);
 	return 0;
 
 err_requests:
-	kmem_cache_destroy(slab_requests);
+	kmem_cache_destroy(global.slab_requests);
 	return -ENOMEM;
 }

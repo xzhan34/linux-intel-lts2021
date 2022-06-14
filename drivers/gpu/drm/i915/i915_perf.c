@@ -3422,10 +3422,10 @@ i915_perf_open_ioctl_locked(struct i915_perf *perf,
 		struct drm_i915_file_private *file_priv = file->driver_priv;
 
 		specific_ctx = i915_gem_context_lookup(file_priv, ctx_handle);
-		if (IS_ERR(specific_ctx)) {
+		if (!specific_ctx) {
 			DRM_DEBUG("Failed to look up context with ID %u for opening perf stream\n",
 				  ctx_handle);
-			ret = PTR_ERR(specific_ctx);
+			ret = -ENOENT;
 			goto err;
 		}
 	}
@@ -4486,10 +4486,9 @@ static int destroy_config(int id, void *p, void *data)
 	return 0;
 }
 
-int i915_perf_sysctl_register(void)
+void i915_perf_sysctl_register(void)
 {
 	sysctl_header = register_sysctl_table(dev_root);
-	return 0;
 }
 
 void i915_perf_sysctl_unregister(void)

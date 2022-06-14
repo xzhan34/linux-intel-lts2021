@@ -189,6 +189,18 @@ struct virtual_engine {
 		int prio;
 	} nodes[I915_NUM_ENGINES];
 
+	/*
+	 * Keep track of bonded pairs -- restrictions upon on our selection
+	 * of physical engines any particular request may be submitted to.
+	 * If we receive a submit-fence from a master engine, we will only
+	 * use one of sibling_mask physical engines.
+	 */
+	struct ve_bond {
+		const struct intel_engine_cs *master;
+		intel_engine_mask_t sibling_mask;
+	} *bonds;
+	unsigned int num_bonds;
+
 	/* And finally, which physical engines this virtual engine maps onto. */
 	unsigned int num_siblings;
 	struct intel_engine_cs *siblings[];
@@ -199,9 +211,6 @@ static struct virtual_engine *to_virtual_engine(struct intel_engine_cs *engine)
 	GEM_BUG_ON(!intel_engine_is_virtual(engine));
 	return container_of(engine, struct virtual_engine, base);
 }
-
-static struct intel_context *
-execlists_create_virtual(struct intel_engine_cs **siblings, unsigned int count);
 
 static struct i915_request *
 __active_request(const struct intel_timeline * const tl,
@@ -2619,7 +2628,7 @@ static const struct intel_context_ops execlists_context_ops = {
 	.reset = lrc_reset,
 	.destroy = lrc_destroy,
 
-	.create_virtual = execlists_create_virtual,
+	.create_virtual = intel_execlists_create_virtual,
 };
 
 static int emit_pdps(struct i915_request *rq)
@@ -3516,6 +3525,7 @@ static void rcu_virtual_context_destroy(struct work_struct *wrk)
 		i915_sched_engine_put(ve->base.sched_engine);
 	intel_engine_free_request_pool(&ve->base);
 
+	kfree(ve->bonds);
 	kfree(ve);
 }
 
@@ -3785,8 +3795,45 @@ unlock:
 	spin_unlock_irqrestore(&ve->base.sched_engine->lock, flags);
 }
 
-static struct intel_context *
-execlists_create_virtual(struct intel_engine_cs **siblings, unsigned int count)
+static struct ve_bond *
+virtual_find_bond(struct virtual_engine *ve,
+		  const struct intel_engine_cs *master)
+{
+	int i;
+
+	for (i = 0; i < ve->num_bonds; i++) {
+		if (ve->bonds[i].master == master)
+			return &ve->bonds[i];
+	}
+
+	return NULL;
+}
+
+static void
+virtual_bond_execute(struct i915_request *rq, struct dma_fence *signal)
+{
+	struct virtual_engine *ve = to_virtual_engine(rq->engine);
+	intel_engine_mask_t allowed, exec;
+	struct ve_bond *bond;
+
+	allowed = ~to_request(signal)->engine->mask;
+
+	bond = virtual_find_bond(ve, to_request(signal)->engine);
+	if (bond)
+		allowed &= bond->sibling_mask;
+
+	/* Restrict the bonded request to run on only the available engines */
+	exec = READ_ONCE(rq->execution_mask);
+	while (!try_cmpxchg(&rq->execution_mask, &exec, exec & allowed))
+		;
+
+	/* Prevent the master from being re-run on the bonded engines */
+	to_request(signal)->execution_mask &= ~allowed;
+}
+
+struct intel_context *
+intel_execlists_create_virtual(struct intel_engine_cs **siblings,
+			       unsigned int count)
 {
 	struct virtual_engine *ve;
 	unsigned int n;
@@ -3838,6 +3885,7 @@ execlists_create_virtual(struct intel_engine_cs **siblings, unsigned int count)
 	ve->base.sched_engine->schedule = i915_schedule;
 	ve->base.sched_engine->kick_backend = kick_execlists;
 	ve->base.submit_request = virtual_submit_request;
+	ve->base.bond_execute = virtual_bond_execute;
 
 	INIT_LIST_HEAD(virtual_queue(ve));
 	tasklet_setup(&ve->base.sched_engine->tasklet, virtual_submission_tasklet);
@@ -3923,6 +3971,42 @@ execlists_create_virtual(struct intel_engine_cs **siblings, unsigned int count)
 err_put:
 	intel_context_put(&ve->context);
 	return ERR_PTR(err);
+}
+
+int intel_virtual_engine_attach_bond(struct intel_engine_cs *engine,
+				     const struct intel_engine_cs *master,
+				     const struct intel_engine_cs *sibling)
+{
+	struct virtual_engine *ve = to_virtual_engine(engine);
+	struct ve_bond *bond;
+	int n;
+
+	/* Sanity check the sibling is part of the virtual engine */
+	for (n = 0; n < ve->num_siblings; n++)
+		if (sibling == ve->siblings[n])
+			break;
+	if (n == ve->num_siblings)
+		return -EINVAL;
+
+	bond = virtual_find_bond(ve, master);
+	if (bond) {
+		bond->sibling_mask |= sibling->mask;
+		return 0;
+	}
+
+	bond = krealloc(ve->bonds,
+			sizeof(*bond) * (ve->num_bonds + 1),
+			GFP_KERNEL);
+	if (!bond)
+		return -ENOMEM;
+
+	bond[ve->num_bonds].master = master;
+	bond[ve->num_bonds].sibling_mask = sibling->mask;
+
+	ve->bonds = bond;
+	ve->num_bonds++;
+
+	return 0;
 }
 
 void intel_execlists_show_requests(struct intel_engine_cs *engine,

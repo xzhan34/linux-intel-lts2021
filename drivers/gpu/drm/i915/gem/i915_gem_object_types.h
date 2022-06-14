@@ -10,7 +10,6 @@
 #include <linux/mmu_notifier.h>
 
 #include <drm/drm_gem.h>
-#include <drm/ttm/ttm_bo_api.h>
 #include <uapi/drm/i915_drm.h>
 
 #include "i915_active.h"
@@ -18,7 +17,6 @@
 
 struct drm_i915_gem_object;
 struct intel_fronbuffer;
-struct intel_memory_region;
 
 /*
  * struct i915_lut_handle tracks the fast lookups from handle to vma used
@@ -34,9 +32,10 @@ struct i915_lut_handle {
 
 struct drm_i915_gem_object_ops {
 	unsigned int flags;
-#define I915_GEM_OBJECT_IS_SHRINKABLE	BIT(1)
-#define I915_GEM_OBJECT_IS_PROXY	BIT(2)
-#define I915_GEM_OBJECT_NO_MMAP		BIT(3)
+#define I915_GEM_OBJECT_HAS_IOMEM	BIT(1)
+#define I915_GEM_OBJECT_IS_SHRINKABLE	BIT(2)
+#define I915_GEM_OBJECT_IS_PROXY	BIT(3)
+#define I915_GEM_OBJECT_NO_MMAP		BIT(4)
 
 	/* Interface between the GEM object and its backing storage.
 	 * get_pages() is called once prior to the use of the associated set
@@ -61,34 +60,10 @@ struct drm_i915_gem_object_ops {
 		     const struct drm_i915_gem_pread *arg);
 	int (*pwrite)(struct drm_i915_gem_object *obj,
 		      const struct drm_i915_gem_pwrite *arg);
-	u64 (*mmap_offset)(struct drm_i915_gem_object *obj);
 
 	int (*dmabuf_export)(struct drm_i915_gem_object *obj);
-
-	/**
-	 * adjust_lru - notify that the madvise value was updated
-	 * @obj: The gem object
-	 *
-	 * The madvise value may have been updated, or object was recently
-	 * referenced so act accordingly (Perhaps changing an LRU list etc).
-	 */
-	void (*adjust_lru)(struct drm_i915_gem_object *obj);
-
-	/**
-	 * delayed_free - Override the default delayed free implementation
-	 */
-	void (*delayed_free)(struct drm_i915_gem_object *obj);
-
-	/**
-	 * migrate - Migrate object to a different region either for
-	 * pinning or for as long as the object lock is held.
-	 */
-	int (*migrate)(struct drm_i915_gem_object *obj,
-		       struct intel_memory_region *mr);
-
 	void (*release)(struct drm_i915_gem_object *obj);
 
-	const struct vm_operations_struct *mmap_ops;
 	const char *name; /* friendly name for debug, e.g. lockdep classes */
 };
 
@@ -185,7 +160,6 @@ enum i915_mmap_type {
 	I915_MMAP_TYPE_WC,
 	I915_MMAP_TYPE_WB,
 	I915_MMAP_TYPE_UC,
-	I915_MMAP_TYPE_FIXED,
 };
 
 struct i915_mmap_offset {
@@ -205,16 +179,7 @@ struct i915_gem_object_page_iter {
 };
 
 struct drm_i915_gem_object {
-	/*
-	 * We might have reason to revisit the below since it wastes
-	 * a lot of space for non-ttm gem objects.
-	 * In any case, always use the accessors for the ttm_buffer_object
-	 * when accessing it.
-	 */
-	union {
-		struct drm_gem_object base;
-		struct ttm_buffer_object __do_not_access;
-	};
+	struct drm_gem_object base;
 
 	const struct drm_i915_gem_object_ops *ops;
 
@@ -264,10 +229,6 @@ struct drm_i915_gem_object {
 	 * when i915_gem_ww_ctx_backoff() or i915_gem_ww_ctx_fini() are called.
 	 */
 	struct list_head obj_link;
-	/**
-	 * @shared_resv_from: The object shares the resv from this vm.
-	 */
-	struct i915_address_space *shares_resv_from;
 
 	union {
 		struct rcu_head rcu;
@@ -290,25 +251,15 @@ struct drm_i915_gem_object {
 	unsigned long flags;
 #define I915_BO_ALLOC_CONTIGUOUS BIT(0)
 #define I915_BO_ALLOC_VOLATILE   BIT(1)
-#define I915_BO_ALLOC_CPU_CLEAR  BIT(2)
-#define I915_BO_ALLOC_USER       BIT(3)
+#define I915_BO_ALLOC_STRUCT_PAGE BIT(2)
+#define I915_BO_ALLOC_CPU_CLEAR  BIT(3)
 #define I915_BO_ALLOC_FLAGS (I915_BO_ALLOC_CONTIGUOUS | \
 			     I915_BO_ALLOC_VOLATILE | \
-			     I915_BO_ALLOC_CPU_CLEAR | \
-			     I915_BO_ALLOC_USER)
+			     I915_BO_ALLOC_STRUCT_PAGE | \
+			     I915_BO_ALLOC_CPU_CLEAR)
 #define I915_BO_READONLY         BIT(4)
 #define I915_TILING_QUIRK_BIT    5 /* unknown swizzling; do not release! */
 
-	/**
-	 * @mem_flags - Mutable placement-related flags
-	 *
-	 * These are flags that indicate specifics of the memory region
-	 * the object is currently in. As such they are only stable
-	 * either under the object lock or if the object is pinned.
-	 */
-	unsigned int mem_flags;
-#define I915_BO_FLAG_STRUCT_PAGE BIT(0) /* Object backed by struct pages */
-#define I915_BO_FLAG_IOMEM       BIT(1) /* Object backed by IO memory */
 	/**
 	 * @cache_level: The desired GTT caching level.
 	 *
@@ -415,12 +366,6 @@ struct drm_i915_gem_object {
 	 * Note that on shared LLC platforms we still apply the heavy flush for
 	 * I915_CACHE_NONE objects, under the assumption that this is going to
 	 * be used for scanout.
-	 *
-	 * Update: On some hardware there is now also the 'Bypass LLC' MOCS
-	 * entry, which defeats our @cache_coherent tracking, since userspace
-	 * can freely bypass the CPU cache when touching the pages with the GPU,
-	 * where the kernel is completely unaware. On such platform we need
-	 * apply the sledgehammer-on-acquire regardless of the @cache_coherent.
 	 */
 	unsigned int cache_dirty:1;
 
@@ -465,13 +410,10 @@ struct drm_i915_gem_object {
 		 * Memory region for this object.
 		 */
 		struct intel_memory_region *region;
-
 		/**
-		 * Memory manager resource allocated for this object. Only
-		 * needed for the mock region.
+		 * List of memory region blocks allocated for this object.
 		 */
-		struct ttm_resource *res;
-
+		struct list_head blocks;
 		/**
 		 * Element within memory_region->objects or region->purgeable
 		 * if the object is marked as DONTNEED. Access is protected by
@@ -530,12 +472,6 @@ struct drm_i915_gem_object {
 		 */
 		bool dirty:1;
 	} mm;
-
-	struct {
-		struct sg_table *cached_io_st;
-		struct i915_gem_object_page_iter get_io_page;
-		bool created:1;
-	} ttm;
 
 	/** Record of address bit 17 of each page at last unbind. */
 	unsigned long *bit_17;

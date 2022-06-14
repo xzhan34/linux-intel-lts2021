@@ -22,13 +22,18 @@
  *
  */
 
+#include <linux/console.h>
 #include <linux/vga_switcheroo.h>
 
 #include <drm/drm_drv.h>
 #include <drm/i915_pciids.h>
 
+#include "display/intel_fbdev.h"
+
 #include "i915_drv.h"
-#include "i915_pci.h"
+#include "i915_perf.h"
+#include "i915_globals.h"
+#include "i915_selftest.h"
 
 #define PLATFORM(x) .platform = (x)
 #define GEN(x) \
@@ -1234,12 +1239,65 @@ static struct pci_driver i915_pci_driver = {
 	.driver.pm = &i915_pm_ops,
 };
 
-int i915_register_pci_driver(void)
+static int __init i915_init(void)
 {
-	return pci_register_driver(&i915_pci_driver);
+	bool use_kms = true;
+	int err;
+
+	err = i915_globals_init();
+	if (err)
+		return err;
+
+	err = i915_mock_selftests();
+	if (err)
+		return err > 0 ? 0 : err;
+
+	/*
+	 * Enable KMS by default, unless explicitly overriden by
+	 * either the i915.modeset prarameter or by the
+	 * vga_text_mode_force boot option.
+	 */
+
+	if (i915_modparams.modeset == 0)
+		use_kms = false;
+
+	if (vgacon_text_force() && i915_modparams.modeset == -1)
+		use_kms = false;
+
+	if (!use_kms) {
+		/* Silently fail loading to not upset userspace. */
+		DRM_DEBUG_DRIVER("KMS disabled.\n");
+		return 0;
+	}
+
+	i915_pmu_init();
+
+	err = pci_register_driver(&i915_pci_driver);
+	if (err) {
+		i915_pmu_exit();
+		return err;
+	}
+
+	i915_perf_sysctl_register();
+	return 0;
 }
 
-void i915_unregister_pci_driver(void)
+static void __exit i915_exit(void)
 {
+	if (!i915_pci_driver.driver.owner)
+		return;
+
+	i915_perf_sysctl_unregister();
 	pci_unregister_driver(&i915_pci_driver);
+	i915_globals_exit();
+	i915_pmu_exit();
 }
+
+module_init(i915_init);
+module_exit(i915_exit);
+
+MODULE_AUTHOR("Tungsten Graphics, Inc.");
+MODULE_AUTHOR("Intel Corporation");
+
+MODULE_DESCRIPTION(DRIVER_DESC);
+MODULE_LICENSE("GPL and additional rights");

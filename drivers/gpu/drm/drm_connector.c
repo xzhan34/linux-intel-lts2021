@@ -20,7 +20,6 @@
  * OF THIS SOFTWARE.
  */
 
-#include <drm/drm_auth.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_encoder.h>
@@ -2417,7 +2416,6 @@ int drm_mode_getconnector(struct drm_device *dev, void *data,
 	struct drm_mode_modeinfo u_mode;
 	struct drm_mode_modeinfo __user *mode_ptr;
 	uint32_t __user *encoder_ptr;
-	bool is_current_master;
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EOPNOTSUPP;
@@ -2448,17 +2446,11 @@ int drm_mode_getconnector(struct drm_device *dev, void *data,
 	out_resp->connector_type = connector->connector_type;
 	out_resp->connector_type_id = connector->connector_type_id;
 
-	is_current_master = drm_is_current_master(file_priv);
-
 	mutex_lock(&dev->mode_config.mutex);
 	if (out_resp->count_modes == 0) {
-		if (is_current_master)
-			connector->funcs->fill_modes(connector,
-						     dev->mode_config.max_width,
-						     dev->mode_config.max_height);
-		else
-			drm_dbg_kms(dev, "User-space requested a forced probe on [CONNECTOR:%d:%s] but is not the DRM master, demoting to read-only probe",
-				    connector->base.id, connector->name);
+		connector->funcs->fill_modes(connector,
+					     dev->mode_config.max_width,
+					     dev->mode_config.max_height);
 	}
 
 	out_resp->mm_width = connector->display_info.width_mm;

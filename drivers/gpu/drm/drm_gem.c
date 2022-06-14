@@ -974,6 +974,28 @@ drm_gem_object_free(struct kref *kref)
 EXPORT_SYMBOL(drm_gem_object_free);
 
 /**
+ * drm_gem_object_put_locked - release a GEM buffer object reference
+ * @obj: GEM buffer object
+ *
+ * This releases a reference to @obj. Callers must hold the
+ * &drm_device.struct_mutex lock when calling this function, even when the
+ * driver doesn't use &drm_device.struct_mutex for anything.
+ *
+ * For drivers not encumbered with legacy locking use
+ * drm_gem_object_put() instead.
+ */
+void
+drm_gem_object_put_locked(struct drm_gem_object *obj)
+{
+	if (obj) {
+		WARN_ON(!mutex_is_locked(&obj->dev->struct_mutex));
+
+		kref_put(&obj->refcount, drm_gem_object_free);
+	}
+}
+EXPORT_SYMBOL(drm_gem_object_put_locked);
+
+/**
  * drm_gem_vm_open - vma->ops->open implementation for GEM
  * @vma: VM area structure
  *
@@ -1124,6 +1146,15 @@ int drm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	if (!drm_vma_node_is_allowed(node, priv)) {
 		drm_gem_object_put(obj);
 		return -EACCES;
+	}
+
+	if (node->readonly) {
+		if (vma->vm_flags & VM_WRITE) {
+			drm_gem_object_put(obj);
+			return -EINVAL;
+		}
+
+		vma->vm_flags &= ~VM_MAYWRITE;
 	}
 
 	ret = drm_gem_mmap_obj(obj, drm_vma_node_size(node) << PAGE_SHIFT,

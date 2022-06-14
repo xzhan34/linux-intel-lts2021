@@ -369,7 +369,9 @@ int i915_request_await_object(struct i915_request *to,
 int i915_request_await_dma_fence(struct i915_request *rq,
 				 struct dma_fence *fence);
 int i915_request_await_execution(struct i915_request *rq,
-				 struct dma_fence *fence);
+				 struct dma_fence *fence,
+				 void (*hook)(struct i915_request *rq,
+					      struct dma_fence *signal));
 
 void i915_request_add(struct i915_request *rq);
 
@@ -667,8 +669,5 @@ enum i915_request_state {
 };
 
 enum i915_request_state i915_test_request_state(struct i915_request *rq);
-
-void i915_request_module_exit(void);
-int i915_request_module_init(void);
 
 #endif /* I915_REQUEST_H */

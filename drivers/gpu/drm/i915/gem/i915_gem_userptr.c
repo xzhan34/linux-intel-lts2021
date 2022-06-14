@@ -165,7 +165,7 @@ alloc_table:
 		goto err;
 	}
 
-	sg_page_sizes = i915_sg_dma_sizes(st->sgl);
+	sg_page_sizes = i915_sg_page_sizes(st->sgl);
 
 	__i915_gem_object_set_pages(obj, st, sg_page_sizes);
 
@@ -419,34 +419,6 @@ static const struct drm_i915_gem_object_ops i915_gem_userptr_ops = {
 
 #endif
 
-static int
-probe_range(struct mm_struct *mm, unsigned long addr, unsigned long len)
-{
-	const unsigned long end = addr + len;
-	struct vm_area_struct *vma;
-	int ret = -EFAULT;
-
-	mmap_read_lock(mm);
-	for (vma = find_vma(mm, addr); vma; vma = vma->vm_next) {
-		/* Check for holes, note that we also update the addr below */
-		if (vma->vm_start > addr)
-			break;
-
-		if (vma->vm_flags & (VM_PFNMAP | VM_MIXEDMAP))
-			break;
-
-		if (vma->vm_end >= end) {
-			ret = 0;
-			break;
-		}
-
-		addr = vma->vm_end;
-	}
-	mmap_read_unlock(mm);
-
-	return ret;
-}
-
 /*
  * Creates a new mm object that wraps some normal memory from the process
  * context - user memory.
@@ -502,8 +474,7 @@ i915_gem_userptr_ioctl(struct drm_device *dev,
 	}
 
 	if (args->flags & ~(I915_USERPTR_READ_ONLY |
-			    I915_USERPTR_UNSYNCHRONIZED |
-			    I915_USERPTR_PROBE))
+			    I915_USERPTR_UNSYNCHRONIZED))
 		return -EINVAL;
 
 	if (i915_gem_object_size_2big(args->user_size))
@@ -530,24 +501,14 @@ i915_gem_userptr_ioctl(struct drm_device *dev,
 			return -ENODEV;
 	}
 
-	if (args->flags & I915_USERPTR_PROBE) {
-		/*
-		 * Check that the range pointed to represents real struct
-		 * pages and not iomappings (at this moment in time!)
-		 */
-		ret = probe_range(current->mm, args->user_ptr, args->user_size);
-		if (ret)
-			return ret;
-	}
-
 #ifdef CONFIG_MMU_NOTIFIER
 	obj = i915_gem_object_alloc();
 	if (obj == NULL)
 		return -ENOMEM;
 
 	drm_gem_private_object_init(dev, &obj->base, args->user_size);
-	i915_gem_object_init(obj, &i915_gem_userptr_ops, &lock_class, 0);
-	obj->mem_flags = I915_BO_FLAG_STRUCT_PAGE;
+	i915_gem_object_init(obj, &i915_gem_userptr_ops, &lock_class,
+			     I915_BO_ALLOC_STRUCT_PAGE);
 	obj->read_domains = I915_GEM_DOMAIN_CPU;
 	obj->write_domain = I915_GEM_DOMAIN_CPU;
 	i915_gem_object_set_cache_coherency(obj, I915_CACHE_LLC);

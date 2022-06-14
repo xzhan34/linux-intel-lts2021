@@ -19,6 +19,7 @@ subdir-ccflags-y += $(call cc-disable-warning, missing-field-initializers)
 subdir-ccflags-y += $(call cc-disable-warning, unused-but-set-variable)
 # clang warnings
 subdir-ccflags-y += $(call cc-disable-warning, sign-compare)
+subdir-ccflags-y += $(call cc-disable-warning, sometimes-uninitialized)
 subdir-ccflags-y += $(call cc-disable-warning, initializer-overrides)
 subdir-ccflags-y += $(call cc-disable-warning, frame-address)
 subdir-ccflags-$(CONFIG_DRM_I915_WERROR) += -Werror
@@ -37,7 +38,6 @@ i915-y += i915_drv.o \
 	  i915_irq.o \
 	  i915_getparam.o \
 	  i915_mitigations.o \
-	  i915_module.o \
 	  i915_params.o \
 	  i915_pci.o \
 	  i915_scatterlist.o \
@@ -50,7 +50,6 @@ i915-y += i915_drv.o \
 	  intel_memory_region.o \
 	  intel_pch.o \
 	  intel_pm.o \
-	  intel_region_ttm.o \
 	  intel_runtime_pm.o \
 	  intel_sideband.o \
 	  intel_step.o \
@@ -107,7 +106,6 @@ gt-y += \
 	gt/intel_gtt.o \
 	gt/intel_llc.o \
 	gt/intel_lrc.o \
-	gt/intel_migrate.o \
 	gt/intel_mocs.o \
 	gt/intel_ppgtt.o \
 	gt/intel_rc6.o \
@@ -142,6 +140,7 @@ gem-y += \
 	gem/i915_gem_execbuffer.o \
 	gem/i915_gem_internal.o \
 	gem/i915_gem_object.o \
+	gem/i915_gem_object_blt.o \
 	gem/i915_gem_lmem.o \
 	gem/i915_gem_mman.o \
 	gem/i915_gem_pages.o \
@@ -153,7 +152,6 @@ gem-y += \
 	gem/i915_gem_stolen.o \
 	gem/i915_gem_throttle.o \
 	gem/i915_gem_tiling.o \
-	gem/i915_gem_ttm.o \
 	gem/i915_gem_userptr.o \
 	gem/i915_gem_wait.o \
 	gem/i915_gemfs.o
@@ -166,11 +164,11 @@ i915-y += \
 	  i915_gem_gtt.o \
 	  i915_gem_ww.o \
 	  i915_gem.o \
+	  i915_globals.o \
 	  i915_query.o \
 	  i915_request.o \
 	  i915_scheduler.o \
 	  i915_trace_points.o \
-	  i915_ttm_buddy_manager.o \
 	  i915_vma.o \
 	  intel_wopcm.o
 

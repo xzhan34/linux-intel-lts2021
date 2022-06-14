@@ -6,6 +6,7 @@
 #include <linux/suspend.h>
 
 #include "i915_drv.h"
+#include "i915_globals.h"
 #include "i915_params.h"
 #include "intel_context.h"
 #include "intel_engine_pm.h"
@@ -66,6 +67,8 @@ static int __gt_unpark(struct intel_wakeref *wf)
 
 	GT_TRACE(gt, "\n");
 
+	i915_globals_unpark();
+
 	/*
 	 * It seems that the DMC likes to transition between the DC states a lot
 	 * when there are no connected displays (no active power domains) during
@@ -112,6 +115,8 @@ static int __gt_park(struct intel_wakeref *wf)
 	/* Defer dropping the display power well for 100ms, it's slow! */
 	GEM_BUG_ON(!wakeref);
 	intel_display_power_put_async(i915, POWER_DOMAIN_GT_IRQ, wakeref);
+
+	i915_globals_park();
 
 	return 0;
 }
