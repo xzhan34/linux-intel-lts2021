@@ -810,8 +810,7 @@ static void vf_post_migration_recovery(struct drm_i915_private *i915)
 	if (unlikely(err))
 		goto fail;
 
-	err = -EOPNOTSUPP;
-	goto fail;
+	intel_iov_migration_fixup_ggtt_nodes(&to_gt(i915)->iov);
 
 	vf_post_migration_kickstart(i915);
 	i915_reset_backoff_leave(i915);
