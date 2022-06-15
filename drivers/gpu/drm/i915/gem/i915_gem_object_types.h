@@ -504,7 +504,7 @@ struct drm_i915_gem_object {
 		 * needed for the mock region.
 		 */
 		struct ttm_resource *res;
-
+		struct list_head blocks;
 		/**
 		 * Element within memory_region->objects or region->purgeable
 		 * if the object is marked as DONTNEED. Access is protected by

@@ -100,7 +100,6 @@
 #include "intel_pci_config.h"
 #include "intel_pcode.h"
 #include "intel_pm.h"
-#include "intel_region_ttm.h"
 #include "intel_vsec.h"
 #include "vlv_suspend.h"
 
@@ -436,10 +435,6 @@ static int i915_driver_early_probe(struct drm_i915_private *dev_priv,
 	if (ret < 0)
 		goto err_workqueues;
 
-	ret = intel_region_ttm_device_init(dev_priv);
-	if (ret)
-		goto err_ttm;
-
 	intel_wopcm_init_early(&dev_priv->wopcm);
 
 	ret = intel_root_gt_init_early(dev_priv);
@@ -469,9 +464,7 @@ err_gem:
 	i915_gem_cleanup_early(dev_priv);
 	intel_gt_driver_late_release_all(dev_priv);
 err_rootgt:
-	intel_region_ttm_device_fini(dev_priv);
 	i915_drm_clients_fini(&dev_priv->clients);
-err_ttm:
 	vlv_suspend_cleanup(dev_priv);
 err_workqueues:
 	i915_workqueues_cleanup(dev_priv);
@@ -489,7 +482,6 @@ static void i915_driver_late_release(struct drm_i915_private *dev_priv)
 	intel_power_domains_cleanup(dev_priv);
 	i915_gem_cleanup_early(dev_priv);
 	intel_gt_driver_late_release_all(dev_priv);
-	intel_region_ttm_device_fini(dev_priv);
 	i915_drm_clients_fini(&dev_priv->clients);
 	vlv_suspend_cleanup(dev_priv);
 	i915_workqueues_cleanup(dev_priv);

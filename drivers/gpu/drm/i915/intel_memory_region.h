@@ -13,6 +13,8 @@
 #include <drm/drm_mm.h>
 #include <uapi/drm/i915_drm.h>
 
+#include "i915_buddy.h"
+
 struct drm_i915_private;
 struct drm_i915_gem_object;
 struct intel_memory_region;
@@ -70,6 +72,9 @@ struct intel_memory_region {
 	struct io_mapping iomap;
 	struct resource region;
 
+	struct i915_buddy_mm mm;
+	struct mutex mm_lock;
+
 	struct kref kref;
 
 	resource_size_t io_start;
@@ -84,9 +89,12 @@ struct intel_memory_region {
 	char name[16];
 	bool private; /* not for userspace */
 
+	struct list_head reserved;
+
 	struct {
 		struct mutex lock; /* Protects access to objects */
 		struct list_head list;
+		struct list_head purgeable;
 	} objects;
 
 	bool is_range_manager;
@@ -97,6 +105,21 @@ struct intel_memory_region {
 struct intel_memory_region *
 intel_memory_region_lookup(struct drm_i915_private *i915,
 			   u16 class, u16 instance);
+
+int intel_memory_region_init_buddy(struct intel_memory_region *mem);
+void intel_memory_region_release_buddy(struct intel_memory_region *mem);
+
+int __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
+					  resource_size_t size,
+					  unsigned int flags,
+					  struct list_head *blocks);
+struct i915_buddy_block *
+__intel_memory_region_get_block_buddy(struct intel_memory_region *mem,
+				      resource_size_t size,
+				      unsigned int flags);
+void __intel_memory_region_put_pages_buddy(struct intel_memory_region *mem,
+					   struct list_head *blocks);
+void __intel_memory_region_put_block_buddy(struct i915_buddy_block *block);
 
 struct intel_memory_region *
 intel_memory_region_create(struct drm_i915_private *i915,
@@ -125,6 +148,5 @@ intel_memory_region_set_name(struct intel_memory_region *mem,
 			     const char *fmt, ...);
 
 int intel_memory_region_reserve(struct intel_memory_region *mem,
-				resource_size_t offset,
-				resource_size_t size);
+				u64 offset, u64 size);
 #endif

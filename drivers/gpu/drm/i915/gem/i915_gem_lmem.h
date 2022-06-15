@@ -19,7 +19,7 @@ i915_gem_object_lmem_io_map(struct drm_i915_gem_object *obj,
 			    unsigned long n,
 			    unsigned long size);
 
-bool i915_gem_object_is_lmem(struct drm_i915_gem_object *obj);
+bool i915_gem_object_is_lmem(const struct drm_i915_gem_object *obj);
 
 struct drm_i915_gem_object *
 i915_gem_object_create_lmem_from_data(struct drm_i915_private *i915,
@@ -29,5 +29,9 @@ struct drm_i915_gem_object *
 i915_gem_object_create_lmem(struct drm_i915_private *i915,
 			    resource_size_t size,
 			    unsigned int flags);
+int __i915_gem_lmem_object_init(struct intel_memory_region *mem,
+				struct drm_i915_gem_object *obj,
+				resource_size_t size,
+				unsigned int flags);
 
 #endif /* !__I915_GEM_LMEM_H */

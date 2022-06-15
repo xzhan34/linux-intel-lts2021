@@ -9,10 +9,8 @@
 #include "intel_memory_region.h"
 #include "intel_pci_config.h"
 #include "intel_region_lmem.h"
-#include "intel_region_ttm.h"
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_region.h"
-#include "gem/i915_gem_ttm.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_mcr.h"
 #include "gt/intel_gt_regs.h"
@@ -20,8 +18,8 @@
 static void
 region_lmem_release(struct intel_memory_region *mem)
 {
-	intel_region_ttm_fini(mem);
 	io_mapping_fini(&mem->iomap);
+	intel_memory_region_release_buddy(mem);
 }
 
 static int
@@ -34,14 +32,9 @@ region_lmem_init(struct intel_memory_region *mem)
 				mem->io_size))
 		return -EIO;
 
-	ret = intel_region_ttm_init(mem);
+	ret = intel_memory_region_init_buddy(mem);
 	if (ret)
-		goto out_no_buddy;
-
-	return 0;
-
-out_no_buddy:
-	io_mapping_fini(&mem->iomap);
+		io_mapping_fini(&mem->iomap);
 
 	return ret;
 }
@@ -49,7 +42,7 @@ out_no_buddy:
 static const struct intel_memory_region_ops intel_region_lmem_ops = {
 	.init = region_lmem_init,
 	.release = region_lmem_release,
-	.init_object = __i915_gem_ttm_object_init,
+	.init_object = __i915_gem_lmem_object_init,
 };
 
 static bool get_legacy_lowmem_region(struct intel_uncore *uncore,
