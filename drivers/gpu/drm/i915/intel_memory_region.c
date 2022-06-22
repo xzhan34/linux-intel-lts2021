@@ -478,12 +478,14 @@ int intel_memory_regions_hw_probe(struct drm_i915_private *i915)
 
 		if (IS_ERR(mem)) {
 			drm_err(&i915->drm,
-				"Failed to setup region %d (type=%d:%d), error %ld\n",
-				i, type, instance, PTR_ERR(mem));
+				"Failed to setup global region %d type=%d (%pe)\n", i, type, mem);
 			continue;
 		}
 
+		GEM_BUG_ON(intel_region_map[i].instance);
+
 		mem->id = i;
+		mem->instance = 0;
 		i915->mm.regions[i] = mem;
 	}
 
