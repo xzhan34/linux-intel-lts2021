@@ -1304,9 +1304,6 @@ static void intel_gt_reset_global(struct intel_gt *gt,
 	intel_wedge_on_timeout(&w, gt, 60 * HZ) {
 		intel_display_prepare_reset(gt->i915);
 
-		/* Flush everyone using a resource about to be clobbered */
-		synchronize_srcu_expedited(&gt->reset.backoff_srcu);
-
 		intel_gt_reset(gt, engine_mask, reason);
 
 		intel_display_finish_reset(gt->i915);
@@ -1421,6 +1418,9 @@ full_reset:
 					    TASK_UNINTERRUPTIBLE);
 		}
 	}
+
+	/* Flush everyone using a resource about to be clobbered */
+	synchronize_srcu_expedited(&gt->reset.backoff_srcu);
 
 	intel_gt_reset_global(gt, engine_mask, msg);
 
