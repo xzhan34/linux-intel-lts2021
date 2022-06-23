@@ -27,6 +27,7 @@
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_gt_regs.h"
 #include "gt/uc/intel_guc_submission.h"
+#include "gt/intel_workarounds.h"
 
 #include "i915_debugger.h"
 #include "i915_driver.h"
@@ -2971,29 +2972,30 @@ err_free:
 	return ret;
 }
 
-static bool i915_debugger_modparms_are_sane(struct drm_i915_private *i915)
-{
-	const struct i915_params * const p = &i915->params;
-	int fails = 0;
-
-	if (p->debug_eu != 1 && ++fails)
-		drm_warn(&i915->drm, "i915_debugger: i915.debug_eu=1 not set (is %d)\n",
-			 p->debug_eu);
-
-	return fails == 0;
-}
-
 int i915_debugger_open_ioctl(struct drm_device *dev,
 			     void *data,
 			     struct drm_file *file)
 {
 	struct drm_i915_private *i915 = to_i915(dev);
 	struct prelim_drm_i915_debugger_open_param * const param = data;
+	int ret = 0;
 
-	if (!i915_debugger_modparms_are_sane(i915))
+	/*
+	 * Use lock to avoid the debugger getting disabled via sysfs during
+	 * session creation.
+	 */
+	mutex_lock(&i915->debuggers.enable_eu_debug_lock);
+	if (!i915->debuggers.enable_eu_debug) {
+		drm_err(&i915->drm,
+			"i915_debugger: prelim_enable_eu_debug not set (is %d)\n",
+			i915->debuggers.enable_eu_debug);
+		mutex_unlock(&i915->debuggers.enable_eu_debug_lock);
 		return -ENODEV;
+	}
 
-	return i915_debugger_open(i915, param);
+	ret = i915_debugger_open(i915, param);
+	mutex_unlock(&i915->debuggers.enable_eu_debug_lock);
+	return ret;
 }
 
 void i915_debugger_init(struct drm_i915_private *i915)
@@ -3002,6 +3004,8 @@ void i915_debugger_init(struct drm_i915_private *i915)
 
 	spin_lock_init(&i915->debuggers.lock);
 	INIT_LIST_HEAD(&i915->debuggers.list);
+	mutex_init(&i915->debuggers.enable_eu_debug_lock);
+	i915->debuggers.enable_eu_debug = !!i915->params.debug_eu;
 }
 
 void i915_debugger_fini(struct drm_i915_private *i915)
@@ -3744,6 +3748,41 @@ long i915_debugger_attention_poll_interval(struct intel_engine_cs *engine)
 		delay = i915_DEBUGGER_ATTENTION_INTERVAL;
 
 	return delay;
+}
+
+int i915_debugger_enable(struct drm_i915_private *i915, bool enable)
+{
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+	struct intel_gt *gt;
+	unsigned int i;
+
+	mutex_lock(&i915->debuggers.enable_eu_debug_lock);
+	if (!enable && !list_empty(&i915->debuggers.list)) {
+		mutex_unlock(&i915->debuggers.enable_eu_debug_lock);
+		return -EBUSY;
+	}
+
+	if (enable == i915->debuggers.enable_eu_debug) {
+		mutex_unlock(&i915->debuggers.enable_eu_debug_lock);
+		return 0;
+	}
+
+	for_each_gt(gt, i915, i) {
+		/* XXX suspend current activity */
+		for_each_engine(engine, gt, id) {
+			if (enable)
+				intel_engine_debug_enable(engine);
+			else
+				intel_engine_debug_disable(engine);
+		}
+		intel_gt_handle_error(gt, ALL_ENGINES, 0, NULL);
+	}
+
+	i915->debuggers.enable_eu_debug = enable;
+	mutex_unlock(&i915->debuggers.enable_eu_debug_lock);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

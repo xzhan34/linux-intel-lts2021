@@ -895,6 +895,11 @@ struct drm_i915_private {
 		u64 session_count;
 
 		struct mutex eu_flush_lock;
+
+		/* lock for enable_eu_debug */
+		struct mutex enable_eu_debug_lock;
+		/* debugger state */
+		bool enable_eu_debug;
 	} debuggers;
 #endif
 
