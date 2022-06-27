@@ -427,10 +427,11 @@ void intel_gt_heartbeats_disable(struct intel_gt *gt)
 	intel_gt_park_heartbeats(gt);
 }
 
-void intel_gt_heartbeats_restore(struct intel_gt *gt)
+void intel_gt_heartbeats_restore(struct intel_gt *gt, bool unpark)
 {
 	intel_gt_pm_put_all_engines(gt);
-	intel_gt_unpark_heartbeats(gt);
+	if (unpark)
+		intel_gt_unpark_heartbeats(gt);
 }
 
 static int __intel_engine_pulse(struct intel_engine_cs *engine)

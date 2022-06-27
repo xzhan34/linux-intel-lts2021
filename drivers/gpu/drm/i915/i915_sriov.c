@@ -716,6 +716,27 @@ static void vf_post_migration_shutdown(struct drm_i915_private *i915)
 	intel_uc_suspend(&gt->uc);
 }
 
+/**
+ * vf_post_migration_reset_guc_state - Reset GuC state.
+ * @i915: the i915 struct
+ *
+ * This function sends VF state reset to GuC, which also checks for the MIGRATED
+ * flag, and re-schedules post-migration worker if the flag was raised.
+ */
+static void vf_post_migration_reset_guc_state(struct drm_i915_private *i915)
+{
+	intel_wakeref_t wakeref;
+
+	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
+		__intel_gt_reset(to_gt(i915), ALL_ENGINES);
+	}
+}
+
+static bool vf_post_migration_is_scheduled(struct drm_i915_private *i915)
+{
+	return work_pending(&i915->sriov.vf.migration_worker);
+}
+
 static int vf_post_migration_reinit_guc(struct drm_i915_private *i915)
 {
 	intel_wakeref_t wakeref;
@@ -739,7 +760,7 @@ static void vf_post_migration_kickstart(struct drm_i915_private *i915)
 	intel_runtime_pm_enable_interrupts(i915);
 	i915_gem_resume(i915);
 	intel_guc_submission_restore(&to_gt(i915)->uc.guc);
-	intel_gt_heartbeats_restore(to_gt(i915));
+	intel_gt_heartbeats_restore(to_gt(i915), true);
 }
 
 static void i915_reset_backoff_enter(struct drm_i915_private *i915)
@@ -775,6 +796,16 @@ static void vf_post_migration_recovery(struct drm_i915_private *i915)
 	drm_dbg(&i915->drm, "migration recovery in progress\n");
 	vf_post_migration_shutdown(i915);
 
+	/*
+	 * After migration has happened, all requests sent to GuC are expected
+	 * to fail. Only after successful VF state reset, the VF driver can
+	 * re-init GuC communication. If the VF state reset fails, it shall be
+	 * repeated until success - we will skip this run and retry in that
+	 * newly scheduled one.
+	 */
+	vf_post_migration_reset_guc_state(i915);
+	if (vf_post_migration_is_scheduled(i915))
+		goto defer;
 	err = vf_post_migration_reinit_guc(i915);
 	if (unlikely(err))
 		goto fail;
@@ -785,6 +816,13 @@ static void vf_post_migration_recovery(struct drm_i915_private *i915)
 	vf_post_migration_kickstart(i915);
 	i915_reset_backoff_leave(i915);
 	drm_notice(&i915->drm, "migration recovery completed\n");
+	return;
+
+defer:
+	drm_dbg(&i915->drm, "migration recovery deferred\n");
+	/* We bumped wakerefs when disabling heartbeat. Put them back. */
+	intel_gt_heartbeats_restore(to_gt(i915), false);
+	i915_reset_backoff_leave(i915);
 	return;
 
 fail:
