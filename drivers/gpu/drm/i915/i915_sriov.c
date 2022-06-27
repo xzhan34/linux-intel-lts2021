@@ -15,6 +15,7 @@
 #include "gt/intel_engine_heartbeat.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
+#include "gt/iov/intel_iov_migration.h"
 #include "gt/iov/intel_iov_provisioning.h"
 #include "gt/iov/intel_iov_state.h"
 #include "gt/iov/intel_iov_utils.h"
@@ -715,6 +716,17 @@ static void vf_post_migration_shutdown(struct drm_i915_private *i915)
 	intel_uc_suspend(&gt->uc);
 }
 
+static int vf_post_migration_reinit_guc(struct drm_i915_private *i915)
+{
+	intel_wakeref_t wakeref;
+	int err;
+
+	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
+		err = intel_iov_migration_reinit_guc(&to_gt(i915)->iov);
+	}
+	return err;
+}
+
 /**
  * vf_post_migration_kickstart - Re-initialize the driver under new hardware.
  * @i915: the i915 struct
@@ -763,11 +775,13 @@ static void vf_post_migration_recovery(struct drm_i915_private *i915)
 	drm_dbg(&i915->drm, "migration recovery in progress\n");
 	vf_post_migration_shutdown(i915);
 
-	/* XXX add GuC handshake here */
-	err = -EOPNOTSUPP;
-
+	err = vf_post_migration_reinit_guc(i915);
 	if (unlikely(err))
 		goto fail;
+
+	err = -EOPNOTSUPP;
+	goto fail;
+
 	vf_post_migration_kickstart(i915);
 	i915_reset_backoff_leave(i915);
 	drm_notice(&i915->drm, "migration recovery completed\n");
