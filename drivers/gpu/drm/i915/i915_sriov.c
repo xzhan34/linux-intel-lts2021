@@ -612,22 +612,51 @@ int i915_sriov_resume_early(struct drm_i915_private *i915)
 	return 0;
 }
 
+static void i915_reset_backoff_enter(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt = to_gt(i915);
+
+	/* Raise flag for any other resets to back off and resign. */
+	intel_gt_reset_backoff_raise(gt);
+
+	/* Make sure intel_gt_reset_trylock() sees the I915_RESET_BACKOFF. */
+	synchronize_rcu_expedited();
+
+	/*
+	 * Wait for any operations already in progress which state could be
+	 * skewed by post-migration actions.
+	 */
+	synchronize_srcu_expedited(&gt->reset.backoff_srcu);
+}
+
+static void i915_reset_backoff_leave(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt = to_gt(i915);
+
+	intel_gt_reset_backoff_clear(gt);
+}
+
 static void vf_post_migration_recovery(struct drm_i915_private *i915)
 {
 	int err;
+
+	i915_reset_backoff_enter(i915);
 
 	drm_dbg(&i915->drm, "migration recovery in progress\n");
 
 	/* XXX add GuC handshake here */
 	err = -EOPNOTSUPP;
+
 	if (unlikely(err))
 		goto fail;
+	i915_reset_backoff_leave(i915);
 	drm_notice(&i915->drm, "migration recovery completed\n");
 	return;
 
 fail:
 	drm_err(&i915->drm, "migration recovery failed (%pe)\n", ERR_PTR(err));
 	intel_gt_set_wedged(to_gt(i915));
+	i915_reset_backoff_leave(i915);
 }
 
 static void migration_worker_func(struct work_struct *w)
