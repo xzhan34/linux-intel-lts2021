@@ -7,8 +7,10 @@
 #include "i915_sriov_sysfs.h"
 #include "i915_debugger.h"
 #include "i915_drv.h"
+#include "i915_irq.h"
 #include "i915_pci.h"
 #include "intel_pci_config.h"
+#include "gem/i915_gem_pm.h"
 
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
@@ -690,6 +692,39 @@ int i915_sriov_resume_early(struct drm_i915_private *i915)
 	return 0;
 }
 
+/**
+ * vf_post_migration_shutdown - Clean up the kernel structures after VF migration.
+ * @i915: the i915 struct
+ *
+ * After this VM is migrated and assigned to a new VF, it is running on a new
+ * hardware, and therefore all hardware-dependent states and related structures
+ * are no longer valid.
+ * By using selected parts from suspend scenario we can check whether any jobs
+ * were able to finish before the migration (some might have finished at such
+ * moment that the information did not made it back), and clean all the
+ * invalidated structures.
+ */
+static void vf_post_migration_shutdown(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt = to_gt(i915);
+
+	i915_gem_drain_freed_objects(i915);
+	intel_uc_suspend(&gt->uc);
+}
+
+/**
+ * vf_post_migration_kickstart - Re-initialize the driver under new hardware.
+ * @i915: the i915 struct
+ *
+ * After we have finished with all post-migration fixes, restart the driver
+ * using selected parts from resume scenario.
+ */
+static void vf_post_migration_kickstart(struct drm_i915_private *i915)
+{
+	intel_runtime_pm_enable_interrupts(i915);
+	i915_gem_resume(i915);
+}
+
 static void i915_reset_backoff_enter(struct drm_i915_private *i915)
 {
 	struct intel_gt *gt = to_gt(i915);
@@ -721,12 +756,14 @@ static void vf_post_migration_recovery(struct drm_i915_private *i915)
 	i915_reset_backoff_enter(i915);
 
 	drm_dbg(&i915->drm, "migration recovery in progress\n");
+	vf_post_migration_shutdown(i915);
 
 	/* XXX add GuC handshake here */
 	err = -EOPNOTSUPP;
 
 	if (unlikely(err))
 		goto fail;
+	vf_post_migration_kickstart(i915);
 	i915_reset_backoff_leave(i915);
 	drm_notice(&i915->drm, "migration recovery completed\n");
 	return;
