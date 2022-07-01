@@ -383,9 +383,14 @@ static struct i915_gem_engines *default_engines(struct i915_gem_context *ctx)
 void i915_gem_context_release(struct kref *ref)
 {
 	struct i915_gem_context *ctx = container_of(ref, typeof(*ctx), ref);
+	unsigned long flags;
 
 	trace_i915_context_free(ctx);
 	GEM_BUG_ON(!i915_gem_context_is_closed(ctx));
+
+	spin_lock_irqsave(&ctx->i915->gem.contexts.lock, flags);
+	list_del_rcu(&ctx->link);
+	spin_unlock_irqrestore(&ctx->i915->gem.contexts.lock, flags);
 
 	if (ctx->pxp_wakeref)
 		intel_runtime_pm_put(&ctx->i915->runtime_pm, ctx->pxp_wakeref);
@@ -623,10 +628,6 @@ static void context_close(struct i915_gem_context *ctx)
 		drm_syncobj_put(ctx->syncobj);
 
 	ctx->file_priv = ERR_PTR(-EBADF);
-
-	spin_lock(&ctx->i915->gem.contexts.lock);
-	list_del(&ctx->link);
-	spin_unlock(&ctx->i915->gem.contexts.lock);
 
 	client = ctx->client;
 	if (client) {
@@ -945,9 +946,9 @@ static int gem_context_register(struct i915_gem_context *ctx,
 	list_add_tail_rcu(&ctx->client_link, &client->ctx_list);
 	spin_unlock(&client->ctx_lock);
 
-	spin_lock(&i915->gem.contexts.lock);
-	list_add_tail(&ctx->link, &i915->gem.contexts.list);
-	spin_unlock(&i915->gem.contexts.lock);
+	spin_lock_irq(&i915->gem.contexts.lock);
+	list_add_tail_rcu(&ctx->link, &i915->gem.contexts.list);
+	spin_unlock_irq(&i915->gem.contexts.lock);
 
 	return 0;
 

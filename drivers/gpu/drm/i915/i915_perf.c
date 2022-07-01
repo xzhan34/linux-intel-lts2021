@@ -2656,9 +2656,9 @@ oa_configure_all_contexts(struct i915_perf_stream *stream,
 			  struct i915_active *active)
 {
 	struct drm_i915_private *i915 = stream->perf->i915;
-	struct intel_engine_cs *engine;
 	struct intel_gt *gt = stream->engine->gt;
-	struct i915_gem_context *ctx, *cn;
+	struct intel_engine_cs *engine;
+	struct i915_gem_context *ctx;
 	int err;
 
 	lockdep_assert_held(&gt->perf.lock);
@@ -2679,24 +2679,25 @@ oa_configure_all_contexts(struct i915_perf_stream *stream,
 	 * context. Contexts idle at the time of reconfiguration are not
 	 * trapped behind the barrier.
 	 */
-	spin_lock(&i915->gem.contexts.lock);
-	list_for_each_entry_safe(ctx, cn, &i915->gem.contexts.list, link) {
+	rcu_read_lock();
+	list_for_each_entry_rcu(ctx, &i915->gem.contexts.list, link) {
 		if (!kref_get_unless_zero(&ctx->ref))
 			continue;
 
-		spin_unlock(&i915->gem.contexts.lock);
+		rcu_read_unlock();
 
-		err = gen8_configure_context(ctx, regs, num_regs);
-		if (err) {
-			i915_gem_context_put(ctx);
-			return err;
+		if (!i915_gem_context_is_closed(ctx)) {
+			err = gen8_configure_context(ctx, regs, num_regs);
+			if (err) {
+				i915_gem_context_put(ctx);
+				return err;
+			}
 		}
 
-		spin_lock(&i915->gem.contexts.lock);
-		list_safe_reset_next(ctx, cn, link);
+		rcu_read_lock();
 		i915_gem_context_put(ctx);
 	}
-	spin_unlock(&i915->gem.contexts.lock);
+	rcu_read_unlock();
 
 	/*
 	 * After updating all other contexts, we need to modify ourselves.
