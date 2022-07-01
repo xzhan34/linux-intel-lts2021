@@ -12,6 +12,9 @@ void intel_gt_mcr_init(struct intel_gt *gt);
 void intel_gt_mcr_lock(struct intel_gt *gt, unsigned long *flags);
 void intel_gt_mcr_unlock(struct intel_gt *gt, unsigned long flags);
 
+u32 intel_gt_mcr_read_fw(struct intel_gt *gt,
+			 i915_mcr_reg_t reg,
+			 int group, int instance);
 u32 intel_gt_mcr_read(struct intel_gt *gt,
 		      i915_mcr_reg_t reg,
 		      int group, int instance);
@@ -21,6 +24,9 @@ u32 intel_gt_mcr_read_any(struct intel_gt *gt, i915_mcr_reg_t reg);
 void intel_gt_mcr_unicast_write(struct intel_gt *gt,
 				i915_mcr_reg_t reg, u32 value,
 				int group, int instance);
+void intel_gt_mcr_unicast_write_fw(struct intel_gt *gt,
+				   i915_mcr_reg_t reg, u32 value,
+				   int group, int instance);
 void intel_gt_mcr_multicast_write(struct intel_gt *gt,
 				  i915_mcr_reg_t reg, u32 value);
 void intel_gt_mcr_multicast_write_fw(struct intel_gt *gt,

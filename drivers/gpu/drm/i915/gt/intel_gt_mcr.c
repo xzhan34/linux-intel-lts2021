@@ -438,6 +438,26 @@ u32 intel_gt_mcr_read(struct intel_gt *gt,
 }
 
 /**
+ * intel_gt_mcr_read_fw - read a specific instance of an MCR register
+ * @gt: GT structure
+ * @reg: the MCR register to read
+ * @group: the MCR group
+ * @instance: the MCR instance
+ *
+ * Returns the value read from an MCR register after steering toward a specific
+ * group/instance.  This function assumes the caller is already holding any
+ * necessary forcewake domains; use intel_gt_mcr_read() in cases where
+ * forcewake should be obtained automatically.
+
+ */
+u32 intel_gt_mcr_read_fw(struct intel_gt *gt,
+			 i915_mcr_reg_t reg,
+			 int group, int instance)
+{
+	return rw_with_mcr_steering_fw(gt, reg, FW_REG_READ, group, instance, 0);
+}
+
+/**
  * intel_gt_mcr_unicast_write - write a specific instance of an MCR register
  * @gt: GT structure
  * @reg: the MCR register to write
@@ -454,6 +474,25 @@ void intel_gt_mcr_unicast_write(struct intel_gt *gt, i915_mcr_reg_t reg, u32 val
 				int group, int instance)
 {
 	rw_with_mcr_steering(gt, reg, FW_REG_WRITE, group, instance, value);
+}
+
+/**
+ * intel_gt_mcr_unicast_write_fw - write a specific instance of an MCR register
+ * @gt: GT structure
+ * @reg: the MCR register to write
+ * @value: value to write
+ * @group: the MCR group
+ * @instance: the MCR instance
+ *
+ * Write an MCR register in unicast mode after steering toward a specific
+ * group/instance.  This function assumes the caller is already holding any
+ * necessary forcewake domains; use intel_gt_mcr_unicast_write() in cases where
+ * forcewake should be obtained automatically.
+ */
+void intel_gt_mcr_unicast_write_fw(struct intel_gt *gt, i915_mcr_reg_t reg, u32 value,
+				   int group, int instance)
+{
+	rw_with_mcr_steering_fw(gt, reg, FW_REG_WRITE, group, instance, value);
 }
 
 /**
