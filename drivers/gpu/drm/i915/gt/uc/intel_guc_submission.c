@@ -4604,7 +4604,8 @@ static void guc_default_vfuncs(struct intel_engine_cs *engine)
 	 * guc_engine_reset_prepare causes media workload hang for PVC
 	 * A0. Disable this for PVC A0 steppings.
 	 */
-	if (IS_PVC_BD_STEP(engine->gt->i915, STEP_A0, STEP_B0))
+	if (IS_SRIOV_VF(engine->i915) ||
+	    IS_PVC_BD_STEP(engine->gt->i915, STEP_A0, STEP_B0))
 		engine->reset.prepare = guc_reset_nop;
 	else
 		engine->reset.prepare = guc_engine_reset_prepare;
