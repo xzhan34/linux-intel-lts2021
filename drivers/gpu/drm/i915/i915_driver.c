@@ -1610,6 +1610,8 @@ static int i915_drm_prepare(struct drm_device *dev)
 {
 	struct drm_i915_private *i915 = to_i915(dev);
 
+	pvc_wa_disallow_rc6(i915);
+
 	/*
 	 * NB intel_display_suspend() may issue new requests after we've
 	 * ostensibly marked the GPU as ready-to-sleep here. We need to
@@ -1698,6 +1700,12 @@ static int i915_drm_suspend_late(struct drm_device *dev, bool hibernation)
 	/* Must be called before GGTT is suspended. */
 	intel_dpt_suspend(dev_priv);
 	ret = i915_gem_suspend_late(dev_priv);
+
+	/*
+	 * RC6 is disabled at this point, forcewake is cleared
+	 * to balance the forcewake set at suspend_prepare.
+	 */
+	pvc_wa_allow_rc6(dev_priv);
 	if (ret) {
 		drm_err(&dev_priv->drm, "Suspend swapout failed: %d\n", ret);
 		return ret;
@@ -1817,6 +1825,8 @@ static int i915_drm_resume(struct drm_device *dev)
 
 	intel_gvt_resume(dev_priv);
 
+	pvc_wa_allow_rc6(dev_priv);
+
 	enable_rpm_wakeref_asserts(&dev_priv->runtime_pm);
 
 	return 0;
@@ -1876,6 +1886,8 @@ static int i915_drm_resume_early(struct drm_device *dev)
 
 	disable_rpm_wakeref_asserts(&dev_priv->runtime_pm);
 
+	pvc_wa_disallow_rc6(dev_priv);
+
 	/*
 	 * As soon as we can talk to the device, check the local memory.
 	 *
@@ -1884,6 +1896,8 @@ static int i915_drm_resume_early(struct drm_device *dev)
 	 */
 	ret = intel_memory_regions_resume_early(dev_priv);
 	if (ret) {
+		/* if error, allow rc6 as we disallowed at entry */
+		pvc_wa_allow_rc6(dev_priv);
 		drm_err(&dev_priv->drm, "Memory health check failed\n");
 		goto out;
 	}
@@ -2084,6 +2098,8 @@ static int intel_runtime_suspend(struct device *kdev)
 
 	disable_rpm_wakeref_asserts(rpm);
 
+	pvc_wa_disallow_rc6_if_awake(dev_priv);
+
 	/*
 	 * We are safe here against re-faults, since the fault handler takes
 	 * an RPM reference.
@@ -2092,6 +2108,8 @@ static int intel_runtime_suspend(struct device *kdev)
 
 	for_each_gt(gt, dev_priv, i)
 		intel_gt_runtime_suspend(gt);
+
+	pvc_wa_allow_rc6_if_awake(dev_priv);
 
 	intel_runtime_pm_disable_interrupts(dev_priv);
 
@@ -2188,6 +2206,8 @@ static int intel_runtime_resume(struct device *kdev)
 
 	intel_runtime_pm_enable_interrupts(dev_priv);
 
+	pvc_wa_disallow_rc6_if_awake(dev_priv);
+
 	/*
 	 * No point of rolling back things in case of an error, as the best
 	 * we can do is to hope that things will still work (and disable RPM).
@@ -2206,6 +2226,8 @@ static int intel_runtime_resume(struct device *kdev)
 	}
 
 	intel_enable_ipc(dev_priv);
+
+	pvc_wa_allow_rc6_if_awake(dev_priv);
 
 	enable_rpm_wakeref_asserts(rpm);
 
