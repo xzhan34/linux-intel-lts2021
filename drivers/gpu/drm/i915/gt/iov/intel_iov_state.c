@@ -713,3 +713,102 @@ int intel_iov_state_restore_ggtt(struct intel_iov *iov, u32 vfid, const void *bu
 
 	return ret;
 }
+
+static void *
+pf_map_vf_lmem(struct intel_iov *iov, u32 vfid, loff_t offset, size_t size)
+{
+	struct drm_i915_private *i915 = iov_to_i915(iov);
+	struct drm_i915_gem_object *obj = iov->pf.provisioning.configs[vfid].lmem_obj;
+	void *vaddr;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (!obj || offset + size > obj->base.size)
+		return ERR_PTR(-EINVAL);
+
+	vaddr = i915_gem_object_pin_map_unlocked(obj,
+						 i915_coherent_map_type(i915, obj, true));
+	if (IS_ERR(vaddr))
+		return vaddr;
+
+	return vaddr + offset;
+}
+
+static void pf_unmap_vf_lmem(struct intel_iov *iov, u32 vfid)
+{
+	struct drm_i915_gem_object *obj = iov->pf.provisioning.configs[vfid].lmem_obj;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	i915_gem_object_unpin_map(obj);
+}
+
+/**
+ * intel_iov_state_save_lmem - Save VF Local Memory.
+ * @iov: the IOV struct
+ * @vfid: VF identifier
+ * @buf: buffer to save VF LMEM
+ * @offset: offset from the start of VF LMEM
+ * @size: size of buffer to save VF LMEM
+ *
+ * This function is for PF only.
+ *
+ * Return: Size of data written on success or a negative error code on failure.
+ */
+ssize_t intel_iov_state_save_lmem(struct intel_iov *iov, u32 vfid, void *buf,
+				  loff_t offset, size_t size)
+{
+	void *vaddr;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	vaddr = pf_map_vf_lmem(iov, vfid, offset, size);
+	if (IS_ERR(vaddr)) {
+		mutex_unlock(pf_provisioning_mutex(iov));
+		return PTR_ERR(vaddr);
+	}
+
+	memcpy_fromio(buf, vaddr, size);
+
+	pf_unmap_vf_lmem(iov, vfid);
+
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return size;
+}
+
+/**
+ * intel_iov_state_restore_lmem - Restore VF Local Memory.
+ * @iov: the IOV struct
+ * @vfid: VF identifier
+ * @buf: buffer with VF LMEM to restore
+ * @offset: offset from the start of VF LMEM
+ * @size: size of buffer with VF LMEM
+ *
+ * This function is for PF only.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int intel_iov_state_restore_lmem(struct intel_iov *iov, u32 vfid, const void *buf,
+				 loff_t offset, size_t size)
+{
+	void *vaddr;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	vaddr = pf_map_vf_lmem(iov, vfid, offset, size);
+	if (IS_ERR(vaddr)) {
+		mutex_unlock(pf_provisioning_mutex(iov));
+		return PTR_ERR(vaddr);
+	}
+
+	memcpy_toio(vaddr, buf, size);
+
+	pf_unmap_vf_lmem(iov, vfid);
+
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return 0;
+}
