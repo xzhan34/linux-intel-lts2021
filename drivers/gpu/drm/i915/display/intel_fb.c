@@ -203,6 +203,22 @@ static const struct intel_modifier_desc intel_modifiers[] = {
 		.display_ver = { 13, -1 },
 		.plane_caps = INTEL_PLANE_CAP_TILING_4,
 	}, {
+		.modifier = PRELIM_I915_FORMAT_MOD_4_TILED_DG2_MC_CCS,
+		.display_ver = { 13, 13 },
+		.plane_caps = INTEL_PLANE_CAP_TILING_4 | INTEL_PLANE_CAP_CCS_MC,
+	}, {
+		.modifier = PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS,
+		.display_ver = { 13, 13 },
+		.plane_caps = INTEL_PLANE_CAP_TILING_4 | INTEL_PLANE_CAP_CCS_RC,
+	}, {
+		.modifier = PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC,
+		.display_ver = { 13, 13 },
+		.plane_caps = INTEL_PLANE_CAP_TILING_4 | INTEL_PLANE_CAP_CCS_RC_CC,
+
+		.ccs.cc_planes = BIT(1),
+
+		FORMAT_OVERRIDE(gen12_flat_ccs_cc_formats),
+	}, {
 		.modifier = I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS,
 		.display_ver = { 12, 13 },
 		.plane_caps = INTEL_PLANE_CAP_TILING_Y | INTEL_PLANE_CAP_CCS_MC,
@@ -617,6 +633,9 @@ intel_tile_width_bytes(const struct drm_framebuffer *fb, int color_plane)
 	case I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC:
 	case I915_FORMAT_MOD_4_TILED_DG2_MC_CCS:
 	case I915_FORMAT_MOD_4_TILED:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_MC_CCS:
 		/*
 		 * Each 4K tile consists of 64B(8*8) subtiles, with
 		 * same shape as Y Tile(i.e 4*16B OWords)
@@ -827,6 +846,9 @@ unsigned int intel_surf_alignment(const struct drm_framebuffer *fb,
 	case I915_FORMAT_MOD_4_TILED_DG2_RC_CCS:
 	case I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC:
 	case I915_FORMAT_MOD_4_TILED_DG2_MC_CCS:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_MC_CCS:
 		return 16 * 1024;
 	default:
 		MISSING_CASE(fb->modifier);
