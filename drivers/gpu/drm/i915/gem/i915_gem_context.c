@@ -1345,7 +1345,7 @@ static int i915_gem_vm_setparam_ioctl(struct drm_device *dev, void *data,
 	switch (lower_32_bits(args->param)) {
 	case PRELIM_I915_GEM_VM_PARAM_SVM:
 		/* FIXME: Ensure ppgtt is empty before switching */
-		if (!i915_has_svm(file_priv->dev_priv)) {
+		if (!i915_has_svm(file_priv->dev_priv) || IS_SRIOV_VF(file_priv->dev_priv)) {
 			err = -ENOTSUPP;
 			break;
 		}
