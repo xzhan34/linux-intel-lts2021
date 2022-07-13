@@ -682,6 +682,23 @@ static void context_close(struct i915_gem_context *ctx)
 	i915_gem_context_put(ctx);
 }
 
+static void warn_non_persistent_usage(struct drm_i915_private *i915)
+{
+	static bool once;
+
+	if (xchg(&once, true))
+		return;
+
+	drm_notice(&i915->drm, "*****************************************************************\n");
+	drm_notice(&i915->drm, "* WARNING: Non-persistent context with no engine reset detected!*\n");
+	drm_notice(&i915->drm, "*                                                               *\n");
+	drm_notice(&i915->drm, "* This usage is enabled only for debug purposes and is unsafe   *\n");
+	drm_notice(&i915->drm, "* for production use as it may result in forever spinning,      *\n");
+	drm_notice(&i915->drm, "* potentially non-preemptible jobs left on the GPU.             *\n");
+	drm_notice(&i915->drm, "* Further testing may be unreliable. You have been warned!      *\n");
+	drm_notice(&i915->drm, "*****************************************************************\n");
+}
+
 static int __context_set_persistence(struct i915_gem_context *ctx, bool state)
 {
 	if (i915_gem_context_is_persistent(ctx) == state)
@@ -719,8 +736,16 @@ static int __context_set_persistence(struct i915_gem_context *ctx, bool state)
 		 * colateral damage, and we should not pretend we can by
 		 * exposing the interface.
 		 */
-		if (!intel_has_reset_engine(to_gt(ctx->i915)))
-			return -ENODEV;
+		if (!intel_has_reset_engine(to_gt(ctx->i915))) {
+			/*
+			 * It is useful to disable resets for debugging purposes
+			 * and still be able to use non-persistent contexts.
+			 */
+			if (!ctx->i915->params.allow_non_persist_without_reset)
+				return -ENODEV;
+
+			warn_non_persistent_usage(ctx->i915);
+		}
 
 		i915_gem_context_clear_persistence(ctx);
 	}

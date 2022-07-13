@@ -83,6 +83,9 @@ i915_param_named_unsafe(vbt_sdvo_panel_type, int, 0400,
 i915_param_named_unsafe(reset, uint, 0400,
 	"Attempt GPU resets (0=disabled, 1=full gpu reset, 2=engine reset [default])");
 
+i915_param_named_unsafe(allow_non_persist_without_reset, bool, 0400,
+	"Allow non-persistent contexts even if reset is disabled (default: false)");
+
 i915_param_named_unsafe(vbt_firmware, charp, 0400,
 	"Load VBT from specified file under /lib/firmware");
 

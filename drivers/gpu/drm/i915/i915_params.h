@@ -89,6 +89,7 @@ struct drm_printer;
 	param(unsigned int, page_sz_mask, 0, 0600) \
 	param(unsigned int, debug_pages, 0, 0400) \
 	/* leave bools at the end to not create holes */ \
+	param(bool, allow_non_persist_without_reset, false, 0400) \
 	param(bool, enable_fake_int_wa, true, 0400) \
 	param(bool, enable_hw_throttle_blt, false, 0400) \
 	param(bool, enable_rc6, true, 0400) \
