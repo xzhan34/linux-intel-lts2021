@@ -1,0 +1,5 @@
+DISABLE TTM
+
+Disable ttm in DII
+
+T:      drm/i915
