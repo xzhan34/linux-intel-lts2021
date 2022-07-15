@@ -35,7 +35,11 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 	struct sg_table *st;
 	struct scatterlist *sg;
 	unsigned int sg_page_sizes;
+	pgoff_t num_pages; /* implicitly limited by sg_alloc_table */
 	int ret;
+
+	if (!safe_conversion(&num_pages, obj->base.size >> PAGE_SHIFT))
+		 return ERR_PTR(-E2BIG);
 
 	if (obj->base.size > mem->total)
 		return ERR_PTR(-E2BIG);
@@ -44,7 +48,7 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 	if (!st)
 		return ERR_PTR(-ENOMEM);
 
-	if (sg_alloc_table(st, size >> PAGE_SHIFT, I915_GFP_ALLOW_FAIL)) {
+	if (sg_alloc_table(st, num_pages, I915_GFP_ALLOW_FAIL)) {
 		kfree(st);
 		return ERR_PTR(-ENOMEM);
 	}
