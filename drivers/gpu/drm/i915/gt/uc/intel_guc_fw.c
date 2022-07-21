@@ -31,6 +31,12 @@ static void guc_prepare_xfer(struct intel_gt *gt)
 	/* Must program this register before loading the ucode with DMA */
 	intel_uncore_write(uncore, GUC_SHIM_CONTROL, shim_flags);
 
+#if IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM)
+	/* Enable the EIP counter for debug */
+	if (GRAPHICS_VER_FULL(uncore->i915) >= IP_VER(12, 50))
+		intel_uncore_rmw(uncore, GUC_SHIM_CONTROL2, 0, ENABLE_EIP);
+#endif
+
 	if (IS_GEN9_LP(uncore->i915))
 		intel_uncore_write(uncore, GEN9LP_GT_PM_CONFIG, GT_DOORBELL_ENABLE);
 	else
@@ -148,6 +154,26 @@ static int guc_wait_ucode(struct intel_uncore *uncore)
 			drm_info(drm, "GuC firmware exception. EIP: %#x\n",
 				 intel_uncore_read(uncore, SOFT_SCRATCH(13)));
 			ret = -ENXIO;
+		}
+
+		/*
+		 * If the GuC load has timed out, dump the instruction pointers
+		 * so we can check where it stopped. The expectation here is
+		 * that the GuC is stuck, so we dump the registers twice with a
+		 * slight delay to confirm if the GuC has indeed stopped making
+		 * forward progress or not.
+		 * the 1ms was picked as a good balance between tolerating
+		 * slowness and not waiting too long for the counters to
+		 * increase.
+		 */
+		if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM) && ret == -ETIMEDOUT) {
+			drm_info(drm, "EIP: %#x, EIPC: %#x\n",
+				 intel_uncore_read(uncore, GUC_EIP),
+				 intel_uncore_read(uncore, GUC_EIP_COUNTER));
+			msleep(1);
+			drm_info(drm, "EIP: %#x, EIPC: %#x\n",
+				 intel_uncore_read(uncore, GUC_EIP),
+				 intel_uncore_read(uncore, GUC_EIP_COUNTER));
 		}
 	}
 
