@@ -393,7 +393,7 @@ bool i915_request_retire(struct i915_request *rq)
 	}
 
 	if (test_and_set_bit(I915_FENCE_FLAG_BOOST, &rq->fence.flags))
-		intel_rps_dec_waiters(&rq->engine->gt->rps);
+		intel_rps_cancel_boost(&rq->engine->gt->rps);
 
 	/*
 	 * We only loosely track inflight requests across preemption,
@@ -2064,7 +2064,7 @@ long i915_request_wait(struct i915_request *rq,
 	 * (bad for battery).
 	 */
 	if (flags & I915_WAIT_PRIORITY && !i915_request_started(rq))
-		intel_rps_boost(rq);
+		intel_rps_boost_for_request(rq);
 
 	wait.tsk = current;
 	if (dma_fence_add_callback(&rq->fence, &wait.cb, request_wait_wake))
