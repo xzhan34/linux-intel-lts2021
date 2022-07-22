@@ -1411,14 +1411,19 @@ struct prelim_drm_i915_gem_cache_reserve {
 /**
  * struct prelim_drm_i915_gem_vm_prefetch
  *
- * Prefetch an address range to a memory region.
+ * Prefetch an address range to a memory region, support both
+ * system allocator and runtime allocator.
  */
 struct prelim_drm_i915_gem_vm_prefetch {
 	/** Memory region to prefetch to **/
 	__u32 region;
 
-	/** Reserved **/
-	__u32 rsvd;
+	/**
+	 * Destination vm id to prefetch to.
+	 * Only valid for runtime allocator.
+	 * System allocator doesn't need a vm_id, should be set to 0.
+	 */
+	__u32 vm_id;
 
 	/** VA start to prefetch **/
 	__u64 start;
