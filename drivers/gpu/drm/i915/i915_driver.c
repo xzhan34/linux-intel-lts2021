@@ -2563,6 +2563,25 @@ static int i915_gem_vm_advise_ioctl(struct drm_device *dev, void *data,
 	return ret;
 }
 
+static int i915_runtime_vm_prefetch(struct drm_i915_private *i915,
+			struct prelim_drm_i915_gem_vm_prefetch *args,
+			struct drm_i915_file_private *file_priv)
+{
+	return 0;
+}
+
+static int i915_gem_vm_prefetch_ioctl(struct drm_device *dev, void *data,
+			       struct drm_file *file_priv)
+{
+	struct drm_i915_private *i915 = to_i915(dev);
+	struct prelim_drm_i915_gem_vm_prefetch *args = data;
+
+	if (!args->vm_id)
+		return i915_svm_vm_prefetch(i915, args);
+	else
+		return i915_runtime_vm_prefetch(i915, args, file_priv->driver_priv);
+}
+
 static const struct drm_ioctl_desc i915_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(I915_INIT, drm_noop, DRM_AUTH|DRM_MASTER|DRM_ROOT_ONLY),
 	DRM_IOCTL_DEF_DRV(I915_FLUSH, drm_noop, DRM_AUTH),

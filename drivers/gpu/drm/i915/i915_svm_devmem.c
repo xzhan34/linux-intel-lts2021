@@ -740,11 +740,9 @@ void i915_svm_devmem_remove(struct intel_memory_region *mem)
 	}
 }
 
-int i915_gem_vm_prefetch_ioctl(struct drm_device *dev, void *data,
-			       struct drm_file *file_priv)
+int i915_svm_vm_prefetch(struct drm_i915_private *i915,
+			struct prelim_drm_i915_gem_vm_prefetch *args)
 {
-	struct drm_i915_private *i915 = to_i915(dev);
-	struct prelim_drm_i915_gem_vm_prefetch *args = data;
 	unsigned long addr, end, size = args->length;
 	struct intel_memory_region *mem;
 	struct i915_gem_ww_ctx ww;
