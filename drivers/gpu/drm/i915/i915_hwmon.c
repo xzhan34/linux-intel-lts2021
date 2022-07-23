@@ -6,6 +6,7 @@
 #include <linux/hwmon.h>
 #include <linux/hwmon-sysfs.h>
 #include <linux/types.h>
+#include <linux/version.h>
 
 #include "i915_drv.h"
 #include "i915_hwmon.h"
@@ -164,6 +165,26 @@ i915_hwmon_energy_status_get(struct drm_i915_private *i915, long *energy)
 	return hwm_energy(ddat, energy);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)
+static ssize_t
+hwm_power1_rated_max_show(struct device *dev, struct device_attribute *attr,
+			  char *buf)
+{
+	struct hwm_drvdata *ddat = dev_get_drvdata(dev);
+	struct i915_hwmon *hwmon = ddat->hwmon;
+	u64 val = hwm_field_read_and_scale(ddat,
+					   hwmon->rg.pkg_power_sku,
+					   PKG_PKG_TDP,
+					   hwmon->scl_shift_power,
+					   SF_POWER);
+
+	return sysfs_emit(buf, "%llu\n", val);
+}
+
+static SENSOR_DEVICE_ATTR(power1_rated_max, 0444,
+			  hwm_power1_rated_max_show, NULL, 0);
+#endif
+
 static ssize_t
 hwm_power1_max_interval_show(struct device *dev, struct device_attribute *attr,
 			     char *buf)
@@ -268,6 +289,9 @@ static SENSOR_DEVICE_ATTR(power1_max_interval, 0664,
 			  hwm_power1_max_interval_store, 0);
 
 static struct attribute *hwm_attributes[] = {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)
+	&sensor_dev_attr_power1_rated_max.dev_attr.attr,
+#endif
 	&sensor_dev_attr_power1_max_interval.dev_attr.attr,
 	NULL
 };
@@ -281,6 +305,10 @@ static umode_t hwm_attributes_visible(struct kobject *kobj,
 
 	if (attr == &sensor_dev_attr_power1_max_interval.dev_attr.attr)
 		return i915_mmio_reg_valid(hwmon->rg.pkg_rapl_limit) ? attr->mode : 0;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)
+	else if (attr == &sensor_dev_attr_power1_rated_max.dev_attr.attr)
+		return i915_mmio_reg_valid(hwmon->rg.pkg_power_sku) ? attr->mode : 0;
+#endif
 
 	return 0;
 }
