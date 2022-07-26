@@ -2567,7 +2567,44 @@ static int i915_runtime_vm_prefetch(struct drm_i915_private *i915,
 			struct prelim_drm_i915_gem_vm_prefetch *args,
 			struct drm_i915_file_private *file_priv)
 {
-	return 0;
+	struct intel_memory_region *mem;
+	struct i915_address_space *vm;
+	struct drm_mm_node *node;
+	struct i915_vma *vma;
+	u16 class, instance;
+	int err = 0;
+
+	class = args->region >> 16;
+	instance = args->region & 0xffff;
+	mem = intel_memory_region_lookup(i915, class, instance);
+	if (!mem)
+		return -EINVAL;
+
+	vm = i915_address_space_lookup(file_priv, args->vm_id);
+	if (unlikely(!vm))
+		return -ENOENT;
+
+	trace_i915_vm_prefetch(i915, args->vm_id, args->start, args->length, mem->id);
+
+	drm_mm_for_each_node_in_range(node, &vm->mm, args->start,
+					args->start + args->length) {
+		GEM_BUG_ON(!drm_mm_node_allocated(node));
+		vma = container_of(node, typeof(*vma), node);
+		vma = __i915_vma_get(vma);
+		if (!vma)
+			continue;
+		vma = i915_vma_get(vma);
+		/**
+		 * Prefetch is best effort. Even if we fail to prefetch one vma, we will
+		 * proceed with other vmas.
+		 */
+		i915_vma_prefetch(vma, mem);
+		i915_vma_put(vma);
+		__i915_vma_put(vma);
+	}
+
+	i915_vm_put(vm);
+	return err;
 }
 
 static int i915_gem_vm_prefetch_ioctl(struct drm_device *dev, void *data,

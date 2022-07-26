@@ -1889,6 +1889,49 @@ out_rpm:
 	return err;
 }
 
+/**
+ * i915_vma_prefetch - Prefetch a vma to desired memory region
+ * @vma: vma to prefetch
+ * @mem: the destination memory region to prefetch to
+ *
+ * Prefetch vma's backing store to desired memory region, and
+ * bind vma to gpu synchronously
+ */
+int i915_vma_prefetch(struct i915_vma *vma, struct intel_memory_region *mem)
+{
+	struct i915_gem_ww_ctx ww;
+	int err;
+
+	if (!i915_gem_object_can_migrate(vma->obj, mem->id))
+		return -EINVAL;
+
+	if (i915_gem_object_is_userptr(vma->obj))
+		return -EINVAL;
+
+	i915_gem_ww_ctx_init(&ww, true);
+
+retry:
+	err = i915_gem_object_lock(vma->obj, &ww);
+	if (err)
+		goto err_ww;
+
+	if (vma->obj->mm.region.mem->id != mem->id)
+		err = i915_gem_object_migrate_region(vma->obj, &ww, &mem, 1);
+	if (err)
+		goto err_ww;
+
+	err = i915_vma_bind(vma, &ww);
+err_ww:
+	if (err == -EDEADLK) {
+		err = i915_gem_ww_ctx_backoff(&ww);
+		if (!err)
+			goto retry;
+	}
+
+	i915_gem_ww_ctx_fini(&ww);
+	return err;
+}
+
 struct i915_vma *i915_vma_make_unshrinkable(struct i915_vma *vma)
 {
 	i915_gem_object_make_unshrinkable(vma->obj);
