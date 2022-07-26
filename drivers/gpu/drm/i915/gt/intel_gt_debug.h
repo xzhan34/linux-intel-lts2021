@@ -25,6 +25,6 @@ int intel_gt_eu_attention_bitmap(struct intel_gt *gt,
 				 u8* bits,
 				 unsigned int bitmap_size);
 
-int intel_gt_invalidate_l3_mmio(struct intel_gt *gt,
-				unsigned int timeout_us);
+int intel_gt_invalidate_l3_mmio(struct intel_gt *gt);
+
 #endif

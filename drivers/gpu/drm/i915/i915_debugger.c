@@ -1296,18 +1296,20 @@ static void dg2_flush_engines(struct drm_i915_private *i915, u32 mask)
 
 static void gen12_flush_l3(struct drm_i915_private *i915)
 {
-	const unsigned int timeout_us = 5000;
+	intel_wakeref_t wakeref;
 	struct intel_gt *gt;
 	int id, ret;
 
 	for_each_gt(gt, i915, id) {
-		ret = intel_gt_invalidate_l3_mmio(gt, timeout_us);
-		if (ret)
-			drm_notice_once(&gt->i915->drm,
-					"debugger: gt%d l3 invalidation fail: %s(%d). "
-					"Surfaces need to be declared uncached to avoid coherency issues!\n",
-					id, ret == -EACCES ? "incompatible bios" : "timeout",
-					ret);
+		with_intel_gt_pm_if_awake(gt, wakeref) {
+			ret = intel_gt_invalidate_l3_mmio(gt);
+			if (ret)
+				drm_notice_once(&gt->i915->drm,
+						"debugger: gt%d l3 invalidation fail: %s(%d). "
+						"Surfaces need to be declared uncached to avoid coherency issues!\n",
+						id, ret == -EACCES ? "incompatible bios" : "timeout",
+						ret);
+		}
 	}
 }
 

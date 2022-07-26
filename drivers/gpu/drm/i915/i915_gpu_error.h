@@ -139,8 +139,6 @@ struct intel_engine_coredump {
 	u32 ctx_sr_ctl;
 	u32 dma_faddr_hi;
 	u32 dma_faddr_lo;
-	u32 td_att[TD_ATT_MAX];
-	u32 td_ctl; /* can be in power ctx on newer gens */
 	struct intel_instdone instdone;
 
 	/* GuC matched capture-lists info */
@@ -174,14 +172,6 @@ struct intel_engine_coredump {
 			u32 pp_dir_base;
 		};
 	} vm_info;
-
-	struct {
-		int wait_error;
-		unsigned int max_wait_us;
-		ktime_t signal;
-		ktime_t wait;
-		ktime_t attention;
-	} sip_timing;
 
 	struct intel_engine_coredump *next;
 };
@@ -245,6 +235,15 @@ struct intel_gt_coredump {
 			bool is_guc_capture;
 		} guc;
 	} *uc;
+
+	struct {
+		u32 bitmap_size;
+#define ES_MAX_EUS 1024
+#define ES_MAX_THREADS 8
+		u32 td_ctl; /* can be in power ctx on newer gens */
+		u8 att_before[ES_MAX_EUS * ES_MAX_THREADS / BITS_PER_BYTE];
+		u8 att_after[ES_MAX_EUS * ES_MAX_THREADS / BITS_PER_BYTE];
+	} attentions;
 
 	struct intel_gt_coredump *next;
 };

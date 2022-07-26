@@ -192,23 +192,17 @@ int intel_gt_eu_attention_bitmap(struct intel_gt *gt,
 	return 0;
 }
 
-int intel_gt_invalidate_l3_mmio(struct intel_gt *gt,
-				unsigned int timeout_us)
+int intel_gt_invalidate_l3_mmio(struct intel_gt *gt)
 {
+	const unsigned int timeout_us = 5000;
 	struct intel_uncore * const uncore = gt->uncore;
 	const enum forcewake_domains fw =
 		intel_uncore_forcewake_for_reg(uncore, GEN7_MISCCPCTL,
 					       FW_REG_READ | FW_REG_WRITE) |
 		intel_uncore_forcewake_for_reg(uncore, GEN11_GLBLINVL,
 					       FW_REG_READ | FW_REG_WRITE);
-	intel_wakeref_t wakeref;
 	u32 cpctl, cpctl_org, inv, mask;
 	int ret;
-
-	/* Reasonable to expect that when it went to sleep, it flushed */
-	wakeref = intel_gt_pm_get_if_awake(gt);
-	if (!wakeref)
-		return 0;
 
 	mask = GEN12_DOP_CLOCK_GATE_RENDER_ENABLE;
 	if (GRAPHICS_VER_FULL(gt->i915) >= IP_VER(12, 50))
@@ -234,6 +228,11 @@ int intel_gt_invalidate_l3_mmio(struct intel_gt *gt,
 		goto out;
 	}
 
+	/*
+	 * XXX: There is w/a in dg2 that wants to use invalidate
+	 * during context switches. We should be safe against concurrent
+	 * io as we check active invalidation before we proceed
+	 */
 	ret = __intel_wait_for_register_fw(uncore, GEN11_GLBLINVL,
 					   GEN11_L3_GLOBAL_INVALIDATE, 0,
 					   timeout_us, 0, &inv);
@@ -253,8 +252,6 @@ out:
 
 	intel_uncore_forcewake_put__locked(uncore, fw);
 	spin_unlock_irq(&uncore->lock);
-
-	intel_gt_pm_put(gt, wakeref);
 
 	return ret;
 }
