@@ -200,6 +200,7 @@
 #include "gem/i915_gem_context.h"
 #include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_mman.h"
+#include "gem/i915_gem_region.h"
 #include "gt/intel_engine_pm.h"
 #include "gt/intel_engine_regs.h"
 #include "gt/intel_engine_user.h"
@@ -2243,6 +2244,7 @@ static int alloc_noa_wait(struct i915_perf_stream *stream)
 	u32 *batch, *ts0, *cs, *jump;
 	struct i915_gem_ww_ctx ww;
 	int ret, i;
+	enum i915_map_type type;
 	enum {
 		START_TS,
 		NOW_TS,
@@ -2255,7 +2257,20 @@ static int alloc_noa_wait(struct i915_perf_stream *stream)
 					  MI_PREDICATE_RESULT_2_ENGINE(base) :
 					  MI_PREDICATE_RESULT_1(RENDER_RING_BASE);
 
-	bo = i915_gem_object_create_internal(i915, 4096);
+	/*
+	 * On 2T PVC, iaf driver init puts pressure on the PCIe bus. When
+	 * noa wait bo is allocated outside the gt, the batch below runs much
+	 * slower and the delay is more than double the intended
+	 * noa_programming_delay. Using LMEM in such cases resolves the issue.
+	 */
+	if (HAS_LMEM(gt->i915)) {
+		bo = intel_gt_object_create_lmem(gt, 4096, 0);
+		type = I915_MAP_WC;
+	} else {
+		bo = i915_gem_object_create_internal(i915, 4096);
+		type = I915_MAP_WB;
+	}
+
 	if (IS_ERR(bo)) {
 		drm_err(&i915->drm,
 			"Failed to allocate NOA wait batchbuffer\n");
@@ -2283,7 +2298,7 @@ retry:
 	if (ret)
 		goto out_ww;
 
-	batch = cs = i915_gem_object_pin_map(bo, I915_MAP_WB);
+	batch = cs = i915_gem_object_pin_map(bo, type);
 	if (IS_ERR(batch)) {
 		ret = PTR_ERR(batch);
 		goto err_unpin;
