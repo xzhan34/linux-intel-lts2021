@@ -158,8 +158,26 @@ __wait_for_ack(const struct intel_uncore_forcewake_domain *d,
 	       const u32 ack,
 	       const u32 value)
 {
-	return wait_for_atomic((fw_ack(d) & ack) == value,
-			       FORCEWAKE_ACK_TIMEOUT_MS);
+	struct drm_i915_private *i915 = d->uncore->i915;
+	int ret;
+
+	/*
+	 * WA_16017528748: PVC Bx: Increase forcewake ack timeout to 500 msecs
+	 * to counteract pcode wa forcewake hold period at rc6 exit.
+	 * In the unlikely scenario that this call comes from an interrupt handling
+	 * and RC6 is enabled, we might wait this long timeout in the worst case and
+	 * cause an impact in the whole system, including other PVCs in the system.
+	 * However this might not happen unless we are already in an error kind of
+	 * situation since the Wa_16015496043 is already blocking RC6 whenever
+	 * we have any client connected.
+	 */
+	if (IS_PVC_BD_STEP(i915, STEP_B0, STEP_FOREVER) &&
+	    d->uncore->gt->rc6.supported)
+		ret = _wait_for_atomic((fw_ack(d) & ack) == value, 500000, 1);
+	else
+		ret =  wait_for_atomic((fw_ack(d) & ack) == value,
+				       FORCEWAKE_ACK_TIMEOUT_MS);
+	return ret;
 }
 
 static inline int
