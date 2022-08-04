@@ -930,8 +930,10 @@ unsigned int i915_sriov_pf_get_vf_tile_mask(struct drm_i915_private *i915, unsig
 
 	GEM_BUG_ON(!IS_SRIOV_PF(i915));
 
-	if (!HAS_REMOTE_TILES(i915))
-		return 1;
+	if (!HAS_EXTRA_GT_LIST(i915))
+		return BIT(0);
+	else if (!HAS_REMOTE_TILES(i915))
+		return BIT(0) | BIT(1);
 
 	return intel_iov_provisioning_get_tile_mask(iov, vfid);
 }
@@ -954,6 +956,9 @@ i915_sriov_pf_get_vf_ggtt_size(struct drm_i915_private *i915, unsigned int vfid,
 	ssize_t size;
 
 	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	if (!HAS_REMOTE_TILES(i915) && tile > 0)
+		return 0;
 
 	size = intel_iov_state_save_ggtt(iov, vfid, NULL, 0);
 	WARN_ON(size < 0);
@@ -1028,6 +1033,9 @@ i915_pf_get_vf_lmem_size(struct drm_i915_private *i915, unsigned int vfid, unsig
 	struct intel_iov *iov = &i915->gt[tile]->iov;
 
 	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+
+	if (!HAS_REMOTE_TILES(i915) && tile > 0)
+		return 0;
 
 	return intel_iov_provisioning_get_lmem(iov, vfid);
 }
