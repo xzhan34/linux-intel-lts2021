@@ -68,6 +68,8 @@
 #define IPEIR(base)				_MMIO((base) + 0x88)
 #define IPEHR(base)				_MMIO((base) + 0x8c)
 #define RING_ID(base)				_MMIO((base) + 0x8c)
+/* LSB used to determine whether the engine instance is even or odd */
+#define   RING_ENGINE_ID_LSB			REG_BIT(4)
 #define RING_NOPID(base)			_MMIO((base) + 0x94)
 #define RING_HWSTAM(base)			_MMIO((base) + 0x98)
 #define RING_MI_MODE(base)			_MMIO((base) + 0x9c)
@@ -127,6 +129,8 @@
 #define   ECO_FLIP_DONE				REG_BIT(0)
 #define   GEN6_BLITTER_LOCK_SHIFT		16
 
+#define BCS_ENGINE_SWCTL(base)			_MMIO((base) + 0x200)
+#define   BCS_ENGINE_SWCTL_DISABLE_256B		REG_BIT(2)
 #define BLIT_CCTL(base)				_MMIO((base) + 0x204)
 #define   BLIT_CCTL_DST_MOCS_MASK		REG_GENMASK(14, 8)
 #define   BLIT_CCTL_SRC_MOCS_MASK		REG_GENMASK(6, 0)

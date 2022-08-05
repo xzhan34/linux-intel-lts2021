@@ -165,6 +165,7 @@
  */
 #define MI_LOAD_REGISTER_IMM(x)	MI_INSTR(0x22, 2*(x)-1)
 /* Gen11+. addr = base + (ctx_restore ? offset & GENMASK(12,2) : offset) */
+#define   MI_LRI_DEST_CS_MMIO		REG_BIT(19)
 #define   MI_LRI_LRM_CS_MMIO		REG_BIT(19)
 #define   MI_LRI_MMIO_REMAP_EN		REG_BIT(17)
 #define   MI_LRI_FORCE_POSTED		(1<<12)
@@ -188,6 +189,7 @@
 #define MI_LOAD_REGISTER_MEM_GEN8  MI_INSTR(0x29, 2)
 #define MI_LOAD_REGISTER_REG    MI_INSTR(0x2A, 1)
 #define   MI_LRR_SOURCE_CS_MMIO		REG_BIT(18)
+#define   MI_LRR_DEST_CS_MMIO		REG_BIT(19)
 #define MI_BATCH_BUFFER		MI_INSTR(0x30, 1)
 #define   MI_BATCH_NON_SECURE		(1)
 /* for snb/ivb/vlv this also means "batch in ppgtt" when ppgtt is enabled. */
@@ -412,6 +414,9 @@
 #define   MI_MATH_XOR			MI_MATH_INSTR(0x104, 0x0, 0x0)
 #define   MI_MATH_STORE(op1, op2)	MI_MATH_INSTR(0x180, op1, op2)
 #define   MI_MATH_STOREINV(op1, op2)	MI_MATH_INSTR(0x580, op1, op2)
+/* DG2+ */
+#define   MI_MATH_SHR			MI_MATH_INSTR(0x106, 0x0, 0x0)
+
 /* Registers used as operands in MI_MATH_INSTR */
 #define   MI_MATH_REG(x)		(x)
 #define   MI_MATH_REG_SRCA		0x20
