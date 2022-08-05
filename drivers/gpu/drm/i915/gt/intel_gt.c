@@ -638,6 +638,117 @@ static void release_vm(struct intel_gt *gt)
 	i915_vm_put(vm);
 }
 
+/* FIXME Add documentation to API */
+static struct i915_request *
+switch_context_to(struct intel_context *ce, struct i915_request *from)
+{
+	struct i915_request *rq;
+	int err;
+
+	rq = i915_request_create(ce);
+	if (IS_ERR(rq))
+		return rq;
+
+	err = i915_request_await_dma_fence(rq, &from->fence);
+	if (err < 0) {
+		i915_request_add(rq);
+		return ERR_PTR(err);
+	}
+
+	i915_request_get(rq);
+	i915_request_add(rq);
+
+	return rq;
+}
+
+/* FIXME Add documentation to API */
+static struct i915_request *load_default_context(struct intel_context *ce)
+{
+	struct intel_renderstate so;
+	struct i915_request *rq;
+	int err;
+
+	err = intel_renderstate_init(&so, ce);
+	if (err)
+		return ERR_PTR(err);
+
+	rq = i915_request_create(ce);
+	if (IS_ERR(rq)) {
+		err = PTR_ERR(rq);
+		goto err_fini;
+	}
+
+	err = intel_engine_emit_ctx_wa(rq);
+	if (err)
+		goto err_rq;
+
+	err = intel_renderstate_emit(&so, rq);
+	if (err)
+		goto err_rq;
+
+	rq = i915_request_get(rq);
+err_rq:
+	i915_request_add(rq);
+err_fini:
+	intel_renderstate_fini(&so, ce);
+	return err ? ERR_PTR(err) : rq;
+}
+
+/* FIXME Add documentation to API */
+static struct i915_request *
+record_default_context(struct intel_engine_cs *engine)
+{
+	struct i915_request *rq[2];
+	struct i915_gem_ww_ctx ww;
+	struct intel_context *ce;
+	int err;
+
+	/* We must be able to switch to something! */
+	GEM_BUG_ON(!engine->kernel_context);
+
+	ce = intel_context_create(engine);
+	if (IS_ERR(ce))
+		return ERR_CAST(ce);
+
+	err = 0;
+	for_i915_gem_ww(&ww, err, true)
+		err = intel_context_pin_ww(ce, &ww);
+	if (err) {
+		rq[0] = ERR_PTR(err);
+		goto out;
+	}
+
+	/* Prime the golden context with known good state */
+	rq[0] = load_default_context(ce);
+	if (IS_ERR(rq[0]))
+		goto out_unpin;
+
+	rq[1] = switch_context_to(engine->kernel_context, rq[0]);
+	i915_request_put(rq[0]);
+	if (IS_ERR(rq[1])) {
+		rq[0] = rq[1];
+		goto out_unpin;
+	}
+
+	/* Reload the golden context to record the effect of any indirect w/a */
+	rq[0] = switch_context_to(ce, rq[1]);
+	i915_request_put(rq[1]);
+	if (IS_ERR(rq[0]))
+		goto out_unpin;
+
+	/*
+	 * Keep the context referenced until after we read back the
+	 * HW image. The reference is returned to the caller via
+	 * rq->context.
+	 */
+	intel_context_get(ce);
+out_unpin:
+	intel_context_unpin(ce);
+out:
+	intel_context_put(ce);
+	return rq[0];
+}
+
 static int __engines_record_defaults(struct intel_gt *gt)
 {
 	struct i915_request *requests[I915_NUM_ENGINES] = {};
@@ -655,47 +766,18 @@ static int __engines_record_defaults(struct intel_gt *gt)
 	 */
 
 	for_each_engine(engine, gt, id) {
-		struct intel_renderstate so;
-		struct intel_context *ce;
 		struct i915_request *rq;
 
-		/* We must be able to switch to something! */
-		GEM_BUG_ON(!engine->kernel_context);
+		drm_dbg(&gt->i915->drm,
+			"Record default context on %s", engine->name);
 
-		ce = intel_context_create(engine);
-		if (IS_ERR(ce)) {
-			err = PTR_ERR(ce);
-			goto out;
-		}
-
-		err = intel_renderstate_init(&so, ce);
-		if (err)
-			goto err;
-
-		rq = i915_request_create(ce);
+		rq = record_default_context(engine);
 		if (IS_ERR(rq)) {
 			err = PTR_ERR(rq);
-			goto err_fini;
-		}
-
-		err = intel_engine_emit_ctx_wa(rq);
-		if (err)
-			goto err_rq;
-
-		err = intel_renderstate_emit(&so, rq);
-		if (err)
-			goto err_rq;
-
-err_rq:
-		requests[id] = i915_request_get(rq);
-		i915_request_add(rq);
-err_fini:
-		intel_renderstate_fini(&so, ce);
-err:
-		if (err) {
-			intel_context_put(ce);
 			goto out;
 		}
+
+		requests[id] = rq;
 	}
 
 	/* Flush the default context image to memory, and enable powersaving. */
