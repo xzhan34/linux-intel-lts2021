@@ -208,6 +208,9 @@ int i915_getparam_ioctl(struct drm_device *dev, void *data,
 	case PRELIM_I915_PARAM_HAS_PAGE_FAULT:
 		value =  HAS_RECOVERABLE_PAGE_FAULT(i915);
 		break;
+	case PRELIM_I915_PARAM_HAS_SET_PAIR:
+		value = 1;
+		break;
 	case PRELIM_I915_PARAM_EU_DEBUGGER_VERSION:
 		value = IS_ENABLED(CONFIG_DRM_I915_DEBUGGER) ? PRELIM_DRM_I915_DEBUG_VERSION : 0;
 		break;

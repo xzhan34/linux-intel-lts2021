@@ -451,6 +451,11 @@ static void i915_gem_close_object(struct drm_gem_object *gem, struct drm_file *f
 
 	i915_drm_client_del_bo(fpriv->client, obj);
 
+	if (obj->pair) {
+		i915_gem_object_put(obj->pair);
+		obj->pair = NULL;
+	}
+
 	spin_lock(&obj->lut_lock);
 	list_for_each_entry_safe(lut, ln, &obj->lut_list, obj_link) {
 		struct i915_gem_context *ctx = lut->ctx;

@@ -293,6 +293,7 @@ struct create_ext {
 	struct drm_i915_gem_object *vanilla_object;
 	unsigned long flags;
 	u32 vm_id;
+	u32 pair_id;
 };
 
 static void repr_placements(char *buf, size_t size,
@@ -419,6 +420,36 @@ out_free:
 	return ret;
 }
 
+static int prelim_set_pair(struct prelim_drm_i915_gem_object_param *args,
+			   struct create_ext *ext_data)
+{
+	int ret = 0;
+
+	/* start with no pairing */
+	ext_data->pair_id = 0;
+
+	if (args->handle) {
+		DRM_DEBUG("Handle should be zero\n");
+		ret = -EINVAL;
+	}
+
+	if (!args->data) {
+		DRM_DEBUG("Data should be non-zero\n");
+		ret = -EINVAL;
+	}
+
+	if (ret)
+		return ret;
+
+	/*
+	 * data is the "handle" of the object we are going to pair
+	 * with.
+	 */
+	ext_data->pair_id = (u32)args->data;
+
+	return 0;
+}
+
 static int __create_setparam(struct prelim_drm_i915_gem_object_param *args,
 			     struct create_ext *ext_data)
 {
@@ -430,6 +461,8 @@ static int __create_setparam(struct prelim_drm_i915_gem_object_param *args,
 	switch (lower_32_bits(args->param)) {
 	case PRELIM_I915_PARAM_MEMORY_REGIONS:
 		return prelim_set_placements(args, ext_data);
+	case PRELIM_I915_PARAM_SET_PAIR:
+		return prelim_set_pair(args, ext_data);
 	}
 
 	return -EINVAL;
@@ -465,6 +498,68 @@ static const i915_user_extension_fn prelim_create_extensions[] = {
 	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_GEM_CREATE_EXT_VM_PRIVATE)] = ext_set_vm_private,
 	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_GEM_CREATE_EXT_PROTECTED_CONTENT)] = ext_set_protected,
 };
+
+static int check_for_pair(struct drm_file *file, struct drm_i915_gem_object *obj,
+			  struct create_ext *ext_data)
+{
+	struct drm_i915_gem_object *first;
+
+	/*
+	 * If pair_id is set to a handle, find the object and validate that it
+	 * can be used.
+	 */
+	if (!ext_data->pair_id)
+		return 0;
+
+	/*
+	 * For the found object, i915_gem_object_put() needs to be done in
+	 * __i915_gem_free_object()
+	 */
+	first = i915_gem_object_lookup(file, ext_data->pair_id);
+	if (!first) {
+		drm_dbg(&to_i915(obj->base.dev)->drm, "Object pair not found\n");
+		return -EINVAL;
+	}
+
+	/* already paired? */
+	if (first->pair) {
+		drm_dbg(&to_i915(obj->base.dev)->drm, "Object is already paired\n");
+		goto err_out;
+	}
+
+	if (obj->mm.n_placements > 1 || first->mm.n_placements > 1) {
+		drm_dbg(&to_i915(obj->base.dev)->drm, "Implicit pairs cannot migrate\n");
+		goto err_out;
+	}
+
+	if (!i915_gem_object_is_lmem(obj) || !i915_gem_object_is_lmem(first)) {
+		drm_dbg(&to_i915(obj->base.dev)->drm, "Implicit pairs MUST be LMEM\n");
+		goto err_out;
+	}
+
+	/* obj memory regions should not be the same */
+	if (obj->mm.region.mem == first->mm.region.mem) {
+		drm_dbg(&to_i915(obj->base.dev)->drm, "Object pair must be in different regions\n");
+		goto err_out;
+	}
+
+	/*
+	 * OK, this pairing is good to go.
+	 * To keep the to be paired object from getting deleted, do a _get.
+	 * On close of first, do the put and break the link.
+	 * Do the _put on first because _lookup did a get.
+	 * NOTE!: pairing is uni-dircetional.
+	 */
+	i915_gem_object_get(obj);
+	first->pair = obj;
+	i915_gem_object_put(first);
+
+	return 0;
+
+err_out:
+	i915_gem_object_put(first);
+	return -EINVAL;
+}
 
 /**
  * Creates a new mm object and returns a handle to it.
@@ -516,6 +611,10 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 	}
 
 	ret = setup_object(obj, args->size);
+	if (ret)
+		goto vm_put;
+
+	ret = check_for_pair(file, obj, &ext_data);
 	if (ret)
 		goto vm_put;
 

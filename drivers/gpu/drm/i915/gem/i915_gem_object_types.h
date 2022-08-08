@@ -696,6 +696,11 @@ struct drm_i915_gem_object {
 	 * which memory region the object should reside in
 	 */
 	u32 memory_mask;
+
+	/*
+	 * Implicity scaling uses two objects, allow them to be connected
+	 */
+	struct drm_i915_gem_object *pair;
 };
 
 static inline struct drm_i915_gem_object *
