@@ -1810,12 +1810,44 @@ wal_get_fw_for_rmw(struct intel_uncore *uncore, const struct i915_wa_list *wal)
 	return fw;
 }
 
-static bool
-wa_verify(const struct i915_wa *wa, u32 cur, const char *name, const char *from)
+static const char *valid(bool state)
 {
-	if ((cur ^ wa->set) & wa->read) {
-		DRM_ERROR("%s workaround lost on %s! (reg[%x]=0x%x, relevant bits were 0x%x vs expected 0x%x)\n",
+	return state ? "valid" : "invalid";
+}
+
+static bool wa_ok(const struct i915_wa *wa, bool mcr,
+		  u32 cur, const char *name, void *data)
+{
+	return ((cur ^ wa->set) & wa->read) == 0;
+}
+
+static bool
+wa_show(const struct i915_wa *wa, bool mcr,
+	u32 cur, const char *name, void *data)
+{
+	struct drm_printer *p = data;
+	bool ok = wa_ok(wa, mcr, cur, name, data);
+
+	drm_printf(p,
+		   "reg:%x%s { raw:%08x, mask:%08x, value:%08x, expected:%08x, %s }\n",
+		   i915_mmio_reg_offset(wa->reg), mcr ? "*" : "",
+		   cur, wa->read,
+		   cur & wa->read, wa->set & wa->read,
+		   valid(ok));
+
+	return ok;
+}
+
+static bool
+wa_verify(const struct i915_wa *wa, bool mcr,
+	  u32 cur, const char *name, void *data)
+{
+	const char *from = data;
+
+	if (!wa_ok(wa, mcr, cur, name, data)) {
+		DRM_ERROR("%s workaround lost on %s! (reg[%x%s]=0x%x, relevant bits were 0x%x vs expected 0x%x)\n",
 			  name, from, i915_mmio_reg_offset(wa->reg),
+			  mcr ? "*" : "",
 			  cur, cur & wa->read, wa->set & wa->read);
 
 		return false;
@@ -1863,7 +1895,7 @@ wa_list_apply(struct intel_gt *gt, const struct i915_wa_list *wal)
 				intel_gt_mcr_read_any_fw(gt, wa->mcr_reg) :
 				intel_uncore_read_fw(uncore, wa->reg);
 
-			wa_verify(wa, val, wal->name, "application");
+			wa_verify(wa, true, val, wal->name, "application");
 		}
 	}
 
@@ -1877,16 +1909,21 @@ void intel_gt_apply_workarounds(struct intel_gt *gt)
 	wa_list_apply(gt, &gt->wa_list);
 }
 
-static bool wa_list_verify(struct intel_gt *gt,
-			   const struct i915_wa_list *wal,
-			   const char *from)
+static int wa_list_verify(struct intel_gt *gt,
+			  const struct i915_wa_list *wal,
+			  bool (*verify)(const struct i915_wa *wa,
+					 bool mcr,
+					 u32 cur,
+					 const char *name,
+					 void *data),
+			  void *data)
 {
 	struct intel_uncore *uncore = gt->uncore;
 	struct i915_wa *wa;
 	enum forcewake_domains fw;
 	unsigned long flags;
 	unsigned int i;
-	bool ok = true;
+	int err = 0;
 
 	fw = wal_get_fw_for_rmw(uncore, wal);
 
@@ -1895,21 +1932,29 @@ static bool wa_list_verify(struct intel_gt *gt,
 	intel_uncore_forcewake_get__locked(uncore, fw);
 
 	for (i = 0, wa = wal->list; i < wal->count; i++, wa++)
-		ok &= wa_verify(wa, wa->is_mcr ?
-				intel_gt_mcr_read_any_fw(gt, wa->mcr_reg) :
-				intel_uncore_read_fw(uncore, wa->reg),
-				wal->name, from);
+		if (!verify(wa, true, wa->is_mcr ?
+			    intel_gt_mcr_read_any_fw(gt, wa->mcr_reg) :
+			    intel_uncore_read_fw(uncore, wa->reg),
+			    wal->name, data))
+			err = -EINVAL;
 
 	intel_uncore_forcewake_put__locked(uncore, fw);
 	spin_unlock(&uncore->lock);
 	intel_gt_mcr_unlock(gt, flags);
 
-	return ok;
+	return err;
 }
 
 bool intel_gt_verify_workarounds(struct intel_gt *gt, const char *from)
 {
-	return wa_list_verify(gt, &gt->wa_list, from);
+	return wa_list_verify(gt, &gt->wa_list, wa_verify, (void *)from) == 0;
+}
+
+int intel_gt_show_workarounds(struct drm_printer *p,
+			      struct intel_gt *gt,
+			      const struct i915_wa_list * const wal)
+{
+	return wa_list_verify(gt, wal, wa_show, p);
 }
 
 __maybe_unused
@@ -3151,7 +3196,7 @@ wa_list_srm(struct i915_request *rq,
 			count++;
 	}
 
-	cs = intel_ring_begin(rq, 4 * count);
+	cs = intel_ring_begin(rq, 4 * count + 4);
 	if (IS_ERR(cs))
 		return PTR_ERR(cs);
 
@@ -3166,14 +3211,40 @@ wa_list_srm(struct i915_request *rq,
 		*cs++ = i915_ggtt_offset(vma) + sizeof(u32) * i;
 		*cs++ = 0;
 	}
+
+	*cs++ = MI_STORE_DWORD_IMM_GEN4 | MI_USE_GGTT;
+	*cs++ = i915_ggtt_offset(vma) + sizeof(u32) * i;
+	*cs++ = 0;
+	*cs++ = 1;
+
 	intel_ring_advance(rq, cs);
+
+	if (GRAPHICS_VER(i915) >= 8) {
+		cs = intel_ring_begin(rq, 4);
+		if (IS_ERR(cs))
+			return PTR_ERR(cs);
+
+		*cs++ = MI_SEMAPHORE_WAIT |
+			MI_SEMAPHORE_GLOBAL_GTT |
+			MI_SEMAPHORE_POLL |
+			MI_SEMAPHORE_SAD_EQ_SDD;
+		*cs++ = 2;
+		*cs++ = i915_ggtt_offset(vma) + sizeof(u32) * i;
+		*cs++ = 0;
+		intel_ring_advance(rq, cs);
+	}
 
 	return 0;
 }
 
 static int engine_wa_list_verify(struct intel_context *ce,
 				 const struct i915_wa_list * const wal,
-				 const char *from)
+				 bool (*verify)(const struct i915_wa *wa,
+					 bool mcr,
+					 u32 cur,
+					 const char *name,
+					 void *data),
+				 void *data)
 {
 	const struct i915_wa *wa;
 	struct i915_request *rq;
@@ -3187,7 +3258,7 @@ static int engine_wa_list_verify(struct intel_context *ce,
 		return 0;
 
 	vma = __vm_create_scratch_for_read(&ce->engine->gt->ggtt->vm,
-					   wal->count * sizeof(u32));
+					   (wal->count + 1) * sizeof(u32));
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 
@@ -3205,10 +3276,17 @@ retry:
 	if (err)
 		goto err_unpin;
 
+	results = i915_gem_object_pin_map(vma->obj, I915_MAP_WB);
+	if (IS_ERR(results)) {
+		err = PTR_ERR(results);
+		goto err_vma;
+	}
+	memset(results, 0, (wal->count + 1) * sizeof(u32));
+
 	rq = i915_request_create(ce);
 	if (IS_ERR(rq)) {
 		err = PTR_ERR(rq);
-		goto err_vma;
+		goto err_unmap;
 	}
 
 	err = i915_request_await_object(rq, vma->obj, true);
@@ -3221,34 +3299,36 @@ retry:
 	if (err)
 		i915_request_set_error_once(rq, err);
 	i915_request_add(rq);
-
 	if (err)
 		goto err_rq;
 
-	if (i915_request_wait(rq, 0, HZ / 5) < 0) {
+	if (wait_for(READ_ONCE(results[wal->count]), 1000)) {
 		err = -ETIME;
 		goto err_rq;
 	}
 
-	results = i915_gem_object_pin_map(vma->obj, I915_MAP_WB);
-	if (IS_ERR(results)) {
-		err = PTR_ERR(results);
-		goto err_rq;
-	}
-
-	err = 0;
 	for (i = 0, wa = wal->list; i < wal->count; i++, wa++) {
-		if (mcr_range(rq->engine->i915, i915_mmio_reg_offset(wa->reg)))
-			continue;
+		u32 cur = results[i];
+		bool mcr = false;
 
-		if (!wa_verify(wa, results[i], wal->name, from))
-			err = -ENXIO;
+		/* Context is held to keep the engine powered for the mmio */
+		if (mcr_range(rq->engine->i915, i915_mmio_reg_offset(wa->reg))) {
+			cur = wa->set | ~wa->read;
+			if (!i915_request_completed(rq))
+				cur = intel_gt_mcr_read_any(ce->engine->gt, wa->mcr_reg);
+			mcr = true;
+			continue; /* XXX Some are being reset to default? */
+		}
+
+		if (!verify(wa, mcr, cur, wal->name, data))
+			err = -EINVAL;
 	}
-
-	i915_gem_object_unpin_map(vma->obj);
 
 err_rq:
 	i915_request_put(rq);
+err_unmap:
+	WRITE_ONCE(results[wal->count], 2);
+	i915_gem_object_unpin_map(vma->obj);
 err_vma:
 	i915_vma_unpin(vma);
 err_unpin:
@@ -3265,12 +3345,30 @@ err_pm:
 	return err;
 }
 
+int intel_engine_show_workarounds(struct drm_printer *m,
+				  struct intel_engine_cs *engine,
+				  const struct i915_wa_list * const wal)
+{
+	struct intel_context *ce;
+	int err;
+
+	ce = intel_context_create(engine);
+	if (IS_ERR(ce))
+		return PTR_ERR(ce);
+
+	err = engine_wa_list_verify(ce, wal, wa_show, m);
+	intel_context_put(ce);
+
+	return err;
+}
+
 int intel_engine_verify_workarounds(struct intel_engine_cs *engine,
 				    const char *from)
 {
 	return engine_wa_list_verify(engine->kernel_context,
 				     &engine->wa_list,
-				     from);
+				     wa_verify,
+				     (void *)from);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

@@ -33,6 +33,9 @@
 #include <drm/drm_debugfs.h>
 
 #include "gem/i915_gem_context.h"
+#include "gt/intel_engine_pm.h"
+#include "gt/intel_engine_regs.h"
+#include "gt/intel_gpu_commands.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_buffer_pool.h"
 #include "gt/intel_gt_clock_utils.h"
@@ -43,6 +46,7 @@
 #include "gt/intel_gt_requests.h"
 #include "gt/intel_rc6.h"
 #include "gt/intel_reset.h"
+#include "gt/intel_ring.h"
 #include "gt/intel_rps.h"
 #include "gt/intel_sseu_debugfs.h"
 
@@ -542,30 +546,94 @@ static int i915_engine_info(struct seq_file *m, void *unused)
 	return 0;
 }
 
-static int i915_wa_registers(struct seq_file *m, void *unused)
+static u32
+get_whitelist_reg(const struct intel_engine_cs *engine, unsigned int i)
 {
-	struct drm_i915_private *i915 = node_to_i915(m->private);
+	i915_reg_t reg =
+		i < engine->whitelist.count ?
+		engine->whitelist.list[i].reg :
+		RING_NOPID(engine->mmio_base);
+
+	return i915_mmio_reg_offset(reg);
+}
+
+static const char *valid(bool state)
+{
+	return state ? "valid" : "invalid";
+}
+
+static int show_whitelist(struct drm_printer *p, struct intel_engine_cs *engine)
+{
+	int err = 0;
+	int i;
+
+	drm_printf(p, "%s: Privileged access allowed: %u\n",
+		   engine->name, engine->whitelist.count);
+
+	for (i = 0; i < RING_MAX_NONPRIV_SLOTS; i++) {
+		i915_reg_t reg = RING_FORCE_TO_NONPRIV(engine->mmio_base, i);
+		u32 expected = get_whitelist_reg(engine, i);
+		u32 actual = intel_uncore_read(engine->uncore, reg);
+
+		drm_printf(p, "reg:%04x: { raw:%08x, expected:%08x, %s }\n",
+			   i915_mmio_reg_offset(reg),
+			   actual, expected, valid(actual == expected));
+		if (actual != expected)
+			err = -ENXIO;
+	}
+
+	return err;
+}
+
+static int show_engine_wal(struct drm_printer *p,
+			   const char *name,
+			   struct intel_engine_cs *engine,
+			   const struct i915_wa_list *wal)
+{
+	drm_printf(p, "%s: Workarounds applied: %u\n", name, wal->count);
+	return intel_engine_show_workarounds(p, engine, wal);
+}
+
+static int show_gt_wal(struct drm_printer *p,
+		       const char *name,
+		       struct intel_gt *gt,
+		       const struct i915_wa_list *wal)
+{
+	drm_printf(p, "%s: Workarounds applied: %u\n", name, wal->count);
+	return intel_gt_show_workarounds(p, gt, wal);
+}
+
+static int workarounds_show(struct seq_file *m, void *unused)
+{
+	struct drm_i915_private *i915 = m->private;
+	struct drm_printer p = drm_seq_file_printer(m);
 	struct intel_engine_cs *engine;
+	struct intel_gt *gt = to_gt(i915);
+	char buf[80];
+	int ret = 0;
+	int id;
 
 	for_each_uabi_engine(engine, i915) {
-		const struct i915_wa_list *wal = &engine->ctx_wa_list;
-		const struct i915_wa *wa;
-		unsigned int count;
+		intel_engine_pm_get(engine);
 
-		count = wal->count;
-		if (!count)
-			continue;
+		cmpxchg(&ret, 0, show_whitelist(&p, engine));
 
-		seq_printf(m, "%s: Workarounds applied: %u\n",
-			   engine->name, count);
+		sprintf(buf, "%s context", engine->name);
+		cmpxchg(&ret, 0, show_engine_wal(&p, buf, engine, &engine->ctx_wa_list));
 
-		for (wa = wal->list; count--; wa++)
-			seq_printf(m, "0x%X: 0x%08X, mask: 0x%08X\n",
-				   i915_mmio_reg_offset(wa->reg),
-				   wa->set, wa->clr);
+		cmpxchg(&ret, 0, show_engine_wal(&p, engine->name, engine, &engine->wa_list));
 
-		seq_printf(m, "\n");
+		drm_printf(&p, "\n");
+		intel_engine_pm_put(engine);
 	}
+
+	for_each_gt(gt, i915, id) {
+		cmpxchg(&ret, 0, show_gt_wal(&p, gt->name, gt, &gt->wa_list));
+		drm_printf(&p, "\n");
+	}
+
+	if (ret)
+		drm_printf(&p, "Error: %d\n", ret);
 
 	return 0;
 }
@@ -753,9 +821,9 @@ static const struct drm_info_list i915_debugfs_list[] = {
 	{"i915_swizzle_info", i915_swizzle_info, 0},
 	{"i915_runtime_pm_status", i915_runtime_pm_status, 0},
 	{"i915_engine_info", i915_engine_info, 0},
-	{"i915_wa_registers", i915_wa_registers, 0},
 	{"i915_sseu_status", i915_sseu_status, 0},
 	{"i915_rps_boost_info", i915_rps_boost_info, 0},
+	{"i915_workarounds", workarounds_show, 0},
 };
 #define I915_DEBUGFS_ENTRIES ARRAY_SIZE(i915_debugfs_list)
 

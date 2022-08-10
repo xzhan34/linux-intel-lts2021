@@ -1178,15 +1178,20 @@ err:
 	return err;
 }
 
-static bool
+static void set_error_once(int *err, int result)
+{
+	cmpxchg(err, 0, result);
+}
+
+static int
 verify_wa_lists(struct intel_gt *gt, struct wa_lists *lists,
 		const char *str)
 {
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
-	bool ok = true;
+	int err = 0;
 
-	ok &= wa_list_verify(gt, &lists->gt_wa_list, str);
+	set_error_once(&err, wa_list_verify(gt, &lists->gt_wa_list, wa_verify, (void *)str));
 
 	for_each_engine(engine, gt, id) {
 		struct intel_context *ce;
@@ -1195,18 +1200,22 @@ verify_wa_lists(struct intel_gt *gt, struct wa_lists *lists,
 		if (IS_ERR(ce))
 			return false;
 
-		ok &= engine_wa_list_verify(ce,
-					    &lists->engine[id].wa_list,
-					    str) == 0;
+		set_error_once(&err,
+			       engine_wa_list_verify(ce,
+						     &lists->engine[id].wa_list,
+						     wa_verify,
+						     (void *)str));
 
-		ok &= engine_wa_list_verify(ce,
-					    &lists->engine[id].ctx_wa_list,
-					    str) == 0;
+		set_error_once(&err,
+			       engine_wa_list_verify(ce,
+						     &lists->engine[id].ctx_wa_list,
+						     wa_verify,
+						     (void *)str));
 
 		intel_context_put(ce);
 	}
 
-	return ok;
+	return err;
 }
 
 static int
@@ -1215,7 +1224,7 @@ live_gpu_reset_workarounds(void *arg)
 	struct intel_gt *gt = arg;
 	intel_wakeref_t wakeref;
 	struct wa_lists *lists;
-	bool ok;
+	int err;
 
 	if (!intel_has_gpu_reset(gt))
 		return 0;
@@ -1231,13 +1240,13 @@ live_gpu_reset_workarounds(void *arg)
 
 	reference_lists_init(gt, lists);
 
-	ok = verify_wa_lists(gt, lists, "before reset");
-	if (!ok)
+	err = verify_wa_lists(gt, lists, "before reset");
+	if (err)
 		goto out;
 
 	intel_gt_reset(gt, ALL_ENGINES, "live_workarounds");
 
-	ok = verify_wa_lists(gt, lists, "after reset");
+	err = verify_wa_lists(gt, lists, "after reset");
 
 out:
 	reference_lists_fini(gt, lists);
@@ -1245,7 +1254,7 @@ out:
 	igt_global_reset_unlock(gt);
 	kfree(lists);
 
-	return ok ? 0 : -ESRCH;
+	return err;
 }
 
 static int
@@ -1276,7 +1285,6 @@ live_engine_reset_workarounds(void *arg)
 	for_each_engine(engine, gt, id) {
 		struct intel_selftest_saved_policy saved;
 		bool using_guc = intel_engine_uses_guc(engine);
-		bool ok;
 		int ret2;
 
 		pr_info("Verifying after %s reset...\n", engine->name);
@@ -1292,11 +1300,9 @@ live_engine_reset_workarounds(void *arg)
 		}
 
 		if (!using_guc) {
-			ok = verify_wa_lists(gt, lists, "before reset");
-			if (!ok) {
-				ret = -ESRCH;
+			ret = verify_wa_lists(gt, lists, "before reset");
+			if (ret)
 				goto err;
-			}
 
 			ret = intel_engine_reset(engine, "live_workarounds:idle");
 			if (ret) {
@@ -1304,11 +1310,9 @@ live_engine_reset_workarounds(void *arg)
 				goto err;
 			}
 
-			ok = verify_wa_lists(gt, lists, "after idle reset");
-			if (!ok) {
-				ret = -ESRCH;
+			ret = verify_wa_lists(gt, lists, "after idle reset");
+			if (ret)
 				goto err;
-			}
 		}
 
 		ret = igt_spinner_init(&spin, engine->gt);
@@ -1353,9 +1357,8 @@ skip:
 		igt_spinner_end(&spin);
 		igt_spinner_fini(&spin);
 
-		ok = verify_wa_lists(gt, lists, "after busy reset");
-		if (!ok)
-			ret = -ESRCH;
+		if (ret == 0)
+			ret = verify_wa_lists(gt, lists, "after busy reset");
 
 err:
 		intel_context_put(ce);
