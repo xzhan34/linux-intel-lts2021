@@ -1277,6 +1277,9 @@
 #define EU_PERF_CNTL1				PERF_REG(0xe558)
 #define EU_PERF_CNTL5				PERF_REG(0xe55c)
 
+#define XEHPC_ROW_INSTDONE			MCR_REG(0xe580)
+#define   XEHPC_IC_DONE				REG_BIT(12)
+
 #define XEHP_HDC_CHICKEN0			MCR_REG(0xe5f0)
 #define   LSC_L1_FLUSH_CTL_3D_DATAPORT_FLUSH_EVENTS_MASK	REG_GENMASK(13, 11)
 #define ICL_HDC_MODE				MCR_REG(0xe5f4)
@@ -1526,7 +1529,21 @@
 #define   ECOBITS_PPGTT_CACHE4B			(0 << 8)
 
 #define GEN12_RCU_MODE				_MMIO(0x14800)
+#define   XEHP_RCU_MODE_FIXED_SLICE_CCS_MODE	REG_BIT(1)
 #define   GEN12_RCU_MODE_CCS_ENABLE		REG_BIT(0)
+
+/*
+ * Total of 4 cslices, where each cslice is in the form:
+ *   [0-3]     CCS ID
+ *   [4-6]     RSVD
+ *   [7]       Disabled
+ */
+#define XEHP_CCS_MODE				_MMIO(0x14804)
+#define   XEHP_CCS_MODE_CSLICE_0_3_MASK		REG_GENMASK(11, 0) /* 3 bits per cslice */
+#define   XEHP_CCS_MODE_CSLICE_MASK		0x7 /* CCS0-3 + rsvd */
+#define   XEHP_CCS_MODE_CSLICE_WIDTH		ilog2(XEHP_CCS_MODE_CSLICE_MASK + 1)
+#define   XEHP_CCS_MODE_CSLICE(cslice, ccs) \
+	(ccs << (cslice * XEHP_CCS_MODE_CSLICE_WIDTH))
 
 #define GEN12_RCU_ASYNC_FLUSH			_MMIO(0x149fc)
 #define   GEN12_RCU_ASYNC_FLUSH_IN_PROGRESS	REG_BIT(31)

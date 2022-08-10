@@ -3236,6 +3236,12 @@ general_render_compute_wa_init(struct intel_engine_cs *engine, struct i915_wa_li
 		wa_masked_en(wal, VFG_PREEMPTION_CHICKEN, POLYGON_TRIFAN_LINELOOP_DISABLE);
 	}
 
+	if (IS_PONTEVECCHIO(i915)) {
+		/* Wa_16017028706 */
+		wa_masked_en(wal, GEN12_RCU_MODE,
+			     XEHP_RCU_MODE_FIXED_SLICE_CCS_MODE);
+	}
+
 	if (IS_XEHPSDV(i915)) {
 		/* Wa_1409954639 */
 		wa_mcr_masked_en(wal,

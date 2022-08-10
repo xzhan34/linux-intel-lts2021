@@ -21,6 +21,7 @@
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_buffer_pool.h"
+#include "gt/intel_gt_ccs_mode.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_ring.h"
 
@@ -4209,6 +4210,23 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 	if (unlikely(err))
 		goto err_sfence;
 
+	/*
+	 * For any client that wishes to use compute engines, even if
+	 * they are not requiring them for this execbuf, we will change
+	 * the CCS mode and the configuration, and this configuration
+	 * will remain locked until those compute engines are idle.
+	 * That is a second client wishing to use a different compute
+	 * mode will have to wait until the first is finished, even
+	 * if both do not use compute in this sequence. The benefit
+	 * is that the system is always ready for the first client if
+	 * they need to use compute in conjunction with the context
+	 * and must not block.
+	 */
+	err = intel_gt_configure_ccs_mode(eb.context->engine->gt,
+					  eb.gem_context->engine_mask);
+	if (err)
+		goto err_exit;
+
 	i915_gem_vm_bind_lock(eb.context->vm);
 
 	err = eb_lookup_vmas(&eb);
@@ -4302,6 +4320,7 @@ err_vma:
 		intel_context_put(eb.reloc_context);
 err_vm_bind_unlock:
 	i915_gem_vm_bind_unlock(eb.context->vm);
+err_exit:
 	eb_exit(&eb);
 err_sfence:
 	kfree(sfence);

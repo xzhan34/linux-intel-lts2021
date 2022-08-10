@@ -421,8 +421,10 @@ static int guc_mmio_regset_init(struct temp_regset *regset,
 	ret |= GUC_MMIO_REG_ADD(gt, regset, RING_IMR(base), false);
 
 	if ((engine->flags & I915_ENGINE_FIRST_RENDER_COMPUTE) &&
-	    CCS_MASK(engine->gt))
+	    CCS_MASK(engine->gt)) {
 		ret |= GUC_MMIO_REG_ADD(gt, regset, GEN12_RCU_MODE, true);
+		ret |= GUC_MMIO_REG_ADD(gt, regset, XEHP_CCS_MODE, false);
+	}
 
 	for (i = 0, wa = wal->list; i < wal->count; i++, wa++) {
 		/* Wa_1607720814 - dummy write must be last not sorted! */

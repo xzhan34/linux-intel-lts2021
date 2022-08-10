@@ -12,6 +12,7 @@
 #include "intel_engine_pm.h"
 #include "intel_flat_ppgtt_pool.h"
 #include "intel_gt.h"
+#include "intel_gt_ccs_mode.h"
 #include "intel_gt_clock_utils.h"
 #include "intel_gt_pm.h"
 #include "intel_gt_requests.h"
@@ -109,6 +110,8 @@ static int __gt_park(struct intel_wakeref *wf)
 	intel_rps_park(&gt->rps);
 	intel_rc6_park(&gt->rc6);
 	i915_vma_park(gt);
+
+	intel_gt_park_ccs_mode(gt, NULL);
 
 	/* Everything switched off, flush any residual interrupt just in case */
 	intel_synchronize_irq(i915);

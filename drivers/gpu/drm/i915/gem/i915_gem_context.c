@@ -399,6 +399,18 @@ static struct i915_gem_engines *default_engines(struct i915_gem_context *ctx)
 	return e;
 }
 
+static intel_engine_mask_t engine_mask(struct i915_gem_engines *engines)
+{
+	struct i915_gem_engines_iter it;
+	intel_engine_mask_t mask = 0;
+	struct intel_context *ce;
+
+	for_each_gem_engine(ce, engines, it)
+		mask |= ce->engine->mask;
+
+	return mask;
+}
+
 void i915_gem_context_release(struct kref *ref)
 {
 	struct i915_gem_context *ctx = container_of(ref, typeof(*ctx), ref);
@@ -839,6 +851,7 @@ static struct i915_gem_context *__create_context(struct intel_gt *gt)
 		err = PTR_ERR(e);
 		goto err_free;
 	}
+	ctx->engine_mask = engine_mask(e);
 	RCU_INIT_POINTER(ctx->engines, e);
 
 	INIT_RADIX_TREE(&ctx->handles_vma, GFP_KERNEL);
@@ -2060,6 +2073,7 @@ replace:
 		i915_gem_context_set_user_engines(ctx);
 	else
 		i915_gem_context_clear_user_engines(ctx);
+	ctx->engine_mask = engine_mask(set.engines);
 	set.engines = rcu_replace_pointer(ctx->engines, set.engines, 1);
 	mutex_unlock(&ctx->engines_mutex);
 
