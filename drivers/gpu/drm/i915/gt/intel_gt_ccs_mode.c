@@ -322,3 +322,6 @@ void intel_gt_fini_ccs_mode(struct intel_gt *gt)
 {
 	mutex_destroy(&gt->ccs.mutex);
 }
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#include "selftest_gt_ccs_mode.c"
+#endif
