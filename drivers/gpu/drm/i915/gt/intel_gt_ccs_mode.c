@@ -100,6 +100,13 @@ void intel_gt_apply_ccs_mode(struct intel_gt *gt)
 	if (gt->ccs.active)
 		config = gt->ccs.config;
 
+	/*
+	 * SRIOV PF will always use ccs-4 mode from init/reset onwards
+	 * as we have asked GUC to restore CCS_MODE for engine resets
+	 */
+	if (IS_SRIOV_PF(gt->i915) && IS_PONTEVECCHIO(gt->i915))
+		config = ALL_CCS(gt);
+
 	if (config)
 		__intel_gt_apply_ccs_mode(gt, config);
 
@@ -128,6 +135,17 @@ static bool wait_for_compute_idle(struct intel_gt *gt)
 static bool needs_ccs_mode(struct intel_gt *gt)
 {
 	if (!IS_PONTEVECCHIO(gt->i915))
+		return false;
+
+	/*
+	 * Only the PF knows the entire system state and can deduce the
+	 * appropriate engine:slice mapping. However, the PF doesn't know
+	 * the user's requested configuration and so cannot allocate
+	 * precise mappings ahead of time. Instead we opt to apply a static
+	 * 1:1 mapping between CCS engines and compute slices -- we never
+	 * need to reconfigure.
+	 */
+	if (IS_SRIOV(gt->i915))
 		return false;
 
 	return true;
