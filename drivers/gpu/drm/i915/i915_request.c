@@ -1012,14 +1012,12 @@ err_unreserve:
 }
 
 struct i915_request *
-i915_request_create(struct intel_context *ce)
+i915_request_create_locked(struct intel_context *ce, gfp_t gfp)
 {
+	struct intel_timeline *tl = ce->timeline;
 	struct i915_request *rq;
-	struct intel_timeline *tl;
 
-	tl = intel_context_timeline_lock(ce);
-	if (IS_ERR(tl))
-		return ERR_CAST(tl);
+	lockdep_assert_held(&tl->mutex);
 
 	/* Move our oldest request to the slab-cache (if not in use!) */
 	rq = list_first_entry(&tl->requests, typeof(*rq), link);
@@ -1027,13 +1025,29 @@ i915_request_create(struct intel_context *ce)
 		i915_request_retire(rq);
 
 	intel_context_enter(ce);
-	rq = __i915_request_create(ce, GFP_KERNEL);
+	rq = __i915_request_create(ce, gfp);
 	intel_context_exit(ce); /* active reference transferred to request */
 	if (IS_ERR(rq))
-		goto err_unlock;
+		return rq;
 
 	/* Check that we do not interrupt ourselves with a new request */
 	rq->cookie = lockdep_pin_lock(&tl->mutex);
+	return rq;
+}
+
+struct i915_request *
+i915_request_create(struct intel_context *ce)
+{
+	struct intel_timeline *tl;
+	struct i915_request *rq;
+
+	tl = intel_context_timeline_lock(ce);
+	if (IS_ERR(tl))
+		return ERR_CAST(tl);
+
+	rq = i915_request_create_locked(ce, GFP_KERNEL | __GFP_NOWARN);
+	if (IS_ERR(rq))
+		goto err_unlock;
 
 	return rq;
 

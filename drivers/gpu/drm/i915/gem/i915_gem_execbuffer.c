@@ -3232,7 +3232,6 @@ static int eb_request_add(struct i915_execbuffer *eb, struct i915_request *rq,
 	struct i915_request *prev;
 
 	lockdep_assert_held(&tl->mutex);
-	lockdep_unpin_lock(&tl->mutex, rq->cookie);
 
 	trace_i915_request_add(rq);
 
@@ -3273,6 +3272,21 @@ static int eb_request_add(struct i915_execbuffer *eb, struct i915_request *rq,
 static int eb_requests_add(struct i915_execbuffer *eb, int err)
 {
 	int i;
+
+	/*
+	 * The pin operates on the lockclass. In order to prepare
+	 * to unlock a nested and pinned lock, we must first unpin
+	 * all the locks en masse.
+	 */
+	for_each_batch_add_order(eb, i) {
+		struct i915_request *rq = eb->requests[i];
+
+		if (!rq)
+			continue;
+
+		lockdep_unpin_lock(&i915_request_timeline(rq)->mutex,
+				rq->cookie);
+	}
 
 	/*
 	 * We iterate in reverse order of creation to release timeline mutexes in
@@ -3435,8 +3449,41 @@ eb_find_context(struct i915_execbuffer *eb, unsigned int context_number)
 			return child;
 
 	GEM_BUG_ON("Context not found");
+	return eb->context;
+}
 
-	return NULL;
+static inline struct intel_context *
+eb_lock_context(struct i915_execbuffer *eb, unsigned int context_number)
+{
+	struct intel_context *ce = eb_find_context(eb, context_number);
+	struct intel_timeline *tl = ce->timeline;
+
+	if (!intel_context_is_child(ce)) {
+		if (mutex_lock_interruptible(&tl->mutex))
+			return ERR_PTR(-EINTR);
+	} else {
+		mutex_lock_nest_lock(&tl->mutex,
+				     &ce->parallel.parent->timeline->mutex);
+	}
+
+	return ce;
+}
+
+static inline struct i915_request *
+eb_request_create(struct i915_execbuffer *eb, unsigned int context_number)
+{
+	struct intel_context *ce;
+	struct i915_request *rq;
+
+	ce = eb_lock_context(eb, context_number);
+	if (IS_ERR(ce))
+		return ERR_CAST(ce);
+
+	rq = i915_request_create_locked(ce, GFP_KERNEL | __GFP_NOWARN);
+	if (IS_ERR(rq))
+		mutex_unlock(&ce->timeline->mutex);
+
+	return rq;
 }
 
 static struct sync_file *
@@ -3448,7 +3495,7 @@ eb_requests_create(struct i915_execbuffer *eb, struct dma_fence *in_fence,
 
 	for_each_batch_create_order(eb, i) {
 		/* Allocate a request for this batch buffer nice and early. */
-		eb->requests[i] = i915_request_create(eb_find_context(eb, i));
+		eb->requests[i] = eb_request_create(eb, i);
 		if (IS_ERR(eb->requests[i])) {
 			out_fence = ERR_CAST(eb->requests[i]);
 			eb->requests[i] = NULL;

@@ -1121,6 +1121,30 @@ int lrc_alloc(struct intel_context *ce, struct intel_engine_cs *engine)
 			goto err_ring;
 		}
 
+		/*
+		 * To support mutex_lock_nest_lock(), lockdep requires the
+		 * outer/inner (our parent/child contexts) to be of distinct
+		 * lockclasses.
+		 *
+		 * Like lockdep_set_subclass() but we need to preserve the
+		 * original lockclass name.
+		 */
+#if IS_ENABLED(CONFIG_LOCKDEP)
+		lockdep_init_map_waits(&tl->mutex.dep_map,
+				       tl->mutex.dep_map.name,
+				       tl->mutex.dep_map.key,
+				       intel_context_is_child(ce),
+				       tl->mutex.dep_map.wait_type_inner,
+				       tl->mutex.dep_map.wait_type_outer);
+		/*
+		 * Due to an interesting quirk in lockdep's internal debug
+		 * tracking, after setting a subclass we must ensure the lock
+		 * is used. Otherwise, nr_unused_locks is incremented once too
+		 * often.
+		 */
+		might_lock(&tl->mutex);
+#endif
+
 		ce->timeline = tl;
 	}
 
