@@ -3654,9 +3654,18 @@ void i915_debugger_context_param_engines(struct i915_gem_context *ctx)
 	kfree(event_param);
 }
 
+/**
+ * i915_debugger_handle_engine_attention() - handle attentions if any
+ * @engine: engine
+ *
+ * Check if there are eu thread attentions in engine and if so
+ * pass a message to debugger to handle them.
+ *
+ * Returns: number of attentions present or negative on error
+ */
 int i915_debugger_handle_engine_attention(struct intel_engine_cs *engine)
 {
-	int ret;
+	int ret, attentions;
 
 	if (!intel_engine_has_eu_attention(engine))
 		return 0;
@@ -3665,14 +3674,14 @@ int i915_debugger_handle_engine_attention(struct intel_engine_cs *engine)
 	if (ret <= 0)
 		return ret;
 
+	attentions = ret;
+
 	/* We dont care if it fails reach this debugger at this time */
 	ret = i915_debugger_send_engine_attention(engine);
-
-	/* We can resolve on next tick as discovery not yet done */
 	if (ret == -EBUSY)
-		return 0;
+		return attentions; /* Discovery in progress, fake it */
 
-	return ret;
+	return ret ?: attentions;
 }
 
 static bool i915_debugger_active_on_client(struct i915_drm_client *client)
