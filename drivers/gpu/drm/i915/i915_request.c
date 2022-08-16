@@ -1242,7 +1242,10 @@ __emit_semaphore_wait(struct i915_request *to,
 static bool
 can_use_semaphore_wait(struct i915_request *to, struct i915_request *from)
 {
-	return to->engine->gt->ggtt == from->engine->gt->ggtt;
+	if (i915_request_has_initial_breadcrumb(to))
+		return false;
+
+	return to->engine->gt->ggtt == READ_ONCE(from->engine)->gt->ggtt;
 }
 
 static int
@@ -1257,9 +1260,6 @@ emit_semaphore_wait(struct i915_request *to,
 		goto await_fence;
 
 	if (!intel_context_use_semaphores(to->context))
-		goto await_fence;
-
-	if (i915_request_has_initial_breadcrumb(to))
 		goto await_fence;
 
 	/*
@@ -1363,9 +1363,8 @@ __i915_request_await_execution(struct i915_request *to,
 	 * immediate execution, and so we must wait until it reaches the
 	 * active slot.
 	 */
-	if (can_use_semaphore_wait(to, from) &&
-	    intel_engine_has_semaphores(to->engine) &&
-	    !i915_request_has_initial_breadcrumb(to)) {
+	if (intel_engine_has_semaphores(to->engine) &&
+	    can_use_semaphore_wait(to, from)) {
 		err = __emit_semaphore_wait(to, from, i915_request_seqno(from) - 1);
 		if (err < 0)
 			return err;

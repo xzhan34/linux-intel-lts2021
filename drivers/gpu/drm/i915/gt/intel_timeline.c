@@ -399,6 +399,9 @@ int intel_timeline_read_hwsp(struct i915_request *from,
 		goto out;
 	}
 
+	/* Make sure this GGTT address is visible to the reader */
+	GEM_BUG_ON(tl->hwsp_ggtt->vm != &to->engine->gt->ggtt->vm);
+
 	err = i915_active_add_request(&tl->active, to);
 
 out:
