@@ -437,7 +437,7 @@ static int thread_global_clear(void *arg)
 	return threaded_migrate(arg, __thread_global_clear, 0);
 }
 
-int intel_migrate_live_selftests(struct drm_i915_private *i915)
+static int __maybe_unused intel_migrate_live_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(live_migrate_copy),
@@ -659,7 +659,7 @@ err_src:
 	return 0;
 }
 
-int intel_migrate_perf_selftests(struct drm_i915_private *i915)
+static int __maybe_unused intel_migrate_perf_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(perf_clear_blt),

@@ -258,7 +258,7 @@ static struct intel_context *pinned_context(struct intel_gt *gt)
 	return ce;
 }
 
-int intel_migrate_init(struct intel_migrate *m, struct intel_gt *gt)
+int __maybe_unused intel_migrate_init(struct intel_migrate *m, struct intel_gt *gt)
 {
 	struct intel_context *ce;
 
@@ -1111,7 +1111,7 @@ out:
 	return err;
 }
 
-void intel_migrate_fini(struct intel_migrate *m)
+void __maybe_unused intel_migrate_fini(struct intel_migrate *m)
 {
 	struct intel_context *ce;
 

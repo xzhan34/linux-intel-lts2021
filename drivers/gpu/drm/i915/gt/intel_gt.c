@@ -716,8 +716,6 @@ int intel_gt_init(struct intel_gt *gt)
 	if (err)
 		goto err_gt;
 
-	intel_migrate_init(&gt->migrate, gt);
-
 	intel_pxp_init(&gt->pxp);
 
 	goto out_fw;
@@ -745,7 +743,6 @@ void intel_gt_driver_remove(struct intel_gt *gt)
 
 	__intel_gt_disable(gt);
 
-	intel_migrate_fini(&gt->migrate);
 	intel_uc_driver_remove(&gt->uc);
 
 	intel_engines_release(gt);
