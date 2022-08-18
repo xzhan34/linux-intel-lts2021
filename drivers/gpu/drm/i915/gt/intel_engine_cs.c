@@ -1750,30 +1750,6 @@ bool intel_engine_is_idle(struct intel_engine_cs *engine)
 	return ring_is_idle(engine);
 }
 
-bool intel_engines_are_idle(struct intel_gt *gt)
-{
-	struct intel_engine_cs *engine;
-	enum intel_engine_id id;
-
-	/*
-	 * If the driver is wedged, HW state may be very inconsistent and
-	 * report that it is still busy, even though we have stopped using it.
-	 */
-	if (intel_gt_is_wedged(gt))
-		return true;
-
-	/* Already parked (and passed an idleness test); must still be idle */
-	if (!READ_ONCE(gt->awake))
-		return true;
-
-	for_each_engine(engine, gt, id) {
-		if (!intel_engine_is_idle(engine))
-			return false;
-	}
-
-	return true;
-}
-
 bool intel_engine_irq_enable(struct intel_engine_cs *engine)
 {
 	if (!engine->irq_enable)
