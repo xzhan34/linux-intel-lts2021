@@ -177,17 +177,18 @@ struct drm_i915_private *mock_gem_device(void)
 		I915_GTT_PAGE_SIZE_64K |
 		I915_GTT_PAGE_SIZE_2M;
 
+	intel_root_gt_init_early(i915);
+	mock_uncore_init(&i915->uncore, i915);
+	atomic_inc(&to_gt(i915)->wakeref.count); /* disable; no hw support */
+	to_gt(i915)->awake = -ENODEV;
+	mock_gt_probe(i915);
+
 	mkwrite_device_info(i915)->memory_regions = REGION_SMEM;
 	intel_memory_regions_hw_probe(i915);
 
 	spin_lock_init(&i915->gpu_error.lock);
 
 	i915_gem_init__mm(i915);
-	intel_root_gt_init_early(i915);
-	mock_uncore_init(&i915->uncore, i915);
-	atomic_inc(&to_gt(i915)->wakeref.count); /* disable; no hw support */
-	to_gt(i915)->awake = -ENODEV;
-	mock_gt_probe(i915);
 
 	i915->wq = alloc_ordered_workqueue("mock", 0);
 	if (!i915->wq)
