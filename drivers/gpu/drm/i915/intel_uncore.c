@@ -2252,6 +2252,8 @@ static const struct i915_range vf_accessible_regs[] = {
 	{ .start = 0x1901f0, .end = 0x1901f0 },
 	{ .start = 0x1901f8, .end = 0x1901f8 },
 	{ .start = 0x190240, .end = 0x19024c },
+	{ .start = 0x190300, .end = 0x190304 },
+	{ .start = 0x19030c, .end = 0x19031c },
 };
 
 static bool reg_is_vf_accessible(u32 offset)
