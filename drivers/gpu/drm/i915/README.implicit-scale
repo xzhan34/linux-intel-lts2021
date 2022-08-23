@@ -1,4 +1,4 @@
-Implicit Scaling
+Implicit Scaling (done)
 D: Michael J. Ruhl <michael.j.ruhl@intel.com>
 
 The implicit scaling feature "scales" a buffer to match the number of
