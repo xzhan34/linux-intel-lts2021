@@ -1,0 +1,14 @@
+Implicit Scaling
+D: Michael J. Ruhl <michael.j.ruhl@intel.com>
+
+The implicit scaling feature "scales" a buffer to match the number of
+tiles for a GPU.  The current mechanism is to export a dma-buf file
+descriptor for each buffer.
+
+It is desired that only one file descriptor be exported for the
+combinded buffers.
+
+Future work will allow a buffer object to have mulitple memory regions
+for an object.  For now this hack is introduced to "pair" two buffer
+objects together, so that on dma-buf import, a combined scatter gather
+table will be availble.
