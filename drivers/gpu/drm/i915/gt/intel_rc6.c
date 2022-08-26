@@ -481,7 +481,7 @@ static bool bxt_check_bios_rc6_setup(struct intel_rc6 *rc6)
 	return enable_rc6;
 }
 
-static bool rc6_supported(struct intel_rc6 *rc6)
+static bool rc6_exists(struct intel_rc6 *rc6)
 {
 	struct drm_i915_private *i915 = rc6_to_i915(rc6);
 
@@ -493,6 +493,13 @@ static bool rc6_supported(struct intel_rc6 *rc6)
 
 	if (is_mock_gt(rc6_to_gt(rc6)))
 		return false;
+
+	return true;
+}
+
+static bool rc6_supported(struct intel_rc6 *rc6)
+{
+	struct drm_i915_private *i915 = rc6_to_i915(rc6);
 
 	if (IS_GEN9_LP(i915) && !bxt_check_bios_rc6_setup(rc6)) {
 		drm_notice(&i915->drm,
@@ -557,7 +564,7 @@ void intel_rc6_init(struct intel_rc6 *rc6)
 	/* Disable runtime-pm until we can save the GPU state with rc6 pctx */
 	rpm_get(rc6);
 
-	if (!rc6_supported(rc6))
+	if (!rc6_exists(rc6))
 		return;
 
 	if (IS_CHERRYVIEW(i915))
@@ -569,6 +576,9 @@ void intel_rc6_init(struct intel_rc6 *rc6)
 
 	/* Sanitize rc6, ensure it is disabled before we are ready. */
 	__intel_rc6_disable(rc6);
+
+	if (!rc6_supported(rc6))
+		err = -ECANCELED;
 
 	rc6->supported = err == 0;
 }
