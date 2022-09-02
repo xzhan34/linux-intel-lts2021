@@ -1417,6 +1417,9 @@ static void engine_record_registers(struct intel_engine_coredump *ee)
 	const struct intel_engine_cs *engine = ee->engine;
 	struct drm_i915_private *i915 = engine->i915;
 
+	if (IS_SRIOV_VF(i915))
+		return;
+
 	if (GRAPHICS_VER(i915) >= 6) {
 		ee->rc_psmi = ENGINE_READ(engine, RING_PSMI_CTL);
 
@@ -2047,9 +2050,11 @@ gt_record_uc(struct intel_gt_coredump *gt,
 	 * log times to system times (in conjunction with the error->boottime and
 	 * gt->clock_frequency fields saved elsewhere).
 	 */
-	error_uc->guc.timestamp = intel_uncore_read(gt->_gt->uncore, GUCPMTIMESTAMP);
-	error_uc->guc.vma_log = i915_vma_coredump_create(gt->_gt, uc->guc.log.vma,
-							 "GuC log buffer", compress);
+	if (!IS_SRIOV_VF(gt->_gt->i915)) {
+		error_uc->guc.timestamp = intel_uncore_read(gt->_gt->uncore, GUCPMTIMESTAMP);
+		error_uc->guc.vma_log = i915_vma_coredump_create(gt->_gt, uc->guc.log.vma,
+								 "GuC log buffer", compress);
+	}
 	error_uc->guc.vma_ctb = i915_vma_coredump_create(gt->_gt, uc->guc.ct.vma,
 							 "GuC CT buffer", compress);
 	error_uc->guc.last_fence = uc->guc.ct.requests.last_fence;
@@ -2397,6 +2402,10 @@ intel_gt_coredump_alloc(struct intel_gt *gt, gfp_t gfp, u32 dump_flags)
 	gc->_gt = gt;
 	gc->awake = intel_gt_pm_is_awake(gt);
 	gt_record_info(gc);
+
+	/* We can't record anything more on VF */
+	if (IS_SRIOV_VF(gt->i915))
+		return gc;
 
 	gt_record_display_regs(gc);
 	gt_record_global_nonguc_regs(gc);
