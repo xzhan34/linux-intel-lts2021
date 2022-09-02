@@ -16,3 +16,4 @@
  * Tests are executed in order by igt/i915_selftest
  */
 selftest(sanitycheck, i915_wip_sanitycheck) /* keep first (igt selfcheck) */
+selftest(gt_gtt, intel_gtt_wip_selftests)
