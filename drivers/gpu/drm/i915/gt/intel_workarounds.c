@@ -142,6 +142,16 @@ static void _wa_add(struct i915_wa_list *wal, const struct i915_wa *wa)
 			wa_->set &= ~wa->clr;
 		}
 
+		GEM_WARN_ON(wa->masked_reg != wa_->masked_reg);
+
+		if (wa->masked_reg) {
+			GEM_WARN_ON(wa->clr);
+			GEM_WARN_ON(wa_->clr);
+
+			/* Keep the enable mask, reset the actual target bits */
+			wa_->set &= ~(wa->set >> 16);
+		}
+
 		wa_->set |= wa->set;
 		wa_->clr |= wa->clr;
 		wa_->read |= wa->read;
