@@ -65,6 +65,8 @@
 #include "gt/intel_workarounds.h"
 #include "gt/uc/intel_uc.h"
 
+#include "spi/intel_spi.h"
+
 #include "i915_drm_client.h"
 #include "i915_gem.h"
 #include "i915_gem_gtt.h"
@@ -797,6 +799,8 @@ struct drm_i915_private {
 	struct intel_runtime_pm runtime_pm;
 
 	struct i915_perf perf;
+
+	struct intel_spi spi;
 
 	struct i915_hwmon *hwmon;
 

@@ -76,6 +76,8 @@
 
 #include "pxp/intel_pxp_pm.h"
 
+#include "spi/intel_spi.h"
+
 #include "i915_debugfs.h"
 #include "i915_driver.h"
 #include "i915_drm_client.h"
@@ -914,6 +916,9 @@ static void i915_driver_register(struct drm_i915_private *dev_priv)
 	i915_setup_sysfs(dev_priv);
 	i915_register_sysrq(dev_priv);
 
+
+	intel_spi_init(&dev_priv->spi, dev_priv);
+
 	for_each_gt(gt, dev_priv, i)
 		intel_gt_driver_register(gt);
 
@@ -955,6 +960,8 @@ static void i915_driver_unregister(struct drm_i915_private *dev_priv)
 	intel_display_driver_unregister(dev_priv);
 
 	i915_hwmon_unregister(dev_priv);
+
+	intel_spi_fini(&dev_priv->spi);
 
 	i915_perf_unregister(dev_priv);
 	/* GT should be available until PMU is gone */
