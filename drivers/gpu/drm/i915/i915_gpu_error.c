@@ -830,6 +830,10 @@ static void err_print_gt_global_nonguc(struct drm_i915_error_state_buf *m,
 	int i;
 
 	err_printf(m, "GT awake: %s\n", str_yes_no(gt->awake));
+
+	if (IS_SRIOV_VF(gt->_gt->i915))
+		return;
+
 	err_printf(m, "CS timestamp frequency: %u Hz, %d ns\n",
 		   gt->clock_frequency, gt->clock_period_ns);
 	err_printf(m, "EIR: 0x%08x\n", gt->eir);
@@ -2115,6 +2119,9 @@ static void gt_record_global_nonguc_regs(struct intel_gt_coredump *gt)
 		gt->gtier[0] = intel_uncore_read(uncore, GTIER);
 		gt->ngtier = 1;
 	}
+
+	if (IS_SRIOV_VF(i915))
+		return;
 
 	gt->eir = intel_uncore_read(uncore, EIR);
 	gt->pgtbl_er = intel_uncore_read(uncore, PGTBL_ER);
