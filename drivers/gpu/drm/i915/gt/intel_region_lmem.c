@@ -76,6 +76,9 @@ static bool get_tracedebug_region(struct intel_uncore *uncore,
 	if (!IS_XEHPSDV(uncore->i915))
 		return false;
 
+	if (IS_SRIOV_VF(uncore->i915))
+		return false;
+
 	*size = intel_uncore_read(uncore, XEHP_DBGTRACEMEM_SZ);
 	if (!*size)
 		return false;
