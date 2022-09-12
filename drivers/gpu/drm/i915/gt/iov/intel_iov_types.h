@@ -30,6 +30,14 @@ struct intel_iov_config {
 };
 
 /**
+ * struct intel_iov_spare_config - PF spare configuration data.
+ * @ggtt_size: GGTT size.
+ */
+struct intel_iov_spare_config {
+	u64 ggtt_size;
+};
+
+/**
  * struct intel_iov_sysfs - IOV sysfs data.
  * @entries: array with kobjects that represent PF and VFs.
  */
@@ -43,6 +51,7 @@ struct intel_iov_sysfs {
  * @lock: protects provisionining data
  */
 struct intel_iov_provisioning {
+	struct intel_iov_spare_config spare;
 	struct intel_iov_config *configs;
 	struct mutex lock;
 };

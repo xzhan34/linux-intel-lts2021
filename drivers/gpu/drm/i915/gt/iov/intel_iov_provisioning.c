@@ -129,6 +129,64 @@ static u64 pf_get_ggtt_alignment(struct intel_iov *iov)
 	return SZ_4K;
 }
 
+static u64 pf_get_min_spare_ggtt(struct intel_iov *iov)
+{
+	/* this might be platform dependent */
+	return SZ_64M; /* XXX: preliminary */
+}
+
+static u64 pf_get_spare_ggtt(struct intel_iov *iov)
+{
+	u64 spare;
+
+	spare = iov->pf.provisioning.spare.ggtt_size;
+	spare = max_t(u64, spare, pf_get_min_spare_ggtt(iov));
+
+	return spare;
+}
+
+/**
+ * intel_iov_provisioning_set_spare_ggtt - Set size of the PF spare GGTT.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_set_spare_ggtt(struct intel_iov *iov, u64 size)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (size && size < pf_get_min_spare_ggtt(iov))
+		return -EINVAL;
+
+	if (check_round_up_overflow(size, pf_get_ggtt_alignment(iov), &size))
+		size = U64_MAX;
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	iov->pf.provisioning.spare.ggtt_size = size;
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return 0;
+}
+
+/**
+ * intel_iov_provisioning_get_spare_ggtt - Get size of the PF spare GGTT.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u64 intel_iov_provisioning_get_spare_ggtt(struct intel_iov *iov)
+{
+	u64 spare;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	spare = pf_get_spare_ggtt(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return spare;
+}
+
 static bool pf_is_valid_config_ggtt(struct intel_iov *iov, unsigned int id)
 {
 	GEM_BUG_ON(!intel_iov_is_pf(iov));

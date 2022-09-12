@@ -121,7 +121,33 @@ static const struct attribute_group *default_iov_attr_groups[] = {
 
 /* PF only attributes */
 
+static ssize_t ggtt_spare_iov_attr_show(struct intel_iov *iov,
+					unsigned int id, char *buf)
+{
+	GEM_WARN_ON(id);
+	return sysfs_emit(buf, "%llu\n", intel_iov_provisioning_get_spare_ggtt(iov));
+}
+
+static ssize_t ggtt_spare_iov_attr_store(struct intel_iov *iov,
+					 unsigned int id,
+					 const char *buf, size_t count)
+{
+	u64 size;
+	int err;
+
+	err = kstrtou64(buf, 0, &size);
+	if (err)
+		return err;
+
+	GEM_WARN_ON(id);
+	err = intel_iov_provisioning_set_spare_ggtt(iov, size);
+	return err ?: count;
+}
+
+IOV_ATTR(ggtt_spare);
+
 static struct attribute *pf_attrs[] = {
+	&ggtt_spare_iov_attr.attr,
 	NULL
 };
 
