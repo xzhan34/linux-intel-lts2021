@@ -43,13 +43,25 @@ struct prelim_i915_user_extension {
 #define PRELIM_UAPI_MINOR	1
 
 /* PRELIM ioctl's */
+
 /* PRELIM ioctl numbers go down from 0x5f */
 #define PRELIM_DRM_I915_RESERVED_FOR_VERSION	0x5f
 /* 0x5e is free, please use if needed */
+#define PRELIM_DRM_I915_GEM_VM_BIND		0x5d
+#define PRELIM_DRM_I915_GEM_VM_UNBIND		0x5c
 
 
 #define PRELIM_DRM_IOCTL_I915_GEM_CREATE_EXT		DRM_IOWR(DRM_COMMAND_BASE + DRM_I915_GEM_CREATE, struct prelim_drm_i915_gem_create_ext)
+#define PRELIM_DRM_IOCTL_I915_GEM_VM_BIND		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_BIND, struct prelim_drm_i915_gem_vm_bind)
+#define PRELIM_DRM_IOCTL_I915_GEM_VM_UNBIND		DRM_IOWR(DRM_COMMAND_BASE + PRELIM_DRM_I915_GEM_VM_UNBIND, struct prelim_drm_i915_gem_vm_bind)
 /* End PRELIM ioctl's */
+
+/* getparam */
+#define PRELIM_I915_PARAM               (1 << 16)
+
+/* VM_BIND feature availability */
+#define PRELIM_I915_PARAM_HAS_VM_BIND	(PRELIM_I915_PARAM | 6)
+/* End getparam */
 
 struct prelim_drm_i915_gem_create_ext {
 
@@ -206,6 +218,50 @@ struct prelim_drm_i915_query_memory_regions {
 
 	/* Info about each supported region */
 	struct prelim_drm_i915_memory_region_info regions[];
+};
+
+/**
+ * struct prelim_drm_i915_gem_vm_bind
+ *
+ * VA to object/buffer mapping to [un]bind.
+ *
+ * NOTE:
+ * A vm_bind will hold a reference on the BO which is released
+ * during corresponding vm_unbind or while closing the VM.
+ * Hence closing the BO alone will not ensure BO is released.
+ */
+struct prelim_drm_i915_gem_vm_bind {
+	/** vm to [un]bind **/
+	__u32 vm_id;
+
+	/** BO handle **/
+	__u32 handle; /* For unbind, it is reserved and must be 0 */
+
+	/** VA start to [un]bind **/
+	__u64 start;
+
+	/** Offset in object to [un]bind **/
+	__u64 offset;
+
+	/** VA length to [un]bind **/
+	__u64 length;
+
+	/** Flags **/
+	__u64 flags;
+#define PRELIM_I915_GEM_VM_BIND_IMMEDIATE	(1ull << 63)
+#define PRELIM_I915_GEM_VM_BIND_READONLY	(1ull << 62)
+
+	/**
+	 * Zero-terminated chain of extensions.
+	 *
+	 * No current extensions defined; mbz.
+	 */
+	__u64 extensions;
+};
+
+struct prelim_drm_i915_gem_vm_control {
+#define PRELIM_I915_VM_CREATE_FLAGS_USE_VM_BIND		(1 << 18)
+#define PRELIM_I915_VM_CREATE_FLAGS_UNKNOWN		(~(GENMASK(18, 18)))
 };
 
 #endif /* __I915_DRM_PRELIM_H__ */

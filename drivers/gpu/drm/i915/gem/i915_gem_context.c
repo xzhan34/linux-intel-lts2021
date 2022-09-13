@@ -1025,7 +1025,7 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 	if (!HAS_FULL_PPGTT(i915))
 		return -ENODEV;
 
-	if (args->flags)
+	if (args->flags & PRELIM_I915_VM_CREATE_FLAGS_UNKNOWN)
 		return -EINVAL;
 
 	ppgtt = i915_ppgtt_create(to_gt(i915));
@@ -1046,6 +1046,9 @@ int i915_gem_vm_create_ioctl(struct drm_device *dev, void *data,
 		       xa_limit_32b, GFP_KERNEL);
 	if (err)
 		goto err_put;
+
+	if (args->flags & PRELIM_I915_VM_CREATE_FLAGS_USE_VM_BIND)
+		ppgtt->vm.vm_bind_mode = true;
 
 	GEM_BUG_ON(id == 0); /* reserved for invalid/unassigned ppgtt */
 	args->vm_id = id;

@@ -1556,6 +1556,28 @@ i915_gem_context_lookup(struct drm_i915_file_private *file_priv, u32 id)
 	return ctx;
 }
 
+static inline struct i915_address_space *
+__i915_address_space_lookup_rcu(struct drm_i915_file_private *file_priv,
+				u32 id)
+{
+	return xa_load(&file_priv->vm_xa, id);
+}
+
+static inline struct i915_address_space *
+i915_address_space_lookup(struct drm_i915_file_private *file_priv,
+			  u32 id)
+{
+	struct i915_address_space *vm;
+
+	rcu_read_lock();
+	vm = __i915_address_space_lookup_rcu(file_priv, id);
+	if (vm)
+		vm = i915_vm_tryget(vm);
+	rcu_read_unlock();
+
+	return vm;
+}
+
 /* intel_device_info.c */
 static inline struct intel_device_info *
 mkwrite_device_info(struct drm_i915_private *dev_priv)

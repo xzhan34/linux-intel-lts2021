@@ -2090,6 +2090,34 @@ i915_gem_reject_pin_ioctl(struct drm_device *dev, void *data,
 	return -ENODEV;
 }
 
+static int i915_gem_vm_bind_ioctl(struct drm_device *dev, void *data,
+				  struct drm_file *file)
+{
+	struct prelim_drm_i915_gem_vm_bind *args = data;
+	struct i915_address_space *vm;
+
+	vm = i915_address_space_lookup(file->driver_priv, args->vm_id);
+	if (unlikely(!vm))
+		return -ENOENT;
+
+	i915_vm_put(vm);
+	return -EINVAL;
+}
+
+static int i915_gem_vm_unbind_ioctl(struct drm_device *dev, void *data,
+				    struct drm_file *file)
+{
+	struct prelim_drm_i915_gem_vm_bind *args = data;
+	struct i915_address_space *vm;
+
+	vm = i915_address_space_lookup(file->driver_priv, args->vm_id);
+	if (unlikely(!vm))
+		return -ENOENT;
+
+	i915_vm_put(vm);
+	return -EINVAL;
+}
+
 static const struct drm_ioctl_desc i915_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(I915_INIT, drm_noop, DRM_AUTH|DRM_MASTER|DRM_ROOT_ONLY),
 	DRM_IOCTL_DEF_DRV(I915_FLUSH, drm_noop, DRM_AUTH),
@@ -2151,6 +2179,8 @@ static const struct drm_ioctl_desc i915_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(I915_GEM_VM_DESTROY, i915_gem_vm_destroy_ioctl, DRM_RENDER_ALLOW),
 
 	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_CREATE_EXT, i915_gem_create_ioctl, DRM_RENDER_ALLOW),
+	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_VM_BIND, i915_gem_vm_bind_ioctl, DRM_RENDER_ALLOW),
+	PRELIM_DRM_IOCTL_DEF_DRV(I915_GEM_VM_UNBIND, i915_gem_vm_unbind_ioctl, DRM_RENDER_ALLOW),
 };
 
 /*

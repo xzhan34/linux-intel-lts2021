@@ -177,6 +177,9 @@ int i915_getparam_ioctl(struct drm_device *dev, void *data,
 	case I915_PARAM_OA_TIMESTAMP_FREQUENCY:
 		value = i915_perf_oa_timestamp_frequency(i915);
 		break;
+	case PRELIM_I915_PARAM_HAS_VM_BIND:
+		value = GRAPHICS_VER(i915) >= 12;
+		break;
 	default:
 		DRM_DEBUG("Unknown parameter %d\n", param->param);
 		return -EINVAL;

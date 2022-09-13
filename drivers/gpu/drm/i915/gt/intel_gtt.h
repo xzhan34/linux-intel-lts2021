@@ -296,6 +296,12 @@ struct i915_address_space {
 	/* Some systems support read-only mappings for GGTT and/or PPGTT */
 	bool has_read_only:1;
 
+	/**
+	 * true: allow only vm_bind method of binding.
+	 * false: allow only legacy execbuff method of binding.
+	 */
+	bool vm_bind_mode:1;
+
 	u8 top;
 	u8 pd_shift;
 	u8 scratch_order;
