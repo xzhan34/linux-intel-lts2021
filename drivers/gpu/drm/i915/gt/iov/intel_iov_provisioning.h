@@ -44,4 +44,6 @@ int intel_iov_provisioning_print_ggtt(struct intel_iov *iov, struct drm_printer 
 int intel_iov_provisioning_print_ctxs(struct intel_iov *iov, struct drm_printer *p);
 int intel_iov_provisioning_print_dbs(struct intel_iov *iov, struct drm_printer *p);
 
+int intel_iov_provisioning_print_available_ggtt(struct intel_iov *iov, struct drm_printer *p);
+
 #endif /* __INTEL_IOV_PROVISIONING_H__ */

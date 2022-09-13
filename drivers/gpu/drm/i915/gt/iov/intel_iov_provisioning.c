@@ -1456,6 +1456,51 @@ int intel_iov_provisioning_print_ggtt(struct intel_iov *iov, struct drm_printer 
 }
 
 /**
+ * intel_iov_provisioning_print_available_ggtt - Print available GGTT ranges.
+ * @iov: the IOV struct
+ * @p: the DRM printer
+ *
+ * Print GGTT ranges that are available for the provisioning.
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_print_available_ggtt(struct intel_iov *iov, struct drm_printer *p)
+{
+	struct i915_ggtt *ggtt = iov_to_gt(iov)->ggtt;
+	const struct drm_mm *mm = &ggtt->vm.mm;
+	const struct drm_mm_node *entry;
+	u64 alignment = pf_get_ggtt_alignment(iov);
+	u64 spare = pf_get_spare_ggtt(iov);
+	u64 hole_min_start = ggtt->pin_bias;
+	u64 hole_start, hole_end, hole_size;
+	u64 avail, total = 0;
+
+	mutex_lock(&ggtt->vm.mutex);
+
+	drm_mm_for_each_hole(entry, mm, hole_start, hole_end) {
+		hole_start = max(hole_start, hole_min_start);
+		hole_start = ALIGN(hole_start, alignment);
+		hole_end = ALIGN_DOWN(hole_end, alignment);
+		if (hole_start >= hole_end)
+			continue;
+		hole_size = hole_end - hole_start;
+		total += hole_size;
+
+		drm_printf(p, "range:\t%#08llx-%#08llx\t(%lluK)\n",
+			   hole_start, hole_end - 1,
+			   hole_size / SZ_1K);
+	}
+
+	mutex_unlock(&ggtt->vm.mutex);
+
+	avail = total > spare ? total - spare : 0;
+	drm_printf(p, "total:\t%llu\t(%lluK)\n", total, total / SZ_1K);
+	drm_printf(p, "avail:\t%llu\t(%lluK)\n", avail, avail / SZ_1K);
+
+	return 0;
+}
+
+/**
  * intel_iov_provisioning_print_ctxs - Print contexts provisioning data.
  * @iov: the IOV struct
  * @p: the DRM printer
