@@ -432,10 +432,13 @@ static const struct attribute_group pf_policies_attr_group = {
 	.attrs = pf_policies_attrs,
 };
 
+static const struct attribute_group pf_deprecated_attr_group;
+
 static const struct attribute_group *pf_attr_groups[] = {
 	&pf_attr_group,
 	&pf_available_attr_group,
 	&pf_policies_attr_group,
+	&pf_deprecated_attr_group,
 	NULL
 };
 
@@ -490,6 +493,10 @@ static ssize_t contexts_quota_iov_attr_store(struct intel_iov *iov,
 static ssize_t doorbells_quota_iov_attr_show(struct intel_iov *iov,
 					     unsigned int id, char *buf)
 {
+	/* XXX: for PF treat show(quota) as alias to show(free) */
+	if (!id)
+		return doorbells_free_iov_attr_show(iov, id, buf);
+
 	return sysfs_emit(buf, "%hu\n", intel_iov_provisioning_get_dbs(iov, id));
 }
 
@@ -499,6 +506,10 @@ static ssize_t doorbells_quota_iov_attr_store(struct intel_iov *iov,
 {
 	u16 num_dbs;
 	int err;
+
+	/* XXX: for PF treat store(quota) as alias to store(spare) */
+	if (!id)
+		return doorbells_spare_iov_attr_store(iov, 0, buf, count);
 
 	err = kstrtou16(buf, 0, &num_dbs);
 	if (err)
@@ -533,6 +544,16 @@ IOV_ATTR(ggtt_quota);
 IOV_ATTR(contexts_quota);
 IOV_ATTR(doorbells_quota);
 IOV_ATTR(lmem_quota);
+
+static struct attribute *pf_deprecated_attrs[] = {
+	&contexts_quota_iov_attr.attr,
+	&doorbells_quota_iov_attr.attr,
+	NULL
+};
+
+static const struct attribute_group pf_deprecated_attr_group = {
+	.attrs = pf_deprecated_attrs,
+};
 
 static struct attribute *vf_attrs[] = {
 	&ggtt_quota_iov_attr.attr,
