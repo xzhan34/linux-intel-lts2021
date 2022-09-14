@@ -64,11 +64,13 @@ struct intel_iov_config {
 /**
  * struct intel_iov_spare_config - PF spare configuration data.
  * @ggtt_size: GGTT size.
+ * @lmem_size: LMEM size.
  * @num_ctxs: number of GuC submission contexts.
  * @num_dbs: number of GuC doorbells.
  */
 struct intel_iov_spare_config {
 	u64 ggtt_size;
+	u64 lmem_size;
 	u16 num_ctxs;
 	u16 num_dbs;
 };

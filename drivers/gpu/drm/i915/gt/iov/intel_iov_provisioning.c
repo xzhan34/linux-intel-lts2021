@@ -1715,6 +1715,61 @@ u32 intel_iov_provisioning_get_preempt_timeout(struct intel_iov *iov, unsigned i
 	return preempt_timeout;
 }
 
+static u64 pf_get_min_spare_lmem(struct intel_iov *iov)
+{
+	/* this might be platform dependent */
+	return SZ_128M; /* XXX: preliminary */
+}
+
+static u64 pf_get_spare_lmem(struct intel_iov *iov)
+{
+	u64 spare;
+
+	spare = iov->pf.provisioning.spare.lmem_size;
+	spare = max_t(u64, spare, pf_get_min_spare_lmem(iov));
+
+	return spare;
+}
+
+/**
+ * intel_iov_provisioning_get_spare_lmem - Get size of the PF spare LMEM.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u64 intel_iov_provisioning_get_spare_lmem(struct intel_iov *iov)
+{
+	u64 spare;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	spare = pf_get_spare_lmem(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return spare;
+}
+
+/**
+ * intel_iov_provisioning_set_spare_lmem - Set size of the PF spare LMEM.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_set_spare_lmem(struct intel_iov *iov, u64 size)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (size && size < pf_get_min_spare_lmem(iov))
+		return -EINVAL;
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	iov->pf.provisioning.spare.lmem_size = size;
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return 0;
+}
+
 static int pf_provision_lmem(struct intel_iov *iov, unsigned int id, u64 size)
 {
 	struct intel_iov_provisioning *provisioning = &iov->pf.provisioning;
