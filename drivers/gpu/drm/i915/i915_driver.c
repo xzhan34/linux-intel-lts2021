@@ -1387,8 +1387,9 @@ static void i915_sanitize_force_driver_flr(struct drm_i915_private *i915)
 	/*
 	* Sanitize force_driver_flr at init time: If hardware needs driver-FLR at
 	* load / unload and the user has not forced it off then allow triggering driver-FLR.
+	* Exception: VFs cant access the driver-FLR registers.
 	*/
-	if (!INTEL_INFO(i915)->needs_driver_flr)
+	if (!INTEL_INFO(i915)->needs_driver_flr || IS_SRIOV_VF(i915))
 		i915->params.force_driver_flr = 0;
 	else if (i915->params.force_driver_flr == -1)
 		i915->params.force_driver_flr = 1;
