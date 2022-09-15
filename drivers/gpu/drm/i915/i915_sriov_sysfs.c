@@ -385,6 +385,26 @@ static void pf_teardown_device_link(struct drm_i915_private *i915)
 	sysfs_remove_link(&kobjs[0]->base, SRIOV_DEVICE_LINK_NAME);
 }
 
+static int pf_setup_prelim_link(struct drm_i915_private *i915)
+{
+	struct i915_sriov_pf *pf = &i915->sriov.pf;
+	struct i915_sriov_kobj *home = pf->sysfs.home;
+	int err;
+
+	err = sysfs_create_link(home->base.parent, &home->base,
+				SRIOV_KOBJ_HOME_NAME + sizeof(SRIOV_PRELIMINARY) - 1);
+	return err;
+}
+
+static void pf_teardown_prelim_link(struct drm_i915_private *i915)
+{
+	struct i915_sriov_pf *pf = &i915->sriov.pf;
+	struct i915_sriov_kobj *home = pf->sysfs.home;
+
+	sysfs_remove_link(home->base.parent,
+			  SRIOV_KOBJ_HOME_NAME + sizeof(SRIOV_PRELIMINARY) - 1);
+}
+
 static void pf_welcome(struct drm_i915_private *i915)
 {
 #if IS_ENABLED(CONFIG_DRM_I915_DEBUG)
@@ -441,6 +461,7 @@ int i915_sriov_sysfs_setup(struct drm_i915_private *i915)
 	if (unlikely(err))
 		goto failed_link;
 
+	pf_setup_prelim_link(i915);
 	pf_welcome(i915);
 	return 0;
 
@@ -466,6 +487,7 @@ void i915_sriov_sysfs_teardown(struct drm_i915_private *i915)
 	if (!pf_initialized(i915))
 		return;
 
+	pf_teardown_prelim_link(i915);
 	pf_teardown_device_link(i915);
 	pf_teardown_tree(i915);
 	pf_teardown_home(i915);
