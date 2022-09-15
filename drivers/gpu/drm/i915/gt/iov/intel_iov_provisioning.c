@@ -2250,6 +2250,16 @@ static int pf_auto_provision_lmem(struct intel_iov *iov, unsigned int num_vfs)
 	fair = div_u64(available, num_vfs);
 	fair = round_down(fair, SZ_2M);
 
+	/* for more VFs we shouldn't ignore sizes of LMTT and PPGTT */
+	if (num_vfs > 1) {
+		u64 lmtt_sz = intel_lmtt_estimate_pt_size(&iov->pf.lmtt, fair);
+		u64 pt_sz = i915_vm_estimate_pt_size(iov_to_gt(iov)->vm, fair);
+
+		fair = fair > lmtt_sz ? fair - lmtt_sz : 0;
+		fair = fair > pt_sz ? fair - pt_sz : 0;
+		fair = round_down(fair, SZ_2M);
+	}
+
 	IOV_DEBUG(iov, "LMEM available(%lluM) fair(%u x %lluM)\n",
 		  available / SZ_1M, num_vfs, fair / SZ_1M);
 	if (!fair)
