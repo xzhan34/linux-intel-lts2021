@@ -588,6 +588,7 @@ static void __i915_gem_object_free_vma(struct drm_i915_gem_object *obj)
 void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 {
 	trace_i915_gem_object_destroy(obj);
+	GEM_BUG_ON(obj->swapto);
 
 	i915_drm_client_fini_bo(obj);
 
@@ -852,6 +853,7 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 			    bool nowait)
 {
 	struct drm_i915_gem_object *donor;
+	int madv = I915_MADV_DONTNEED;
 	int err = 0;
 
 	assert_object_held(obj);
@@ -863,6 +865,9 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 	if (GEM_WARN_ON(obj->mm.madv != I915_MADV_WILLNEED))
 		return -EFAULT;
 
+	if (obj->swapto && obj->swapto->mm.madv == __I915_MADV_PURGED)
+		i915_gem_object_put(fetch_and_zero(&obj->swapto));
+
 	if (id == INTEL_REGION_SMEM) {
 		err = __i915_gem_object_put_pages(obj);
 		if (err)
@@ -871,6 +876,7 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 
 	if (obj->swapto && id == INTEL_REGION_SMEM) {
 		donor = fetch_and_zero(&obj->swapto);
+		donor->mm.madv = I915_MADV_WILLNEED;
 	} else {
 		donor = i915_gem_object_create_region(to_i915(obj->base.dev)->mm.regions[id],
 						      obj->base.size,
@@ -890,7 +896,15 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 	i915_gem_object_release_mmap(obj);
 
 	/* Copy backing store if we have to */
-	if (i915_gem_object_has_pages(obj) || obj->base.filp) {
+	if (obj->base.filp) {
+		GEM_BUG_ON(donor->base.filp);
+		if (obj->swapto) {
+			i915_gem_object_put(obj->swapto);
+			obj->swapto = NULL;
+		}
+		obj->mm.dirty = true;
+		madv = I915_MADV_WILLNEED;
+	} else if (i915_gem_object_has_pages(obj)) { /* lmem <-> lmem */
 		err = i915_gem_object_ww_copy_blt(obj, donor, ww, ce, nowait);
 		if (err)
 			goto out;
@@ -930,9 +944,14 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 	GEM_BUG_ON(obj->mm.region.mem->id != id);
 	GEM_BUG_ON(obj->swapto && id == INTEL_REGION_SMEM);
 
+	if (!obj->swapto && donor->base.filp) {
+		GEM_BUG_ON(donor->mm.region.mem->id != INTEL_REGION_SMEM);
+		obj->swapto = i915_gem_object_get(donor);
+	}
+
 out:
 	/* Need to set I915_MADV_DONTNEED so that shrinker can free it */
-	donor->mm.madv = I915_MADV_DONTNEED; /* XXX set_madv() */
+	donor->mm.madv = madv; /* XXX set_madv() */
 	i915_gem_object_put(donor);
 	return err;
 }

@@ -549,6 +549,9 @@ int __i915_vma_bind(struct i915_vma *vma,
 		vma->ops->bind_vma(vma->vm, NULL, vma, pat_index, bind_flags);
 	}
 
+	if (bind_flags & PIN_RESIDENT && vma->obj)
+		vma->obj->mm.dirty = true;
+
 	atomic_or(bind_flags, &vma->flags);
 	return 0;
 }
