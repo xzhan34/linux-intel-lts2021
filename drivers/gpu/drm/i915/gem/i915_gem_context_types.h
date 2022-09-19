@@ -176,6 +176,7 @@ struct i915_gem_context {
 	unsigned long flags;
 #define CONTEXT_CLOSED			0
 #define CONTEXT_USER_ENGINES		1
+#define CONTEXT_BAN			2
 
 	/**
 	 * @uses_protected_content: context uses PXP-encrypted objects.

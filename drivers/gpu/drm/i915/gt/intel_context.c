@@ -709,6 +709,16 @@ bool intel_context_ban(struct intel_context *ce, struct i915_request *rq)
 	if (ce->ops->ban)
 		ce->ops->ban(ce, rq);
 
+	if (!ret) {
+		struct i915_gem_context *ctx;
+
+		rcu_read_lock();
+		ctx = rcu_dereference(ce->gem_context);
+		if (ctx)
+			i915_gem_context_set_banned(ctx);
+		rcu_read_unlock();
+	}
+
 	return ret;
 }
 
