@@ -381,17 +381,7 @@ static inline bool intel_context_set_banned(struct intel_context *ce)
 	return test_and_set_bit(CONTEXT_BANNED, &ce->flags);
 }
 
-static inline bool intel_context_ban(struct intel_context *ce,
-				     struct i915_request *rq)
-{
-	bool ret = intel_context_set_banned(ce);
-
-	trace_intel_context_ban(ce);
-	if (ce->ops->ban)
-		ce->ops->ban(ce, rq);
-
-	return ret;
-}
+bool intel_context_ban(struct intel_context *ce, struct i915_request *rq);
 
 /**
  * intel_context_suspend - suspend a context

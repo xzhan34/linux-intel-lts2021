@@ -1071,9 +1071,6 @@ static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 	case INTEL_GUC_ACTION_CONTEXT_RESET_NOTIFICATION:
 		ret = intel_guc_context_reset_process_msg(guc, payload, len);
 		break;
-	case GUC_ACTION_GUC2HOST_NOTIFY_MEMORY_CAT_ERROR:
-		ret = intel_gt_pagefault_process_cat_error_msg(gt, hxg, hxg_len);
-		break;
 	case GUC_ACTION_GUC2HOST_NOTIFY_PAGE_FAULT:
 		ret = intel_gt_pagefault_process_page_fault_msg(gt, hxg, hxg_len);
 		break;
@@ -1177,7 +1174,8 @@ static int ct_handle_event(struct intel_guc_ct *ct, struct ct_incoming_msg *requ
 		g2h_release_space(ct, request->size);
 	}
 	/* Handle tlb invalidation response in interrupt context */
-	if (action == INTEL_GUC_ACTION_TLB_INVALIDATION_DONE) {
+	if (action == INTEL_GUC_ACTION_TLB_INVALIDATION_DONE ||
+	    action == GUC_ACTION_GUC2HOST_NOTIFY_MEMORY_CAT_ERROR) {
 		const u32 *payload;
 		u32 hxg_len, len;
 
@@ -1186,7 +1184,11 @@ static int ct_handle_event(struct intel_guc_ct *ct, struct ct_incoming_msg *requ
 		if (unlikely(len < 1))
 			return -EPROTO;
 		payload = &hxg[GUC_HXG_MSG_MIN_LEN];
-		intel_guc_tlb_invalidation_done(ct_to_guc(ct),  payload[0]);
+		if (action == INTEL_GUC_ACTION_TLB_INVALIDATION_DONE)
+			intel_guc_tlb_invalidation_done(ct_to_guc(ct),  payload[0]);
+		else
+			intel_gt_pagefault_process_cat_error_msg(ct_to_gt(ct), payload[0]);
+
 		ct_free_msg(request);
 		return 0;
 	}

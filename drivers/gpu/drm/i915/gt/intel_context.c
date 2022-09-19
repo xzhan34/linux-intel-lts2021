@@ -701,6 +701,17 @@ int intel_context_throttle(const struct intel_context *ce)
 	return err;
 }
 
+bool intel_context_ban(struct intel_context *ce, struct i915_request *rq)
+{
+	bool ret = intel_context_set_banned(ce);
+
+	trace_intel_context_ban(ce);
+	if (ce->ops->ban)
+		ce->ops->ban(ce, rq);
+
+	return ret;
+}
+
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftest_context.c"
 #endif

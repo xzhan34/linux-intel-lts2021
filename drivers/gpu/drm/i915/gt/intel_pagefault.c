@@ -5,34 +5,29 @@
 #include "i915_drv.h"
 #include "i915_trace.h"
 
+#include "intel_context.h"
 #include "intel_gt.h"
 #include "intel_gt_regs.h"
 #include "intel_pagefault.h"
 
-int intel_gt_pagefault_process_cat_error_msg(struct intel_gt *gt, const u32 *msg, u32 len)
+void intel_gt_pagefault_process_cat_error_msg(struct intel_gt *gt, u32 guc_ctx_id)
 {
 	struct drm_device *drm = &gt->i915->drm;
+	struct intel_guc *guc = &gt->uc.guc;
+	struct intel_context *ce;
 	char buf[11];
-	u32 guc_ctx_id;
 
-	if (len != GUC2HOST_NOTIFY_MEMORY_CAT_ERROR_MSG_LEN)
-		return -EPROTO;
-
-	if (FIELD_GET(GUC2HOST_NOTIFY_MEMORY_CAT_ERROR_MSG_0_MBZ, msg[0]) != 0)
-		return -EPROTO;
-
-	guc_ctx_id = FIELD_GET(GUC2HOST_NOTIFY_MEMORY_CAT_ERROR_MSG_1_CONTEXT_ID, msg[1]);
-
-	if (guc_ctx_id != CAT_ERROR_INV_SW_CTX)
+	ce = xa_load(&guc->context_lookup, guc_ctx_id);
+	if (ce) {
 		snprintf(buf, sizeof(buf), "%#04x", guc_ctx_id);
-	else
+		intel_context_ban(ce, NULL);
+	} else {
 		snprintf(buf, sizeof(buf), "n/a");
+	}
 
 	trace_intel_gt_cat_error(gt, buf);
 
 	drm_err(drm, "GPU catastrophic memory error. GT: %d, GuC context: %s\n", gt->info.id, buf);
-
-	return 0;
 }
 
 static u64 fault_va(u32 fault_data1, u32 fault_data0)
