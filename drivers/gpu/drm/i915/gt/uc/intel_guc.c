@@ -280,6 +280,10 @@ static u32 guc_ctl_feature_flags(struct intel_guc *guc)
 	if (intel_guc_slpc_is_used(guc))
 		flags |= GUC_CTL_ENABLE_SLPC;
 
+	/* FIXME: Should we enable this feature unconditionally? */
+	if (HAS_UM_QUEUES(guc_to_gt(guc)->i915))
+		flags |= GUC_CTL_ENABLE_RESET_ON_CAT;
+
 	flags |= i915_modparams.guc_feature_flags;
 
 	return flags;
