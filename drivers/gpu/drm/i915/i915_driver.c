@@ -1380,6 +1380,18 @@ static void i915_read_dev_uid(struct drm_i915_private *i915)
 								    CSC_DEVUID_HWORD);
 }
 
+static void i915_sanitize_force_driver_flr(struct drm_i915_private *i915)
+{
+	/*
+	* Sanitize force_driver_flr at init time: If hardware needs driver-FLR at
+	* load / unload and the user has not forced it off then allow triggering driver-FLR.
+	*/
+	if (!INTEL_INFO(i915)->needs_driver_flr)
+		i915->params.force_driver_flr = 0;
+	else if (i915->params.force_driver_flr == -1)
+		i915->params.force_driver_flr = 1;
+}
+
 /**
  * i915_driver_probe - setup chip and create an initial config
  * @pdev: PCI device
@@ -1445,6 +1457,8 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			i915->params.smem_access_control = 0;
 		}
 	}
+
+	i915_sanitize_force_driver_flr(i915);
 
 	ret = intel_gt_probe_all(i915);
 	if (ret < 0)

@@ -1292,6 +1292,7 @@ static const struct intel_device_info mtl_info = {
 	MTL_CACHELEVEL,
 	.platform_engine_mask = BIT(RCS0) | BIT(BCS0) | BIT(CCS0),
 	.require_force_probe = 1,
+	.needs_driver_flr = 1,
 };
 
 #undef PLATFORM

@@ -202,7 +202,8 @@ enum intel_ppgtt_type {
 	func(has_lmem_max_bandwidth);	\
 	func(unfenced_needs_alignment); \
 	func(hws_needs_physical); \
-	func(oam_uses_vdbox0_channel);
+	func(oam_uses_vdbox0_channel); \
+	func(needs_driver_flr);
 
 #define DEV_INFO_DISPLAY_FOR_EACH_FLAG(func) \
 	/* Keep in alphabetical order */ \
