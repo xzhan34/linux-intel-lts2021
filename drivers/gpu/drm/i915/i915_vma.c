@@ -351,6 +351,32 @@ struct i915_vma_work {
 	unsigned int flags;
 };
 
+static int
+i915_vma_work_set_vm(struct i915_vma_work *work,
+		     struct i915_vma *vma,
+		     struct i915_gem_ww_ctx *ww)
+{
+	work->vm = i915_vm_get(vma->vm);
+	if (vma->vm->allocate_va_range) {
+		int err;
+
+		/* Allocate enough page directories to used PTE */
+		err = i915_vm_alloc_pt_stash(vma->vm, &work->stash, vma->size);
+		if (err)
+			return err;
+
+		err = i915_vm_lock_objects(vma->vm, ww);
+		if (err)
+			return err;
+
+		err = i915_vm_map_pt_stash(vma->vm, &work->stash);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
 static int __vma_bind(struct dma_fence_work *work)
 {
 	struct i915_vma_work *vw = container_of(work, typeof(*vw), base);
@@ -411,7 +437,7 @@ static const struct dma_fence_work_ops bind_ops = {
 	.release = __vma_release,
 };
 
-struct i915_vma_work *i915_vma_work(void)
+static struct i915_vma_work *i915_vma_work(void)
 {
 	struct i915_vma_work *vw;
 
@@ -444,7 +470,7 @@ int i915_vma_wait_for_bind(struct i915_vma *vma)
 }
 
 /**
- * i915_vma_bind - Sets up PTEs for an VMA in it's corresponding address space.
+ * __i915_vma_bind - Sets up PTEs for an VMA in it's corresponding address space.
  * @vma: VMA to map
  * @cache_level: mapping cache level
  * @flags: flags like global or local mapping
@@ -454,10 +480,10 @@ int i915_vma_wait_for_bind(struct i915_vma *vma)
  * this VMA in case of non-default GGTT views) and PTE entries set up.
  * Note that DMA addresses are also the only part of the SG table we care about.
  */
-int i915_vma_bind(struct i915_vma *vma,
-		  enum i915_cache_level cache_level,
-		  u32 flags,
-		  struct i915_vma_work *work)
+int __i915_vma_bind(struct i915_vma *vma,
+		    enum i915_cache_level cache_level,
+		    u32 flags,
+		    struct i915_vma_work *work)
 {
 	u32 bind_flags;
 	u32 vma_flags;
@@ -1102,6 +1128,62 @@ static void vma_unbind_pages(struct i915_vma *vma)
 	__vma_put_pages(vma, count | count << I915_VMA_PAGES_BIAS);
 }
 
+/**
+ * i915_vma_bind - Updates page tables for this vma.
+ * @vma: vma to bind
+ * @ww: ww context for object lock
+ */
+int i915_vma_bind(struct i915_vma *vma, struct i915_gem_ww_ctx *ww)
+{
+	struct i915_address_space *vm = vma->vm;
+	struct i915_vma_work *work;
+	int err;
+
+	assert_object_held(vma->obj);
+	err = vma_get_pages(vma);
+	if (err)
+		return err;
+	GEM_BUG_ON(!vma->pages);
+
+	work = i915_vma_work();
+	if (!work) {
+		err = -ENOMEM;
+		goto err_pages;
+	}
+
+	err = i915_vma_work_set_vm(work, vma, ww);
+	if (err)
+		goto err_fence;
+
+	err = mutex_lock_interruptible(&vm->mutex);
+	if (err)
+		goto err_fence;
+
+	err = i915_active_acquire(&vma->active);
+	if (err)
+		goto err_unlock;
+
+	err = __i915_vma_bind(vma,
+			      vma->obj->cache_level,
+			      PIN_USER,
+			      work);
+	if (err)
+		goto err_active;
+
+	atomic_add(I915_VMA_PAGES_ACTIVE, &vma->pages_count);
+	GEM_BUG_ON(!i915_vma_is_bound(vma, PIN_USER));
+
+err_active:
+	i915_active_release(&vma->active);
+err_unlock:
+	mutex_unlock(&vm->mutex);
+err_fence:
+	dma_fence_work_commit_imm(&work->base);
+err_pages:
+	vma_put_pages(vma);
+	return err;
+}
+
 int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 		    u64 size, u64 alignment, u64 flags)
 {
@@ -1130,6 +1212,7 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	err = vma_get_pages(vma);
 	if (err)
 		return err;
+	GEM_BUG_ON(!vma->pages);
 
 	if (flags & PIN_GLOBAL)
 		wakeref = intel_runtime_pm_get(&vma->vm->i915->runtime_pm);
@@ -1142,24 +1225,9 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 		goto err_rpm;
 	}
 
-	work->vm = i915_vm_get(vma->vm);
-
-	/* Allocate enough page directories to used PTE */
-	if (vma->vm->allocate_va_range) {
-		err = i915_vm_lock_objects(vma->vm, ww);
-		if (err)
-			goto err_fence;
-
-		err = i915_vm_alloc_pt_stash(vma->vm,
-					     &work->stash,
-					     vma->size);
-		if (err)
-			goto err_fence;
-
-		err = i915_vm_map_pt_stash(vma->vm, &work->stash);
-		if (err)
-			goto err_fence;
-	}
+	err = i915_vma_work_set_vm(work, vma, ww);
+	if (err)
+		goto err_fence;
 
 	/*
 	 * Differentiate between user/kernel vma inside the aliasing-ppgtt.
@@ -1227,10 +1295,9 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 			__i915_vma_set_map_and_fenceable(vma);
 	}
 
-	GEM_BUG_ON(!vma->pages);
-	err = i915_vma_bind(vma,
-			    vma->obj ? vma->obj->cache_level : 0,
-			    flags, work);
+	err = __i915_vma_bind(vma,
+			      vma->obj ? vma->obj->cache_level : 0,
+			      flags, work);
 	if (err)
 		goto err_remove;
 

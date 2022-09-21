@@ -39,6 +39,8 @@
 #include "i915_request.h"
 #include "i915_vma_types.h"
 
+struct i915_vma_work;
+
 struct i915_vma *
 i915_vma_instance(struct drm_i915_gem_object *obj,
 		  struct i915_address_space *vm,
@@ -258,11 +260,11 @@ i915_vma_compare(struct i915_vma *vma,
 	return memcmp(&vma->ggtt_view.partial, &view->partial, view->type);
 }
 
-struct i915_vma_work *i915_vma_work(void);
-int i915_vma_bind(struct i915_vma *vma,
-		  enum i915_cache_level cache_level,
-		  u32 flags,
-		  struct i915_vma_work *work);
+int __i915_vma_bind(struct i915_vma *vma,
+		    enum i915_cache_level cache_level,
+		    u32 flags,
+		    struct i915_vma_work *work);
+int i915_vma_bind(struct i915_vma *vma, struct i915_gem_ww_ctx *ww);
 
 bool i915_gem_valid_gtt_space(struct i915_vma *vma, unsigned long color);
 bool i915_vma_misplaced(const struct i915_vma *vma,
