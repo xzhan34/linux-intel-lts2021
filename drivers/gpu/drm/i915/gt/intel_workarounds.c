@@ -708,6 +708,31 @@ static void gen12_ctx_gt_tuning_init(struct intel_engine_cs *engine,
 	       0, false);
 }
 
+/*
+ * These settings aren't actually workarounds, but general tuning settings that
+ * need to be programmed on PVC 0x0BD6.
+ */
+static void pvc_ctx_gt_tuning_init(struct intel_engine_cs *engine,
+				   struct i915_wa_list *wal)
+{
+	/*
+	 * For tuning power.
+	 * FPU residue disable will lower the power consumption.
+	 */
+	if (INTEL_DEVID(engine->i915) == 0x0BD6 &&
+	    engine->flags & I915_ENGINE_FIRST_RENDER_COMPUTE) {
+		struct intel_gt *gt;
+		u16 eu_count = 0;
+		int id;
+
+		for_each_gt(gt, engine->i915, id)
+			eu_count += gt->info.sseu.eu_total;
+
+		if (eu_count == 1024)
+			wa_mcr_write_or(wal, GEN8_ROW_CHICKEN, FPU_RESIDUAL_DISABLE);
+	}
+}
+
 static void gen12_ctx_workarounds_init(struct intel_engine_cs *engine,
 				       struct i915_wa_list *wal)
 {
@@ -842,6 +867,12 @@ static void mtl_ctx_workarounds_init(struct intel_engine_cs *engine,
 	wa_mcr_masked_en(wal, XEHP_CACHE_MODE_1, MSAA_OPTIMIZATION_REDUC_DISABLE);
 }
 
+static void pvc_ctx_workarounds_init(struct intel_engine_cs *engine,
+				     struct i915_wa_list *wal)
+{
+	pvc_ctx_gt_tuning_init(engine, wal);
+}
+
 static void fakewa_disable_nestedbb_mode(struct intel_engine_cs *engine,
 					 struct i915_wa_list *wal)
 {
@@ -934,7 +965,7 @@ __intel_engine_init_ctx_wa(struct intel_engine_cs *engine,
 	if (IS_METEORLAKE(i915))
 		mtl_ctx_workarounds_init(engine, wal);
 	else if (IS_PONTEVECCHIO(i915))
-		; /* noop; none at this time */
+		pvc_ctx_workarounds_init(engine, wal);
 	else if (IS_DG2(i915))
 		dg2_ctx_workarounds_init(engine, wal);
 	else if (IS_XEHPSDV(i915))
