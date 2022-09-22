@@ -604,6 +604,64 @@ u16 intel_iov_provisioning_get_ctxs(struct intel_iov *iov, unsigned int id)
 	return num_ctxs;
 }
 
+static u16 pf_get_min_spare_dbs(struct intel_iov *iov)
+{
+	/* we don't use doorbells yet */
+	return 0;
+}
+
+static u16 pf_get_spare_dbs(struct intel_iov *iov)
+{
+	u16 spare;
+
+	spare = iov->pf.provisioning.spare.num_dbs;
+	spare = max_t(u16, spare, pf_get_min_spare_dbs(iov));
+
+	return spare;
+}
+
+/**
+ * intel_iov_provisioning_get_spare_dbs - Get number of the PF's spare doorbells.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u16 intel_iov_provisioning_get_spare_dbs(struct intel_iov *iov)
+{
+	u16 spare;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	spare = pf_get_spare_dbs(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return spare;
+}
+
+/**
+ * intel_iov_provisioning_set_spare_dbs - Set number of the PF's spare doorbells.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_set_spare_dbs(struct intel_iov *iov, u16 spare)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (spare > GUC_NUM_DOORBELLS)
+		return -EINVAL;
+
+	if (spare && spare < pf_get_min_spare_dbs(iov))
+		return -EINVAL;
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	iov->pf.provisioning.spare.num_dbs = spare;
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return 0;
+}
+
 static unsigned long *pf_get_dbs_bitmap(struct intel_iov *iov)
 {
 	unsigned long *dbs_bitmap = bitmap_zalloc(GUC_NUM_DOORBELLS, GFP_KERNEL);
