@@ -839,9 +839,14 @@ static int pf_alloc_dbs_range(struct intel_iov *iov, u16 num_dbs)
 {
 	unsigned long *dbs_bitmap = pf_get_dbs_bitmap(iov);
 	unsigned long index;
+	int used;
 
 	if (unlikely(!dbs_bitmap))
 		return -ENOMEM;
+
+	used = bitmap_weight(dbs_bitmap, GUC_NUM_DOORBELLS);
+	if (used + pf_get_spare_dbs(iov) + num_dbs > GUC_NUM_DOORBELLS)
+		return -EDQUOT;
 
 	index = bitmap_find_next_zero_area(dbs_bitmap, GUC_NUM_DOORBELLS, 0, num_dbs, 0);
 	bitmap_free(dbs_bitmap);
