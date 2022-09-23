@@ -808,7 +808,8 @@ mem_write_tearing(struct intel_gt *gt,
 				struct i915_vma *va,
 				struct i915_vma *vb,
 				u64 align,
-				struct rnd_state *prng))
+				struct rnd_state *prng),
+		  unsigned int flags)
 {
 	struct intel_engine_cs *engine;
 	struct drm_i915_gem_object *A, *B;
@@ -864,7 +865,7 @@ mem_write_tearing(struct intel_gt *gt,
 		pr_warn("Failed to allocate contiguous pages for size %zx\n",
 			A->base.size);
 
-	ppgtt = i915_ppgtt_create(gt, 0);
+	ppgtt = i915_ppgtt_create(gt, flags);
 	if (IS_ERR(ppgtt)) {
 		err = PTR_ERR(ppgtt);
 		goto out_b;
@@ -960,9 +961,9 @@ static int write_tearing(void *arg)
 	 * the HW formed a different physical address than A or B.
 	 */
 
-	err = mem_write_tearing(gt, create_smem, pte_write_tearing);
+	err = mem_write_tearing(gt, create_smem, pte_write_tearing, 0);
 	if (err == 0)
-		err = mem_write_tearing(gt, create_lmem, pte_write_tearing);
+		err = mem_write_tearing(gt, create_lmem, pte_write_tearing, 0);
 	if (err == -ENODEV || err == -ENXIO)
 		err = 0;
 
@@ -981,9 +982,34 @@ static int invalid_read(void *arg)
 	 * update and stray into the wilds.
 	 */
 
-	err = mem_write_tearing(gt, create_smem, pte_invalid_read);
+	err = mem_write_tearing(gt, create_smem, pte_invalid_read, 0);
 	if (err == 0)
-		err = mem_write_tearing(gt, create_lmem, pte_invalid_read);
+		err = mem_write_tearing(gt, create_lmem, pte_invalid_read, 0);
+	if (err == -ENODEV || err == -ENXIO)
+		err = 0;
+
+	return err;
+}
+
+static int invalid_fault(void *arg)
+{
+	struct intel_gt *gt = arg;
+	int err;
+
+	/*
+	 * Similar to invalid_read, try to sample an unbound address
+	 * triggering a pagefault, while simultaneously attempting
+	 * to rebind that address.
+	 */
+
+	if (!HAS_RECOVERABLE_PAGE_FAULT(gt->i915))
+		return 0;
+
+	err = mem_write_tearing(gt, create_smem, pte_invalid_read,
+				PRELIM_I915_VM_CREATE_FLAGS_ENABLE_PAGE_FAULT);
+	if (err == 0)
+		err = mem_write_tearing(gt, create_lmem, pte_invalid_read,
+					PRELIM_I915_VM_CREATE_FLAGS_ENABLE_PAGE_FAULT);
 	if (err == -ENODEV || err == -ENXIO)
 		err = 0;
 
@@ -1020,6 +1046,7 @@ int intel_gtt_wip_selftests(struct drm_i915_private *i915)
 	static const struct i915_subtest tests[] = {
 		SUBTEST(write_tearing),
 		SUBTEST(invalid_read),
+		SUBTEST(invalid_fault),
 	};
 	struct intel_gt *gt;
 	unsigned int i;
