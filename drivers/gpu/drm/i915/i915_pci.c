@@ -1171,6 +1171,13 @@ static const struct intel_device_info pvc_info = {
 	.has_flat_ccs = 0,
 	.extra_gt_list = pvc_extra_gt,
 	.platform_engine_mask = PVC_ENGINES,
+
+	/*
+	 * Runtime PM is not a PVC requirement, few PVC platforms
+	 * has ended up with DPC and Internal fabric error when entered to
+	 * Runtime Suspend D3, therefore disabling Runtime PM.
+	 */
+	.has_runtime_pm = 0,
 	.require_force_probe = 1,
 };
 
