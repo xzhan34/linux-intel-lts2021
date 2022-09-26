@@ -1659,6 +1659,27 @@ guc_submission_unwind_all(struct intel_guc *guc, intel_engine_mask_t stalled)
 	spin_unlock_irqrestore(&se->lock, flags);
 }
 
+/**
+ * intel_guc_submission_pause - temporarily stop GuC submission mechanics
+ */
+void intel_guc_submission_pause(struct intel_guc *guc)
+{
+	struct i915_sched_engine * const sched_engine = guc->sched_engine;
+
+	tasklet_disable_nosync(&sched_engine->tasklet);
+}
+
+/**
+ * intel_guc_submission_restore - unpause GuC submission mechanics
+ */
+void intel_guc_submission_restore(struct intel_guc *guc)
+{
+	struct i915_sched_engine * const sched_engine = guc->sched_engine;
+
+	tasklet_enable(&sched_engine->tasklet);
+	tasklet_hi_schedule(&sched_engine->tasklet);
+}
+
 static struct intel_engine_cs *
 guc_virtual_get_sibling(struct intel_engine_cs *ve, unsigned int sibling)
 {
