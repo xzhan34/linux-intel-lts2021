@@ -55,6 +55,14 @@ static void uc_expand_default_options(struct intel_uc *uc)
 	if (IS_XEHPSDV(i915) ||
 	    IS_PVC_BD_STEP(i915, STEP_B0, STEP_FOREVER))
 		i915->params.enable_guc &= ~ENABLE_GUC_LOAD_HUC;
+
+	/*
+	 * FIXME: MTL IFWI still has issues with FLR, so we can't reload the
+	 * driver with GSC enabled. Since GSC is a requirement for HuC, we can't
+	 * enable HuC without GSC.
+	 */
+	if (IS_METEORLAKE(i915))
+		i915->params.enable_guc &= ~ENABLE_GUC_LOAD_HUC;
 }
 
 /* Reset GuC providing us with fresh state for both GuC and HuC.
