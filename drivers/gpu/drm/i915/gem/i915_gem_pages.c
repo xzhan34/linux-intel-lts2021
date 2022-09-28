@@ -15,6 +15,18 @@
 #include "i915_gem_lmem.h"
 #include "i915_gem_mman.h"
 
+unsigned int i915_gem_sg_segment_size(const struct drm_i915_gem_object *obj)
+{
+	/*
+	 * Internal device memory is not passed through dma-mapping, so
+	 * we are only limited by the maximum page size.
+	 */
+	if (i915_gem_object_is_lmem(obj))
+		return rounddown_pow_of_two(UINT_MAX);
+
+	return rounddown_pow_of_two(i915_sg_segment_size());
+}
+
 void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 				 struct sg_table *pages,
 				 unsigned int sg_page_sizes)

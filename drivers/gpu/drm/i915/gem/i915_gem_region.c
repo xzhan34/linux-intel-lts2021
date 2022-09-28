@@ -28,7 +28,7 @@ struct sg_table *
 i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 				unsigned int *page_sizes)
 {
-	const u64 max_segment = i915_sg_segment_size();
+	const u64 max_segment = i915_gem_sg_segment_size(obj);
 	struct i915_gem_ww_ctx *ww = i915_gem_get_locking_ctx(obj);
 	struct intel_memory_region *mem = obj->mm.region.mem;
 	struct list_head *blocks = &obj->mm.blocks;
