@@ -72,33 +72,27 @@ void intel_uc_fw_change_status(struct intel_uc_fw *uc_fw,
  * security fixes, etc. to be enabled.
  */
 #define INTEL_GUC_FIRMWARE_DEFS(fw_def, guc_maj, guc_mmp) \
-	fw_def(DG2,          0, guc_maj(dg2,  70, 5)) \
-	fw_def(ALDERLAKE_P,  0, guc_maj(adlp, 70, 5)) \
-	fw_def(ALDERLAKE_P,  0, guc_mmp(adlp, 70, 1, 1)) \
-	fw_def(ALDERLAKE_P,  0, guc_mmp(adlp, 69, 0, 3)) \
-	fw_def(ALDERLAKE_S,  0, guc_maj(tgl,  70, 5)) \
-	fw_def(ALDERLAKE_S,  0, guc_mmp(tgl,  70, 1, 1)) \
-	fw_def(ALDERLAKE_S,  0, guc_mmp(tgl,  69, 0, 3)) \
-	fw_def(DG1,          0, guc_maj(dg1,  70, 5)) \
-	fw_def(ROCKETLAKE,   0, guc_mmp(tgl,  70, 1, 1)) \
-	fw_def(TIGERLAKE,    0, guc_mmp(tgl,  70, 1, 1)) \
-	fw_def(JASPERLAKE,   0, guc_mmp(ehl,  70, 1, 1)) \
-	fw_def(ELKHARTLAKE,  0, guc_mmp(ehl,  70, 1, 1)) \
-	fw_def(ICELAKE,      0, guc_mmp(icl,  70, 1, 1)) \
-	fw_def(COMETLAKE,    5, guc_mmp(cml,  70, 1, 1)) \
-	fw_def(COMETLAKE,    0, guc_mmp(kbl,  70, 1, 1)) \
-	fw_def(COFFEELAKE,   0, guc_mmp(kbl,  70, 1, 1)) \
-	fw_def(GEMINILAKE,   0, guc_mmp(glk,  70, 1, 1)) \
-	fw_def(KABYLAKE,     0, guc_mmp(kbl,  70, 1, 1)) \
-	fw_def(BROXTON,      0, guc_mmp(bxt,  70, 1, 1)) \
-	fw_def(SKYLAKE,      0, guc_mmp(skl,  70, 1, 1))
+	fw_def(DG2,          0, guc_mmp(dg2,  70, 6, 6)) \
+	fw_def(ALDERLAKE_P,  0, guc_mmp(adlp, 70, 6, 6)) \
+	fw_def(ALDERLAKE_S,  0, guc_mmp(tgl,  70, 6, 6)) \
+	fw_def(DG1,          0, guc_mmp(dg1,  70, 6, 6)) \
+	fw_def(ROCKETLAKE,   0, guc_mmp(tgl,  70, 6, 6)) \
+	fw_def(TIGERLAKE,    0, guc_mmp(tgl,  70, 6, 6)) \
+	fw_def(JASPERLAKE,   0, guc_mmp(ehl,  70, 6, 6)) \
+	fw_def(ELKHARTLAKE,  0, guc_mmp(ehl,  70, 6, 6)) \
+	fw_def(ICELAKE,      0, guc_mmp(icl,  70, 6, 6)) \
+	fw_def(COMETLAKE,    5, guc_mmp(cml,  70, 6, 6)) \
+	fw_def(COMETLAKE,    0, guc_mmp(kbl,  70, 6, 6)) \
+	fw_def(COFFEELAKE,   0, guc_mmp(kbl,  70, 6, 6)) \
+	fw_def(GEMINILAKE,   0, guc_mmp(glk,  70, 6, 6)) \
+	fw_def(KABYLAKE,     0, guc_mmp(kbl,  70, 6, 6)) \
+	fw_def(BROXTON,      0, guc_mmp(bxt,  70, 6, 6)) \
+	fw_def(SKYLAKE,      0, guc_mmp(skl,  70, 6, 6))
 
 #define INTEL_HUC_FIRMWARE_DEFS(fw_def, huc_raw, huc_mmp) \
-	fw_def(ALDERLAKE_P,  0, huc_raw(tgl)) \
 	fw_def(ALDERLAKE_P,  0, huc_mmp(tgl,  7, 9, 3)) \
-	fw_def(ALDERLAKE_S,  0, huc_raw(tgl)) \
 	fw_def(ALDERLAKE_S,  0, huc_mmp(tgl,  7, 9, 3)) \
-	fw_def(DG1,          0, huc_raw(dg1)) \
+	fw_def(DG1,          0, huc_mmp(dg1,  7, 9, 3)) \
 	fw_def(ROCKETLAKE,   0, huc_mmp(tgl,  7, 9, 3)) \
 	fw_def(TIGERLAKE,    0, huc_mmp(tgl,  7, 9, 3)) \
 	fw_def(JASPERLAKE,   0, huc_mmp(ehl,  9, 0, 0)) \
