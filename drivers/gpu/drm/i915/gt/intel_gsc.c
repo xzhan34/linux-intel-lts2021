@@ -80,12 +80,42 @@ static void gsc_ext_om_destroy(struct intel_gsc_intf *intf)
 	i915_gem_object_put(obj);
 }
 
+static void intel_gsc_forcewake_get(void *gsc)
+{
+	struct intel_uncore *uncore = gsc_to_gt(gsc)->uncore;
+	intel_wakeref_t wakeref;
+
+	with_intel_runtime_pm(uncore->rpm, wakeref)
+		intel_uncore_forcewake_get(uncore, FORCEWAKE_GT);
+}
+
+static void intel_gsc_forcewake_put(void *gsc)
+{
+	struct intel_uncore *uncore = gsc_to_gt(gsc)->uncore;
+	intel_wakeref_t wakeref;
+
+	with_intel_runtime_pm(uncore->rpm, wakeref)
+		intel_uncore_forcewake_put(uncore, FORCEWAKE_GT);
+}
+
+/**
+ * struct gsc_def - GSC definitions per generation
+ *
+ * @name: device name
+ * @bar: base offset for HECI bar
+ * @bar_size: size of HECI bar
+ * @use_polling: use register polling instead of interrupts
+ * @slow_firmware: the firmware is slow and requires longer timeouts
+ * @forcewake_needed: the GT forcewake is needed before operations
+ * @lmem_size: size of extended operation memory for GSC, if required
+ */
 struct gsc_def {
 	const char *name;
 	unsigned long bar;
 	size_t bar_size;
 	bool use_polling;
 	bool slow_firmware;
+	bool forcewake_needed;
 	size_t lmem_size;
 };
 
@@ -137,6 +167,7 @@ static const struct gsc_def gsc_def_pvc[] = {
 		.bar = PVC_GSC_HECI2_BASE,
 		.bar_size = GSC_BAR_LENGTH,
 		.slow_firmware = true,
+		.forcewake_needed = true,
 	}
 };
 
@@ -253,6 +284,10 @@ add_device:
 	adev->bar.flags = IORESOURCE_MEM;
 	adev->bar.desc = IORES_DESC_NONE;
 	adev->slow_firmware = def->slow_firmware;
+	adev->forcewake_needed = def->forcewake_needed;
+	adev->gsc = gsc;
+	adev->forcewake_get = intel_gsc_forcewake_get;
+	adev->forcewake_put = intel_gsc_forcewake_put;
 
 	aux_dev = &adev->aux_dev;
 	aux_dev->name = def->name;
