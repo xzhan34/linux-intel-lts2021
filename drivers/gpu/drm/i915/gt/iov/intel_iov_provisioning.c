@@ -848,6 +848,8 @@ static int __pf_provision_ctxs(struct intel_iov *iov, unsigned int id, u16 start
 	return __pf_provision_vf_ctxs(iov, id, start_ctx, num_ctxs);
 }
 
+static u16 pf_get_ctxs_max_quota(struct intel_iov *iov);
+
 static int pf_provision_ctxs(struct intel_iov *iov, unsigned int id, u16 num_ctxs)
 {
 	u16 ctxs_quota = align_ctxs(id, num_ctxs);
@@ -867,6 +869,9 @@ static int pf_provision_ctxs(struct intel_iov *iov, unsigned int id, u16 num_ctx
 	ret = __pf_provision_ctxs(iov, id, 0, 0);
 	if (!num_ctxs || ret)
 		return ret;
+
+	if (ctxs_quota > pf_get_ctxs_max_quota(iov))
+		return -EDQUOT;
 
 	ret = pf_alloc_ctxs_range(iov, id, ctxs_quota);
 	if (ret >= 0)
