@@ -292,6 +292,63 @@ u64 intel_iov_provisioning_get_ggtt(struct intel_iov *iov, unsigned int id)
 	return size;
 }
 
+static u16 pf_get_min_spare_ctxs(struct intel_iov *iov)
+{
+	return SZ_256;
+}
+
+static u16 pf_get_spare_ctxs(struct intel_iov *iov)
+{
+	u16 spare;
+
+	spare = iov->pf.provisioning.spare.num_ctxs;
+	spare = max_t(u16, spare, pf_get_min_spare_ctxs(iov));
+
+	return spare;
+}
+
+/**
+ * intel_iov_provisioning_get_spare_ctxs - Get number of the PF's spare contexts.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+u16 intel_iov_provisioning_get_spare_ctxs(struct intel_iov *iov)
+{
+	u16 spare;
+
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	spare = pf_get_spare_ctxs(iov);
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return spare;
+}
+
+/**
+ * intel_iov_provisioning_set_spare_ctxs - Set number of the PF's spare contexts.
+ * @iov: the IOV struct
+ *
+ * This function can only be called on PF.
+ */
+int intel_iov_provisioning_set_spare_ctxs(struct intel_iov *iov, u16 spare)
+{
+	GEM_BUG_ON(!intel_iov_is_pf(iov));
+
+	if (spare > GUC_MAX_CONTEXT_ID)
+		return -EINVAL;
+
+	if (spare && spare < pf_get_min_spare_ctxs(iov))
+		return -EINVAL;
+
+	mutex_lock(pf_provisioning_mutex(iov));
+	iov->pf.provisioning.spare.num_ctxs = spare;
+	mutex_unlock(pf_provisioning_mutex(iov));
+
+	return 0;
+}
+
 static bool pf_is_valid_config_ctxs(struct intel_iov *iov, unsigned int id)
 {
 	GEM_BUG_ON(!intel_iov_is_pf(iov));

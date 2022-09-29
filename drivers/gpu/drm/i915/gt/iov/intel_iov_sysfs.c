@@ -144,10 +144,35 @@ static ssize_t ggtt_spare_iov_attr_store(struct intel_iov *iov,
 	return err ?: count;
 }
 
+static ssize_t contexts_spare_iov_attr_show(struct intel_iov *iov,
+					    unsigned int id, char *buf)
+{
+	GEM_WARN_ON(id);
+	return sysfs_emit(buf, "%hu\n", intel_iov_provisioning_get_spare_ctxs(iov));
+}
+
+static ssize_t contexts_spare_iov_attr_store(struct intel_iov *iov,
+					     unsigned int id,
+					     const char *buf, size_t count)
+{
+	u16 spare;
+	int err;
+
+	err = kstrtou16(buf, 0, &spare);
+	if (err)
+		return err;
+
+	GEM_WARN_ON(id);
+	err = intel_iov_provisioning_set_spare_ctxs(iov, spare);
+	return err ?: count;
+}
+
 IOV_ATTR(ggtt_spare);
+IOV_ATTR(contexts_spare);
 
 static struct attribute *pf_attrs[] = {
 	&ggtt_spare_iov_attr.attr,
+	&contexts_spare_iov_attr.attr,
 	NULL
 };
 
