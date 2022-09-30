@@ -4093,6 +4093,14 @@ static int read_properties_unlocked(struct i915_perf *perf,
 		uprop += 2;
 	}
 
+	/*
+	 * Enforce SAMPLE_OA is present if user passes OA_EXPONENT. The converse
+	 * case when user passes SAMPLE_OA without OA_EXPONENT is handled in
+	 * -EIO return in i915_oa_wait_unlocked.
+	 */
+	if (props->oa_periodic && !(props->sample_flags & SAMPLE_OA_REPORT))
+		return -EINVAL;
+
 	return 0;
 }
 
