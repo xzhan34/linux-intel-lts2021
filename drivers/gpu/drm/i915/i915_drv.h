@@ -891,6 +891,8 @@ static inline struct intel_gt *to_gt(struct drm_i915_private *i915)
 	(MEDIA_VER(i915) >= (from) && MEDIA_VER(i915) <= (until))
 
 #define DISPLAY_VER(i915)		(RUNTIME_INFO(i915)->display.ver)
+#define DISPLAY_VER_FULL(i915)		IP_VER(RUNTIME_INFO(i915)->display.ver, \
+					       RUNTIME_INFO(i915)->display.rel)
 #define IS_DISPLAY_VER(i915, from, until) \
 	(DISPLAY_VER(i915) >= (from) && DISPLAY_VER(i915) <= (until))
 
