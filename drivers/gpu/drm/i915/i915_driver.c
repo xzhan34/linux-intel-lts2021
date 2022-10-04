@@ -1863,6 +1863,10 @@ static void intel_evict_lmem(struct drm_i915_private *i915)
 				continue;
 
 			obj = container_of(pos, typeof(*obj), mm.region);
+
+			/* only segment BOs should be in mem->objects.list */
+			GEM_BUG_ON(i915_gem_object_has_segments(obj));
+
 			if (!i915_gem_object_has_pages(obj))
 				continue;
 

@@ -372,6 +372,9 @@ next:
 			goto bookmark;
 		}
 
+		/* only segment BOs should be in mem->objects.list */
+		GEM_BUG_ON(i915_gem_object_has_segments(obj));
+
 		if (!i915_gem_object_allows_eviction(obj) ||
 		    i915_gem_object_is_framebuffer(obj))
 			goto put;

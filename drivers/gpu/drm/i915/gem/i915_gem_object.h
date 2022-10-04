@@ -95,6 +95,8 @@ int i915_gem_object_migrate_to_smem(struct drm_i915_gem_object *obj,
 
 void i915_gem_flush_free_objects(struct drm_i915_private *i915);
 
+void i915_gem_object_release_segments(struct drm_i915_gem_object *obj);
+
 void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj,
 				       struct sg_table *pages);
 
@@ -291,6 +293,18 @@ static inline void i915_gem_object_unlock(struct drm_i915_gem_object *obj)
 		obj->ops->adjust_lru(obj);
 
 	dma_resv_unlock(obj->base.resv);
+}
+
+static inline bool
+i915_gem_object_has_segments(struct drm_i915_gem_object *obj)
+{
+	return !list_empty(&obj->segments);
+}
+
+static inline bool
+i915_gem_object_is_segment(struct drm_i915_gem_object *obj)
+{
+	return !list_empty(&obj->segment_link);
 }
 
 static inline void

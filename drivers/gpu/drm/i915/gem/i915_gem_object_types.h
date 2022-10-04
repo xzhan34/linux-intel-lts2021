@@ -206,6 +206,8 @@ struct i915_resv {
 	};
 };
 
+#define I915_BO_MIN_CHUNK_SIZE	SZ_2M
+
 struct drm_i915_gem_object {
 	/*
 	 * We might have reason to revisit the below since it wastes
@@ -219,6 +221,9 @@ struct drm_i915_gem_object {
 	};
 
 	const struct drm_i915_gem_object_ops *ops;
+
+	struct list_head segments;
+	struct list_head segment_link;
 
 	/* VM pointer if the object is private to a VM; NULL otherwise */
 	struct i915_address_space *vm;

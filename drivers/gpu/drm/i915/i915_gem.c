@@ -156,6 +156,16 @@ already_locked:
 	return ret;
 }
 
+/*
+ * For segmented BOs, this routine should be called for just the individual
+ * segments and not the parent BO. As only the individual segments have
+ * backing store, those per-segment objects are the ones getting linked
+ * into the appropriate linked lists for tracking backing store:
+ *   eviction: mem_region->objects.[purgeable, list]
+ *   shrinker: i915->mm.[purge_list, shrink_list]
+ * and likewise i915_gem_object_migrate_region operates on only individual
+ * segment BOs.
+ */
 int i915_gem_object_unbind(struct drm_i915_gem_object *obj,
 			   struct i915_gem_ww_ctx *ww,
 			   unsigned long flags)

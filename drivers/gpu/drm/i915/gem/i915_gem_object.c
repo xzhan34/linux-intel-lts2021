@@ -185,12 +185,18 @@ struct drm_i915_gem_object *i915_gem_object_alloc(void)
 
 	INIT_LIST_HEAD(&obj->mm.region.link);
 	INIT_ACTIVE_FENCE(&obj->mm.migrate);
+
+	/* below could be used prior to i915_gem_object_init */
+	INIT_LIST_HEAD(&obj->segments);
+	INIT_LIST_HEAD(&obj->segment_link);
+
 	return obj;
 }
 
 void i915_gem_object_free(struct drm_i915_gem_object *obj)
 {
 	GEM_BUG_ON(obj->mm.region.mem);
+	GEM_BUG_ON(i915_gem_object_has_segments(obj));
 
 	return kmem_cache_free(slab_objects, obj);
 }
@@ -666,12 +672,28 @@ static void __i915_gem_free_work(struct work_struct *work)
 	i915_gem_flush_free_objects(i915);
 }
 
+void i915_gem_object_release_segments(struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_gem_object *sobj, *snext;
+
+	list_for_each_entry_safe(sobj, snext, &obj->segments, segment_link) {
+		/* clear pointer to placements (owned by parent BO) */
+		sobj->mm.placements = NULL;
+		sobj->mm.n_placements = 0;
+		list_del_init(&sobj->segment_link);
+		/* release original reference from object_alloc */
+		i915_gem_object_put(sobj);
+	}
+}
+
 static void i915_gem_free_object(struct drm_gem_object *gem_obj)
 {
 	struct drm_i915_gem_object *obj = to_intel_bo(gem_obj);
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 
 	GEM_BUG_ON(i915_gem_object_is_framebuffer(obj));
+
+	i915_gem_object_release_segments(obj);
 
 	/*
 	 * If object had been swapped out, free the hidden object.
@@ -865,6 +887,9 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 	int err = 0;
 
 	assert_object_held(obj);
+
+	/* Parent of segment BOs has no backing store to migrate */
+	GEM_BUG_ON(i915_gem_object_has_segments(obj));
 
 	GEM_BUG_ON(id >= INTEL_REGION_UNKNOWN);
 	if (obj->mm.region.mem->id == id)

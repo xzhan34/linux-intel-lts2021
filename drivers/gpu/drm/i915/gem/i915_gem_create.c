@@ -118,6 +118,24 @@ static int i915_gem_publish(struct drm_i915_gem_object *obj,
 	return 0;
 }
 
+/*
+ * This routine will automatically determine if BO segmentation will be
+ * enabled, based on obj->base.size.
+ * Must be larger than the minimum chunk size and need 2 chunks.
+ * We do not require any alignment to chunk size, and so the last chunk can
+ * be partial.
+ * TODO: hook into GEM_CREATE user flag/requested chunk size.
+ */
+static u64 get_object_segment_size(struct drm_i915_gem_object *obj)
+{
+	u64 segment_size = I915_BO_MIN_CHUNK_SIZE;
+
+	/* require 2+ chunks */
+	if  (!(segment_size && obj->base.size >= segment_size << 1))
+		return 0;
+	return segment_size;
+}
+
 static u32 placement_mask(struct intel_memory_region **placements,
 			  int n_placements)
 {
@@ -136,6 +154,8 @@ static int
 setup_object(struct drm_i915_gem_object *obj, u64 size)
 {
 	struct intel_memory_region *mr = obj->mm.placements[0];
+	u64 obj_segment_size;
+	u64 nsegments = 0;
 	u32 alloc_flags;
 	int ret;
 
@@ -155,19 +175,53 @@ setup_object(struct drm_i915_gem_object *obj, u64 size)
 		I915_BO_ALLOC_CONTIGUOUS : 0;
 
 	size = object_size_align(mr, size, &alloc_flags);
-	ret = mr->ops->init_object(mr, obj, size, alloc_flags | I915_BO_ALLOC_USER);
+	alloc_flags |= I915_BO_ALLOC_USER;
+	ret = mr->ops->init_object(mr, obj, size, alloc_flags);
 	if (ret)
 		return ret;
 
 	GEM_BUG_ON(size != obj->base.size);
 
+	obj_segment_size = get_object_segment_size(obj);
+	if (obj_segment_size) {
+		struct drm_i915_gem_object *sobj;
+		u64 segment_size;
+
+		while (size) {
+			sobj = i915_gem_object_alloc();
+			if (!sobj) {
+				ret = -ENOMEM;
+				break;
+			}
+
+			/* point to same placement array as parent */
+			object_set_placements(sobj, obj->mm.placements,
+					      obj->mm.n_placements);
+			segment_size = min_t(u64, obj_segment_size, size);
+			ret = mr->ops->init_object(mr, sobj, segment_size, alloc_flags);
+			if (ret) {
+				i915_gem_object_free(sobj);
+				break;
+			}
+
+			list_add_tail(&sobj->segment_link, &obj->segments);
+			size -= sobj->base.size;
+			nsegments++;
+		}
+
+		if (ret)
+			goto err_segments;
+	}
+
 	ret = i915_gem_object_account(obj);
 	if (ret) {
+err_segments:
+		i915_gem_object_release_segments(obj);
 		obj->ops->release(obj);
 		return ret;
 	}
 
-	trace_i915_gem_object_create(obj);
+	trace_i915_gem_object_create(obj, nsegments);
 	return 0;
 }
 
