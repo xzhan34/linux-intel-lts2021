@@ -540,6 +540,12 @@ struct drm_i915_private {
 		struct intel_global_obj obj;
 	} dbuf;
 
+	struct {
+		wait_queue_head_t waitqueue;
+		struct mutex lock;
+		struct intel_global_obj obj;
+	} pmdemand;
+
 	/**
 	 * wq - Driver workqueue for GEM.
 	 *
