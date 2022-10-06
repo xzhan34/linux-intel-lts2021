@@ -1296,7 +1296,7 @@ create_blitter_context(struct intel_engine_cs *engine)
 {
 	static struct lock_class_key blitter;
 
-	return intel_engine_create_pinned_context(engine, engine->gt->vm, SZ_4K,
+	return intel_engine_create_pinned_context(engine, engine->gt->vm, SZ_512K,
 						  I915_GEM_HWS_BLITTER_ADDR,
 						  &blitter, "blitter_context");
 }

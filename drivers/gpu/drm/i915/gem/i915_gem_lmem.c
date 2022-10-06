@@ -5,10 +5,32 @@
 
 #include <uapi/drm/i915_drm.h>
 
+#include "gt/intel_context.h"
+#include "gt/intel_engine_pm.h"
+#include "gt/intel_gpu_commands.h"
+#include "gt/intel_gt.h"
+#include "gt/intel_gt_pm.h"
+#include "gt/intel_ring.h"
+
 #include "i915_drv.h"
 #include "i915_gem_lmem.h"
 #include "i915_gem_region.h"
+#include "i915_sw_fence.h"
 #include "intel_memory_region.h"
+
+static struct intel_context *
+get_blitter_context(const struct intel_gt *gt, int idx)
+{
+	if (intel_gt_is_wedged(gt))
+		return NULL;
+
+	return gt->engine[idx] ? gt->engine[idx]->blitter_context : NULL;
+}
+
+static struct intel_context *get_clear_context(const struct intel_gt *gt)
+{
+	return get_blitter_context(gt, BCS0);
+}
 
 void __iomem *
 i915_gem_object_lmem_io_map_page_atomic(struct drm_i915_gem_object *obj,
@@ -113,7 +135,206 @@ i915_gem_object_create_lmem_from_data(struct drm_i915_private *i915,
 	return obj;
 }
 
-static void clear_cpu(struct intel_memory_region *mem, struct sg_table *sgt)
+static int emit_flush(struct i915_request *rq, unsigned int flags)
+{
+	u32 *cs;
+
+	cs = intel_ring_begin(rq, 4);
+	if (IS_ERR(cs))
+		return PTR_ERR(cs);
+
+	*cs++ = (MI_FLUSH_DW + 1) | flags;
+	*cs++ = 0;
+	*cs++ = 0;
+	*cs++ = 0;
+
+	intel_ring_advance(rq, cs);
+	return 0;
+}
+
+static int num_ccs_blocks(unsigned int size)
+{
+	return DIV_ROUND_UP(size,
+			    NUM_BYTES_PER_CCS_BYTE * NUM_CCS_BYTES_PER_BLOCK);
+}
+
+static int
+emit_ccs_clear(struct i915_request *rq, u64 offset, u32 length)
+{
+	u32 mocs = REG_FIELD_PREP(XY_CSC_BLT_MOCS_INDEX_MASK_XEHP,
+				  rq->engine->gt->mocs.uc_index);
+	u64 zero = offset;
+	int err;
+
+	err = emit_flush(rq, 0);
+	if (err)
+		return err;
+
+	do {
+		u32 blocks = min_t(u32, length, SZ_64M);
+		u32 *cs;
+
+		cs = intel_ring_begin(rq, 6);
+		if (IS_ERR(cs))
+			return PTR_ERR(cs);
+
+		*cs++ = XY_CTRL_SURF_COPY_BLT |
+			DIRECT_ACCESS << SRC_ACCESS_TYPE_SHIFT |
+			INDIRECT_ACCESS << DST_ACCESS_TYPE_SHIFT |
+			REG_FIELD_PREP(CCS_SIZE_MASK_XEHP,
+				       num_ccs_blocks(blocks) - 1);
+
+		*cs++ = lower_32_bits(zero);
+		*cs++ = upper_32_bits(zero) | mocs;
+		*cs++ = lower_32_bits(offset);
+		*cs++ = upper_32_bits(offset) | mocs;
+		*cs++ = MI_NOOP;
+
+		intel_ring_advance(rq, cs);
+
+		offset += SZ_64M;
+		length -= blocks;
+	} while (length);
+
+	return emit_flush(rq, MI_FLUSH_DW_LLC | MI_FLUSH_DW_CCS);
+}
+
+static int
+xy_emit_clear(struct i915_request *rq, u64 offset, u32 size, u32 page_shift)
+{
+	u32 mocs = 0;
+	int len;
+	u32 *cs;
+
+	GEM_BUG_ON(page_shift > 18); /* max stride */
+	GEM_BUG_ON(BIT(page_shift) / 4 > S16_MAX); /* max width */
+	GEM_BUG_ON(size >> page_shift > S16_MAX); /* max height */
+
+	len = 11;
+	if (GRAPHICS_VER_FULL(rq->engine->i915) >= IP_VER(12, 50)) {
+		mocs = rq->engine->gt->mocs.uc_index << 1;
+		mocs = FIELD_PREP(XY_FAST_COLOR_BLT_MOCS_MASK, mocs);
+		len = 16;
+	}
+
+	cs = intel_ring_begin(rq, 16);
+	if (IS_ERR(cs))
+		return PTR_ERR(cs);
+
+	*cs++ = GEN9_XY_FAST_COLOR_BLT_CMD |
+		XY_FAST_COLOR_BLT_DEPTH_32 |
+		(len - 2);
+	*cs++ = mocs | (BIT(page_shift) - 1);
+	*cs++ = 0;
+	*cs++ = size >> page_shift << 16 | BIT(page_shift) / 4;
+	*cs++ = lower_32_bits(offset);
+	*cs++ = upper_32_bits(offset);
+	*cs++ = 0;
+	*cs++ = 0;
+	*cs++ = 0;
+	*cs++ = 0;
+	*cs++ = 0;
+	*cs++ = 0;
+	*cs++ = 0;
+	*cs++ = 0;
+	*cs++ = 0;
+	*cs++ = 0;
+
+	intel_ring_advance(rq, cs);
+
+	return 0;
+}
+
+static struct i915_request *
+chain_request(struct i915_request *rq, struct i915_request *chain)
+{
+	struct intel_timeline *tl = rq->context->timeline;
+
+	/*
+	 * Hold the request until the next is chained. We need
+	 * a complete chain in order to propagate any error to the
+	 * final fence, and into the obj->mm.migrate. If we drop
+	 * the error at any point (due to a completed request),
+	 * then we may continue to use the uninitialised contents.
+	 */
+
+	lockdep_assert_held(&tl->mutex);
+	lockdep_unpin_lock(&tl->mutex, rq->cookie);
+
+	i915_sw_fence_await(&rq->submit);
+	i915_request_get(rq);
+
+	trace_i915_request_add(rq);
+	__i915_request_commit(rq);
+	__i915_request_queue(rq, I915_PRIORITY_NORMAL);
+
+	if (chain) {
+		i915_sw_fence_complete(&chain->submit);
+		i915_request_put(chain);
+	}
+
+	return rq;
+}
+
+static int
+clear_blt(struct intel_context *ce,
+	  struct sg_table *sgt,
+	  unsigned int page_sizes,
+	  unsigned int flags,
+	  struct i915_request **out)
+{
+	const int page_shift = min(__ffs(page_sizes), 16ul);
+	const u32 step = BIT(page_shift) << 14; /* 128-1024MiB */
+	const bool use_ccs_clear =
+		flags & I915_BO_ALLOC_USER && HAS_FLAT_CCS(ce->engine->i915);
+	struct sgt_iter it;
+	u64 offset;
+	int err;
+
+	GEM_BUG_ON(ce->ring->size < SZ_64K);
+	GEM_BUG_ON(ce->vm != ce->engine->gt->vm);
+	GEM_BUG_ON(!drm_mm_node_allocated(&ce->engine->gt->flat));
+
+	*out = NULL;
+
+	err = intel_context_throttle(ce);
+	if (err)
+		return err;
+
+	mutex_lock(&ce->timeline->mutex);
+	intel_context_enter(ce);
+	__for_each_sgt_daddr(offset, it, sgt, step) {
+		struct i915_request *rq;
+		u32 length;
+
+		length = min_t(u32, it.max - it.curr, step);
+		if (!length)
+			continue;
+
+		GEM_BUG_ON(offset < ce->engine->gt->flat.start);
+		GEM_BUG_ON(offset + length > ce->engine->gt->flat.start + ce->engine->gt->flat.size);
+
+		rq = i915_request_create_locked(ce, I915_GFP_ALLOW_FAIL);
+		if (IS_ERR(rq)) {
+			err = PTR_ERR(rq);
+			break;
+		}
+
+		err = xy_emit_clear(rq, offset, length, page_shift);
+		if (err == 0 && use_ccs_clear)
+			err = emit_ccs_clear(rq, offset, length);
+
+		*out = chain_request(rq, *out);
+		if (err)
+			break;
+	}
+	intel_context_exit(ce);
+	mutex_unlock(&ce->timeline->mutex);
+
+	return err;
+}
+
+static void clear_cpu(struct intel_memory_region *mem, struct sg_table *sgt, u64 value)
 {
         struct scatterlist *sg;
 
@@ -130,33 +351,89 @@ static void clear_cpu(struct intel_memory_region *mem, struct sg_table *sgt)
                 daddr -= mem->region.start;
 
                 vaddr = io_mapping_map_wc(&mem->iomap, daddr, length);
-                memset64((void __force *)vaddr, 0, length / sizeof(u64));
+                memset64((void __force *)vaddr, value, length / sizeof(u64));
                 io_mapping_unmap(vaddr);
         }
 
         wmb();
 }
 
+static inline bool
+small_sync_clear(const struct drm_i915_gem_object *obj, unsigned int flags)
+{
+	if (!(flags & I915_BO_SYNC_HINT))
+		return false;
+
+	/* Assume exec + sync latency ~2ms and WC bw of ~4GiB/s */
+	return obj->base.size <= SZ_32M;
+}
+
+static inline bool
+use_flat_ccs(struct intel_gt *gt)
+{
+	/* If the device is wedged, [stale] indirect CCS is inaccessible */
+	return HAS_FLAT_CCS(gt->i915) && !intel_gt_is_wedged(gt);
+}
+
+static inline bool
+use_cpu_clear(struct intel_gt *gt, unsigned int flags)
+{
+	if (!(flags & I915_BO_CPU_CLEAR))
+		return false;
+
+	if (!(flags & I915_BO_ALLOC_USER))
+		return true;
+
+	return !use_flat_ccs(gt);
+}
+
 static int lmem_clear(struct drm_i915_gem_object *obj,
 		      struct sg_table *pages,
-		      unsigned int page_sizes)
+		      unsigned int page_sizes,
+		      struct i915_request **out)
 {
 	struct intel_memory_region *mem = obj->mm.region;
 	unsigned int flags = obj->flags;
+	struct intel_gt *gt = mem->gt;
+	struct intel_context *ce;
+	intel_wakeref_t wf = 0;
 	int err = 0;
 
 	if (flags & I915_BO_SKIP_CLEAR)
 		return 0;
 
+	ce = NULL;
+	if (flags & (I915_BO_ALLOC_USER | I915_BO_CPU_CLEAR)) {
+		ce = get_clear_context(gt);
+		if (!ce || small_sync_clear(obj, flags))
+			flags |= I915_BO_CPU_CLEAR;
+	}
+
+	/* Avoid misspending PCI credits between the GT; must use BLT clears */
+	if (ce && gt->info.id > 0 && intel_gt_pm_is_awake(gt))
+		flags &= ~I915_BO_CPU_CLEAR;
+
+	/* Clear is too small to benefit from waking up the GPU */
+	if (ce && page_sizes < SZ_2M && !(wf = intel_gt_pm_get_if_awake(gt)))
+		flags |= I915_BO_CPU_CLEAR;
+
 	/* Intended for kernel internal use only */
-	if (flags & I915_BO_CPU_CLEAR)
-		clear_cpu(mem, pages);
+	if (use_cpu_clear(gt, flags))
+		clear_cpu(mem, pages, 0);
+	else if (ce)
+		err = clear_blt(ce, pages, page_sizes, flags, out);
+	else if (flags & I915_BO_CPU_CLEAR)
+		err = -EIO;
+
+	if (wf)
+		intel_gt_pm_put(gt, wf);
 
 	return err;
 }
 
 static int lmem_get_pages(struct drm_i915_gem_object *obj)
 {
+	struct i915_request *rq = NULL;
 	unsigned int page_sizes;
 	struct sg_table *pages;
 	int err;
@@ -165,7 +442,12 @@ static int lmem_get_pages(struct drm_i915_gem_object *obj)
 	if (IS_ERR(pages))
 		return PTR_ERR(pages);
 
-	err = lmem_clear(obj, pages, page_sizes);
+	err = lmem_clear(obj, pages, page_sizes, &rq);
+	if (rq) {
+		i915_gem_object_migrate_prepare(obj, rq);
+		i915_sw_fence_complete(&rq->submit);
+		i915_request_put(rq);
+	}
 	if (err)
 		goto err;
 
@@ -173,6 +455,7 @@ static int lmem_get_pages(struct drm_i915_gem_object *obj)
 	return 0;
 
 err:
+	i915_gem_object_migrate_finish(obj);
 	i915_gem_object_put_pages_buddy(obj, pages);
 	return err;
 }
@@ -180,6 +463,9 @@ err:
 static void
 lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 {
+	i915_gem_object_migrate_finish(obj);
+	obj->flags &= ~I915_BO_SYNC_HINT;
+
 	return i915_gem_object_put_pages_buddy(obj, pages);
 }
 
@@ -415,3 +701,7 @@ int __i915_gem_lmem_object_init(struct intel_memory_region *mem,
 
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#include "selftests/i915_gem_lmem.c"
+#endif

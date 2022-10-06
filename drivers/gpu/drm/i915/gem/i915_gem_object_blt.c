@@ -77,7 +77,9 @@ struct i915_vma *intel_emit_vma_fill_blt(struct intel_context *ce,
 		GEM_BUG_ON(size >> PAGE_SHIFT > S16_MAX);
 
 		if (GRAPHICS_VER(i915) >= 12) {
-			*cmd++ = XY_FAST_COLOR_BLT | BLT_COLOR_DEPTH_32 | (11 - 2);
+			*cmd++ = GEN9_XY_FAST_COLOR_BLT_CMD |
+				XY_FAST_COLOR_BLT_DEPTH_32 |
+				(11 - 2);
 			*cmd++ = PAGE_SIZE - 1;
 			*cmd++ = 0;
 			*cmd++ = size >> PAGE_SHIFT << 16 | PAGE_SIZE / 4;

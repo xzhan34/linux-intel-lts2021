@@ -504,4 +504,6 @@ void __mark_lock_used_irq(struct lockdep_map *lock);
 	overflows_type(__v, *__ptr) ? 0 : (*__ptr = (typeof(*__ptr))__v), 1; \
 })
 
+#define make_u64(hi__, low__) ((u64)(hi__) << 32 | (low__))
+
 #endif /* !__I915_UTILS_H */

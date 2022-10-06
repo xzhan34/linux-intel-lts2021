@@ -230,9 +230,10 @@
 #define XY_CTRL_SURF_COPY_BLT		((2 << 29) | (0x48 << 22) | 3)
 #define   SRC_ACCESS_TYPE_SHIFT		21
 #define   DST_ACCESS_TYPE_SHIFT		20
-#define   CCS_SIZE_MASK			0x3FF
-#define   CCS_SIZE_SHIFT		8
-#define   XY_CTRL_SURF_MOCS_MASK	GENMASK(31, 25)
+#define   CCS_SIZE_MASK_XEHP		GENMASK(17, 8)
+/* This is the subset of XY_CTRL_SURF_MOCS_MASK that corresponds to MOCS index */
+#define   XY_CSC_BLT_MOCS_INDEX_MASK_XEHP	GENMASK(31, 26)
+
 #define   NUM_CCS_BYTES_PER_BLOCK	256
 #define   NUM_BYTES_PER_CCS_BYTE	256
 #define   NUM_CCS_BLKS_PER_XFER		1024
@@ -240,13 +241,7 @@
 #define   DIRECT_ACCESS			1
 
 #define COLOR_BLT_CMD			(2 << 29 | 0x40 << 22 | (5 - 2))
-#define XY_COLOR_BLT_CMD		(2 << 29 | 0x50 << 22)
-#define XY_FAST_COLOR_BLT_CMD		(2 << 29 | 0x44 << 22)
-#define   XY_FAST_COLOR_BLT_DEPTH_32	(2 << 19)
-#define   XY_FAST_COLOR_BLT_DW		16
-#define   XY_FAST_COLOR_BLT_MOCS_MASK	GENMASK(27, 21)
-#define   XY_FAST_COLOR_BLT_MEM_TYPE_SHIFT 31
-
+#define GEN9_XY_FAST_COPY_BLT_CMD	(2 << 29 | 0x42 << 22)
 #define   XY_FAST_COPY_BLT_D0_SRC_TILING_MASK     REG_GENMASK(21, 20)
 #define   XY_FAST_COPY_BLT_D0_DST_TILING_MASK     REG_GENMASK(14, 13)
 #define   XY_FAST_COPY_BLT_D0_SRC_TILE_MODE(mode)  \
@@ -257,22 +252,41 @@
 #define     TILE_X				0x1
 #define     XMAJOR				0x1
 #define     YMAJOR				0x2
-#define     TILE_64			0x3
-#define   XY_FAST_COPY_BLT_D1_SRC_TILE4	REG_BIT(31)
-#define   XY_FAST_COPY_BLT_D1_DST_TILE4	REG_BIT(30)
-#define BLIT_CCTL_SRC_MOCS_MASK  REG_GENMASK(6, 0)
-#define BLIT_CCTL_DST_MOCS_MASK  REG_GENMASK(14, 8)
+#define     TILE_64				0x3
+#define   XY_FAST_COPY_BLT_D1_SRC_TILE4		REG_BIT(31)
+#define   XY_FAST_COPY_BLT_D1_DST_TILE4		REG_BIT(30)
+#define   BLIT_CCTL_SRC_MOCS_MASK		REG_GENMASK(6, 0)
+#define   BLIT_CCTL_DST_MOCS_MASK		REG_GENMASK(14, 8)
 /* Note:  MOCS value = (index << 1) */
-#define BLIT_CCTL_SRC_MOCS(idx) \
+#define   BLIT_CCTL_SRC_MOCS(idx) \
 	REG_FIELD_PREP(BLIT_CCTL_SRC_MOCS_MASK, (idx) << 1)
-#define BLIT_CCTL_DST_MOCS(idx) \
+#define   BLIT_CCTL_DST_MOCS(idx) \
 	REG_FIELD_PREP(BLIT_CCTL_DST_MOCS_MASK, (idx) << 1)
 
 #define SRC_COPY_BLT_CMD		(2 << 29 | 0x43 << 22)
-#define GEN9_XY_FAST_COPY_BLT_CMD	(2 << 29 | 0x42 << 22)
-#define SRC_COPY_BLT_CMD		(2 << 29 | 0x43 << 22)
-#define XY_FAST_COLOR_BLT		(2 << 29 | 0x44 << 22)
-#define   BLT_COLOR_DEPTH_32		(2 << 19)
+#define GEN9_XY_FAST_COLOR_BLT_CMD	(2 << 29 | 0x44 << 22)
+#define   XY_FAST_COLOR_BLT_DW		16
+#define   XY_FAST_COLOR_BLT_MOCS_MASK	GENMASK(27, 21)
+#define   XY_FAST_COLOR_BLT_MEM_TYPE_SHIFT 31
+#define   XY_FAST_CLEAR_1		(1 << 12)
+#define   XY_FAST_CLEAR_0		(2 << 12)
+#define   XY_FAST_TILE_Y		(1 << 30)
+#define   XY_FAST_TILE_X		(1 << 30)
+#define   XY_FAST_TILE_4		(2 << 30)
+#define   XY_FAST_TILE_64		(3 << 30)
+#define   XY_FAST_COLOR_BLT_DEPTH_8	(0 << 19)
+#define   XY_FAST_COLOR_BLT_DEPTH_16	(1 << 19)
+#define   XY_FAST_COLOR_BLT_DEPTH_32	(2 << 19)
+#define   XY_FAST_COLOR_BLT_DEPTH_64	(3 << 19)
+#define   XY_FAST_COLOR_BLT_DEPTH_128	(5 << 19)
+#define   XY_FAST_COMPRESSION		REG_BIT(29)
+#define   AUX_CCS_NONE			(0 << 18)
+#define   AUX_CCS_E			(5 << 18)
+#define   SURFTYPE_1D			(0 << 29)
+#define   SURFTYPE_2D			(1 << 29)
+#define   SURFTYPE_3D			(2 << 29)
+#define   SURFTYPE_CUBE			(3 << 29)
+
 #define XY_COLOR_BLT_CMD		(2 << 29 | 0x50 << 22)
 #define XY_SRC_COPY_BLT_CMD		(2 << 29 | 0x53 << 22)
 #define XY_MONO_SRC_COPY_IMM_BLT	(2 << 29 | 0x71 << 22 | 5)
