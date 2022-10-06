@@ -1409,6 +1409,7 @@ static int mei_me_hw_reset(struct mei_device *dev, bool intr_enable)
 			if (ret)
 				return ret;
 		}
+		mei_forcewake_put(dev);
 	}
 	return 0;
 }
