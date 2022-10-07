@@ -27,6 +27,7 @@
 #include "gt/intel_engine_regs.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_regs.h"
+#include "gt/intel_gt.h"
 
 #include "i915_drv.h"
 #include "i915_iosf_mbi.h"
@@ -129,16 +130,22 @@ intel_uncore_forcewake_domain_to_str(const enum forcewake_domain_id id)
 static inline void
 fw_domain_reset(const struct intel_uncore_forcewake_domain *d)
 {
+	struct drm_i915_private *i915 = d->uncore->i915;
 	/*
 	 * We don't really know if the powerwell for the forcewake domain we are
 	 * trying to reset here does exist at this point (engines could be fused
 	 * off in ICL+), so no waiting for acks
 	 */
 	/* WaRsClearFWBitsAtReset */
-	if (GRAPHICS_VER(d->uncore->i915) >= 12)
-		fw_clear(d, 0xefff);
-	else
+	if (GRAPHICS_VER(i915) >= 12) {
+		/* Wa_16017528748 mdfi wa in pcode uses bit#1 */
+		if (pvc_needs_rc6_wa(i915))
+			fw_clear(d, 0xeffd);
+		else
+			fw_clear(d, 0xefff);
+	} else {
 		fw_clear(d, 0xffff);
+	}
 }
 
 static inline void
