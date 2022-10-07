@@ -643,6 +643,8 @@ err:
 
 	/* Flush the default context image to memory, and enable powersaving. */
 	if (intel_gt_wait_for_idle(gt, I915_GEM_IDLE_TIMEOUT)) {
+		if (!i915_error_injected())
+			intel_klog_error_capture(gt, (intel_engine_mask_t) ~0U);
 		err = -EIO;
 		goto out;
 	}
