@@ -7474,7 +7474,7 @@ static void intel_atomic_helper_free_state_worker(struct work_struct *work)
 	intel_atomic_helper_free_state(dev_priv);
 }
 
-static void intel_atomic_commit_fence_wait(struct intel_atomic_state *intel_state)
+static int intel_atomic_commit_fence_wait(struct intel_atomic_state *intel_state)
 {
 	struct wait_queue_entry wait_fence, wait_reset;
 	struct drm_i915_private *dev_priv = to_i915(intel_state->base.dev);
@@ -7499,6 +7499,8 @@ static void intel_atomic_commit_fence_wait(struct intel_atomic_state *intel_stat
 	finish_wait(bit_waitqueue(&to_gt(dev_priv)->reset.flags,
 				  I915_RESET_MODESET),
 		    &wait_reset);
+
+	return intel_state->commit_ready.error;
 }
 
 static void intel_cleanup_dsbs(struct intel_atomic_state *state)
@@ -7577,9 +7579,15 @@ static void intel_atomic_commit_tail(struct intel_atomic_state *state)
 	struct intel_crtc *crtc;
 	struct intel_power_domain_mask put_domains[I915_MAX_PIPES] = {};
 	intel_wakeref_t wakeref = 0;
+	int err;
 	int i;
 
-	intel_atomic_commit_fence_wait(state);
+	/* XXX handle asynchronous errors; scanout may be reading void */
+	err = intel_atomic_commit_fence_wait(state);
+	if (err)
+		drm_notice(&dev_priv->drm,
+			   "Incomplete display update: %i\n",
+			   err);
 
 	drm_atomic_helper_wait_for_dependencies(&state->base);
 
