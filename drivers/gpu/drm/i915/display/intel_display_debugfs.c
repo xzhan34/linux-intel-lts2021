@@ -1898,6 +1898,30 @@ i915_fifo_underrun_reset_write(struct file *filp,
 	return cnt;
 }
 
+static int i915_suppress_wakeup_hpd_set(void *data, u64 val)
+{
+	struct drm_i915_private *i915 = data;
+
+	drm_dbg_kms(&i915->drm, "Ignoring long HPDs: %s\n", str_yes_no(val));
+
+	i915->hotplug.ignore_long_hpd = val;
+
+	return 0;
+}
+
+static int i915_suppress_wakeup_hpd_get(void *data, u64 *val)
+{
+	struct drm_i915_private *i915 = data;
+
+	*val = i915->hotplug.ignore_long_hpd;
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i915_suppress_wakeup_hpd_fops,
+			i915_suppress_wakeup_hpd_get,
+			i915_suppress_wakeup_hpd_set, "%llu\n");
+
 static const struct file_operations i915_fifo_underrun_reset_ops = {
 	.owner = THIS_MODULE,
 	.open = simple_open,
@@ -1939,6 +1963,7 @@ static const struct {
 	{"i915_ipc_status", &i915_ipc_status_fops},
 	{"i915_drrs_ctl", &i915_drrs_ctl_fops},
 	{"i915_edp_psr_debug", &i915_edp_psr_debug_fops},
+	{"i915_suppress_wakeup_hpd", &i915_suppress_wakeup_hpd_fops},
 };
 
 void intel_display_debugfs_register(struct drm_i915_private *i915)
