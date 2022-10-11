@@ -261,7 +261,7 @@ static void call_idle_barriers(struct intel_engine_cs *engine)
 	list_for_each_safe(node, next, &engine->barrier_tasks) {
 		struct dma_fence_cb *cb = container_of(node, typeof(*cb), node);
 
-		cb->func(ERR_PTR(-EAGAIN), cb);
+		cb->func(IDLE_BARRIER, cb);
 	}
 	INIT_LIST_HEAD(&engine->barrier_tasks);
 }

@@ -43,7 +43,7 @@ node_from_active(struct i915_active_fence *active)
 
 static inline bool is_barrier(const struct i915_active_fence *active)
 {
-	return IS_ERR(rcu_access_pointer(active->fence));
+	return rcu_access_pointer(active->fence) == IDLE_BARRIER;
 }
 
 static inline struct list_head *barrier_to_task(struct active_node *node)
@@ -134,7 +134,7 @@ __active_retire(struct i915_active *ref)
 	if (!atomic_dec_and_lock_irqsave(&ref->count, &ref->tree_lock, flags))
 		return;
 
-	GEM_BUG_ON(rcu_access_pointer(ref->excl.fence));
+	GEM_BUG_ON(i915_active_fence_isset(&ref->excl));
 	debug_active_deactivate(ref);
 
 	/* Even if we have not used the cache, we may still have a barrier */
@@ -205,13 +205,28 @@ __active_fence_slot(struct i915_active_fence *active)
 	return (struct dma_fence ** __force)&active->fence;
 }
 
+static inline void *fatal_error(const struct dma_fence *fence)
+{
+	if (IS_ERR_OR_NULL(fence))
+		return NULL;
+
+	switch (fence->error) {
+	case 0:
+	case -EAGAIN:
+		return NULL;
+
+	default:
+		return ERR_PTR(fence->error);
+	}
+}
+
 static inline bool
 active_fence_cb(struct dma_fence *fence, struct dma_fence_cb *cb)
 {
 	struct i915_active_fence *active =
 		container_of(cb, typeof(*active), cb);
 
-	return cmpxchg(__active_fence_slot(active), fence, NULL) == fence;
+	return try_cmpxchg(__active_fence_slot(active), &fence, fatal_error(fence));
 }
 
 static void
@@ -725,7 +740,7 @@ void i915_active_fini(struct i915_active *ref)
 
 static inline bool is_idle_barrier(struct active_node *node, u64 idx)
 {
-	return node->timeline == idx && !i915_active_fence_isset(&node->base);
+	return node->timeline == idx && !rcu_access_pointer(node->base.fence);
 }
 
 static struct active_node *reuse_idle_barrier(struct i915_active *ref, u64 idx)
@@ -862,7 +877,7 @@ int i915_active_acquire_preallocate_barrier(struct i915_active *ref,
 		 * for our tracking of the pending barrier.
 		 */
 		__i915_active_acquire(ref);
-		RCU_INIT_POINTER(node->base.fence, ERR_PTR(-EAGAIN));
+		RCU_INIT_POINTER(node->base.fence, IDLE_BARRIER);
 		node->engine = engine;
 
 		first = barrier_to_ll(node);
@@ -1015,11 +1030,13 @@ __i915_active_fence_set(struct i915_active_fence *active,
 	 */
 	spin_lock_irqsave(fence->lock, flags);
 	prev = xchg(__active_fence_slot(active), fence);
-	if (prev) {
+	if (!IS_ERR_OR_NULL(prev)) {
 		GEM_BUG_ON(prev == fence);
 		spin_lock_nested(prev->lock, SINGLE_DEPTH_NESTING);
 		__list_del_entry(&active->cb.node);
 		spin_unlock(prev->lock); /* serialise with prev->cb_list */
+	} else {
+		prev = NULL;
 	}
 	list_add_tail(&active->cb.node, &fence->cb_list);
 	spin_unlock_irqrestore(fence->lock, flags);
