@@ -281,16 +281,17 @@ struct drm_i915_gem_object {
 	unsigned long flags;
 #define I915_BO_ALLOC_CONTIGUOUS BIT(0)
 #define I915_BO_ALLOC_VOLATILE   BIT(1)
-#define I915_BO_ALLOC_USER       BIT(4)
+#define I915_BO_ALLOC_USER       BIT(2)
 #define I915_BO_ALLOC_FLAGS (I915_BO_ALLOC_CONTIGUOUS | \
 			     I915_BO_ALLOC_VOLATILE | \
 			     I915_BO_ALLOC_USER)
-#define I915_BO_STRUCT_PAGE	BIT(4)
-#define I915_BO_READONLY	BIT(5)
-#define I915_TILING_QUIRK_BIT	6 /* unknown swizzling; do not release! */
-#define I915_BO_PROTECTED	BIT(8)
-#define I915_BO_SKIP_CLEAR	BIT(9)
-#define I915_BO_CPU_CLEAR	BIT(10)
+#define I915_BO_STRUCT_PAGE	BIT(3)
+#define I915_BO_READONLY	BIT(4)
+#define I915_TILING_QUIRK_BIT	5 /* unknown swizzling; do not release! */
+#define I915_BO_PROTECTED	BIT(6)
+#define I915_BO_SKIP_CLEAR	BIT(7)
+#define I915_BO_CPU_CLEAR	BIT(8)
+#define I915_BO_SYNC_HINT	BIT(9)
 
 	/**
 	 * @cache_level: The desired GTT caching level.
@@ -562,6 +563,20 @@ struct drm_i915_gem_object {
 		 * pages were last acquired.
 		 */
 		bool dirty:1;
+
+		/*
+		 * Track the completion of the page construction if using the
+		 * blitter for swapin/swapout and for clears. Following
+		 * completion, it holds a persistent ERR_PTR should the
+		 * GPU operation to instantiate the pages fail and all
+		 * attempts to utilise the backing store must be prevented
+		 * (as the backing store is in undefined state) until the
+		 * taint is removed. All operations on the backing store
+		 * must wait for the fence to be signaled, be it asynchronously
+		 * as part of the scheduling pipeline or synchronously before
+		 * CPU access.
+		 */
+		struct i915_active_fence migrate;
 
 		u32 tlb;
 	} mm;

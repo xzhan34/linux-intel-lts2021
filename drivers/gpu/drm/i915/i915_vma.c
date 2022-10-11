@@ -309,6 +309,11 @@ static void __vma_release(struct dma_fence_work *work)
 {
 	struct i915_vma_work *vw = container_of(work, typeof(*vw), base);
 
+	if (work->dma.error) {
+		GEM_BUG_ON(test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &work->dma.flags));
+		set_bit(I915_VMA_ERROR_BIT, __i915_vma_flags(vw->vma));
+	}
+
 	if (vw->pinned) {
 		__i915_gem_object_unpin_pages(vw->pinned);
 		i915_gem_object_put(vw->pinned);
@@ -340,19 +345,18 @@ struct i915_vma_work *i915_vma_work(void)
 
 int i915_vma_wait_for_bind(struct i915_vma *vma)
 {
-	int err = 0;
+	struct dma_fence *fence;
+	int err;
 
-	if (rcu_access_pointer(vma->active.excl.fence)) {
-		struct dma_fence *fence;
+	fence = i915_active_fence_get_or_error(&vma->active.excl);
+	if (likely(!fence))
+		return 0;
 
-		rcu_read_lock();
-		fence = dma_fence_get_rcu_safe(&vma->active.excl.fence);
-		rcu_read_unlock();
-		if (fence) {
-			err = dma_fence_wait(fence, true);
-			dma_fence_put(fence);
-		}
-	}
+	if (IS_ERR(fence))
+		return PTR_ERR(fence);
+
+	err = dma_fence_wait(fence, true) ? -EINTR : fence->error;
+	dma_fence_put(fence);
 
 	return err;
 }
@@ -400,7 +404,7 @@ int i915_vma_bind(struct i915_vma *vma,
 	GEM_BUG_ON(!vma->pages);
 
 	trace_i915_vma_bind(vma, bind_flags);
-	if (work && bind_flags & vma->vm->bind_async_flags) {
+	if (work) {
 		struct dma_fence *prev;
 
 		work->vma = vma;
@@ -417,7 +421,18 @@ int i915_vma_bind(struct i915_vma *vma,
 		 * execution and not content or object's backing store lifetime.
 		 */
 		prev = i915_active_set_exclusive(&vma->active, &work->base.dma);
+		if (!prev) {
+			/*
+			 * Before we publish the backing store to any and all
+			 * observers via the ppGTT, wait for all residual data
+			 * to be cleared or overwritten by swapin.
+			 */
+			prev = i915_active_fence_get_or_error(&vma->obj->mm.migrate);
+		}
 		if (prev) {
+			if (IS_ERR(prev))
+				return PTR_ERR(prev);
+
 			__i915_sw_fence_await_dma_fence(&work->base.chain,
 							prev,
 							&work->cb);
@@ -486,6 +501,10 @@ void __iomem *i915_vma_pin_iomap(struct i915_vma *vma)
 	}
 
 	__i915_vma_pin(vma);
+
+	err = i915_vma_wait_for_bind(vma);
+	if (err)
+		goto err_unpin;
 
 	err = i915_vma_pin_fence(vma);
 	if (err)
@@ -942,7 +961,7 @@ static void vma_unbind_pages(struct i915_vma *vma)
 int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 		    u64 size, u64 alignment, u64 flags)
 {
-	struct i915_vma_work *work = NULL;
+	struct i915_vma_work *work;
 	intel_wakeref_t wakeref = 0;
 	unsigned int bound;
 	int err;
@@ -968,32 +987,29 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	if (flags & PIN_GLOBAL)
 		wakeref = intel_runtime_pm_get(&vma->vm->i915->runtime_pm);
 
-	if (flags & vma->vm->bind_async_flags) {
-		/* lock VM */
+	work = i915_vma_work();
+	if (!work) {
+		err = -ENOMEM;
+		goto err_rpm;
+	}
+
+	work->vm = i915_vm_get(vma->vm);
+
+	/* Allocate enough page directories to used PTE */
+	if (vma->vm->allocate_va_range) {
 		err = i915_vm_lock_objects(vma->vm, ww);
 		if (err)
-			goto err_rpm;
+			goto err_fence;
 
-		work = i915_vma_work();
-		if (!work) {
-			err = -ENOMEM;
-			goto err_rpm;
-		}
+		err = i915_vm_alloc_pt_stash(vma->vm,
+					     &work->stash,
+					     vma->size);
+		if (err)
+			goto err_fence;
 
-		work->vm = i915_vm_get(vma->vm);
-
-		/* Allocate enough page directories to used PTE */
-		if (vma->vm->allocate_va_range) {
-			err = i915_vm_alloc_pt_stash(vma->vm,
-						     &work->stash,
-						     vma->size);
-			if (err)
-				goto err_fence;
-
-			err = i915_vm_map_pt_stash(vma->vm, &work->stash);
-			if (err)
-				goto err_fence;
-		}
+		err = i915_vm_map_pt_stash(vma->vm, &work->stash);
+		if (err)
+			goto err_fence;
 	}
 
 	/*
@@ -1035,7 +1051,7 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 
 	bound = atomic_read(&vma->flags);
 	if (unlikely(bound & I915_VMA_ERROR)) {
-		err = -ENOMEM;
+		err = i915_active_fence_has_error(&vma->active.excl) ?: -EFAULT;
 		goto err_unlock;
 	}
 
@@ -1089,8 +1105,7 @@ err_active:
 err_unlock:
 	mutex_unlock(&vma->vm->mutex);
 err_fence:
-	if (work)
-		dma_fence_work_commit_imm(&work->base);
+	dma_fence_work_commit_imm(&work->base);
 err_rpm:
 	if (wakeref)
 		intel_runtime_pm_put(&vma->vm->i915->runtime_pm, wakeref);

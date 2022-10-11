@@ -262,7 +262,7 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 	if (i915_gem_object_lock_interruptible(obj, NULL))
 		return VM_FAULT_NOPAGE;
 
-	err = i915_gem_object_pin_pages(obj);
+	err = i915_gem_object_pin_pages_sync(obj);
 	if (err)
 		goto out;
 
@@ -327,7 +327,7 @@ retry:
 		goto err_rpm;
 	}
 
-	ret = i915_gem_object_pin_pages(obj);
+	ret = i915_gem_object_pin_pages_sync(obj);
 	if (ret)
 		goto err_rpm;
 

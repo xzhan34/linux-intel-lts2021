@@ -1576,6 +1576,9 @@ static inline bool use_reloc_gpu(struct i915_vma *vma)
 	if (DBG_FORCE_RELOC)
 		return false;
 
+	if (i915_gem_object_has_migrate(vma->obj))
+		return true;
+
 	return !dma_resv_test_signaled(vma->resv, true);
 }
 

@@ -264,10 +264,12 @@ static int lmem_pread(struct drm_i915_gem_object *obj,
 		io_mapping_unmap_atomic(vaddr);
 		if (unwritten) {
 			vaddr = i915_gem_object_lmem_io_map_page(obj, idx);
-			unwritten = copy_to_user(user_data,
-						 (void __force *)vaddr + offset,
-						 length);
-			io_mapping_unmap(vaddr);
+			if (!IS_ERR_OR_NULL(vaddr)) {
+				unwritten = copy_to_user(user_data,
+							 (void __force *)vaddr + offset,
+							 length);
+				io_mapping_unmap(vaddr);
+			}
 		}
 		if (unwritten) {
 			ret = -EFAULT;
@@ -333,9 +335,11 @@ static int lmem_pwrite(struct drm_i915_gem_object *obj,
 		io_mapping_unmap_atomic(vaddr);
 		if (unwritten) {
 			vaddr = i915_gem_object_lmem_io_map_page(obj, idx);
-			unwritten = copy_from_user((void __force *)vaddr + offset,
-						   user_data, length);
-			io_mapping_unmap(vaddr);
+			if (!IS_ERR_OR_NULL(vaddr)) {
+				unwritten = copy_from_user((void __force *)vaddr + offset,
+							   user_data, length);
+				io_mapping_unmap(vaddr);
+			}
 		}
 		if (unwritten) {
 			ret = -EFAULT;
@@ -371,6 +375,11 @@ i915_gem_object_lmem_io_map_page(struct drm_i915_gem_object *obj,
 				 unsigned long n)
 {
 	resource_size_t offset;
+	int err;
+
+	err = i915_gem_object_migrate_sync(obj);
+	if (err)
+		return IO_ERR_PTR(err);
 
 	offset = i915_gem_object_get_dma_address(obj, n);
 	offset -= obj->mm.region->region.start;

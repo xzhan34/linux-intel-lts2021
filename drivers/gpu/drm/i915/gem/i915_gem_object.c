@@ -48,6 +48,50 @@ static struct kmem_cache *slab_objects;
 
 static const struct drm_gem_object_funcs i915_gem_object_funcs;
 
+void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
+				     struct i915_request *rq)
+{
+	GEM_WARN_ON(i915_active_fence_set(&obj->mm.migrate, rq));
+}
+
+long i915_gem_object_migrate_wait(struct drm_i915_gem_object *obj,
+				  unsigned int flags,
+				  long timeout)
+{
+	struct dma_fence *fence;
+
+	fence = i915_active_fence_get_or_error(&obj->mm.migrate);
+	if (likely(!fence))
+		return timeout;
+
+	if (IS_ERR(fence))
+		return PTR_ERR(fence);
+
+	timeout = i915_request_wait(to_request(fence), flags, timeout);
+	if (fence->error)
+		timeout = fence->error;
+
+	dma_fence_put(fence);
+	return timeout;
+}
+
+int i915_gem_object_migrate_sync(struct drm_i915_gem_object *obj)
+{
+	long timeout =
+		i915_gem_object_migrate_wait(obj,
+					     I915_WAIT_INTERRUPTIBLE |
+					     I915_WAIT_PRIORITY,
+					     MAX_SCHEDULE_TIMEOUT);
+
+	return timeout < 0 ? timeout : 0;
+}
+
+void i915_gem_object_migrate_finish(struct drm_i915_gem_object *obj)
+{
+	i915_gem_object_migrate_wait(obj, 0, MAX_SCHEDULE_TIMEOUT);
+	obj->mm.migrate.fence = NULL;
+}
+
 struct drm_i915_gem_object *i915_gem_object_alloc(void)
 {
 	struct drm_i915_gem_object *obj;
@@ -57,6 +101,7 @@ struct drm_i915_gem_object *i915_gem_object_alloc(void)
 		return NULL;
 	obj->base.funcs = &i915_gem_object_funcs;
 
+	INIT_ACTIVE_FENCE(&obj->mm.migrate);
 	return obj;
 }
 
@@ -212,6 +257,7 @@ void __i915_gem_free_object_rcu(struct rcu_head *head)
 		container_of(head, typeof(*obj), rcu);
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 
+	i915_active_fence_fini(&obj->mm.migrate);
 	dma_resv_fini(&obj->base._resv);
 	i915_gem_object_free(obj);
 

@@ -454,6 +454,7 @@ i915_gem_object_pin_pages(struct drm_i915_gem_object *obj)
 }
 
 int i915_gem_object_pin_pages_unlocked(struct drm_i915_gem_object *obj);
+int i915_gem_object_pin_pages_sync(struct drm_i915_gem_object *obj);
 
 static inline bool
 i915_gem_object_has_pages(struct drm_i915_gem_object *obj)
@@ -659,5 +660,25 @@ static inline int i915_gem_object_userptr_submit_done(struct drm_i915_gem_object
 static inline int i915_gem_object_userptr_validate(struct drm_i915_gem_object *obj) { GEM_BUG_ON(1); return -ENODEV; }
 
 #endif
+
+void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
+				     struct i915_request *rq);
+long i915_gem_object_migrate_wait(struct drm_i915_gem_object *obj,
+				  unsigned int flags,
+				  long timeout);
+int i915_gem_object_migrate_sync(struct drm_i915_gem_object *obj);
+void i915_gem_object_migrate_finish(struct drm_i915_gem_object *obj);
+
+static inline bool
+i915_gem_object_has_migrate(const struct drm_i915_gem_object *obj)
+{
+	return i915_active_fence_isset(&obj->mm.migrate);
+}
+
+static inline int
+i915_gem_object_migrate_has_error(const struct drm_i915_gem_object *obj)
+{
+	return i915_active_fence_has_error(&obj->mm.migrate);
+}
 
 #endif
