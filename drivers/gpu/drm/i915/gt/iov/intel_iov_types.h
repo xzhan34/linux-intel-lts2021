@@ -170,11 +170,18 @@ struct intel_iov_relay {
 };
 
 /**
+ * struct intel_iov_vf_config - VF configuration data.
+ */
+struct intel_iov_vf_config {
+};
+
+/**
  * struct intel_iov - I/O Virtualization related data.
  * @pf.sysfs: sysfs data.
  * @pf.provisioning: provisioning data.
  * @pf.service: placeholder for service data.
  * @pf.state: placeholder for VFs data.
+ * @vf.config: configuration of the resources assigned to VF.
  * @relay: data related to VF/PF communication based on GuC Relay messages.
  */
 struct intel_iov {
@@ -187,6 +194,7 @@ struct intel_iov {
 		} pf;
 
 		struct {
+			struct intel_iov_vf_config config;
 		} vf;
 	};
 
