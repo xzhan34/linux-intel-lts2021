@@ -913,6 +913,8 @@ struct drm_i915_private {
 
 		struct mutex eu_flush_lock;
 
+		/* Allow to enable the debugger */
+		bool allow_eu_debug;
 		/* lock for enable_eu_debug */
 		struct mutex enable_eu_debug_lock;
 		/* debugger state */

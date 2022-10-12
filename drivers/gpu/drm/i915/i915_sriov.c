@@ -5,6 +5,7 @@
 
 #include "i915_sriov.h"
 #include "i915_sriov_sysfs.h"
+#include "i915_debugger.h"
 #include "i915_drv.h"
 #include "i915_pci.h"
 #include "intel_pci_config.h"
@@ -396,6 +397,11 @@ int i915_sriov_pf_enable_vfs(struct drm_i915_private *i915, int num_vfs)
 	if (err < 0)
 		goto fail;
 
+	/* ensure the debugger is disabled */
+	err = i915_debugger_disallow(i915);
+	if (err < 0)
+		goto fail;
+
 	/* hold the reference to runtime pm as long as VFs are enabled */
 	intel_gt_pm_get_untracked(to_gt(i915));
 
@@ -427,6 +433,7 @@ fail_guc:
 fail_pm:
 	intel_iov_provisioning_auto(&to_gt(i915)->iov, 0);
 	intel_gt_pm_put_untracked(to_gt(i915));
+	i915_debugger_allow(i915);
 fail:
 	drm_err(&i915->drm, "Failed to enable %u VFs (%pe)\n",
 		num_vfs, ERR_PTR(err));
@@ -499,6 +506,8 @@ int i915_sriov_pf_disable_vfs(struct drm_i915_private *i915)
 	pf_update_guc_clients(&to_gt(i915)->iov, 0);
 	intel_iov_provisioning_auto(&to_gt(i915)->iov, 0);
 	intel_gt_pm_put_untracked(to_gt(i915));
+
+	i915_debugger_allow(i915);
 
 	dev_info(dev, "Disabled %u VFs\n", num_vfs);
 	return 0;
