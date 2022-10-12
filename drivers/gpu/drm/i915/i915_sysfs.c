@@ -824,8 +824,13 @@ static ssize_t enable_eu_debug_store(struct device *dev,
 static I915_DEVICE_ATTR_RW(prelim_enable_eu_debug, 0644, enable_eu_debug_show,
 			   enable_eu_debug_store);
 
-static void i915_setup_enable_eu_debug_sysfs(struct device *kdev)
+static void i915_setup_enable_eu_debug_sysfs(struct drm_i915_private *i915)
 {
+	struct device *kdev = i915->drm.primary->kdev;
+
+	if (IS_SRIOV_VF(i915))
+		return;
+
 	if (sysfs_create_file(&kdev->kobj,
 			      &dev_attr_prelim_enable_eu_debug.attr.attr))
 		dev_warn(kdev, "Failed to add prelim_enable_eu_deubg sysfs param\n");
@@ -833,7 +838,7 @@ static void i915_setup_enable_eu_debug_sysfs(struct device *kdev)
 
 #else /* CONFIG_DRM_I915_DEBUGGER */
 
-static void i915_setup_enable_eu_debug_sysfs(struct device *kdev) {}
+static void i915_setup_enable_eu_debug_sysfs(struct drm_i915_private *i915) {}
 
 #endif /* CONFIG_DRM_I915_DEBUGGER */
 
@@ -964,13 +969,13 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 
 	intel_mem_health_report_sysfs(dev_priv);
 
-	i915_setup_enable_eu_debug_sysfs(kdev);
-
 	if (i915_ats_enabled(dev_priv)) {
 		ret = sysfs_create_files(&kdev->kobj, mode_b_attrs);
 		if (ret)
 			DRM_ERROR("Failed to setup Address Translation Services sysfs\n");
 	}
+
+	i915_setup_enable_eu_debug_sysfs(dev_priv);
 }
 
 void i915_teardown_sysfs(struct drm_i915_private *dev_priv)

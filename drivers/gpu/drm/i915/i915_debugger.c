@@ -3001,8 +3001,15 @@ void i915_debugger_init(struct drm_i915_private *i915)
 	spin_lock_init(&i915->debuggers.lock);
 	INIT_LIST_HEAD(&i915->debuggers.list);
 	mutex_init(&i915->debuggers.enable_eu_debug_lock);
+
 	i915->debuggers.enable_eu_debug = !!i915->params.debug_eu;
-	i915->debuggers.allow_eu_debug = true;
+	if (IS_SRIOV_VF(i915) && i915->params.debug_eu) {
+		drm_notice(&i915->drm,
+			   "i915_debugger: ignoring 'debug_eu=1' in VF mode\n");
+		i915->debuggers.enable_eu_debug = false;
+	}
+
+	i915->debuggers.allow_eu_debug = !IS_SRIOV_VF(i915);
 }
 
 void i915_debugger_fini(struct drm_i915_private *i915)
@@ -3779,6 +3786,9 @@ int i915_debugger_enable(struct drm_i915_private *i915, bool enable)
 
 static int __i915_debugger_allow(struct drm_i915_private *i915, bool allow)
 {
+	if (IS_SRIOV_VF(i915) && allow)
+		return -EPERM;
+
 	mutex_lock(&i915->debuggers.enable_eu_debug_lock);
 	if (!allow && i915->debuggers.enable_eu_debug) {
 		mutex_unlock(&i915->debuggers.enable_eu_debug_lock);
