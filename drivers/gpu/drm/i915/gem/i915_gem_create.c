@@ -8,6 +8,7 @@
 #include "gem/i915_gem_ioctls.h"
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_region.h"
+#include "pxp/intel_pxp.h"
 
 #include "i915_drv.h"
 #include "i915_gem_create.h"
@@ -203,6 +204,7 @@ object_free:
 struct create_ext {
 	struct drm_i915_private *i915;
 	struct drm_i915_gem_object *vanilla_object;
+	unsigned long flags;
 };
 
 static void repr_placements(char *buf, size_t size,
@@ -341,8 +343,28 @@ static int ext_set_placements(struct i915_user_extension __user *base,
 	return set_placements(&ext, data);
 }
 
+static int ext_set_protected(struct i915_user_extension __user *base, void *data)
+{
+	struct drm_i915_gem_create_ext_protected_content ext;
+	struct create_ext *ext_data = data;
+
+	if (copy_from_user(&ext, base, sizeof(ext)))
+		return -EFAULT;
+
+	if (ext.flags)
+		return -EINVAL;
+
+	if (!intel_pxp_is_enabled(&ext_data->i915->gt0.pxp))
+		return -ENODEV;
+
+	ext_data->flags |= I915_BO_PROTECTED;
+
+	return 0;
+}
+
 static const i915_user_extension_fn create_extensions[] = {
 	[I915_GEM_CREATE_EXT_MEMORY_REGIONS] = ext_set_placements,
+	[I915_GEM_CREATE_EXT_PROTECTED_CONTENT] = ext_set_protected,
 };
 
 /**
@@ -361,8 +383,6 @@ i915_gem_create_ext_ioctl(struct drm_device *dev, void *data,
 	struct intel_memory_region **placements_ext;
 	struct drm_i915_gem_object *obj;
 	int ret;
-
-	return -EINVAL;
 
 	if (args->flags)
 		return -EINVAL;
@@ -392,6 +412,9 @@ i915_gem_create_ext_ioctl(struct drm_device *dev, void *data,
 	ret = i915_gem_setup(obj, args->size);
 	if (ret)
 		goto object_free;
+
+	/* Add any flag set by create_ext options */
+	obj->flags |= ext_data.flags;
 
 	return i915_gem_publish(obj, file, &args->size, &args->handle);
 

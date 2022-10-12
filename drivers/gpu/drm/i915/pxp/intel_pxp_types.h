@@ -43,6 +43,13 @@ struct intel_pxp {
 	 */
 	bool arb_is_valid;
 
+	/**
+	 * @key_instance: tracks which key instance we're on, so we can use it
+	 * to determine if an object was created using the current key or a
+	 * previous one.
+	 */
+	u32 key_instance;
+
 	/** @tee_mutex: protects the tee channel binding and messaging. */
 	struct mutex tee_mutex;
 

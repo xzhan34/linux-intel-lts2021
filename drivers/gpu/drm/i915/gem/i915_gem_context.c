@@ -81,6 +81,8 @@
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_ring.h"
 
+#include "pxp/intel_pxp.h"
+
 #include "i915_drm_client.h"
 #include "i915_gem_context.h"
 #include "i915_trace.h"
@@ -386,6 +388,9 @@ void i915_gem_context_release(struct kref *ref)
 	trace_i915_context_free(ctx);
 	GEM_BUG_ON(!i915_gem_context_is_closed(ctx));
 
+	if (ctx->pxp_wakeref)
+		intel_runtime_pm_put(&ctx->i915->runtime_pm, ctx->pxp_wakeref);
+
 	if (ctx->client)
 		i915_drm_client_put(ctx->client);
 
@@ -685,6 +690,36 @@ static int __context_set_persistence(struct i915_gem_context *ctx, bool state)
 	}
 
 	return 0;
+}
+
+static int __context_set_protected(struct drm_i915_private *i915,
+				   struct i915_gem_context *ctx,
+				   bool protected)
+{
+	int ret = 0;
+
+	if (ctx->file_priv) {
+		/* can't change this after creation! */
+		ret = -EINVAL;
+	} else if (!protected) {
+		ctx->uses_protected_content = false;
+	} else if (!intel_pxp_is_enabled(&i915->gt0.pxp)) {
+		ret = -ENODEV;
+	} else if ((i915_gem_context_is_recoverable(ctx)) ||
+		   !(i915_gem_context_is_bannable(ctx))) {
+		ret = -EPERM;
+	} else {
+		ctx->uses_protected_content = true;
+
+		/*
+		 * protected context usage requires the PXP session to be up,
+		 * which in turn requires the device to be active.
+		 */
+		ctx->pxp_wakeref = intel_runtime_pm_get(&i915->runtime_pm);
+		ret = intel_pxp_wait_for_arb_start(&i915->gt0.pxp);
+	}
+
+	return ret;
 }
 
 static struct i915_gem_context *
@@ -2127,6 +2162,8 @@ static int ctx_setparam(struct drm_i915_file_private *fpriv,
 			ret = -EPERM;
 		else if (args->value)
 			i915_gem_context_set_bannable(ctx);
+		else if (ctx->uses_protected_content)
+			ret = -EPERM;
 		else
 			i915_gem_context_clear_bannable(ctx);
 		break;
@@ -2134,10 +2171,12 @@ static int ctx_setparam(struct drm_i915_file_private *fpriv,
 	case I915_CONTEXT_PARAM_RECOVERABLE:
 		if (args->size)
 			ret = -EINVAL;
-		else if (args->value)
-			i915_gem_context_set_recoverable(ctx);
-		else
+		else if (!args->value)
 			i915_gem_context_clear_recoverable(ctx);
+		else if (ctx->uses_protected_content)
+			ret = -EPERM;
+		else
+			i915_gem_context_set_recoverable(ctx);
 		break;
 
 	case I915_CONTEXT_PARAM_PRIORITY:
@@ -2158,6 +2197,11 @@ static int ctx_setparam(struct drm_i915_file_private *fpriv,
 
 	case I915_CONTEXT_PARAM_PERSISTENCE:
 		ret = set_persistence(ctx, args);
+		break;
+
+	case I915_CONTEXT_PARAM_PROTECTED_CONTENT:
+		ret = __context_set_protected(fpriv->dev_priv, ctx,
+					      args->value);
 		break;
 
 	case I915_CONTEXT_PARAM_NO_ZEROMAP:
@@ -2396,6 +2440,11 @@ int i915_gem_context_getparam_ioctl(struct drm_device *dev, void *data,
 	case I915_CONTEXT_PARAM_PERSISTENCE:
 		args->size = 0;
 		args->value = i915_gem_context_is_persistent(ctx);
+		break;
+
+	case I915_CONTEXT_PARAM_PROTECTED_CONTENT:
+		args->size = 0;
+		args->value = i915_gem_context_uses_protected_content(ctx);
 		break;
 
 	case I915_CONTEXT_PARAM_NO_ZEROMAP:
