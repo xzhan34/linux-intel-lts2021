@@ -209,22 +209,14 @@ out:
 #undef COND
 }
 
-int intel_pcode_init(struct intel_uncore *uncore)
+static int pcode_init_wait(struct intel_uncore *uncore, int timeout_ms)
 {
-	const long timeout_ms = 180 * 1000;
-
-	if (!IS_DGFX(uncore->i915))
-		return 0;
-
 	if (__intel_wait_for_register_fw(uncore,
 					 GEN6_PCODE_MAILBOX,
 					 GEN6_PCODE_READY, 0,
 					 500, timeout_ms,
-					 NULL)) {
-		drm_warn(&uncore->i915->drm,
-			 "Firmware not idle; deferring module probe\n");
+					 NULL))
 		return -EPROBE_DEFER;
-	}
 
 	return skl_pcode_request(uncore,
 				 DG1_PCODE_STATUS,
@@ -232,6 +224,22 @@ int intel_pcode_init(struct intel_uncore *uncore)
 				 DG1_UNCORE_INIT_STATUS_COMPLETE,
 				 DG1_UNCORE_INIT_STATUS_COMPLETE,
 				 timeout_ms);
+}
+
+int intel_pcode_init(struct intel_uncore *uncore)
+{
+	int err = 0;
+
+	if (!IS_DGFX(uncore->i915))
+		return 0;
+
+	if (pcode_init_wait(uncore, 10000)) {
+		drm_notice(&uncore->i915->drm,
+			   "Waiting for HW initialisation...\n");
+		err = pcode_init_wait(uncore, 6 * 60 * 1000 /* 6 minutes! */);
+	}
+
+	return err;
 }
 
 int snb_pcode_read_p(struct intel_uncore *uncore, u32 mbcmd, u32 p1, u32 p2, u32 *val)
