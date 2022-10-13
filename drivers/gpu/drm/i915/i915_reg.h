@@ -184,6 +184,9 @@
 #define _MASKED_BIT_ENABLE(a)	({ typeof(a) _a = (a); _MASKED_FIELD(_a, _a); })
 #define _MASKED_BIT_DISABLE(a)	(_MASKED_FIELD((a), 0))
 
+#define CSC_DEVUID_LWORD            _MMIO(0x102008)
+#define CSC_DEVUID_HWORD            _MMIO(0x10200C)
+
 #define GU_CNTL				_MMIO(0x101010)
 #define   LMEM_INIT			REG_BIT(7)
 

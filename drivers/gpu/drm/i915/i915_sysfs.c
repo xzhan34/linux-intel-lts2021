@@ -240,6 +240,16 @@ static ssize_t prelim_uapi_version_show(struct device *dev,
 
 static DEVICE_ATTR_RO(prelim_uapi_version);
 
+static ssize_t
+prelim_csc_unique_id_show(struct device *kdev, struct device_attribute *attr, char *buf)
+{
+	struct drm_i915_private *i915 = kdev_minor_to_i915(kdev);
+
+	return sysfs_emit(buf, "%llx\n", RUNTIME_INFO(i915)->uid);
+}
+
+static DEVICE_ATTR_RO(prelim_csc_unique_id);
+
 static ssize_t i915_driver_error_show(struct device *dev,
 				    struct device_attribute *attr,
 				    char *buf)
@@ -447,6 +457,12 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 
 	if (sysfs_create_file(&kdev->kobj, &dev_attr_prelim_uapi_version.attr))
 		dev_err(kdev, "Failed adding prelim_uapi_version to sysfs\n");
+
+	if (INTEL_INFO(dev_priv)->has_csc_uid) {
+		ret = sysfs_create_file(&kdev->kobj, &dev_attr_prelim_csc_unique_id.attr);
+		if (ret)
+			drm_warn(&dev_priv->drm, "UID sysfs setup failed\n");
+	}
 
 	dev_priv->clients.root =
 		kobject_create_and_add("clients", &kdev->kobj);

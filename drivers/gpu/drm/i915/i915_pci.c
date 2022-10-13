@@ -1126,6 +1126,7 @@ static const struct intel_device_info ats_m_info = {
 	DG2_FEATURES,
 	.display = { 0 },
 	.tuning_thread_rr_after_dep = 1,
+	.has_csc_uid = 1,
 };
 
 #define XE_HPC_FEATURES \

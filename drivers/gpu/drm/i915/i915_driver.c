@@ -1171,6 +1171,14 @@ i915_driver_create(struct pci_dev *pdev, const struct pci_device_id *ent)
 	return i915;
 }
 
+static void i915_read_dev_uid(struct drm_i915_private *i915)
+{
+	if (INTEL_INFO(i915)->has_csc_uid)
+		RUNTIME_INFO(i915)->uid  = intel_uncore_read64_2x32(&i915->uncore,
+								    CSC_DEVUID_LWORD,
+								    CSC_DEVUID_HWORD);
+}
+
 /**
  * i915_driver_probe - setup chip and create an initial config
  * @pdev: PCI device
@@ -1243,6 +1251,8 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	ret = i915_driver_mmio_probe(i915);
 	if (ret < 0)
 		goto out_runtime_pm_put;
+
+	i915_read_dev_uid(i915);
 
 	ret = i915_driver_hw_probe(i915);
 	if (ret < 0)
