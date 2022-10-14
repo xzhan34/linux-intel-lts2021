@@ -1002,6 +1002,15 @@ static struct i915_vma *eb_lookup_vma(struct i915_execbuffer *eb, u32 handle)
 			return ERR_PTR(-ENOENT);
 
 		/*
+		 * As main use case for segmented BOs is vm_bind and pagefault
+		 * mode, we don't support with exec_object. And we can't easily
+		 * support segmented BOs here without heavy refactoring as this
+		 * whole file assumes single VMA per exec_object.
+		 */
+		if (i915_gem_object_has_segments(obj))
+			return ERR_PTR(-ENXIO);
+
+		/*
 		 * If the user has opted-in for protected-object tracking, make
 		 * sure the object encryption can be used.
 		 * We only need to do this when the object is first used with
