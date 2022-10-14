@@ -333,6 +333,7 @@ void i915_gem_vm_unbind_all(struct i915_address_space *vm)
 
 struct unbind_work {
 	struct dma_fence_work base;
+	struct list_head unbind_link;
 	struct i915_vma *vma;
 	struct i915_sw_dma_fence_cb cb;
 };
@@ -358,7 +359,8 @@ static const struct dma_fence_work_ops unbind_ops = {
 	.release = release,
 };
 
-static struct dma_fence_work *queue_unbind(struct i915_vma *vma)
+static struct dma_fence_work *queue_unbind(struct i915_vma *vma,
+					   struct list_head *unbind_head)
 {
 	struct dma_fence *prev;
 	struct unbind_work *w;
@@ -369,6 +371,8 @@ static struct dma_fence_work *queue_unbind(struct i915_vma *vma)
 
 	dma_fence_work_init(&w->base, &unbind_ops);
 	w->vma = vma;
+	INIT_LIST_HEAD(&w->unbind_link);
+	list_add_tail(&w->unbind_link, unbind_head);
 
 	prev = i915_active_set_exclusive(&vma->active, &w->base.dma);
 	if (!IS_ERR_OR_NULL(prev)) {
@@ -379,11 +383,65 @@ static struct dma_fence_work *queue_unbind(struct i915_vma *vma)
 	return &w->base;
 }
 
+static int verify_adjacent_segments(struct i915_vma *vma, u64 length)
+{
+	struct i915_vma *vma_head = vma;
+	struct i915_vma *vma_end = NULL;
+	u64 vma_size = 0;
+	int ret;
+
+	/*
+	 * If obj->segment_offset is non-zero, we are not at the start of a
+	 * segmented BO. Partial unbinds are not supported, so this is error.
+	 */
+	if (vma->obj->segment_offset)
+		return -EINVAL;
+
+	/*
+	 * For segmented BOs, we created many smaller binds. Perform adjacency
+	 * search to find rest of VMAs for the VA range.
+	 * Don't append VMAs until active_acquire() completed so that easy to
+	 * release active references on error.
+	 */
+	while (vma && (vma_size < length)) {
+		if (i915_vma_is_pinned(vma) || atomic_read(&vma->open_count)) {
+			ret = -EAGAIN;
+			goto out_del;
+		}
+
+		ret = i915_active_acquire(&vma->active);
+		if (ret) {
+			vma_end = vma;
+			goto out_del;
+		}
+
+		vma_size += vma->size;
+		vma = vma->adjacent_next;
+	}
+
+	/*
+	 * If we reached end of adjacency list, vma will be NULL.
+	 * If not NULL, then user attempted a partial unbind (error).
+	 */
+	vma_end = vma;
+
+	if (vma_size == length && !vma_end)
+		return 0; /* success */
+
+	ret = -EINVAL;
+out_del:
+	for (vma = vma_head; vma && vma != vma_end; vma = vma->adjacent_next)
+		i915_active_release(&vma->active);
+	return ret;
+}
+
 int i915_gem_vm_unbind_obj(struct i915_address_space *vm,
 			   struct prelim_drm_i915_gem_vm_bind *va)
 {
+	struct i915_vma *vma, *vma_head, *vma_next;
+	struct unbind_work *uwn, *uw = NULL;
 	struct dma_fence_work *work = NULL;
-	struct i915_vma *vma;
+	LIST_HEAD(unbind_head);
 	int ret;
 
 	/* Handle is not used and must be 0 */
@@ -402,34 +460,62 @@ int i915_gem_vm_unbind_obj(struct i915_address_space *vm,
 		ret = -ENOENT;
 		goto out_unlock;
 	}
+	vma_head = vma;
 
-	if (vma->size != va->length) {
-		ret = -EINVAL;
-		goto out_unlock;
+	if (!i915_gem_object_is_segment(vma->obj)) {
+		if (vma->size != va->length) {
+			ret = -EINVAL;
+			goto out_unlock;
+		}
+
+		if (i915_vma_is_pinned(vma) || atomic_read(&vma->open_count)) {
+			ret = -EAGAIN;
+			goto out_unlock;
+		}
+
+		ret = i915_active_acquire(&vma->active);
+		if (ret)
+			goto out_unlock;
+	} else {
+		/*
+		 * For support of segmented BOs, we make EAGAIN checks for each
+		 * segment and test if va->length matches size of the aggregate
+		 * set of VMAs. This will do active_acquire() for each segment;
+		 * but on error, these are released before returning.
+		 */
+		ret = verify_adjacent_segments(vma, va->length);
+		if (ret)
+			goto out_unlock;
 	}
 
-	if (i915_vma_is_pinned(vma) || atomic_read(&vma->open_count)) {
-		ret = -EAGAIN;
-		goto out_unlock;
+	/*
+	 * As this uses dma_fence_work, we use multiple workers (one per VMA)
+	 * as each worker advances the vma->active timeline.
+	 */
+	for (vma = vma_head; vma; vma = vma->adjacent_next) {
+		work = queue_unbind(vma, &unbind_head);
+		if (!work) {
+			ret = -ENOMEM;
+			list_for_each_entry_safe(uw, uwn, &unbind_head, unbind_link)
+				dma_fence_put(&uw->base.dma);
+			break;
+		}
 	}
 
-	ret = i915_active_acquire(&vma->active);
-	if (ret)
-		goto out_unlock;
-
-	work = queue_unbind(vma);
-	i915_active_release(&vma->active);
-	if (!work) {
-		ret = -ENOMEM;
-		goto out_unlock;
+	for (vma = vma_head; vma; vma = vma_next) {
+		i915_active_release(&vma->active);
+		vma_next = vma->adjacent_next;
+		if (!ret) {
+			vma->adjacent_next = NULL;
+			i915_gem_vm_bind_remove(vma);
+		}
 	}
-
-	i915_gem_vm_bind_remove(vma);
 
 out_unlock:
 	i915_gem_vm_bind_unlock(vm);
 
-	if (work) {
+	list_for_each_entry_safe(uw, uwn, &unbind_head, unbind_link) {
+		work = &uw->base;
 		dma_fence_get(&work->dma);
 		dma_fence_work_commit_imm(work);
 		if (!vm->i915->params.async_vm_unbind)
