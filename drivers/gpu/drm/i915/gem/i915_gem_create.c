@@ -201,8 +201,10 @@ static int create_setparam(struct i915_user_extension __user *base, void *data)
 	return __create_setparam(&ext.param, data);
 }
 
+static int ext_set_protected(struct i915_user_extension __user *base, void *data);
 static const i915_user_extension_fn prelim_create_extensions[] = {
 	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_GEM_CREATE_EXT_SETPARAM)] = create_setparam,
+	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_GEM_CREATE_EXT_PROTECTED_CONTENT)] = ext_set_protected,
 };
 
 /**
@@ -238,6 +240,9 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 	ret = i915_gem_setup(obj, args->size);
 	if (ret)
 		goto object_free;
+
+	/* Add any flag set by create_ext options */
+	obj->flags |= ext_data.flags;
 
 	return i915_gem_publish(obj, file, &args->size, &args->handle);
 
