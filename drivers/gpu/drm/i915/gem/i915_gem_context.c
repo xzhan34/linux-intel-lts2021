@@ -2103,6 +2103,7 @@ static int ctx_setparam(struct drm_i915_file_private *fpriv,
 		break;
 
 	case I915_CONTEXT_PARAM_PROTECTED_CONTENT:
+	case PRELIM_I915_CONTEXT_PARAM_PROTECTED_CONTENT:
 		ret = __context_set_protected(fpriv->dev_priv, ctx,
 					      args->value);
 		break;
@@ -2350,6 +2351,7 @@ int i915_gem_context_getparam_ioctl(struct drm_device *dev, void *data,
 		break;
 
 	case I915_CONTEXT_PARAM_PROTECTED_CONTENT:
+	case PRELIM_I915_CONTEXT_PARAM_PROTECTED_CONTENT:
 		args->size = 0;
 		args->value = i915_gem_context_uses_protected_content(ctx);
 		break;
