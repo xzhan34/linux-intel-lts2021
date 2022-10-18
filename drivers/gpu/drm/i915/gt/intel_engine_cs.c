@@ -981,6 +981,9 @@ static intel_engine_mask_t init_engine_mask(struct intel_gt *gt)
 	engine_mask_apply_compute_fuses(gt);
 	engine_mask_apply_copy_fuses(gt);
 
+	if (!intel_uc_wants_gsc_uc(&gt->uc))
+		info->engine_mask &= ~BIT(GSC0);
+
 	return info->engine_mask;
 }
 
