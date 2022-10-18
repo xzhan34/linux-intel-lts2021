@@ -108,9 +108,17 @@ static int intel_gt_probe_lmem(struct intel_gt *gt)
 
 int intel_gt_assign_ggtt(struct intel_gt *gt)
 {
-	gt->ggtt = drmm_kzalloc(&gt->i915->drm, sizeof(*gt->ggtt), GFP_KERNEL);
+	/* Media GT shares primary GT's GGTT */
+	if (gt->type == GT_MEDIA) {
+		gt->ggtt = to_gt(gt->i915)->ggtt;
+	} else {
+		gt->ggtt = drmm_kzalloc(&gt->i915->drm, sizeof(*gt->ggtt), GFP_KERNEL);
+		if (!gt->ggtt)
+			return -ENOMEM;
+	}
 
-	return gt->ggtt ? 0 : -ENOMEM;
+	list_add_tail(&gt->ggtt_link, &gt->ggtt->gt_list);
+	return 0;
 }
 
 int intel_gt_init_mmio(struct intel_gt *gt)
@@ -947,6 +955,9 @@ int intel_gt_tiles_init(struct drm_i915_private *i915)
 	int ret;
 
 	for_each_gt(gt, i915, id) {
+		if (GRAPHICS_VER(i915) >= 8)
+			setup_private_pat(gt);
+
 		ret = intel_gt_probe_lmem(gt);
 		if (ret)
 			return ret;

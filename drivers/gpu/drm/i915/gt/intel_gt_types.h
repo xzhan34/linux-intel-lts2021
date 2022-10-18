@@ -246,6 +246,9 @@ struct intel_gt {
 
 	struct intel_pxp pxp;
 
+	/** link: &ggtt.gt_list */
+	struct list_head ggtt_link;
+
 	struct i915_perf_gt perf;
 };
 
