@@ -426,6 +426,8 @@ static int __i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
 int i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
 			     struct prelim_drm_i915_gem_vm_advise *args)
 {
+	struct intel_memory_region *old_preferred_region;
+	unsigned int old_madv_atomic;
 	struct i915_gem_ww_ctx ww;
 	int err = 0;
 
@@ -433,7 +435,48 @@ int i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
 		err = i915_gem_object_lock(obj, &ww);
 		if (err)
 			continue;
+
+		/*
+		 * Revert to these values if unable to update all
+		 * segments to the requested hint
+		 */
+		old_madv_atomic = obj->mm.madv_atomic;
+		old_preferred_region = obj->mm.preferred_region;
+
 		err = __i915_gem_object_set_hint(obj, &ww, args);
+
+		/*
+		 * Propagate hints to child segments for now; next step
+		 * is to add support for chunk granular hints
+		 */
+		if (!err && i915_gem_object_has_segments(obj)) {
+			struct drm_i915_gem_object *sobj;
+
+			list_for_each_entry(sobj, &obj->segments, segment_link) {
+				err = i915_gem_object_lock(sobj, &ww);
+				if (!err) {
+					err = __i915_gem_object_set_hint(sobj, &ww, args);
+					i915_gem_object_unlock(sobj);
+				}
+
+				/*
+				 * On -EDEADLK error, i915_gem_ww will unwind
+				 * and retry. For other errors, we will break
+				 * and return error to user. In both cases, we
+				 * first rollback hints to the prior value.
+				 */
+				if (err) {
+					list_for_each_entry_continue_reverse(sobj, &obj->segments,
+									     segment_link) {
+						sobj->mm.madv_atomic = old_madv_atomic;
+						sobj->mm.preferred_region = old_preferred_region;
+					}
+					obj->mm.madv_atomic = old_madv_atomic;
+					obj->mm.preferred_region = old_preferred_region;
+					break;
+				}
+			}
+		}
 	}
 
 	return err;
