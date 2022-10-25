@@ -683,8 +683,10 @@ struct prelim_drm_i915_debug_event_context {
  * Debugger ABI (ioctl and events) Version History:
  * 0 - No debugger available
  * 1 - Initial version
+ * 2 - Events sent from a small fifo queue
+ * 3 - VM_BIND ioctl is non-blocking wrt to the debugger ack
  */
-#define PRELIM_DRM_I915_DEBUG_VERSION 0
+#define PRELIM_DRM_I915_DEBUG_VERSION 3
 
 struct prelim_drm_i915_debugger_open_param {
 	__u64 pid; /* input: Target process ID */
