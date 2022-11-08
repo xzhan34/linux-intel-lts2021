@@ -1101,6 +1101,7 @@
 #define XELPMP_VDBX_MOD_CTRL			_MMIO(0xcf34)
 #define XEHP_VEBX_MOD_CTRL			MCR_REG(0xcf38)
 #define XELPMP_VEBX_MOD_CTRL			_MMIO(0xcf38)
+#define BLT_MOD_CTRL				MCR_REG(0xcf3c)
 #define   FORCE_MISS_FTLB			REG_BIT(3)
 
 #define XEHP_GAMSTLB_CTRL			MCR_REG(0xcf4c)
