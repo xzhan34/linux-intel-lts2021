@@ -1897,6 +1897,7 @@ static void quirk_intel_pcie_pm(struct pci_dev *dev)
 	pci_pm_d3hot_delay = 120;
 	dev->no_d1d2 = 1;
 }
+
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	0x25e2, quirk_intel_pcie_pm);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	0x25e3, quirk_intel_pcie_pm);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	0x25e4, quirk_intel_pcie_pm);
@@ -5423,6 +5424,33 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_4, quirk_intel_pvc_no_at
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_5, quirk_intel_pvc_no_ats);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_6, quirk_intel_pvc_no_ats);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_7, quirk_intel_pvc_no_ats);
+
+/*
+ * Some Intel PCIe endpoint devices do not have End-End TLP Prefixes support,
+ * albeit they support ATS and PASID via upstream and root ports. Those devices
+ * do not use PCIe TLP for PASID operations - So, this function sets
+ * pasid_no_tlp bit to bypass check in the pci_enable_pasid() callback function
+ * and allow device driver to enable PASID
+ */
+static void quirk_intel_pcie_no_tlp_pasid(struct pci_dev *dev)
+{
+	const u8 base_die_rev = (dev->revision >> PVC_BASE_DIE_SHIFT) &
+				 PVC_BASE_DIE_MASK;
+
+	if (base_die_rev < PVC_BASE_DIE_REV_B0)
+		return;
+
+	/* BD B0 support ATS and PASID */
+	dev->pasid_no_tlp = 1;
+}
+
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_1, quirk_intel_pcie_no_tlp_pasid);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_2, quirk_intel_pcie_no_tlp_pasid);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_3, quirk_intel_pcie_no_tlp_pasid);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_4, quirk_intel_pcie_no_tlp_pasid);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_5, quirk_intel_pcie_no_tlp_pasid);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_6, quirk_intel_pcie_no_tlp_pasid);
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, PVC_PCI_ID_7, quirk_intel_pcie_no_tlp_pasid);
 
 #endif /* CONFIG_PCI_ATS */
 
