@@ -652,11 +652,12 @@ static int i915_engine_info(struct seq_file *m, void *unused)
 	wakeref = intel_runtime_pm_get(&i915->runtime_pm);
 
 	for_each_gt(gt, i915, id) {
-		seq_printf(m, "GT%d awake? %s [%d], %llums\n",
+		seq_printf(m, "GT%d awake? %s [%d], %llums, interrupts: %lu\n",
 			   gt->info.id,
 			   str_yes_no(gt->awake),
 			   atomic_read(&gt->wakeref.count),
-			   ktime_to_ms(intel_gt_get_awake_time(gt)));
+			   ktime_to_ms(intel_gt_get_awake_time(gt)),
+			   gt->irq_count);
 		seq_printf(m, "CS timestamp frequency: %u Hz, %d ns\n",
 			   gt->clock_frequency,
 			   gt->clock_period_ns);

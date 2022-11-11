@@ -188,6 +188,7 @@ struct intel_gt {
 	struct intel_rps rps;
 
 	spinlock_t *irq_lock;
+	unsigned long irq_count;
 	u32 gt_imr;
 	u32 pm_ier;
 	u32 pm_imr;
