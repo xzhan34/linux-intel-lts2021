@@ -206,7 +206,7 @@ struct i915_resv {
 	};
 };
 
-#define I915_BO_MIN_CHUNK_SIZE	SZ_2M
+#define I915_BO_MIN_CHUNK_SIZE	SZ_64K
 
 struct drm_i915_gem_object {
 	/*

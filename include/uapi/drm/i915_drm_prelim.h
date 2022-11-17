@@ -263,6 +263,8 @@ struct prelim_i915_user_extension {
 /* EU Debugger support */
 #define PRELIM_I915_PARAM_EU_DEBUGGER_VERSION  (PRELIM_I915_PARAM | 9)
 
+/* BO chunk granularity support */
+#define PRELIM_I915_PARAM_HAS_CHUNK_SIZE	(PRELIM_I915_PARAM | 10)
 /* End getparam */
 
 struct prelim_drm_i915_gem_create_ext {
@@ -326,6 +328,18 @@ struct prelim_drm_i915_gem_object_param {
  * use two buffer objects with a single exported dma-buf file descriptor
  */
 #define PRELIM_I915_PARAM_SET_PAIR ((1 << 17) | 0x1)
+
+/*
+ * PRELIM_I915_PARAM_SET_CHUNK_SIZE:
+ *
+ * Specifies that this buffer object should support 'chunking' and chunk
+ * granularity. Allows internal KMD paging/migration/eviction handling to
+ * operate on a single chunk instead of the whole buffer object.
+ * Size specified in bytes and must be non-zero and a power of 2.
+ * KMD will return error (-ENOSPC) if CHUNK_SIZE is deemed to be too small
+ * to be supported.
+ */
+#define PRELIM_I915_PARAM_SET_CHUNK_SIZE ((1 << 18) | 1)
 	__u64 param;
 
 	/* Data value or pointer */
