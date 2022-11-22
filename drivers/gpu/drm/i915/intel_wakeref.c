@@ -16,7 +16,7 @@ static void rpm_get(struct intel_wakeref *wf)
 
 static void rpm_put(struct intel_wakeref *wf)
 {
-	intel_wakeref_t wakeref = fetch_and_zero(&wf->wakeref);
+	intel_wakeref_t wakeref = xchg(&wf->wakeref, 0);
 
 	intel_runtime_pm_put(wf->rpm, wakeref);
 	INTEL_WAKEREF_BUG_ON(!wakeref);
