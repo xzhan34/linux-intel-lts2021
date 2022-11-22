@@ -440,31 +440,109 @@ out_unlock:
 	return ret;
 }
 
-static struct i915_vma *vm_bind_get_vma(struct i915_address_space *vm,
-					struct drm_i915_gem_object *obj,
-					struct prelim_drm_i915_gem_vm_bind *va)
+static struct i915_vma *vm_create_vma(struct i915_address_space *vm,
+				      struct drm_i915_gem_object *obj,
+				      u64 start, u64 offset, u64 size)
 {
 	struct i915_ggtt_view view;
 	struct i915_vma *vma;
 
-	va->start = intel_noncanonical_addr(INTEL_PPGTT_MSB(vm->i915),
-					    va->start);
-	vma = i915_gem_vm_bind_lookup_vma(vm, va->start);
-	if (vma)
-		return ERR_PTR(-EEXIST);
-
 	view.type = I915_GGTT_VIEW_PARTIAL;
-	view.partial.offset = va->offset >> PAGE_SHIFT;
-	view.partial.size = va->length >> PAGE_SHIFT;
+	view.partial.offset = offset >> PAGE_SHIFT;
+	view.partial.size = size >> PAGE_SHIFT;
 	vma = i915_vma_instance(obj, vm, &view);
 	if (IS_ERR(vma))
 		return vma;
 
-	vma->start = va->start;
-	vma->last = va->start + va->length - 1;
+	vma->start = start;
+	vma->last = start + size - 1;
 	__set_bit(I915_VMA_PERSISTENT_BIT, __i915_vma_flags(vma));
 
 	return __i915_vma_get(vma);
+}
+
+/*
+ * To support segmented BOs, we add VMAs to vma_head as we can now optionally
+ * create a list of many smaller binds.
+ */
+static int vm_bind_get_vmas(struct i915_address_space *vm,
+			    struct drm_i915_gem_object *obj,
+			    struct prelim_drm_i915_gem_vm_bind *va,
+			    struct i915_sw_fence *bind_fence,
+			    struct list_head *vma_head)
+{
+	struct drm_i915_gem_object *vma_obj;
+	struct i915_vma *vma, *vn;
+	int err = 0, vma_count = 0;
+
+	/*
+	 * If segmented BO, divide VA range into multiple smaller binds,
+	 * with one per segment of the BO.
+	 */
+	if (i915_gem_object_has_segments(obj)) {
+		size_t offset, remaining, start, vma_size;
+
+		start = va->start;
+		offset = va->offset;
+		remaining = va->length;
+
+		list_for_each_entry(vma_obj, &obj->segments, segment_link) {
+			if (offset >= vma_obj->base.size) {
+				offset -= vma_obj->base.size;
+				continue;
+			}
+
+			vma_size = min_t(size_t, vma_obj->base.size - offset,
+					 remaining);
+			/*
+			 * VMA points to segment BO, allowing faults/migration
+			 * to be segment based ('chunk granular')
+			 */
+			vma = vm_create_vma(vm, vma_obj, start, offset, vma_size);
+			if (IS_ERR(vma)) {
+				err = PTR_ERR(vma);
+				break;
+			}
+			vma_count++;
+
+			if (bind_fence) {
+				/*
+				 * If multiple VMAs, add reference to fence so
+				 * that we signal waiters when the last of the
+				 * set of VMAs is bound. This was done already
+				 * during ufence_create() for the first VMA.
+				 */
+				if (vma_count > 1)
+					i915_sw_fence_await(bind_fence);
+				vma->bind_fence = bind_fence;
+			}
+			list_add_tail(&vma->vm_bind_link, vma_head);
+
+			remaining -= vma_size;
+			if (!remaining)
+				break;
+			start += vma_size;
+			offset = 0;
+		}
+
+		if (err) {
+			list_for_each_entry_safe(vma, vn, vma_head, vm_bind_link) {
+				list_del_init(&vma->vm_bind_link);
+				__i915_vma_put(vma);
+			}
+		}
+	} else {
+		/* no segments, will create single VMA */
+		vma = vm_create_vma(vm, obj, va->start, va->offset, va->length);
+		if (IS_ERR(vma)) {
+			err = PTR_ERR(vma);
+		} else {
+			vma->bind_fence = bind_fence;
+			list_add_tail(&vma->vm_bind_link, vma_head);
+		}
+	}
+
+	return err;
 }
 
 static int vma_bind_insert(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
@@ -502,12 +580,11 @@ retry:
 		__i915_vma_unpin(vma);
 	}
 
-	list_add_tail(&vma->vm_bind_link, &vm->vm_bind_list);
+	list_move_tail(&vma->vm_bind_link, &vm->vm_bind_list);
 	i915_vm_bind_it_insert(vma, &vm->va);
 	if (!vma->obj->vm)
 		list_add_tail(&vma->non_priv_vm_bind_link,
 			      &vm->non_priv_vm_bind_list);
-
 out_ww:
 	if (ret == -EDEADLK) {
 		ret = i915_gem_ww_ctx_backoff(ww);
@@ -526,9 +603,11 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 		.metadata_list = LIST_HEAD_INIT(ext.metadata_list),
 		.vm = vm,
 	};
+	struct i915_sw_fence *bind_fence = NULL;
 	struct drm_i915_gem_object *obj;
+	struct i915_vma *vma, *vma_next;
 	struct i915_gem_ww_ctx ww;
-	struct i915_vma *vma;
+	LIST_HEAD(vma_head);
 	u64 pin_flags = 0;
 	int ret;
 
@@ -567,9 +646,15 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	if (ret)
 		goto put_obj;
 
-	vma = vm_bind_get_vma(vm, obj, va);
-	if (IS_ERR(vma)) {
-		ret = PTR_ERR(vma);
+	va->start = intel_noncanonical_addr(INTEL_PPGTT_MSB(vm->i915),
+					    va->start);
+	/*
+	 * Verify VA isn't already in use (bound) for this VM.
+	 * FIXME: This only tests start address and should be checking
+	 * that no VMAs intersect the address range.
+	 */
+	if (i915_gem_vm_bind_lookup_vma(vm, va->start)) {
+		ret = -EEXIST;
 		goto unlock_vm;
 	}
 
@@ -578,8 +663,8 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 		if (va->flags & PRELIM_I915_GEM_VM_BIND_MAKE_RESIDENT)
 			pin_flags |= PIN_RESIDENT;
 
-		vma->bind_fence = ufence_create(vm, &ext);
-		if (!vma->bind_fence) {
+		bind_fence = ufence_create(vm, &ext);
+		if (!bind_fence) {
 			ret = -ENOMEM;
 			goto unlock_vm;
 		}
@@ -591,9 +676,22 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 		}
 	}
 
-	/* Hold object reference until vm_unbind */
-	i915_gem_object_get(vma->obj);
+	/*
+	 * In @vma_head, returns a list of many VMAs for the case
+	 * of segmented BO which has VMA per segment.
+	 * For the normal case of non-segmented BO, @vma_head will
+	 * just contain one VMA.
+	 */
+	ret = vm_bind_get_vmas(vm, obj, va, bind_fence, &vma_head);
+	if (ret)
+		goto unlock_vm;
+	GEM_BUG_ON(list_empty(&vma_head));
 
+	/*
+	 * TODO: follow-on work needed for debugger integration,
+	 * for now put the metadata_list in first VMA.
+	 */
+	vma = list_first_entry(&vma_head, typeof(*vma), vm_bind_link);
 	if (!list_empty(&ext.metadata_list)) {
 		spin_lock(&vma->metadata_lock);
 		list_splice_tail_init(&ext.metadata_list, &vma->metadata_list);
@@ -601,24 +699,43 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	}
 
 	i915_gem_ww_ctx_init(&ww, true);
-	ret = vma_bind_insert(vma, &ww, pin_flags);
-	if (ret)
-		goto out_ww;
+	list_for_each_entry_safe(vma, vma_next, &vma_head, vm_bind_link) {
+		/* Hold object reference until vm_unbind */
+		i915_gem_object_get(vma->obj);
+
+		ret = vma_bind_insert(vma, &ww, pin_flags);
+		if (ret)
+			break;
+
+		/* apply pat_index from parent */
+		vma->obj->pat_index = obj->pat_index;
+
+		/* TODO: capture should contain single aggregated address range */
+		if (va->flags & PRELIM_I915_GEM_VM_BIND_CAPTURE) {
+			spin_lock(&vm->vm_capture_lock);
+			list_add_tail(&vma->vm_capture_link, &vm->vm_capture_list);
+			spin_unlock(&vm->vm_capture_lock);
+		}
+
+		/* increment va->start (embedded in pin_flags) */
+		if (pin_flags)
+			pin_flags += vma->size;
+	}
+	i915_gem_ww_ctx_fini(&ww);
 	set_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags);
 
-	if (va->flags & PRELIM_I915_GEM_VM_BIND_CAPTURE) {
-		spin_lock(&vm->vm_capture_lock);
-		list_add_tail(&vma->vm_capture_link, &vm->vm_capture_list);
-		spin_unlock(&vm->vm_capture_lock);
-	}
-
-out_ww:
-	i915_gem_ww_ctx_fini(&ww);
-
 	if (ret) {
-		i915_gem_vm_bind_unpublish(vma);
-		i915_gem_vm_bind_release(vma);
+		/*
+		 * cleanup VMAs which failed or didn't attempt vma_bind_insert()
+		 * TODO cleanup VMAs where vma_bind_insert() succeeded
+		 */
+		list_for_each_entry_safe(vma, vma_next, &vma_head, vm_bind_link) {
+			list_del_init(&vma->vm_bind_link);
+			i915_gem_vm_bind_unpublish(vma);
+			i915_gem_vm_bind_release(vma);
+		}
 	}
+
 unlock_vm:
 	/* after dropping this lock, user can vm_unbind_obj */
 	i915_gem_vm_bind_unlock(vm);
