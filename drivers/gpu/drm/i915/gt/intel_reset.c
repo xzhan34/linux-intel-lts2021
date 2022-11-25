@@ -964,6 +964,8 @@ void intel_gt_set_wedged(struct intel_gt *gt)
 	__intel_gt_set_wedged(gt);
 
 	mutex_unlock(&gt->reset.mutex);
+
+	intel_gt_retire_requests(gt);
 	intel_runtime_pm_put(gt->uncore->rpm, wakeref);
 }
 
