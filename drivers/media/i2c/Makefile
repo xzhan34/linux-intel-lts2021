@@ -149,3 +149,7 @@ obj-$(CONFIG_VIDEO_INTEL_KMB_SMART_DRV) += kmb-smart-driver.o
 
 obj-$(CONFIG_VIDEO_AR0234) += ar0234.o
 obj-$(CONFIG_VIDEO_LT6911UXC) += lt6911uxc.o
+obj-$(CONFIG_VIDEO_TI960) += ti960.o
+ti960-objs      :=      ti953-ser.o ti960-des.o
+obj-$(CONFIG_VIDEO_IMX390) += imx390.o
+obj-$(CONFIG_VIDEO_ISX031) += isx031.o

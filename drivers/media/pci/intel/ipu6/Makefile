@@ -6,7 +6,7 @@ srcpath := $(srctree)
 endif
 
 ccflags-y += -DIPU_VC_SUPPORT -DIPU_HAS_S2M -DIPU_TPG_FRAME_SYNC -DIPU_PSYS_GPC \
-		-DIPU_ISYS_GPC -DIPU_TRACE_EVENT
+		-DIPU_ISYS_GPC
 ccflags-y += -DIPU_META_DATA_SUPPORT -DI2C_DYNAMIC
 ccflags-y += -DIPU_ISYS_RESET
 
@@ -19,6 +19,7 @@ intel-ipu6-objs				+= ../ipu.o \
 					   ../ipu-cpd.o \
 					   ipu6.o \
 					   ../ipu-fw-com.o
+intel-ipu6-objs				+= ../ipu-isys-bridge.o
 
 obj-$(CONFIG_VIDEO_INTEL_IPU6)		+= intel-ipu6.o
 
@@ -26,6 +27,7 @@ intel-ipu6-isys-objs			+= ../ipu-isys.o \
 					   ../ipu-isys-csi2.o \
 					   ipu6-isys.o \
 					   ipu6-isys-phy.o \
+					   ipu6-isys-dwc-phy.o \
 					   ipu6-isys-csi2.o \
 					   ipu6-isys-gpc.o \
 					   ../ipu-isys-csi2-be-soc.o \
@@ -33,11 +35,6 @@ intel-ipu6-isys-objs			+= ../ipu-isys.o \
 					   ../ipu-isys-video.o \
 					   ../ipu-isys-queue.o \
 					   ../ipu-isys-subdev.o
-intel-ipu6-isys-objs			+= ../ipu-isys-csi2-be.o
-
-ifdef CONFIG_VIDEO_INTEL_IPU_TPG
-intel-ipu6-isys-objs                    += ../ipu-isys-tpg.o
-endif
 
 obj-$(CONFIG_VIDEO_INTEL_IPU6)		+= intel-ipu6-isys.o
 

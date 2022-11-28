@@ -32,7 +32,7 @@ config VIDEO_INTEL_IPU_SOC
 endchoice
 
 config VIDEO_INTEL_IPU_WERROR
-	bool "Force GCC to throw an error instead of a warning when compiling"
+	tristate "Force GCC to throw an error instead of a warning when compiling"
 	depends on VIDEO_INTEL_IPU6
 	depends on EXPERT
 	depends on !COMPILE_TEST
@@ -45,16 +45,24 @@ config VIDEO_INTEL_IPU_WERROR
 
 	  If in doubt, say "N".
 
+config IPU_ISYS_BRIDGE
+	bool "Intel IPU driver bridge"
+	default y
+	depends on VIDEO_INTEL_IPU6
+	help
+	  If selected, IPU isys bridge would be enabled.
+
+	  If you want supported sensors can be registered as IPU subdevices,
+	  select y here.
+
 config VIDEO_INTEL_IPU_USE_PLATFORMDATA
 	bool "Enable platform data"
-	depends on VIDEO_INTEL_IPU6
 	default y
 	help
 	  Enalbe platform data in IPU.
 
 config VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING
 	bool "Enable platform data dynamic loading"
-	depends on VIDEO_INTEL_IPU6
 	depends on VIDEO_INTEL_IPU_USE_PLATFORMDATA
 	default n
 	help
@@ -64,3 +72,16 @@ config VIDEO_INTEL_IPU_PDATA_DYNAMIC_LOADING
 
 	  If in doubt, say "N".
 
+config VIDEO_HKR
+        tristate "Intel hkr driver"
+        depends on VIDEO_V4L2 && PCI
+        depends on ACPI || COMPILE_TEST
+        depends on MEDIA_SUPPORT
+        depends on X86
+        select MEDIA_CONTROLLER
+        select VIDEOBUF2_DMA_CONTIG
+        select VIDEO_V4L2_SUBDEV_API
+        select VIDEOBUF2_DMA_SG
+
+        help
+          This is the Intel HKR module driver
