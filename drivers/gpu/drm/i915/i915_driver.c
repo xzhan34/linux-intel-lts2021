@@ -807,7 +807,6 @@ static void i915_driver_register(struct drm_i915_private *dev_priv)
 	unsigned int i;
 
 	i915_gem_driver_register(dev_priv);
-	i915_pmu_register(dev_priv);
 
 	intel_vgpu_register(dev_priv);
 
@@ -821,11 +820,12 @@ static void i915_driver_register(struct drm_i915_private *dev_priv)
 	i915_debugfs_register(dev_priv);
 	i915_setup_sysfs(dev_priv);
 
-	/* Depends on sysfs having been initialized */
-	i915_perf_register(dev_priv);
-
 	for_each_gt(gt, dev_priv, i)
 		intel_gt_driver_register(gt);
+
+	/* Depends on sysfs having been initialized */
+	i915_pmu_register(dev_priv);
+	i915_perf_register(dev_priv);
 
 	i915_hwmon_register(dev_priv);
 
@@ -860,13 +860,14 @@ static void i915_driver_unregister(struct drm_i915_private *dev_priv)
 
 	intel_display_driver_unregister(dev_priv);
 
-	for_each_gt(gt, dev_priv, i)
-		intel_gt_driver_unregister(gt);
-
 	i915_hwmon_unregister(dev_priv);
 
 	i915_perf_unregister(dev_priv);
+	/* GT should be available until PMU is gone */
 	i915_pmu_unregister(dev_priv);
+
+	for_each_gt(gt, dev_priv, i)
+		intel_gt_driver_unregister(gt);
 
 	i915_teardown_sysfs(dev_priv);
 	drm_dev_unplug(&dev_priv->drm);
