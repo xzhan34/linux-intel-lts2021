@@ -185,6 +185,7 @@ enum intel_ppgtt_type {
 	func(has_coherent_ggtt); \
 	func(tuning_thread_rr_after_dep); \
 	func(has_csc_uid);	\
+	func(has_lmem_max_bandwidth);	\
 	func(unfenced_needs_alignment); \
 	func(hws_needs_physical); \
 	func(oam_uses_vdbox0_channel);
