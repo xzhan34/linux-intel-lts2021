@@ -859,6 +859,16 @@ int i915_sriov_resume_early(struct drm_i915_private *i915)
 	return 0;
 }
 
+static void contexts_ring_move_back(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int id;
+
+	for_each_gt(gt, i915, id) {
+		guc_submission_revert_ring_heads(&gt->uc.guc);
+	}
+}
+
 static void user_contexts_hwsp_rebase(struct drm_i915_private *i915)
 {
 	struct i915_gem_context *ctx;
@@ -905,11 +915,107 @@ static void intel_gt_default_contexts_hwsp_rebase(struct intel_gt *gt)
 	}
 }
 
+static void default_contexts_hwsp_rebase(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int id;
+
+	for_each_gt(gt, i915, id)
+		intel_gt_default_contexts_hwsp_rebase(gt);
+}
+
 static void vf_post_migration_fixup_contexts(struct drm_i915_private *i915)
 {
-	intel_gt_default_contexts_hwsp_rebase(to_gt(i915));
+	default_contexts_hwsp_rebase(i915);
 	user_contexts_hwsp_rebase(i915);
-	guc_submission_revert_ring_heads(&to_gt(i915)->uc.guc);
+	contexts_ring_move_back(i915);
+}
+
+static void heartbeats_disable(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int id;
+
+	for_each_gt(gt, i915, id) {
+		intel_gt_heartbeats_disable(gt);
+	}
+}
+
+static void heartbeats_restore(struct drm_i915_private *i915, bool unpark)
+{
+	struct intel_gt *gt;
+	unsigned int id;
+
+	for_each_gt(gt, i915, id) {
+		intel_gt_heartbeats_restore(gt, unpark);
+	}
+}
+
+/**
+ * submissions_disable - Turn off advancing with execution of scheduled submissions.
+ * @i915: the i915 struct
+ *
+ * When the hardware is not ready to accept submissions, continuing to push
+ * the scheduled requests would only lead to a series of errors, and aborting
+ * requests which could be successfully executed if submitted after the pipeline
+ * is back to ready state.
+ */
+static void submissions_disable(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int id;
+
+	for_each_gt(gt, i915, id) {
+		intel_guc_submission_pause(&gt->uc.guc);
+	}
+}
+
+/**
+ * submissions_restore - Re-enable advancing with execution of scheduled submissions.
+ * @i915: the i915 struct
+ *
+ * We possibly unwinded some requests which did not finished before migration; now
+ * we can allow these requests to be re-submitted.
+ */
+static void submissions_restore(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int id;
+
+	for_each_gt(gt, i915, id) {
+		intel_guc_submission_restore(&gt->uc.guc);
+	}
+}
+
+/**
+ * vf_post_migration_status_page_sanitization_disable - Disable sanitization of status pages.
+ * @i915: the i915 struct
+ *
+ * The post-migration recovery uses gt sanitization code to prepare the driver re-enabling.
+ * This code however clears status pages of contexts, as it assumes they were damaged
+ * by suspend. Migration is not suspend, and it keeps the status pages content intact.
+ * In fact, we need the values within to recover unfinished submissions.
+ */
+static void vf_post_migration_status_page_sanitization_disable(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int id;
+
+	for_each_gt(gt, i915, id)
+		guc_submission_status_page_sanitization_disable(&gt->uc.guc);
+}
+
+/**
+ * vf_post_migration_status_page_sanitization_enable - Re-enable sanitization of status pages.
+ * @i915: the i915 struct
+ */
+static void vf_post_migration_status_page_sanitization_enable(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int id;
+
+	for_each_gt(gt, i915, id)
+		guc_submission_status_page_sanitization_enable(&gt->uc.guc);
 }
 
 /**
@@ -926,13 +1032,15 @@ static void vf_post_migration_fixup_contexts(struct drm_i915_private *i915)
  */
 static void vf_post_migration_shutdown(struct drm_i915_private *i915)
 {
-	struct intel_gt *gt = to_gt(i915);
+	struct intel_gt *gt;
+	unsigned int id;
 
-	intel_gt_heartbeats_disable(gt);
-	intel_guc_submission_pause(&gt->uc.guc);
+	heartbeats_disable(i915);
+	submissions_disable(i915);
 	i915_gem_drain_freed_objects(i915);
-	intel_uc_suspend(&gt->uc);
-	guc_submission_status_page_sanitization_disable(&gt->uc.guc);
+	for_each_gt(gt, i915, id)
+		intel_uc_suspend(&gt->uc);
+	vf_post_migration_status_page_sanitization_disable(i915);
 }
 
 /**
@@ -947,7 +1055,12 @@ static void vf_post_migration_reset_guc_state(struct drm_i915_private *i915)
 	intel_wakeref_t wakeref;
 
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
-		__intel_gt_reset(to_gt(i915), ALL_ENGINES);
+		struct intel_gt *gt;
+		unsigned int id;
+
+		for_each_gt(gt, i915, id) {
+			__intel_gt_reset(gt, ALL_ENGINES);
+		}
 	}
 }
 
@@ -962,9 +1075,29 @@ static int vf_post_migration_reinit_guc(struct drm_i915_private *i915)
 	int err;
 
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
-		err = intel_iov_migration_reinit_guc(&to_gt(i915)->iov);
+		struct intel_gt *gt;
+		unsigned int id;
+
+		for_each_gt(gt, i915, id) {
+			err = intel_iov_migration_reinit_guc(&gt->iov);
+			if (unlikely(err))
+				break;
+		}
 	}
 	return err;
+}
+
+static void vf_post_migration_fixup_ggtt_nodes(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int id;
+
+	for_each_gt(gt, i915, id) {
+		/* media doesn't have its own ggtt */
+		if (gt->type == GT_MEDIA)
+			continue;
+		intel_iov_migration_fixup_ggtt_nodes(&gt->iov);
+	}
 }
 
 /**
@@ -976,19 +1109,26 @@ static int vf_post_migration_reinit_guc(struct drm_i915_private *i915)
  */
 static void vf_post_migration_kickstart(struct drm_i915_private *i915)
 {
+	struct intel_gt *gt;
+	unsigned int id;
+
+	for_each_gt(gt, i915, id)
+		intel_uc_resume_early(&gt->uc);
 	intel_runtime_pm_enable_interrupts(i915);
 	i915_gem_resume(i915);
-	guc_submission_status_page_sanitization_enable(&to_gt(i915)->uc.guc);
-	intel_guc_submission_restore(&to_gt(i915)->uc.guc);
-	intel_gt_heartbeats_restore(to_gt(i915), true);
+	vf_post_migration_status_page_sanitization_enable(i915);
+	submissions_restore(i915);
+	heartbeats_restore(i915, true);
 }
 
 static void i915_reset_backoff_enter(struct drm_i915_private *i915)
 {
-	struct intel_gt *gt = to_gt(i915);
+	struct intel_gt *gt;
+	unsigned int id;
 
 	/* Raise flag for any other resets to back off and resign. */
-	intel_gt_reset_backoff_raise(gt);
+	for_each_gt(gt, i915, id)
+		intel_gt_reset_backoff_raise(gt);
 
 	/* Make sure intel_gt_reset_trylock() sees the I915_RESET_BACKOFF. */
 	synchronize_rcu_expedited();
@@ -997,14 +1137,18 @@ static void i915_reset_backoff_enter(struct drm_i915_private *i915)
 	 * Wait for any operations already in progress which state could be
 	 * skewed by post-migration actions.
 	 */
-	synchronize_srcu_expedited(&gt->reset.backoff_srcu);
+	for_each_gt(gt, i915, id)
+		synchronize_srcu_expedited(&gt->reset.backoff_srcu);
 }
 
 static void i915_reset_backoff_leave(struct drm_i915_private *i915)
 {
-	struct intel_gt *gt = to_gt(i915);
+	struct intel_gt *gt;
+	unsigned int id;
 
-	intel_gt_reset_backoff_clear(gt);
+	for_each_gt(gt, i915, id) {
+		intel_gt_reset_backoff_clear(gt);
+	}
 }
 
 static void vf_post_migration_recovery(struct drm_i915_private *i915)
@@ -1030,7 +1174,7 @@ static void vf_post_migration_recovery(struct drm_i915_private *i915)
 	if (unlikely(err))
 		goto fail;
 
-	intel_iov_migration_fixup_ggtt_nodes(&to_gt(i915)->iov);
+	vf_post_migration_fixup_ggtt_nodes(i915);
 	vf_post_migration_fixup_contexts(i915);
 
 	vf_post_migration_kickstart(i915);
@@ -1041,7 +1185,7 @@ static void vf_post_migration_recovery(struct drm_i915_private *i915)
 defer:
 	drm_dbg(&i915->drm, "migration recovery deferred\n");
 	/* We bumped wakerefs when disabling heartbeat. Put them back. */
-	intel_gt_heartbeats_restore(to_gt(i915), false);
+	heartbeats_restore(i915, false);
 	i915_reset_backoff_leave(i915);
 	return;
 
