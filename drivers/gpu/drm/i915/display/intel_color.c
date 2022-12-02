@@ -987,6 +987,41 @@ static void glk_load_luts(const struct intel_crtc_state *crtc_state)
 	}
 }
 
+static void mtl_load_degamma_lut(const struct intel_crtc_state *crtc_state)
+{
+	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
+	struct drm_color_lut_ext *degamma_lut = crtc_state->hw.degamma_lut->data;
+	u32 i, lut_size = INTEL_INFO(i915)->display.color.degamma_lut_size;
+	enum pipe pipe = crtc->pipe;
+
+	/*
+	 * When setting the auto-increment bit, the hardware seems to
+	 * ignore the index bits, so we need to reset it to index 0
+	 * separately.
+	 */
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe), 0);
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe),
+			  PRE_CSC_GAMC_AUTO_INCREMENT);
+
+	for (i = 0; i < lut_size; i++) {
+		u64 word = drm_color_lut_extract_ext(degamma_lut[i].green, 24);
+		u32 lut_val = (word & 0xffffff);
+
+		intel_de_write_fw(i915, PRE_CSC_GAMC_DATA(pipe),
+				  lut_val);
+	}
+
+	/*
+	 * Clamp values > 1.0.
+	 * TODO: Extend to max 7.0.
+	 */
+	while (i++ < glk_degamma_lut_size(i915))
+		intel_de_write_fw(i915, PRE_CSC_GAMC_DATA(pipe), 1 << 24);
+
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe), 0);
+}
+
 /* ilk+ "12.4" interpolated format (high 10 bits) */
 static u32 ilk_lut_12p4_udw(const struct drm_color_lut *color)
 {
@@ -1179,9 +1214,14 @@ static void xelpd_load_luts(const struct intel_crtc_state *crtc_state)
 {
 	const struct drm_property_blob *gamma_lut = crtc_state->hw.gamma_lut;
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
 
-	if (crtc_state->hw.degamma_lut)
-		glk_load_degamma_lut(crtc_state);
+	if (crtc_state->hw.degamma_lut) {
+		if ((DISPLAY_VER(i915) >= 14))
+			mtl_load_degamma_lut(crtc_state);
+		else
+			glk_load_degamma_lut(crtc_state);
+	}
 
 	switch (crtc_state->gamma_mode & GAMMA_MODE_MODE_MASK) {
 	case GAMMA_MODE_MODE_8BIT:
