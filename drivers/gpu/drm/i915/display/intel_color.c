@@ -3215,13 +3215,16 @@ void intel_color_init(struct intel_crtc *crtc)
 		if (DISPLAY_VER(dev_priv) >= 13) {
 			dev_priv->color_funcs = &xelpd_color_funcs;
 			drm_color_create_gamma_mode_property(&crtc->base, 2);
-			drm_color_add_gamma_mode_range(&crtc->base,
-						       "no gamma", NULL, 0);
-			drm_color_add_gamma_mode_range(&crtc->base,
-						       "logarithmic gamma",
-							xelpd_logarithmic_gamma,
-							sizeof(xelpd_logarithmic_gamma));
-			drm_crtc_attach_gamma_mode_property(&crtc->base);
+			drm_color_add_gamma_degamma_mode_range(&crtc->base,
+							       "no gamma", NULL, 0,
+							       LUT_TYPE_GAMMA);
+			drm_color_add_gamma_degamma_mode_range(&crtc->base,
+							       "logarithmic gamma",
+							       xelpd_logarithmic_gamma,
+							       sizeof(xelpd_logarithmic_gamma),
+							       LUT_TYPE_GAMMA);
+			drm_crtc_attach_gamma_degamma_mode_property(&crtc->base,
+								    LUT_TYPE_GAMMA);
 		} else if (DISPLAY_VER(dev_priv) >= 11) {
 			dev_priv->color_funcs = &icl_color_funcs;
 		} else if (DISPLAY_VER(dev_priv) == 10) {
