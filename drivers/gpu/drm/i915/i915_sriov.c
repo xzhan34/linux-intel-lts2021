@@ -12,6 +12,7 @@
 #include "intel_pci_config.h"
 #include "gem/i915_gem_pm.h"
 
+#include "gt/intel_engine_heartbeat.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/iov/intel_iov_provisioning.h"
@@ -708,6 +709,7 @@ static void vf_post_migration_shutdown(struct drm_i915_private *i915)
 {
 	struct intel_gt *gt = to_gt(i915);
 
+	intel_gt_heartbeats_disable(gt);
 	i915_gem_drain_freed_objects(i915);
 	intel_uc_suspend(&gt->uc);
 }
@@ -723,6 +725,7 @@ static void vf_post_migration_kickstart(struct drm_i915_private *i915)
 {
 	intel_runtime_pm_enable_interrupts(i915);
 	i915_gem_resume(i915);
+	intel_gt_heartbeats_restore(to_gt(i915));
 }
 
 static void i915_reset_backoff_enter(struct drm_i915_private *i915)
