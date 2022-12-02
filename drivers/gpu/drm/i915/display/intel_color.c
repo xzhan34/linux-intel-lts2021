@@ -3253,6 +3253,8 @@ void intel_color_init(struct intel_crtc *crtc)
 								       mtl_24bit_degamma,
 								       sizeof(mtl_24bit_degamma),
 								       LUT_TYPE_DEGAMMA);
+				drm_crtc_attach_gamma_degamma_mode_property(&crtc->base,
+									    LUT_TYPE_DEGAMMA);
 			}
 		} else if (DISPLAY_VER(dev_priv) >= 11) {
 			dev_priv->color_funcs = &icl_color_funcs;
