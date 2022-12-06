@@ -10,6 +10,8 @@
 #include "i915_drv.h"
 #include "intel_memory_region.h"
 #include "gem/i915_gem_context.h"
+#include "gt/intel_gt.h"
+#include "gt/intel_tlb.h"
 
 bool i915_ats_enabled(struct drm_i915_private *dev_priv)
 {
@@ -193,4 +195,21 @@ end_request:
 	mmput(mm);
 
 	return status;
+}
+
+void intel_invalidate_devtlb_range(struct i915_address_space *vm,
+				   u64 start, u64 size)
+{
+	struct intel_gt *gt;
+	int id;
+
+	if (!is_vm_pasid_active(vm))
+		return;
+
+	for_each_gt(gt, vm->i915, id) {
+		if (!atomic_read(&vm->active_contexts_gt[id]))
+			continue;
+
+		intel_gt_invalidate_tlb_range(gt, vm, start, size);
+	}
 }

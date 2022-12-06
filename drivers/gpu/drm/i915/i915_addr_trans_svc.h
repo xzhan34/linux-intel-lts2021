@@ -37,6 +37,8 @@ bool is_vm_pasid_active(struct i915_address_space *vm);
 int i915_global_pasid_counter(struct drm_i915_private *i915);
 int i915_handle_ats_fault_request(struct i915_address_space *vm,
 				  struct recoverable_page_fault_info *info);
+void intel_invalidate_devtlb_range(struct i915_address_space *vm,
+				   u64 start, u64 size);
 
 #else /* CONFIG_DRM_I915_ATS */
 struct i915_ats_priv { };
@@ -55,5 +57,7 @@ static inline int
 i915_handle_ats_fault_request(struct i915_address_space *vm,
 			      struct recoverable_page_fault_info *info)
 { return -EOPNOTSUPP; }
+static inline void intel_invalidate_devtlb_range(struct i915_address_space *vm,
+						 u64 start, u64 size){ }
 #endif /* CONFIG_DRM_I915_ATS */
 #endif /* __I915_ADDR_TRANS_SVC_H__ */

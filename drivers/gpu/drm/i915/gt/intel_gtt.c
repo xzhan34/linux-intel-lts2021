@@ -838,6 +838,7 @@ void svm_unbind_addr(struct i915_address_space *vm,
 		     u64 start, u64 size)
 {
 	vm->clear_range(vm, start, size);
+	vm->invalidate_dev_tlb(vm, start, size);
 }
 
 struct i915_vma *

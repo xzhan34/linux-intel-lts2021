@@ -20,6 +20,7 @@
 #include "intel_gtt.h"
 #include "intel_gt_pm.h"
 #include "intel_lrc.h"
+#include "i915_drv.h"
 
 static intel_wakeref_t l4wa_pm_get(struct intel_gt *gt)
 {
@@ -2226,6 +2227,13 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt, u32 flags)
 
 	if (intel_vgpu_active(gt->i915))
 		gen8_ppgtt_notify_vgt(ppgtt, true);
+
+	/*
+	 * Device TLB invalidation for ATS page faulting due to
+	 * invalid ATS response received via IOMMU. This is done in
+	 * conjunction with IOMMU TLB call via mmu notifier.
+	 */
+	ppgtt->vm.invalidate_dev_tlb = intel_invalidate_devtlb_range;
 
 	return ppgtt;
 

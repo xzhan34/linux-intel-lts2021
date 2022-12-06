@@ -421,6 +421,9 @@ struct i915_address_space {
 				   void *data),
 			void *data);
 
+	void (*invalidate_dev_tlb)(struct i915_address_space *vm,
+				   u64 start, u64 length);
+
 	struct i915_vma_ops vma_ops;
 
 	I915_SELFTEST_DECLARE(struct fault_attr fault_attr);
