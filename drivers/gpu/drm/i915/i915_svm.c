@@ -154,7 +154,7 @@ static int i915_hmm_convert_pfn(struct drm_i915_private *dev_priv,
 }
 
 static int i915_range_fault(struct svm_notifier *sn,
-			    struct prelim_drm_i915_gem_vm_bind *va,
+			    __u64 start, __u64 length, __u64 flags,
 			    struct sg_table *st, unsigned long *pfns)
 {
 	unsigned long timeout =
@@ -175,7 +175,6 @@ static int i915_range_fault(struct svm_notifier *sn,
 	struct i915_gem_ww_ctx ww;
 	u32 sg_page_sizes;
 	int regions;
-	u64 flags;
 	long ret;
 
 	while (true) {
@@ -202,14 +201,14 @@ static int i915_range_fault(struct svm_notifier *sn,
 
 		/* XXX: Not an elegant solution, revisit */
 		i915_gem_ww_ctx_init(&ww, true);
-		ret = svm_bind_addr_prepare(vm, &stash, &ww, va->start, va->length);
+		ret = svm_bind_addr_prepare(vm, &stash, &ww, start, length);
 		if (ret)
 			goto fault_done;
 
 		mutex_lock(&svm->mutex);
 		if (mmu_interval_read_retry(range.notifier,
 					    range.notifier_seq)) {
-			svm_unbind_addr(vm, va->start, va->length);
+			svm_unbind_addr(vm, start, length);
 			mutex_unlock(&svm->mutex);
 			i915_vm_free_pt_stash(vm, &stash);
 			i915_gem_ww_ctx_fini(&ww);
@@ -218,10 +217,10 @@ static int i915_range_fault(struct svm_notifier *sn,
 		break;
 	}
 
-	flags = (regions & REGION_LMEM) ? I915_GTT_SVM_LMEM : 0;
-	flags |= (va->flags & PRELIM_I915_GEM_VM_BIND_READONLY) ?
+	flags = (flags & PRELIM_I915_GEM_VM_BIND_READONLY) ?
 		 I915_GTT_SVM_READONLY : 0;
-	ret = svm_bind_addr_commit(vm, &stash, va->start, va->length, flags,
+	flags |= (regions & REGION_LMEM) ? I915_GTT_SVM_LMEM : 0;
+	ret = svm_bind_addr_commit(vm, &stash, start, length, flags,
 				   st, sg_page_sizes);
 	mutex_unlock(&svm->mutex);
 	i915_vm_free_pt_stash(vm, &stash);
@@ -318,7 +317,7 @@ int i915_gem_vm_bind_svm_buffer(struct i915_address_space *vm,
 					   va->start, va->length,
 					   &i915_svm_mni_ops);
 	if (!ret) {
-		ret = i915_range_fault(&sn, va, &st, pfns);
+		ret = i915_range_fault(&sn, va->start, va->length, va->flags, &st, pfns);
 		mmu_interval_notifier_remove(&sn.notifier);
 	}
 
