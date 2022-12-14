@@ -224,6 +224,8 @@ struct drm_i915_gem_object {
 
 	struct list_head segments;
 	struct list_head segment_link;
+	unsigned long segment_offset;
+	struct drm_i915_gem_object *parent;
 
 	/* VM pointer if the object is private to a VM; NULL otherwise */
 	struct i915_address_space *vm;

@@ -680,6 +680,7 @@ void i915_gem_object_release_segments(struct drm_i915_gem_object *obj)
 		/* clear pointer to placements (owned by parent BO) */
 		sobj->mm.placements = NULL;
 		sobj->mm.n_placements = 0;
+		sobj->parent = NULL;
 		list_del_init(&sobj->segment_link);
 		/* release original reference from object_alloc */
 		i915_gem_object_put(sobj);
