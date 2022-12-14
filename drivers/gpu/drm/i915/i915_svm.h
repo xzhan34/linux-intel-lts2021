@@ -9,6 +9,7 @@
 #include <linux/hmm.h>
 
 #include "i915_drv.h"
+#include "gt/intel_pagefault.h"
 
 #if defined(CONFIG_DRM_I915_SVM)
 struct i915_svm {
@@ -47,6 +48,8 @@ int i915_svm_vm_prefetch(struct drm_i915_private *i915,
 int i915_svm_devmem_add(struct intel_memory_region *mem);
 void i915_svm_devmem_remove(struct intel_memory_region *mem);
 
+int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
+				struct recoverable_page_fault_info *info);
 #else
 
 struct i915_svm { };
@@ -68,6 +71,9 @@ static inline int i915_svm_vm_prefetch(struct drm_i915_private *i915,
 static inline int i915_svm_devmem_add(struct intel_memory_region *mem)
 { return 0; }
 static inline void i915_svm_devmem_remove(struct intel_memory_region *mem) { }
+static inline int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
+				struct recoverable_page_fault_info *info)
+{ return 0; }
 #endif
 
 #endif /* __I915_SVM_H */

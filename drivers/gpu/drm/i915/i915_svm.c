@@ -269,6 +269,87 @@ unbind_done:
 	return ret;
 }
 
+/* Determine whether read or/and write to vma is allowed
+ * write: true means a read and write access; false: read only access
+ */
+static bool svm_access_allowed(struct vm_area_struct *vma, bool write)
+{
+	unsigned long access = VM_READ;
+
+	if (write)
+		access |= VM_WRITE;
+
+	return (vma->vm_flags & access) == access;
+}
+
+int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
+				struct recoverable_page_fault_info *info)
+{
+	unsigned long *pfns, flags = HMM_PFN_REQ_FAULT;
+	struct vm_area_struct *vma;
+	u64 npages, start, length;
+	struct svm_notifier sn;
+	struct i915_svm *svm;
+	struct mm_struct *mm;
+	struct sg_table st;
+	int ret = 0;
+
+	svm = vm_get_svm(vm);
+	if (!svm)
+		return -EINVAL;
+
+	mm = svm->notifier.mm;
+
+	vma = find_vma_intersection(mm, info->page_addr, info->page_addr + 4);
+	if (!vma) {
+		ret = -ENOENT;
+		goto put_svm;
+	}
+
+	if (!svm_access_allowed (vma, info->access_type != ACCESS_TYPE_READ)) {
+		ret = -EPERM;
+		goto put_svm;
+	}
+
+	/** migrate the whole vma */
+	start =  vma->vm_start;
+	length = vma->vm_end - vma->vm_start;
+	npages = vma->vm_end / PAGE_SIZE - vma->vm_start / PAGE_SIZE + 1;
+	if (unlikely(sg_alloc_table(&st, npages, GFP_KERNEL))) {
+		ret = -ENOMEM;
+		goto put_svm;
+	}
+
+	pfns = kvmalloc_array(npages, sizeof(*pfns), GFP_KERNEL);
+	if (unlikely(!pfns)) {
+		ret = -ENOMEM;
+		goto free_sg;
+	}
+
+	if (vma->vm_flags & VM_WRITE)
+		flags |= HMM_PFN_REQ_WRITE;
+
+	memset64((u64 *)pfns, (u64)flags, npages);
+
+	sn.svm = svm;
+	ret = mmu_interval_notifier_insert(&sn.notifier, mm,
+					   start, length,
+					   &i915_svm_mni_ops);
+	if (!ret) {
+		ret = i915_range_fault(&sn, start, length,
+			!(vma->vm_flags & VM_WRITE) ? PRELIM_I915_GEM_VM_BIND_READONLY : 0,
+			&st, pfns);
+		mmu_interval_notifier_remove(&sn.notifier);
+	}
+
+	kvfree(pfns);
+free_sg:
+	sg_free_table(&st);
+put_svm:
+	vm_put_svm(vm);
+	return ret;
+}
+
 int i915_gem_vm_bind_svm_buffer(struct i915_address_space *vm,
 				struct prelim_drm_i915_gem_vm_bind *va)
 {

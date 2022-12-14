@@ -21,6 +21,7 @@
 #include "intel_pagefault.h"
 #include "uc/intel_guc.h"
 #include "uc/intel_guc_fwif.h"
+#include "i915_svm.h"
 
 /**
  * DOC: Recoverable page fault implications
@@ -50,13 +51,6 @@
  * any DMA fence because of the deadlock described above. Thus, we can't attach
  * any DMA fences, including suspend fence or request fence, to a faultable vm.
  */
-
-enum access_type {
-	ACCESS_TYPE_READ = 0,
-	ACCESS_TYPE_WRITE = 1,
-	ACCESS_TYPE_ATOMIC = 2,
-	ACCESS_TYPE_RESERVED = 3,
-};
 
 enum fault_type {
 	NOT_PRESENT = 0,
@@ -381,6 +375,9 @@ handle_i915_mm_fault(struct intel_guc *guc,
 
 	if (!i915_vm_page_fault_enabled(vm))
 		return ERR_PTR(-ENOENT);
+
+	if (i915_vm_is_svm_enabled(vm))
+		return ERR_PTR(i915_svm_handle_gpu_fault(vm, info));
 
 	vma = i915_find_vma(vm, info->page_addr);
 
