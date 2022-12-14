@@ -2727,6 +2727,9 @@ static int sanity_check_mmio_access(struct intel_uncore *uncore)
 {
 	struct drm_i915_private *i915 = uncore->i915;
 
+	if (IS_SRIOV_VF(uncore->i915))
+		return 0;
+
 	if (GRAPHICS_VER(i915) < 8)
 		return 0;
 
