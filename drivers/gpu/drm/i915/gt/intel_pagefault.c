@@ -377,7 +377,7 @@ handle_i915_mm_fault(struct intel_guc *guc,
 		return ERR_PTR(-ENOENT);
 
 	if (i915_vm_is_svm_enabled(vm))
-		return ERR_PTR(i915_svm_handle_gpu_fault(vm, info));
+		return ERR_PTR(i915_svm_handle_gpu_fault(vm, gt, info));
 
 	vma = i915_find_vma(vm, info->page_addr);
 

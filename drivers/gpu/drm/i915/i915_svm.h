@@ -49,7 +49,14 @@ int i915_svm_devmem_add(struct intel_memory_region *mem);
 void i915_svm_devmem_remove(struct intel_memory_region *mem);
 
 int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
+				struct intel_gt *gt,
 				struct recoverable_page_fault_info *info);
+
+int i915_devmem_migrate_vma(struct intel_memory_region *mem,
+				   struct i915_gem_ww_ctx *ww,
+				   struct vm_area_struct *vma,
+				   unsigned long start,
+				   unsigned long end);
 #else
 
 struct i915_svm { };
@@ -72,7 +79,15 @@ static inline int i915_svm_devmem_add(struct intel_memory_region *mem)
 { return 0; }
 static inline void i915_svm_devmem_remove(struct intel_memory_region *mem) { }
 static inline int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
+				struct intel_gt *gt,
 				struct recoverable_page_fault_info *info)
+{ return 0; }
+
+static inline int i915_devmem_migrate_vma(struct intel_memory_region *mem,
+				   struct i915_gem_ww_ctx *ww,
+				   struct vm_area_struct *vma,
+				   unsigned long start,
+				   unsigned long end)
 { return 0; }
 #endif
 

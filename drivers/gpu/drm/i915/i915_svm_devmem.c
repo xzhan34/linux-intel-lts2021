@@ -473,7 +473,7 @@ static int i915_devmem_migrate_chunk(struct i915_devmem_migrate *migrate,
 	return ret;
 }
 
-static int i915_devmem_migrate_vma(struct intel_memory_region *mem,
+int i915_devmem_migrate_vma(struct intel_memory_region *mem,
 				   struct i915_gem_ww_ctx *ww,
 				   struct vm_area_struct *vma,
 				   unsigned long start,

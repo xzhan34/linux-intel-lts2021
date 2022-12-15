@@ -282,7 +282,67 @@ static bool svm_access_allowed(struct vm_area_struct *vma, bool write)
 	return (vma->vm_flags & access) == access;
 }
 
+static bool svm_should_migrate(u64 va, enum intel_region_id dst_region, bool is_atomic_fault)
+{
+	return true;
+}
+
+/**
+ * svm_migrate_to_vram() - migrate backing store of a va range to vram
+ * @mm: the process mm_struct of the va range
+ * @start: start of the va range
+ * @length: length of the va range
+ * @mem: destination migration memory region
+ *
+ * Returns: negative errno on faiure, 0 on success
+ */
+static int svm_migrate_to_vram(struct mm_struct *mm,
+			__u64 start, __u64 length,
+			struct intel_memory_region *mem)
+{
+	unsigned long addr, end;
+	struct i915_gem_ww_ctx ww;
+	int err = 0;
+
+	if (!mem->devmem)
+		return -EINVAL;
+
+	mmap_read_lock(mm);
+	i915_gem_ww_ctx_init(&ww, true);
+retry:
+	for (addr = start, end = start + length; addr < end;) {
+		struct vm_area_struct *vma;
+		unsigned long next;
+
+		vma = find_vma_intersection(mm, addr, end);
+		if (!vma)
+			break;
+
+		addr &= PAGE_MASK;
+		next = min(vma->vm_end, end);
+		next = round_up(next, PAGE_SIZE);
+
+		err = i915_devmem_migrate_vma(mem, &ww, vma, addr, next);
+		if (err == -EDEADLK)
+			goto out_ww;
+
+		addr = next;
+	}
+
+out_ww:
+	if (err == -EDEADLK) {
+		err = i915_gem_ww_ctx_backoff(&ww);
+		if (!err)
+			goto retry;
+	}
+
+	i915_gem_ww_ctx_fini(&ww);
+	mmap_read_unlock(mm);
+	return 0;
+}
+
 int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
+				struct intel_gt *gt,
 				struct recoverable_page_fault_info *info)
 {
 	unsigned long *pfns, flags = HMM_PFN_REQ_FAULT;
@@ -315,6 +375,16 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 	start =  vma->vm_start;
 	length = vma->vm_end - vma->vm_start;
 	npages = vma->vm_end / PAGE_SIZE - vma->vm_start / PAGE_SIZE + 1;
+
+	if (svm_should_migrate(start, gt->lmem->id, info->access_type == ACCESS_TYPE_ATOMIC))
+		/*
+		 * Migration is best effort. If we failed to migrate to vram,
+		 * we just map that range to gpu in system memory. For cases
+		 * such as gpu atomic operation which requires memory to be
+		 * resident in vram, we will fault again and retry migration.
+		 */
+		svm_migrate_to_vram(mm, start, length, gt->lmem);
+
 	if (unlikely(sg_alloc_table(&st, npages, GFP_KERNEL))) {
 		ret = -ENOMEM;
 		goto put_svm;
