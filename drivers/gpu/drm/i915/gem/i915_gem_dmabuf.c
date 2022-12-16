@@ -6,6 +6,7 @@
 
 #include <linux/dma-buf.h>
 #include <linux/highmem.h>
+#include <linux/list.h>
 #include <linux/pci-p2pdma.h>
 #include <linux/scatterlist.h>
 
@@ -272,6 +273,37 @@ retry:
 	return err;
 }
 
+static const struct pci_device_id supported_ids[] = {
+	{ PCI_VDEVICE(INTEL, 0x09a2), 256 },
+	{ 0 }
+};
+
+/*
+ * It is possible that the necessary bridge ID has not made it to the p2pdma
+ * list.  Double check.
+ * NOTE: this is modeled after pci_p2pdma_distance_many function.  Only the bridge
+ * verification path is "followed".
+ */
+static int local_distance_check(struct pci_dev *pci_dev)
+{
+	const struct pci_device_id *match = NULL;
+	struct pci_host_bridge *host;
+	struct pci_dev *root;
+
+	host = pci_find_host_bridge(pci_dev->bus);
+	if (!host)
+		goto exit;
+
+	root = pci_get_slot(host->bus, 0);
+	if (!root)
+		goto exit;
+
+	match = pci_match_id(supported_ids, root);
+
+exit:
+	return match ? match->driver_data : -1;
+}
+
 static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 				  struct dma_buf_attachment *attach)
 {
@@ -281,8 +313,13 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 	struct i915_gem_ww_ctx ww;
 	int err, p2p_distance;
 
-	p2p_distance = pci_p2pdma_distance_many(to_pci_dev(obj->base.dev->dev),
-						&attach->dev, 1, false);
+	p2p_distance = pci_p2pdma_distance(to_pci_dev(obj->base.dev->dev),
+					   attach->dev, false);
+
+	/* double check the PCI bridge info (WA for missing ID) */
+	if (p2p_distance == -1)
+		p2p_distance = local_distance_check(to_pci_dev(i915->drm.dev));
+
 	if (p2p_distance < 0 && !to_i915(obj->base.dev)->params.prelim_override_p2p_dist &&
 	    !i915_gem_object_can_migrate(obj, INTEL_REGION_SMEM))
 		return -EOPNOTSUPP;
