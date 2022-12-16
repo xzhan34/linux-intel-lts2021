@@ -326,30 +326,23 @@ static void gen6_ggtt_insert_entries(struct i915_address_space *vm,
 	ggtt->invalidate(ggtt);
 }
 
-static void nop_clear_range(struct i915_address_space *vm,
-			    u64 start, u64 length)
-{
-}
-
 static void gen8_ggtt_clear_range(struct i915_address_space *vm,
 				  u64 start, u64 length)
 {
 	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
-	unsigned int first_entry = start / I915_GTT_PAGE_SIZE;
-	unsigned int num_entries = length / I915_GTT_PAGE_SIZE;
-	const gen8_pte_t scratch_pte = vm->scratch[0]->encode;
-	gen8_pte_t __iomem *gtt_base =
+	unsigned long first_entry = start / I915_GTT_PAGE_SIZE;
+	unsigned long num_entries = length / I915_GTT_PAGE_SIZE;
+	gen8_pte_t __iomem *pte =
 		(gen8_pte_t __iomem *)ggtt->gsm + first_entry;
-	const int max_entries = ggtt_total_entries(ggtt) - first_entry;
-	int i;
+	const gen8_pte_t scratch = vm->scratch[0]->encode;
 
-	if (WARN(num_entries > max_entries,
-		 "First entry = %d; Num entries = %d (max=%d)\n",
-		 first_entry, num_entries, max_entries))
-		num_entries = max_entries;
+	while (num_entries--)
+		iowrite32(scratch, pte++);
+}
 
-	for (i = 0; i < num_entries; i++)
-		gen8_set_pte(&gtt_base[i], scratch_pte);
+static void nop_clear_range(struct i915_address_space *vm,
+			    u64 start, u64 length)
+{
 }
 
 static void bxt_vtd_ggtt_wa(struct i915_address_space *vm)

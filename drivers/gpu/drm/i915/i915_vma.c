@@ -312,6 +312,8 @@ static void __vma_release(struct dma_fence_work *work)
 	if (work->dma.error) {
 		GEM_BUG_ON(test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &work->dma.flags));
 		set_bit(I915_VMA_ERROR_BIT, __i915_vma_flags(vw->vma));
+		if (vw->vm->scratch_range)
+			vw->vm->scratch_range(vw->vm, vw->vma->node.start, vw->vma->node.size);
 	}
 
 	if (vw->pinned) {
