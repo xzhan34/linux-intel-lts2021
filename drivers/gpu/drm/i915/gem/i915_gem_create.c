@@ -53,6 +53,20 @@ static void object_set_placements(struct drm_i915_gem_object *obj,
 	}
 }
 
+static u64 object_limit(struct drm_i915_gem_object *obj)
+{
+	u64 min_region_size = U64_MAX;
+	int i;
+
+	for (i = 0; i < obj->mm.n_placements; i++) {
+		struct intel_memory_region *mr = obj->mm.placements[i];
+
+		min_region_size = min_t(u64, min_region_size, mr->total);
+	}
+
+	return min_region_size;
+}
+
 static int i915_gem_publish(struct drm_i915_gem_object *obj,
 			    struct drm_file *file,
 			    u64 *size_p,
@@ -87,7 +101,7 @@ i915_gem_setup(struct drm_i915_gem_object *obj, u64 size)
 	/* For most of the ABI (e.g. mmap) we think in system pages */
 	GEM_BUG_ON(!IS_ALIGNED(size, PAGE_SIZE));
 
-	if (i915_gem_object_size_2big(size))
+	if (i915_gem_object_size_2big(size) || size > object_limit(obj))
 		return -E2BIG;
 
 	/*
