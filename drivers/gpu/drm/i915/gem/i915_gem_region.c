@@ -59,7 +59,7 @@ i915_gem_object_create_region(struct intel_memory_region *mem,
 	GEM_BUG_ON(!size);
 	GEM_BUG_ON(!IS_ALIGNED(size, I915_GTT_MIN_ALIGNMENT));
 
-	if (i915_gem_object_size_2big(size))
+	if (i915_gem_object_size_2big(size) || size > mem->total)
 		return ERR_PTR(-E2BIG);
 
 	obj = i915_gem_object_alloc();
