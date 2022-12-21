@@ -341,7 +341,7 @@ struct i915_request {
 	} mock;)
 };
 
-#define I915_FENCE_GFP (GFP_KERNEL | __GFP_RETRY_MAYFAIL | __GFP_NOWARN)
+#define I915_FENCE_GFP I915_GFP_ALLOW_FAIL
 
 extern const struct dma_fence_ops i915_fence_ops;
 

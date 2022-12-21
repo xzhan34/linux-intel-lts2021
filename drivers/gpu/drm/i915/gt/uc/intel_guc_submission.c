@@ -2064,8 +2064,7 @@ static int new_guc_id(struct intel_guc *guc, struct intel_context *ce)
 		ret = ida_simple_get(&guc->submission_state.guc_ids,
 				     NUMBER_MULTI_LRC_GUC_ID(guc),
 				     guc->submission_state.num_guc_ids,
-				     GFP_KERNEL | __GFP_RETRY_MAYFAIL |
-				     __GFP_NOWARN);
+				     I915_GFP_ALLOW_FAIL);
 	if (unlikely(ret < 0))
 		return ret;
 

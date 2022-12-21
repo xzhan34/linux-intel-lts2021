@@ -109,6 +109,8 @@ struct intel_overlay;
 struct intel_overlay_error_state;
 struct vlv_s0ix_state;
 
+#define I915_GFP_ALLOW_FAIL (GFP_KERNEL | __GFP_RETRY_MAYFAIL | __GFP_NOWARN)
+
 /* Threshold == 5 for long IRQs, 50 for short */
 #define HPD_STORM_DEFAULT_THRESHOLD 50
 

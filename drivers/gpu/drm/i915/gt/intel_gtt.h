@@ -29,8 +29,6 @@
 #include "i915_selftest.h"
 #include "i915_vma_types.h"
 
-#define I915_GFP_ALLOW_FAIL (GFP_KERNEL | __GFP_RETRY_MAYFAIL | __GFP_NOWARN)
-
 #if IS_ENABLED(CONFIG_DRM_I915_TRACE_GTT)
 #define DBG(...) trace_printk(__VA_ARGS__)
 #else

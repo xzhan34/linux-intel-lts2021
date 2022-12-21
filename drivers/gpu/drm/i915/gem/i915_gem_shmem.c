@@ -68,7 +68,7 @@ static int shmem_get_pages(struct drm_i915_gem_object *obj)
 		return -ENOMEM;
 
 rebuild_st:
-	if (sg_alloc_table(st, page_count, GFP_KERNEL)) {
+	if (sg_alloc_table(st, page_count, I915_GFP_ALLOW_FAIL)) {
 		kfree(st);
 		return -ENOMEM;
 	}
