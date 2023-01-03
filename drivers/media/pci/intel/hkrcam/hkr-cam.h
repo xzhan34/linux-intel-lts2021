@@ -36,7 +36,7 @@ struct hkr_v4l2_queue {
 	/* Video device, /dev/videoX */
 	struct video_device vdev;
 	struct media_pad vdev_pad;
-	struct v4l2_pix_format_mplane format;
+	struct v4l2_pix_format format;
 	struct vb2_queue vbq;
 
 	struct completion msg_ack_comp; /* ack completion from client */
@@ -60,7 +60,6 @@ struct hkr_stream_item {
 	void *stream;
 	struct list_head list;
 };
-
 
 struct hkr_control_dev {
 	int major;
@@ -103,8 +102,6 @@ struct hkr_device {
 	struct hkr_msg_buf *msg_buf;
 	struct mutex msg_lock;
 };
-
-
 
 struct hkr_pci_drv_data {
 	size_t alignment;

@@ -14,6 +14,8 @@
 #include <linux/pm_runtime.h>
 #include <linux/property.h>
 #include <linux/vmalloc.h>
+#include <linux/timekeeping.h>
+
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-event.h>
@@ -62,16 +64,14 @@ do { \
 		dev_info(dev, ##__VA_ARGS__); \
 } while (0)
 
-static int enable_log = 1;
+static int enable_log = 0;
 module_param(enable_log, int, 0644);
-
 
 struct hkr_fmt {
 	char  *name;
 	u32   fourcc;          /* v4l2 format id */
 	int   depth;
 };
-
 
 static struct hkr_fmt hkr_formats[] = {
 	{
@@ -105,11 +105,11 @@ static inline u32 hkr_bytesperline(uint32_t pixelfmt, const unsigned int width) 
 	uint32_t bytesperline = 0;
 	switch(pixelfmt){
 	case V4L2_PIX_FMT_NV12:
-		bytesperline=width*3/2;
+		bytesperline=width * 3 / 2;
 		break;
 	case V4L2_PIX_FMT_YUYV:
 	case V4L2_PIX_FMT_UYVY:
-		bytesperline= width*2;
+		bytesperline= width * 2;
 		break;
 	default:
 		break;
@@ -282,7 +282,6 @@ static void hkr_update_msg_wr_index(struct hkr_device *hkr_dev)
 	msg_buf->header.wr_idx = next_idx;
 }
 
-
 static int hkr_send_mbx_message(struct hkr_device *hkr_dev,
                                 struct hkr_msg_header *head)
 {
@@ -375,9 +374,6 @@ static void hkr_vb2_buf_queue(struct vb2_buffer *vb)
 		HKR_INFO(dev, "enq_index:%d -->%p\n", q->enq_index,
 		         q->bufs[q->enq_index]);
 		q->enq_index = (q->enq_index + 1) % HKR_MAX_BUFFER_NUM;
-			HKR_INFO(dev, "1:ring:%p wr_index:%d rd_index:%d dma:%llx\n",
-			         q->ring, q->ring->wr_index, q->ring->rd_index,
-				 q->ring->dma_addr[q->ring->wr_index]);
 		/* put dma address to ring */
 		if (((q->ring->wr_index + 1) % HKR_MAX_BUFFER_NUM) ==
 		                q->ring->rd_index) {
@@ -385,17 +381,14 @@ static void hkr_vb2_buf_queue(struct vb2_buffer *vb)
 		} else {
 			q->ring->dma_addr[q->ring->wr_index] =
 			        dma_addr;
-			HKR_INFO(dev, "2:ring:%p wr_index:%d rd_index:%d dma:%llx\n",
-			         q->ring, q->ring->wr_index, q->ring->rd_index,
-			         q->ring->dma_addr[q->ring->wr_index]);
+			HKR_INFO(dev, "stream-%d ring:%p wr_index:%d rd_index:%d dma:%llx\n",
+					q->stream_index, q->ring, q->ring->wr_index, q->ring->rd_index,
+					q->ring->dma_addr[q->ring->wr_index]);
 			q->ring->wr_index = (q->ring->wr_index + 1) %
 			                    HKR_MAX_BUFFER_NUM;
 
 			/* call wmb() to ensure write to memory */
 			wmb();
-			HKR_INFO(dev, "3:ring:%p wr_index:%d rd_index:%d dma:%llx\n",
-			         q->ring, q->ring->wr_index, q->ring->rd_index,
-			         q->ring->dma_addr[q->ring->wr_index]);
 		}
 	} else {
 		ret = -ENOMEM;
@@ -437,7 +430,7 @@ static int hkr_vb2_queue_setup(struct vb2_queue *vq,
 	*num_planes = 1;
 
 	for (i = 0; i < *num_planes; i++) {
-		sizes[i] = q->format.plane_fmt[i].sizeimage;
+		sizes[i] = q->format.sizeimage;
 		alloc_devs[i] = dev;
 		HKR_INFO(dev, "size[%d]:%d\n", i, sizes[i]);
 	}
@@ -528,7 +521,6 @@ static void hkr_vb2_stop_streaming(struct vb2_queue *vq)
 	 * TODO: We simplely delay here to wait all interrupt done
 	 * Should wait for EP to finish.
 	 */
-
 	hkr_vb2_return_all_buffers(q, VB2_BUF_STATE_ERROR);
 }
 
@@ -569,12 +561,11 @@ static int hkr_v4l2_enum_fmt(struct file *file, void *fh,
 	return 0;
 }
 
-
 static int hkr_v4l2_g_fmt(struct file *file, void *fh, struct v4l2_format *f)
 {
 	struct hkr_v4l2_queue *q = file_to_hkr_v4l2_queue(file);
 
-	f->fmt.pix_mp = q->format;
+	f->fmt.pix = q->format;
 
 	return 0;
 }
@@ -601,9 +592,7 @@ static int hkr_v4l2_try_fmt(struct file *file, void *fh, struct v4l2_format *f)
 
 	fmt = hkr_find_format(&pix->pixelformat);
 	if (!fmt) {
-		printk("------------------------------------\n");
 		printk("failed to find format, use default\n");
-		printk("------------------------------------\n");
 		fmt = &hkr_formats[0];
 		pix->width=640;
 		pix->height=480;
@@ -632,7 +621,7 @@ static int hkr_v4l2_s_fmt(struct file *file, void *fh, struct v4l2_format *f)
 	struct hkr_v4l2_queue *q = file_to_hkr_v4l2_queue(file);
 
 	hkr_v4l2_try_fmt(file, fh, f);
-	q->format = f->fmt.pix_mp;
+	q->format = f->fmt.pix;
 
 	return 0;
 }
@@ -663,7 +652,6 @@ static int hkr_video_s_input(struct file *file, void *fh,
 {
 	return input == 0 ? 0 : -EINVAL;
 }
-
 
 static const struct v4l2_ioctl_ops hkr_v4l2_ioctl_ops = {
 	.vidioc_querycap = hkr_v4l2_querycap,
@@ -697,6 +685,7 @@ static irqreturn_t hkr_irq(int irq, void *hkr_ptr)
 	struct hkr_device *hkr_dev = vb2_get_drv_priv(&q->vbq);
 	struct device *dev = hkr_dev->dev;
 	struct vb2_buffer *vb;
+	struct timespec64 timestamp;
 
 	if (bufs_queued < 0) {
 		dev_err(dev, " No buffer available\n");
@@ -716,6 +705,8 @@ static irqreturn_t hkr_irq(int irq, void *hkr_ptr)
 
 	if (q->bufs[deq_index]) {
 		vb = &q->bufs[deq_index]->vbb.vb2_buf;
+		ktime_get_coarse_real_ts64(&timestamp);
+                vb->timestamp = timestamp.tv_sec*1000000000 + timestamp.tv_nsec;
 
 		local_irq_save(flags);
 		q->bufs[deq_index] = NULL;
@@ -725,7 +716,8 @@ static irqreturn_t hkr_irq(int irq, void *hkr_ptr)
 
 		atomic_dec(&q->bufs_queued);
 		vb2_buffer_done(vb, VB2_BUF_STATE_DONE);
-		HKR_INFO(dev, "buffer done\n");
+		HKR_INFO(dev, "stream-%d one buffer done, dma addr %llx\n", q->stream_index,
+                                                                q->ring->dma_addr[q->ring->rd_index]);
 	}
 
 	HKR_INFO(dev, "+++++%s %d next deq_index:%d\n", __func__, __LINE__,
@@ -765,7 +757,6 @@ static void hkr_process_start_ack(struct hkr_device *hkr_dev,
 
 	for (i = 0; i < done->num_of_stream; i++) {
 		idx = done->stream_ids[i];
-		printk("++++complete: %d\n", idx);
 		complete(&hkr_dev->queue[idx].msg_ack_comp);
 	}
 }
@@ -779,11 +770,9 @@ static void hkr_process_stop_ack(struct hkr_device *hkr_dev,
 
 	for (i = 0; i < done->num_of_stream; i++) {
 		idx = done->stream_ids[i];
-		printk("++++complete: %d\n", idx);
 		complete(&hkr_dev->queue[idx].msg_ack_comp);
 	}
 }
-
 
 static void hkr_process_dev2host_message(struct hkr_device *hkr_dev)
 {
@@ -881,6 +870,10 @@ static int hkr_create_v4l2_device(struct hkr_device *hkr_dev,
 		q->format.width = image_stream->width;
 		q->format.height = image_stream->height;
 		q->format.pixelformat = image_stream->fourcc;
+		q->format.colorspace = V4L2_COLORSPACE_DEFAULT;
+		q->format.field = V4L2_FIELD_ANY;
+		q->format.bytesperline = hkr_bytesperline(q->format.pixelformat,q->format.width);
+		q->format.sizeimage = q->format.bytesperline * q->format.height;
 		q->irq = hkr_dev->irq + image_stream->irq_index - 1;
 
 		HKR_INFO(dev, "hkr_dev->irq:%d index:%d\n", hkr_dev->irq,
@@ -890,15 +883,7 @@ static int hkr_create_v4l2_device(struct hkr_device *hkr_dev,
 		return -EINVAL;
 	}
 
-
 	init_completion(&q->msg_ack_comp);
-
-	q->format.colorspace = V4L2_COLORSPACE_DEFAULT;
-	q->format.field = V4L2_FIELD_ANY;
-	q->format.num_planes = 1;
-	q->format.plane_fmt[0].bytesperline = hkr_bytesperline(q->format.pixelformat,q->format.width);
-	q->format.plane_fmt[0].sizeimage = q->format.plane_fmt[0].bytesperline *
-	                                   q->format.height;
 
 	HKR_INFO(dev, "cpu:%p dma:%llx\n", q->ring, q->ring_bus_addr);
 	writel(q->ring_bus_addr & 0xFFFFFFFF,
@@ -1112,7 +1097,6 @@ static int hkr_create_instances(struct hkr_device *hkr_dev)
 {
 	int err = 0;
 	struct device *dev = hkr_dev->dev;
-
 
 	err = hkr_alloc_ring_descs(hkr_dev);
 	if (err) {
@@ -1597,7 +1581,6 @@ static int hkr_probe(struct pci_dev *pdev,
 	INIT_LIST_HEAD(&hkr_dev->meta_streams);
 	INIT_LIST_HEAD(&hkr_dev->imu_streams);
 
-
 	err = hkr_parse_usecase(hkr_dev);
 	if (err) {
 		dev_err(dev, "parse usecase fail\n");
@@ -1690,7 +1673,6 @@ static struct pci_driver hkr_pci_driver = {
 };
 
 module_pci_driver(hkr_pci_driver);
-
 
 MODULE_AUTHOR("Shunyong Yang <shunyong.yang@intel.com>");
 MODULE_LICENSE("GPL v2");

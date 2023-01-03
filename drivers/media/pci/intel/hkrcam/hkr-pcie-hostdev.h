@@ -67,7 +67,6 @@ enum {
 	HKR_STREAM_CMD_CFG_BUF,
 };
 
-
 enum {
 	HKR_STREAM_OFF = 0,
 	HKR_STREAM_ON = 1,
@@ -218,7 +217,6 @@ struct hkr_msg_imu_set_report_done {
 
 /* End of IMU related messaage */
 
-
 /* We must assure bytes align with HKR EP */
 struct hkr_ring_desc {
 	uint64_t buf_num;
@@ -267,8 +265,6 @@ struct hkr_imu_stream {
 	uint32_t size;
 } __attribute__ ((__packed__));
 
-
-
 struct hkr_device_info {
 	uint32_t hw_version;
 	uint32_t fw_version;
@@ -296,7 +292,6 @@ struct hkr_device_config {
 	struct hkr_device_info device_info;
 	uint64_t usecase_data[HKR_MAX_STREAM_NUM];
 } __attribute__ ((__packed__));
-
 
 #define MBX_HEADER_VF1          (0xC00)
 #define MBX_PAYLOAD0_VF1        (0xC04)

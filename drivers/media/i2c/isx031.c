@@ -133,6 +133,28 @@ static const struct isx031_reg isx031_1920_1080_30fps_reg[] = {
 	{ISX031_REG_LEN_08BIT, 0xBF0D, 0x00},
 };
 
+static const struct isx031_reg isx031_1632_1536_30fps_reg[] = {
+	{ISX031_REG_LEN_08BIT, 0x8AA8, 0x01}, // crop enable
+	{ISX031_REG_LEN_08BIT, 0x8AAA, 0x60}, // H size = 1632
+	{ISX031_REG_LEN_08BIT, 0x8AAB, 0x06},
+	{ISX031_REG_LEN_08BIT, 0x8AAC, 0x90}, // H croped 144*2
+	{ISX031_REG_LEN_08BIT, 0x8AAD, 0x00},
+	{ISX031_REG_LEN_08BIT, 0x8AAE, 0x00}, // V size 1536
+	{ISX031_REG_LEN_08BIT, 0x8AAF, 0x06},
+	{ISX031_REG_LEN_08BIT, 0x8AB0, 0x00}, // V cropped 0
+	{ISX031_REG_LEN_08BIT, 0x8AB1, 0x00},
+	{ISX031_REG_LEN_08BIT, 0x8ADA, 0x03}, // DCROP_DATA_SEL
+	{ISX031_REG_LEN_08BIT, 0xBF04, 0x01},
+	{ISX031_REG_LEN_08BIT, 0xBF06, 0x60},
+	{ISX031_REG_LEN_08BIT, 0xBF07, 0x06},
+	{ISX031_REG_LEN_08BIT, 0xBF08, 0x90},
+	{ISX031_REG_LEN_08BIT, 0xBF09, 0x00},
+	{ISX031_REG_LEN_08BIT, 0xBF0A, 0x00},
+	{ISX031_REG_LEN_08BIT, 0xBF0B, 0x06},
+	{ISX031_REG_LEN_08BIT, 0xBF0C, 0x00},
+	{ISX031_REG_LEN_08BIT, 0xBF0D, 0x00},
+};
+
 static const struct isx031_reg isx031_1280_720_30fps_reg[] = {
 	{ISX031_REG_LEN_08BIT, 0x8AA8, 0x01}, // crop enable
 	{ISX031_REG_LEN_08BIT, 0x8AAA, 0x00}, // H size = 1280
@@ -169,6 +191,16 @@ static const struct isx031_mode supported_modes[] = {
 		.reg_list = {
 			.num_of_regs = ARRAY_SIZE(isx031_1920_1080_30fps_reg),
 			.regs = isx031_1920_1080_30fps_reg,
+		},
+	},
+	{
+		.width = 1632,
+		.height = 1536,
+		.code = MEDIA_BUS_FMT_UYVY8_1X16,
+		.fps = 30,
+		.reg_list = {
+			.num_of_regs = ARRAY_SIZE(isx031_1632_1536_30fps_reg),
+			.regs = isx031_1632_1536_30fps_reg,
 		},
 	},
 	{

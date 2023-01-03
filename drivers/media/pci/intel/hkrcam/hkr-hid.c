@@ -199,7 +199,6 @@ irqreturn_t hkr_hid_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-
 static struct hid_ll_driver hkr_hid_ll_driver = {
 	.parse = hkr_hid_parse,
 	.start = hkr_hid_start,

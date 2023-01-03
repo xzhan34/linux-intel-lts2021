@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config VIDEO_HKR
+	tristate "Intel hkr driver"
+	depends on VIDEO_V4L2 && PCI
+	depends on ACPI || COMPILE_TEST
+	depends on MEDIA_SUPPORT
+	depends on X86
+	select MEDIA_CONTROLLER
+	select VIDEOBUF2_DMA_CONTIG
+	select VIDEO_V4L2_SUBDEV_API
+	select VIDEOBUF2_DMA_SG
+
+	help
+	  This is the Intel IPU3 CIO2 CSI-2 receiver unit, found in Intel

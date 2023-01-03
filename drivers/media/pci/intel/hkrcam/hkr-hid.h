@@ -35,7 +35,6 @@ struct hkr_hid_data {
 	struct hkr_ring_desc *ring; /* ring desc CPU addr aligned */
 };
 
-
 int hkr_create_hid_device(struct hkr_hid_data *hid_data);
 void hkr_hid_remove(struct hkr_hid_data *hid_data);
 irqreturn_t hkr_hid_irq(int irq, void *data);

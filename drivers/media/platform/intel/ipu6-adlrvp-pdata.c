@@ -265,10 +265,18 @@ static struct ti960_subdev_pdata imx390_d3cm_pdata_stub = {
 
 static struct ti960_subdev_pdata isx031_pdata_stub = {
 	.lanes = 4,
+	.fsin = 2,
+	.gpio_powerup_seq = {0x00, 0x08, 0x08, -1},
+	.module_flags = TI960_FL_POWERUP,
+	.module_name = "isx031",
+};
+
+static struct ti960_subdev_pdata isx031_sg3_pdata_stub = {
+	.lanes = 4,
+	.fsin = 0,
 	.gpio_powerup_seq = {0x00, 0x02, 0x02, -1},
 	.module_flags = TI960_FL_POWERUP,
 	.module_name = "isx031",
-	.fsin = 0, /* gpio 0 used for FSIN */
 };
 #endif
 
@@ -284,6 +292,7 @@ static struct ipu_isys_csi2_config ti960_csi2_cfg_2 = {
 
 static struct ti960_subdev_info ti960_subdevs_1[] = {
 #if IS_ENABLED(CONFIG_VIDEO_ISX031)
+	/* Sunex modules */
 	{
 		.board_info = {
 			.type = "isx031",
@@ -322,6 +331,51 @@ static struct ti960_subdev_info ti960_subdevs_1[] = {
 			.type = "isx031",
 			.addr = ISX031D_ADDRESS,
 			.platform_data = &isx031_pdata_stub,
+		},
+		.rx_port = 3,
+		.phy_i2c_addr = ISX031_I2C_ADDRESS_8BIT,
+		.ser_alias = ISX031D_SER_ADDRESS,
+		.suffix = 'd',
+	},
+	/* test modules */
+	{
+		.board_info = {
+			.type = "isx031",
+			.addr = ISX031A_ADDRESS,
+			.platform_data = &isx031_sg3_pdata_stub,
+		},
+		.rx_port = 0,
+		.phy_i2c_addr = ISX031_I2C_ADDRESS_8BIT,
+		.ser_alias = ISX031A_SER_ADDRESS,
+		.suffix = 'a',
+	},
+	{
+		.board_info = {
+			.type = "isx031",
+			.addr = ISX031B_ADDRESS,
+			.platform_data = &isx031_sg3_pdata_stub,
+		},
+		.rx_port = 1,
+		.phy_i2c_addr = ISX031_I2C_ADDRESS_8BIT,
+		.ser_alias = ISX031B_SER_ADDRESS,
+		.suffix = 'b',
+	},
+	{
+		.board_info = {
+			.type = "isx031",
+			.addr = ISX031C_ADDRESS,
+			.platform_data = &isx031_sg3_pdata_stub,
+		},
+		.rx_port = 2,
+		.phy_i2c_addr = ISX031_I2C_ADDRESS_8BIT,
+		.ser_alias = ISX031C_SER_ADDRESS,
+		.suffix = 'c',
+	},
+	{
+		.board_info = {
+			.type = "isx031",
+			.addr = ISX031D_ADDRESS,
+			.platform_data = &isx031_sg3_pdata_stub,
 		},
 		.rx_port = 3,
 		.phy_i2c_addr = ISX031_I2C_ADDRESS_8BIT,
