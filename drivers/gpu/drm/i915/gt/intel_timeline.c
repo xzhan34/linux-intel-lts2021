@@ -130,6 +130,7 @@ static void intel_timeline_fini(struct rcu_head *rcu)
 
 	i915_vma_put(timeline->hwsp_ggtt);
 	i915_active_fini(&timeline->active);
+	i915_active_fence_fini(&timeline->last_request);
 
 	/*
 	 * A small race exists between intel_gt_retire_requests_timeout and

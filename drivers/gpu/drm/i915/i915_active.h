@@ -71,6 +71,8 @@ __i915_active_fence_init(struct i915_active_fence *active,
 #define INIT_ACTIVE_FENCE(A) \
 	__i915_active_fence_init((A), NULL, NULL)
 
+void i915_active_fence_fini(struct i915_active_fence *active);
+
 struct dma_fence *
 __i915_active_fence_set(struct i915_active_fence *active,
 			struct dma_fence *fence);
