@@ -935,11 +935,6 @@ static int gem_context_register(struct i915_gem_context *ctx,
 		 pid_nr(i915_drm_client_pid(client)));
 	rcu_read_unlock();
 
-	/* And finally expose ourselves to userspace via the idr */
-	ret = xa_alloc(&fpriv->context_xa, id, ctx, xa_limit_32b, GFP_KERNEL);
-	if (ret)
-		goto err_pid;
-
 	ctx->client = client;
 
 	spin_lock(&client->ctx_lock);
@@ -950,9 +945,19 @@ static int gem_context_register(struct i915_gem_context *ctx,
 	list_add_tail_rcu(&ctx->link, &i915->gem.contexts.list);
 	spin_unlock_irq(&i915->gem.contexts.lock);
 
-	return 0;
+	/* And finally expose ourselves to userspace via the idr */
+	ret = xa_alloc(&fpriv->context_xa, id, ctx, xa_limit_32b, GFP_KERNEL);
+	if (!ret)
+		return 0;
 
-err_pid:
+	spin_lock(&client->ctx_lock);
+	list_del_rcu(&ctx->client_link);
+	spin_unlock(&client->ctx_lock);
+
+	spin_lock_irq(&i915->gem.contexts.lock);
+	list_del_rcu(&ctx->link);
+	spin_unlock_irq(&i915->gem.contexts.lock);
+
 	i915_drm_client_put(client);
 	return ret;
 }
