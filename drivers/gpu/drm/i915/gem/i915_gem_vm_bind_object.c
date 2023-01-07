@@ -467,6 +467,57 @@ static struct i915_vma *vm_bind_get_vma(struct i915_address_space *vm,
 	return __i915_vma_get(vma);
 }
 
+static int vma_bind_insert(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
+			   u64 pin_flags)
+{
+	struct i915_address_space *vm = vma->vm;
+	int ret = 0;
+
+retry:
+	if (pin_flags) {
+		/* Always take vm_priv lock here (just like execbuff path) even
+		 * for shared BOs, this will prevent the eviction/shrinker logic
+		 * from evicint private BOs of the VM.
+		 */
+		ret = i915_gem_vm_priv_lock(vm, ww);
+		if (ret)
+			goto out_ww;
+
+		ret = i915_gem_object_lock(vma->obj, ww);
+		if (ret)
+			goto out_ww;
+
+		if (i915_gem_object_is_userptr(vma->obj)) {
+			i915_gem_userptr_lock_mmu_notifier(vm->i915);
+			ret = i915_gem_object_userptr_submit_done(vma->obj);
+			i915_gem_userptr_unlock_mmu_notifier(vm->i915);
+			if (ret)
+				goto out_ww;
+		}
+
+		ret = i915_vma_pin_ww(vma, ww, 0, 0, pin_flags);
+		if (ret)
+			goto out_ww;
+
+		__i915_vma_unpin(vma);
+	}
+
+	list_add_tail(&vma->vm_bind_link, &vm->vm_bind_list);
+	i915_vm_bind_it_insert(vma, &vm->va);
+	if (!vma->obj->vm)
+		list_add_tail(&vma->non_priv_vm_bind_link,
+			      &vm->non_priv_vm_bind_list);
+
+out_ww:
+	if (ret == -EDEADLK) {
+		ret = i915_gem_ww_ctx_backoff(ww);
+		if (!ret)
+			goto retry;
+	}
+
+	return ret;
+}
+
 int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 			 struct prelim_drm_i915_gem_vm_bind *va,
 			 struct drm_file *file)
@@ -478,6 +529,7 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	struct drm_i915_gem_object *obj;
 	struct i915_gem_ww_ctx ww;
 	struct i915_vma *vma;
+	u64 pin_flags = 0;
 	int ret;
 
 	obj = i915_gem_object_lookup(file, va->handle);
@@ -522,6 +574,10 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	}
 
 	if (va->flags & PRELIM_I915_GEM_VM_BIND_IMMEDIATE) {
+		pin_flags = va->start | PIN_OFFSET_FIXED | PIN_USER;
+		if (va->flags & PRELIM_I915_GEM_VM_BIND_MAKE_RESIDENT)
+			pin_flags |= PIN_RESIDENT;
+
 		vma->bind_fence = ufence_create(vm, &ext);
 		if (!vma->bind_fence) {
 			ret = -ENOMEM;
@@ -545,40 +601,10 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	}
 
 	i915_gem_ww_ctx_init(&ww, true);
+	ret = vma_bind_insert(vma, &ww, pin_flags);
+	if (ret)
+		goto out_ww;
 	set_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags);
-retry:
-	if (va->flags & PRELIM_I915_GEM_VM_BIND_IMMEDIATE) {
-		u64 pin_flags = va->start | PIN_OFFSET_FIXED | PIN_USER;
-
-		if (va->flags & PRELIM_I915_GEM_VM_BIND_MAKE_RESIDENT)
-			pin_flags |= PIN_RESIDENT;
-
-		/* Always take vm_priv lock here (just like execbuff path) even
-		 * for shared BOs, this will prevent the eviction/shrinker logic
-		 * from evicint private BOs of the VM.
-		 */
-		ret = i915_gem_vm_priv_lock(vm, &ww);
-		if (ret)
-			goto out_ww;
-
-		ret = i915_gem_object_lock(vma->obj, &ww);
-		if (ret)
-			goto out_ww;
-
-		if (i915_gem_object_is_userptr(obj)) {
-			i915_gem_userptr_lock_mmu_notifier(vm->i915);
-			ret = i915_gem_object_userptr_submit_done(obj);
-			i915_gem_userptr_unlock_mmu_notifier(vm->i915);
-			if (ret)
-				goto out_ww;
-		}
-
-		ret = i915_vma_pin_ww(vma, &ww, 0, 0, pin_flags);
-		if (ret)
-			goto out_ww;
-
-		__i915_vma_unpin(vma);
-	}
 
 	if (va->flags & PRELIM_I915_GEM_VM_BIND_CAPTURE) {
 		spin_lock(&vm->vm_capture_lock);
@@ -586,18 +612,7 @@ retry:
 		spin_unlock(&vm->vm_capture_lock);
 	}
 
-	list_add_tail(&vma->vm_bind_link, &vm->vm_bind_list);
-	i915_vm_bind_it_insert(vma, &vm->va);
-	if (!obj->vm)
-		list_add_tail(&vma->non_priv_vm_bind_link,
-			      &vm->non_priv_vm_bind_list);
-
 out_ww:
-	if (ret == -EDEADLK) {
-		ret = i915_gem_ww_ctx_backoff(&ww);
-		if (!ret)
-			goto retry;
-	}
 	i915_gem_ww_ctx_fini(&ww);
 
 	if (ret) {
@@ -605,6 +620,7 @@ out_ww:
 		i915_gem_vm_bind_release(vma);
 	}
 unlock_vm:
+	/* after dropping this lock, user can vm_unbind_obj */
 	i915_gem_vm_bind_unlock(vm);
 put_obj:
 	i915_gem_object_put(obj);
