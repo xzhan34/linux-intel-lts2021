@@ -672,7 +672,9 @@ mmap_offset_attach(struct drm_i915_gem_object *obj,
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct i915_mmap_offset *mmo;
+	struct intel_gt *gt;
 	int err;
+	int i;
 
 	GEM_BUG_ON(obj->ops->mmap_offset || obj->ops->mmap_ops);
 
@@ -694,12 +696,10 @@ mmap_offset_attach(struct drm_i915_gem_object *obj,
 		goto insert;
 
 	/* Attempt to reap some mmap space from dead objects */
-	err = intel_gt_retire_requests_timeout(to_gt(i915), MAX_SCHEDULE_TIMEOUT,
-					       NULL);
-	if (err)
-		goto err;
-
+	for_each_gt(gt, i915, i)
+		intel_gt_retire_requests(gt);
 	i915_gem_drain_freed_objects(i915);
+
 	err = drm_vma_offset_add(obj->base.dev->vma_offset_manager,
 				 &mmo->vma_node, obj->base.size / PAGE_SIZE);
 	if (err)

@@ -1730,15 +1730,7 @@ static int switch_to_kernel_sync(struct intel_context *ce, int err)
 		err = -ETIME;
 	i915_request_put(rq);
 
-	if (intel_gt_retire_requests_timeout(engine->gt, HZ, NULL) < 0) {
-		struct drm_printer p = drm_info_printer(engine->i915->drm.dev);
-
-		pr_err("%s: Failed to idle iactive engine\n", engine->name);
-		intel_engine_dump(engine, &p, "%s\n", engine->name);
-		err = -EIO;
-	}
 	intel_gt_retire_requests(engine->gt);
-
 	return err;
 }
 

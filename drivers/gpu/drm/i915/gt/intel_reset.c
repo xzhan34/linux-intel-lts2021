@@ -1512,10 +1512,15 @@ void intel_gt_set_wedged_on_init(struct intel_gt *gt)
 
 void intel_gt_set_wedged_on_fini(struct intel_gt *gt)
 {
+	long timeout = 0;
+
 	intel_gt_set_wedged(gt);
 	i915_disable_error_state(gt->i915, -ENODEV);
 	set_bit(I915_WEDGED_ON_FINI, &gt->reset.flags);
-	intel_gt_retire_requests(gt); /* cleanup any wedged requests */
+
+	/* cleanup any wedged requests */
+	while (!intel_gt_retire_requests_timeout(gt, &timeout))
+		;
 }
 
 void intel_gt_init_reset(struct intel_gt *gt)

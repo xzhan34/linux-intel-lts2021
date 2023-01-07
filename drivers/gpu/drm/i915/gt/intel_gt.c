@@ -552,7 +552,7 @@ err:
 	}
 
 	/* Flush the default context image to memory, and enable powersaving. */
-	if (intel_gt_wait_for_idle(gt, I915_GEM_IDLE_TIMEOUT) == -ETIME) {
+	if (intel_gt_wait_for_idle(gt, I915_GEM_IDLE_TIMEOUT)) {
 		err = -EIO;
 		goto out;
 	}
@@ -589,20 +589,15 @@ out:
 	 * and ready to be torn-down. The quickest way we can accomplish
 	 * this is by declaring ourselves wedged.
 	 */
-	if (err)
-		intel_gt_set_wedged(gt);
-
 	for (id = 0; id < ARRAY_SIZE(requests); id++) {
-		struct intel_context *ce;
 		struct i915_request *rq;
 
 		rq = requests[id];
 		if (!rq)
 			continue;
 
-		ce = rq->context;
+		intel_context_put(rq->context);
 		i915_request_put(rq);
-		intel_context_put(ce);
 	}
 	return err;
 }
@@ -622,7 +617,7 @@ static int __engines_verify_workarounds(struct intel_gt *gt)
 	}
 
 	/* Flush and restore the kernel context for safety */
-	if (intel_gt_wait_for_idle(gt, I915_GEM_IDLE_TIMEOUT) == -ETIME)
+	if (intel_gt_wait_for_idle(gt, I915_GEM_IDLE_TIMEOUT))
 		err = -EIO;
 
 	return err;
@@ -640,21 +635,21 @@ static void __intel_gt_disable(struct intel_gt *gt)
 
 int intel_gt_wait_for_idle(struct intel_gt *gt, long timeout)
 {
-	long remaining_timeout;
-
 	/* If the device is asleep, we have no requests outstanding */
 	if (!intel_gt_pm_is_awake(gt))
 		return 0;
 
-	while ((timeout = intel_gt_retire_requests_timeout(gt, timeout,
-							   &remaining_timeout)) > 0) {
-		cond_resched();
+	while (!intel_gt_retire_requests_timeout(gt, &timeout)) {
 		if (signal_pending(current))
 			return -EINTR;
+
+		if (timeout == 0)
+			return -ETIME;
+
+		cond_resched();
 	}
 
-	return timeout ? timeout : intel_uc_wait_for_idle(&gt->uc,
-							  remaining_timeout);
+	return intel_uc_wait_for_idle(&gt->uc, timeout);
 }
 
 int intel_gt_init(struct intel_gt *gt)

@@ -772,10 +772,11 @@ i915_drop_caches_get(void *data, u64 *val)
 static int
 gt_drop_caches(struct intel_gt *gt, u64 val)
 {
+	long timeout = I915_IDLE_ENGINES_TIMEOUT;
 	int ret;
 
 	if (val & DROP_RESET_ACTIVE &&
-	    intel_gt_wait_for_idle(gt, I915_IDLE_ENGINES_TIMEOUT) == -ETIME)
+	    !intel_gt_retire_requests_timeout(gt, &timeout))
 		intel_gt_set_wedged(gt);
 
 	if (val & DROP_RETIRE)
