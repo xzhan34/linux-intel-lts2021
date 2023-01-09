@@ -290,19 +290,16 @@ err_wedged:
 
 static void wait_for_suspend(struct intel_gt *gt)
 {
-	if (!intel_gt_pm_is_awake(gt))
-		return;
+	intel_wakeref_t wf;
 
-	if (intel_gt_wait_for_idle(gt, I915_GEM_IDLE_TIMEOUT) == -ETIME) {
-		/*
-		 * Forcibly cancel outstanding work and leave
-		 * the gpu quiet.
-		 */
-		intel_gt_set_wedged(gt);
-		intel_gt_retire_requests(gt);
+	with_intel_gt_pm(gt, wf) {
+		/* Cancel outstanding work and leave the gpu quiet */
+		if (intel_gt_wait_for_idle(gt, I915_GEM_IDLE_TIMEOUT) == -ETIME)
+			intel_gt_set_wedged(gt);
+
+		/* Make the GPU available again for swapout */
+		intel_gt_unset_wedged(gt);
 	}
-
-	intel_gt_pm_wait_for_idle(gt);
 }
 
 void intel_gt_suspend_prepare(struct intel_gt *gt)
