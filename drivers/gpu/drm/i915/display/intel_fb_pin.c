@@ -51,14 +51,6 @@ intel_pin_fb_obj_dpt(struct drm_framebuffer *fb,
 	if (IS_ERR(vma))
 		goto err;
 
-	if (i915_vma_misplaced(vma, 0, alignment, 0)) {
-		ret = i915_vma_unbind(vma);
-		if (ret) {
-			vma = ERR_PTR(ret);
-			goto err;
-		}
-	}
-
 	ret = i915_vma_pin(vma, 0, alignment, PIN_GLOBAL);
 	if (ret) {
 		vma = ERR_PTR(ret);

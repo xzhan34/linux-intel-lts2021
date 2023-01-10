@@ -937,10 +937,6 @@ new_vma:
 			discard_ggtt_vma(vma);
 			goto new_vma;
 		}
-
-		ret = i915_vma_unbind(vma);
-		if (ret)
-			return ERR_PTR(ret);
 	}
 
 	if (ww)

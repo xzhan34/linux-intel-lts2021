@@ -556,6 +556,25 @@ void i915_vma_unpin_and_release(struct i915_vma **p_vma, unsigned int flags)
 	i915_gem_object_put(obj);
 }
 
+/**
+ * i915_vma_misplaced - check the current placement against requested
+ * @vma - i915_vma to compare
+ * @size - the size of the range required in the GTT for this vma access, or 0
+ * @alignment - the required virtual address alignment or 0 for default
+ * @flags - placement flags, see i915_vma_pin()
+ *
+ * i915_vma_misplaced() checks that if the vma is currently bound,
+ * the current drm_mm_node (offset and size) match the caller's required
+ * placement restraints, as would passed to i915_vma_pin().
+ *
+ * Normally, i915_vma_pin() would unbind any conflicting and /unpinned/ vma,
+ * but sometimes we would prefer to e.g. use a secondary vma if this vma
+ * itself would not satisfy the callers constraints, and thus would like
+ * to check if the placement is valid for itself.
+ *
+ * Returns true if the vma is currently bound and its placement in the GTT
+ * does not match the passed in constraints.
+ */
 bool i915_vma_misplaced(const struct i915_vma *vma,
 			u64 size, u64 alignment, u64 flags)
 {
@@ -992,6 +1011,14 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	if (unlikely(i915_vma_is_closed(vma))) {
 		err = -ENOENT;
 		goto err_unlock;
+	}
+
+	if (unlikely(i915_vma_misplaced(vma, size, alignment, flags))) {
+		err = -EBUSY;
+		if (!(flags & (PIN_NONBLOCK | PIN_NOEVICT)))
+			err = __i915_vma_unbind(vma);
+		if (err)
+			goto err_unlock;
 	}
 
 	bound = atomic_read(&vma->flags);
