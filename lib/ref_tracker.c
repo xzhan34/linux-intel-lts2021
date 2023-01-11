@@ -56,6 +56,10 @@ __ref_tracker_dir_pr_ostream(struct ref_tracker_dir *dir,
 
 	lockdep_assert_held(&dir->lock);
 
+	if (refcount_read(&dir->untracked) > 1)
+		pr_ostream(s, "%s@%pK has %d untracked references\n",
+			   dir->name, dir, refcount_read(&dir->untracked) - 1);
+
 	if (list_empty(&dir->list))
 		return;
 
@@ -159,7 +163,6 @@ int ref_tracker_alloc(struct ref_tracker_dir *dir,
 	gfp |= __GFP_NOWARN;
 	*trackerp = tracker = kzalloc(sizeof(*tracker), gfp);
 	if (unlikely(!tracker)) {
-		pr_err_once("memory allocation failure, unreliable refcount tracker.\n");
 		refcount_inc(&dir->untracked);
 		return -ENOMEM;
 	}
