@@ -685,8 +685,6 @@ static irqreturn_t hkr_irq(int irq, void *hkr_ptr)
 	struct hkr_device *hkr_dev = vb2_get_drv_priv(&q->vbq);
 	struct device *dev = hkr_dev->dev;
 	struct vb2_buffer *vb;
-	struct timespec64 timestamp;
-
 	if (bufs_queued < 0) {
 		dev_err(dev, " No buffer available\n");
 		goto irq_done;
@@ -705,9 +703,7 @@ static irqreturn_t hkr_irq(int irq, void *hkr_ptr)
 
 	if (q->bufs[deq_index]) {
 		vb = &q->bufs[deq_index]->vbb.vb2_buf;
-		ktime_get_coarse_real_ts64(&timestamp);
-                vb->timestamp = timestamp.tv_sec*1000000000 + timestamp.tv_nsec;
-
+		vb->timestamp = ktime_get_ns();
 		local_irq_save(flags);
 		q->bufs[deq_index] = NULL;
 		deq_index = (deq_index + 1) % HKR_MAX_BUFFER_NUM;
