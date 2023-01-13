@@ -1106,6 +1106,13 @@ struct i915_vma *__intel_guc_allocate_vma_with_bias(struct intel_guc *guc,
 	if (IS_ERR(obj))
 		return ERR_CAST(obj);
 
+	/*
+	 * Wa_22016122933: For MTL the shared memory needs to be mapped
+	 * as WC on CPU side and UC (PAT index 2) on GPU side
+	 */
+	if (IS_METEORLAKE(gt->i915))
+		i915_gem_object_set_cache_coherency(obj, I915_CACHE_NONE);
+
 	vma = guc_vma_from_obj(guc, obj, bias);
 	if (IS_ERR(vma))
 		i915_gem_object_put(obj);
