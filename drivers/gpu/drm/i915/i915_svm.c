@@ -15,6 +15,87 @@ struct svm_notifier {
 	struct i915_svm *svm;
 };
 
+static bool i915_svm_range_invalidate(struct mmu_interval_notifier *mni,
+				      const struct mmu_notifier_range *range,
+				      unsigned long cur_seq)
+{
+	struct svm_notifier *sn =
+		container_of(mni, struct svm_notifier, notifier);
+
+	/*
+	 * serializes the update to mni->invalidate_seq done by caller and
+	 * prevents invalidation of the PTE from progressing while HW is being
+	 * programmed. This is very hacky and only works because the normal
+	 * notifier that does invalidation is always called after the range
+	 * notifier.
+	 */
+	if (mmu_notifier_range_blockable(range))
+		mutex_lock(&sn->svm->mutex);
+	else if (!mutex_trylock(&sn->svm->mutex))
+		return false;
+	mmu_interval_set_seq(mni, cur_seq);
+	mutex_unlock(&sn->svm->mutex);
+	return true;
+}
+
+static const struct mmu_interval_notifier_ops i915_svm_mni_ops = {
+	.invalidate = i915_svm_range_invalidate,
+};
+
+
+/** register a mmu interval notifier to monitor vma change
+ * @vma: vma to monitor
+ * @svm: which i915_svm is monitoring the vma
+ * if this vma is already been registered with a notifier, return it directly;
+ * otherwise create and insert a new notifier.
+ */
+static struct svm_notifier *register_svm_notifier(struct vm_area_struct *vma,
+						struct i915_svm *svm)
+{
+	struct svm_notifier *sn;
+	u64 start, length;
+	int ret = 0;
+
+	sn = (struct svm_notifier *)vma->vm_private_data;
+	if (sn)
+		return sn;
+
+	sn = kmalloc(sizeof(*sn), GFP_KERNEL);
+	if (!sn)
+		return ERR_PTR(-ENOMEM);
+
+	start =  vma->vm_start;
+	length = vma->vm_end - vma->vm_start;
+	ret = mmu_interval_notifier_insert(&sn->notifier, vma->vm_mm,
+					   start, length,
+					   &i915_svm_mni_ops);
+	if (ret) {
+		kfree(sn);
+		return ERR_PTR(ret);
+	}
+
+	sn->svm = svm;
+	vma->vm_private_data = sn;
+	return sn;
+}
+
+static void unregister_svm_notifier(struct vm_area_struct *vma,
+		struct i915_svm *svm)
+{
+	struct svm_notifier *sn;
+
+	sn = (struct svm_notifier *)vma->vm_private_data;
+	if (!sn)
+	    return;
+
+	if (sn->svm != svm)
+		return;
+
+	mmu_interval_notifier_remove(&sn->notifier);
+	kfree(sn);
+	vma->vm_private_data = NULL;
+}
+
 static struct i915_svm *vm_get_svm(struct i915_address_space *vm)
 {
 	struct i915_svm *svm = vm->svm;
@@ -31,6 +112,12 @@ static void release_svm(struct kref *ref)
 {
 	struct i915_svm *svm = container_of(ref, typeof(*svm), ref);
 	struct i915_address_space *vm = svm->vm;
+	struct mm_struct *mm = svm->mm;
+	struct vm_area_struct *vma = 0;
+
+	for (vma = mm->mmap; vma; vma = vma->vm_next) {
+		unregister_svm_notifier(vma, svm);
+	}
 
 	mmu_notifier_unregister(&svm->notifier, svm->notifier.mm);
 	mutex_destroy(&svm->mutex);
@@ -87,33 +174,6 @@ static u32 i915_svm_build_sg(struct i915_address_space *vm,
 	sg_mark_end(sg);
 	return sg_page_sizes;
 }
-
-static bool i915_svm_range_invalidate(struct mmu_interval_notifier *mni,
-				      const struct mmu_notifier_range *range,
-				      unsigned long cur_seq)
-{
-	struct svm_notifier *sn =
-		container_of(mni, struct svm_notifier, notifier);
-
-	/*
-	 * serializes the update to mni->invalidate_seq done by caller and
-	 * prevents invalidation of the PTE from progressing while HW is being
-	 * programmed. This is very hacky and only works because the normal
-	 * notifier that does invalidation is always called after the range
-	 * notifier.
-	 */
-	if (mmu_notifier_range_blockable(range))
-		mutex_lock(&sn->svm->mutex);
-	else if (!mutex_trylock(&sn->svm->mutex))
-		return false;
-	mmu_interval_set_seq(mni, cur_seq);
-	mutex_unlock(&sn->svm->mutex);
-	return true;
-}
-
-static const struct mmu_interval_notifier_ops i915_svm_mni_ops = {
-	.invalidate = i915_svm_range_invalidate,
-};
 
 static int i915_hmm_convert_pfn(struct drm_i915_private *dev_priv,
 				struct hmm_range *range)
@@ -348,7 +408,7 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 	unsigned long *pfns, flags = HMM_PFN_REQ_FAULT;
 	struct vm_area_struct *vma;
 	u64 npages, start, length;
-	struct svm_notifier sn;
+	struct svm_notifier *sn;
 	struct i915_svm *svm;
 	struct mm_struct *mm;
 	struct sg_table st;
@@ -360,6 +420,7 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 
 	mm = svm->notifier.mm;
 
+	//TODO: this need to be inside a mmap_lock!
 	vma = find_vma_intersection(mm, info->page_addr, info->page_addr + 4);
 	if (!vma) {
 		ret = -ENOENT;
@@ -368,6 +429,12 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 
 	if (!svm_access_allowed (vma, info->access_type != ACCESS_TYPE_READ)) {
 		ret = -EPERM;
+		goto put_svm;
+	}
+
+	sn = register_svm_notifier(vma, svm);
+	if (IS_ERR(sn)) {
+		ret = PTR_ERR(sn);
 		goto put_svm;
 	}
 
@@ -387,7 +454,7 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 
 	if (unlikely(sg_alloc_table(&st, npages, GFP_KERNEL))) {
 		ret = -ENOMEM;
-		goto put_svm;
+		goto unregister_notifier;
 	}
 
 	pfns = kvmalloc_array(npages, sizeof(*pfns), GFP_KERNEL);
@@ -401,20 +468,15 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 
 	memset64((u64 *)pfns, (u64)flags, npages);
 
-	sn.svm = svm;
-	ret = mmu_interval_notifier_insert(&sn.notifier, mm,
-					   start, length,
-					   &i915_svm_mni_ops);
-	if (!ret) {
-		ret = i915_range_fault(&sn, start, length,
-			!(vma->vm_flags & VM_WRITE) ? PRELIM_I915_GEM_VM_BIND_READONLY : 0,
-			&st, pfns);
-		mmu_interval_notifier_remove(&sn.notifier);
-	}
+	ret = i915_range_fault(sn, start, length,
+		!(vma->vm_flags & VM_WRITE) ? PRELIM_I915_GEM_VM_BIND_READONLY : 0,
+		&st, pfns);
 
 	kvfree(pfns);
 free_sg:
 	sg_free_table(&st);
+unregister_notifier:
+	unregister_svm_notifier(vma, svm);
 put_svm:
 	vm_put_svm(vm);
 	return ret;
