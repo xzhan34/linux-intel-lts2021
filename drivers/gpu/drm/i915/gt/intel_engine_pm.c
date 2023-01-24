@@ -252,15 +252,14 @@ out_unlock:
 
 static void call_idle_barriers(struct intel_engine_cs *engine)
 {
-	struct llist_node *node, *next;
+	struct list_head *node, *next;
 
-	llist_for_each_safe(node, next, llist_del_all(&engine->barrier_tasks)) {
-		struct dma_fence_cb *cb =
-			container_of((struct list_head *)node,
-				     typeof(*cb), node);
+	list_for_each_safe(node, next, &engine->barrier_tasks) {
+		struct dma_fence_cb *cb = container_of(node, typeof(*cb), node);
 
 		cb->func(ERR_PTR(-EAGAIN), cb);
 	}
+	INIT_LIST_HEAD(&engine->barrier_tasks);
 }
 
 static int __engine_park(struct intel_wakeref *wf)

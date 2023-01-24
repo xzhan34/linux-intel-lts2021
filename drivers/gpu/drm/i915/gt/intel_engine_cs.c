@@ -1119,7 +1119,8 @@ static int engine_setup_common(struct intel_engine_cs *engine)
 {
 	int err;
 
-	init_llist_head(&engine->barrier_tasks);
+	spin_lock_init(&engine->barrier_lock);
+	INIT_LIST_HEAD(&engine->barrier_tasks);
 
 	err = init_status_page(engine);
 	if (err)
@@ -1390,7 +1391,7 @@ void intel_engine_cleanup_common(struct intel_engine_cs *engine)
 	if (engine->kernel_context)
 		intel_engine_destroy_pinned_context(engine->kernel_context);
 
-	GEM_BUG_ON(!llist_empty(&engine->barrier_tasks));
+	GEM_BUG_ON(!list_empty(&engine->barrier_tasks));
 	cleanup_status_page(engine);
 
 	intel_wa_list_free(&engine->ctx_wa_list);
@@ -2222,7 +2223,7 @@ void intel_engine_dump(struct intel_engine_cs *engine,
 
 	drm_printf(m, "\tAwake? %d\n", atomic_read(&engine->wakeref.count));
 	drm_printf(m, "\tBarriers?: %s\n",
-		   str_yes_no(!llist_empty(&engine->barrier_tasks)));
+		   str_yes_no(!list_empty(&engine->barrier_tasks)));
 	drm_printf(m, "\tLatency: %luus\n",
 		   ewma__engine_latency_read(&engine->latency));
 	if (intel_engine_supports_stats(engine))

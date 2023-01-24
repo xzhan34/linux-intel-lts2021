@@ -392,7 +392,8 @@ struct intel_engine_cs {
 
 	struct intel_context *hung_ce;
 
-	struct llist_head barrier_tasks;
+	spinlock_t barrier_lock;
+	struct list_head barrier_tasks;
 
 	struct intel_context *kernel_context; /* pinned */
 

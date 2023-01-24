@@ -380,7 +380,7 @@ int intel_engine_flush_barriers(struct intel_engine_cs *engine)
 	struct i915_request *rq;
 	int err;
 
-	if (llist_empty(&engine->barrier_tasks))
+	if (list_empty(&engine->barrier_tasks))
 		return 0;
 
 	if (!intel_engine_pm_get_if_awake(engine))

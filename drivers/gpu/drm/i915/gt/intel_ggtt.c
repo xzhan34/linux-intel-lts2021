@@ -710,7 +710,7 @@ static void ggtt_cleanup_hw(struct i915_ggtt *ggtt)
 	mutex_lock(&ggtt->vm.mutex);
 
 	list_for_each_entry_safe(vma, vn, &ggtt->vm.bound_list, vm_link)
-		WARN_ON(__i915_vma_unbind(vma));
+		WARN_ON_ONCE(__i915_vma_unbind(vma));
 
 	if (drm_mm_node_allocated(&ggtt->error_capture))
 		drm_mm_remove_node(&ggtt->error_capture);
