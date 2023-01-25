@@ -861,6 +861,9 @@ gen12_ctx_gt_fake_wa_init(struct intel_engine_cs *engine,
 		fakewa_disable_nestedbb_mode(engine, wal);
 
 	gen12_ctx_gt_mocs_init(engine, wal);
+
+	if (engine->class == RENDER_CLASS)
+		wa_mcr_masked_en(wal, XEHP_WM_CHICKEN2, DEPTH_STALL_DONE_DISABLE);
 }
 
 static void
