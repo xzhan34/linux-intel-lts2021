@@ -480,6 +480,56 @@ err_unref:
 	return ret;
 }
 
+static int intel_gt_init_counters(struct intel_gt *gt, unsigned int size)
+{
+	struct drm_i915_gem_object *obj;
+	struct i915_gem_ww_ctx ww;
+	struct i915_vma *vma;
+	void *addr;
+	int err;
+
+	obj = i915_gem_object_create_lmem(gt->i915, size, I915_BO_CPU_CLEAR);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	vma = i915_vma_instance(obj, &gt->ggtt->vm, NULL);
+	if (IS_ERR(vma)) {
+		err = PTR_ERR(vma);
+		goto err_unref;
+	}
+
+	for_i915_gem_ww(&ww, err, false) {
+		err = i915_gem_object_lock(obj, &ww);
+		if (err)
+			continue;
+
+		err = i915_ggtt_pin_for_gt(vma, &ww, 0, PIN_HIGH);
+		if (err)
+			continue;
+
+		addr = i915_gem_object_pin_map(obj, I915_MAP_WC);
+		if (IS_ERR(addr)) {
+			err = PTR_ERR(addr);
+			continue;
+		}
+	}
+	if (err)
+		goto err_unref;
+
+	gt->counters.vma = i915_vma_make_unshrinkable(vma);
+	gt->counters.map = addr;
+	return 0;
+
+err_unref:
+	i915_gem_object_put(obj);
+	return err;
+}
+
+static void intel_gt_fini_counters(struct intel_gt *gt)
+{
+	i915_vma_unpin_and_release(&gt->counters.vma, I915_VMA_RELEASE_MAP);
+}
+
 static void intel_gt_fini_scratch(struct intel_gt *gt)
 {
 	i915_vma_unpin_and_release(&gt->scratch, 0);
@@ -715,6 +765,10 @@ int intel_gt_init(struct intel_gt *gt)
 	if (err)
 		goto out_fw;
 
+	err = intel_gt_init_counters(gt, SZ_4K);
+	if (err && err != -ENODEV)
+		goto err_scratch;
+
 	intel_gt_pm_init(gt);
 
 	vm = kernel_vm(gt);
@@ -770,6 +824,8 @@ err_engines:
 	release_vm(gt);
 err_pm:
 	intel_gt_pm_fini(gt);
+	intel_gt_fini_counters(gt);
+err_scratch:
 	intel_gt_fini_scratch(gt);
 out_fw:
 	if (err)
@@ -818,6 +874,7 @@ void intel_gt_driver_release(struct intel_gt *gt)
 
 	intel_wa_list_free(&gt->wa_list);
 	intel_gt_pm_fini(gt);
+	intel_gt_fini_counters(gt);
 	intel_gt_fini_scratch(gt);
 	intel_gt_fini_buffer_pool(gt);
 	intel_gt_fini_hwconfig(gt);

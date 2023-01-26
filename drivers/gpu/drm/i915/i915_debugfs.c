@@ -252,11 +252,29 @@ i915_debugfs_describe_obj(struct seq_file *m, struct drm_i915_gem_object *obj)
 		seq_printf(m, " (fb)");
 }
 
+static void show_xfer(struct seq_file *m,
+		      struct intel_gt *gt,
+		      const char *name,
+		      u64 bytes,
+		      u64 time)
+{
+	time = intel_gt_clock_interval_to_ns(gt, time);
+	if (!time)
+		return;
+
+	seq_printf(m, "GT%d %s: %llu MiB in %llums, %llu MiB/s\n",
+		   gt->info.id, name,
+		   bytes >> 20,
+		   div_u64(time, NSEC_PER_MSEC),
+		   div64_u64(mul_u64_u32_shr(bytes, NSEC_PER_SEC, 20), time));
+}
+
 static int i915_gem_object_info(struct seq_file *m, void *data)
 {
 	struct drm_i915_private *i915 = node_to_i915(m->private);
 	struct intel_memory_region *mr;
 	enum intel_region_id id;
+	struct intel_gt *gt;
 
 	seq_printf(m, "%u shrinkable [%u free] objects, %llu bytes\n",
 		   i915->mm.shrink_count,
@@ -265,6 +283,15 @@ static int i915_gem_object_info(struct seq_file *m, void *data)
 	for_each_memory_region(mr, i915, id)
 		seq_printf(m, "%s: total:%pa, available:%pa bytes\n",
 			   mr->name, &mr->total, &mr->avail);
+
+	for_each_gt(gt, i915, id) {
+		if (!gt->counters.map)
+			continue;
+
+		show_xfer(m, gt, "clear",
+			  gt->counters.map[INTEL_GT_CLEAR_BYTES],
+			  gt->counters.map[INTEL_GT_CLEAR_CYCLES]);
+	}
 
 	return 0;
 }

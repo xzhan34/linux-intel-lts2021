@@ -40,6 +40,11 @@ struct i915_ggtt;
 struct intel_engine_cs;
 struct intel_uncore;
 
+enum intel_gt_counters { /* u64 indices into gt->counters */
+	INTEL_GT_CLEAR_CYCLES = 0,
+	INTEL_GT_CLEAR_BYTES,
+};
+
 struct intel_mmio_range {
 	u32 start;
 	u32 end;
@@ -211,6 +216,10 @@ struct intel_gt {
 	struct i915_vma_clock vma_clock;
 
 	struct i915_vma *scratch;
+	struct { /* See enum intel_gt_counters */
+		struct i915_vma *vma;
+		const u64 *map;
+	} counters;
 
 	const struct intel_mmio_range *steering_table[NUM_STEERING_TYPES];
 	struct intel_migrate migrate;

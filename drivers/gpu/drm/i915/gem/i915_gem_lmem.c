@@ -5,8 +5,10 @@
 
 #include <uapi/drm/i915_drm.h>
 
+#include "gt/gen8_engine_cs.h"
 #include "gt/intel_context.h"
 #include "gt/intel_engine_pm.h"
+#include "gt/intel_engine_regs.h"
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
@@ -17,6 +19,79 @@
 #include "i915_gem_region.h"
 #include "i915_sw_fence.h"
 #include "intel_memory_region.h"
+
+static u32 *emit_timestamp(struct i915_request *rq, u32 *cs, int gpr)
+{
+	*cs++ = MI_LOAD_REGISTER_REG | MI_LRR_SOURCE_CS_MMIO | MI_LRI_LRM_CS_MMIO;
+	*cs++ = i915_mmio_reg_offset(RING_TIMESTAMP_UDW(0));
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR_UDW(0, gpr));
+
+	*cs++ = MI_LOAD_REGISTER_REG | MI_LRR_SOURCE_CS_MMIO | MI_LRI_LRM_CS_MMIO;
+	*cs++ = i915_mmio_reg_offset(RING_TIMESTAMP(0));
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR(0, gpr));
+
+	return cs;
+}
+
+static int emit_start_timestamp(struct i915_request *rq)
+{
+	u32 *cs;
+
+	cs = intel_ring_begin(rq, 6);
+	if (IS_ERR(cs))
+		return PTR_ERR(cs);
+
+	cs = emit_timestamp(rq, cs, 0);
+
+	intel_ring_advance(rq, cs);
+	return 0;
+}
+
+static u32 *emit_mem_fence(struct i915_request *rq, u32 *cs)
+{
+	u32 scratch = i915_ggtt_offset(rq->engine->gt->scratch);
+
+	return gen8_emit_ggtt_write(cs, 0, scratch, 0);
+}
+
+static int emit_update_counters(struct i915_request *rq, u64 size)
+{
+	u32 global = i915_ggtt_offset(rq->engine->gt->counters.vma);
+	u32 *cs;
+
+	cs = intel_ring_begin(rq, 26);
+	if (IS_ERR(cs))
+		return PTR_ERR(cs);
+
+	cs = emit_mem_fence(rq, cs);
+	cs = emit_timestamp(rq, cs, 1);
+
+	/* Compute elapsed time (end - start) */
+	*cs++ = MI_MATH(4);
+	*cs++ = MI_MATH_LOAD(MI_MATH_REG_SRCA, MI_MATH_REG(1));
+	*cs++ = MI_MATH_LOAD(MI_MATH_REG_SRCB, MI_MATH_REG(0));
+	*cs++ = MI_MATH_SUB;
+	*cs++ = MI_MATH_STORE(MI_MATH_REG(0), MI_MATH_REG_ACCU);
+
+	/* Increment cycle counters */
+	*cs++ = MI_ATOMIC | MI_ATOMIC_ADD64 | MI_ATOMIC64 | MI_USE_GGTT;
+	*cs++ = global + INTEL_GT_CLEAR_CYCLES * sizeof(u64);
+	*cs++ = 0;
+
+	/* Increment byte counters */
+	*cs++ = MI_LOAD_REGISTER_IMM(2) | MI_LRI_LRM_CS_MMIO;
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR(0, 0));
+	*cs++ = lower_32_bits(size);
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR_UDW(0, 0));
+	*cs++ = upper_32_bits(size);
+
+	*cs++ = MI_ATOMIC | MI_ATOMIC_ADD64 | MI_ATOMIC64 | MI_USE_GGTT;
+	*cs++ = global + INTEL_GT_CLEAR_BYTES * sizeof(u64);
+	*cs++ = 0;
+
+	intel_ring_advance(rq, cs);
+	return 0;
+}
 
 static struct intel_context *
 get_blitter_context(const struct intel_gt *gt, int idx)
@@ -320,10 +395,21 @@ clear_blt(struct intel_context *ce,
 			break;
 		}
 
+		err = emit_start_timestamp(rq);
+		if (err)
+			goto skip;
+
 		err = xy_emit_clear(rq, offset, length, page_shift);
 		if (err == 0 && use_ccs_clear)
 			err = emit_ccs_clear(rq, offset, length);
+		if (err)
+			goto skip;
 
+		err = emit_update_counters(rq, length);
+		if (err)
+			goto skip;
+
+skip:
 		*out = chain_request(rq, *out);
 		if (err)
 			break;

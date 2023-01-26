@@ -3,16 +3,22 @@
  * Copyright © 2022 Intel Corporation
  */
 
+#include <linux/pm_qos.h>
+
+#include "gt/intel_gt_clock_utils.h"
 #include "gt/intel_rps.h"
 
 #include "i915_selftest.h"
 #include "selftests/i915_random.h"
 #include "selftests/igt_flush_test.h"
 
+#define CPU_LATENCY 0 /* -1 to disable pm_qos, 0 to disable cstates */
+
 static int igt_lmem_clear(void *arg)
 {
 	const u64 poison = make_u64(0xc5c55c5c, 0xa3a33a3a);
 	struct drm_i915_private *i915 = arg;
+	struct pm_qos_request qos;
 	struct sg_table *pages;
 	struct intel_gt *gt;
 	I915_RND_STATE(prng);
@@ -27,6 +33,9 @@ static int igt_lmem_clear(void *arg)
 		kfree(pages);
 		return -ENOMEM;
 	}
+
+	if (CPU_LATENCY >= 0)
+		cpu_latency_qos_add_request(&qos, CPU_LATENCY);
 
 	for_each_gt(gt, i915, id) {
 		struct intel_context *ce;
@@ -46,7 +55,7 @@ static int igt_lmem_clear(void *arg)
 		for (size = SZ_4K; size <= min_t(u64, gt->lmem->total / 2, SZ_2G); size <<= 1) {
 			struct i915_buddy_block *block;
 			struct i915_request *rq;
-			ktime_t cpu, gpu;
+			ktime_t cpu, gpu, sync;
 			LIST_HEAD(blocks);
 			u64 offset;
 
@@ -70,7 +79,8 @@ static int igt_lmem_clear(void *arg)
 			clear_cpu(gt->lmem, pages, poison);
 			cpu += ktime_get();
 
-			gpu = -ktime_get();
+			gpu = -READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_CYCLES]);
+			sync = -ktime_get();
 			err = clear_blt(ce, pages, size, 0, &rq);
 			if (rq) {
 				i915_sw_fence_complete(&rq->submit);
@@ -80,8 +90,10 @@ static int igt_lmem_clear(void *arg)
 					err = rq->fence.error;
 				i915_request_put(rq);
 			}
-			gpu += ktime_get();
+			sync += ktime_get();
+			gpu += READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_CYCLES]);
 
+			gpu = intel_gt_clock_interval_to_ns(gt, gpu);
 			if (gpu) {
 				unsigned int sz = sg_dma_len(pages->sgl);
 				unsigned int cpu_bw , gpu_bw;
@@ -90,8 +102,8 @@ static int igt_lmem_clear(void *arg)
 				gpu_bw = div_u64(mul_u64_u32_shr(sz, NSEC_PER_SEC, 20), gpu);
 
 				dev_info(gt->i915->drm.dev,
-					 "GT%d: checked with size:%x, CPU write:%dMiB/s, GPU write:%dMiB/s\n",
-					 id, sz, cpu_bw, gpu_bw);
+					 "GT%d: checked with size:%x, CPU write:%dMiB/s, GPU write:%dMiB/s, overhead:%lldns\n",
+					 id, sz, cpu_bw, gpu_bw, sync - gpu);
 			}
 
 			if (err == 0) {
@@ -125,6 +137,9 @@ static int igt_lmem_clear(void *arg)
 		if (err)
 			break;
 	}
+
+	if (CPU_LATENCY >= 0)
+		cpu_latency_qos_remove_request(&qos);
 
 	sg_free_table(pages);
 	kfree(pages);
