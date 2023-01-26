@@ -21,27 +21,22 @@ static bool i915_svm_range_invalidate(struct mmu_interval_notifier *mni,
 {
 	struct svm_notifier *sn =
 		container_of(mni, struct svm_notifier, notifier);
+	struct i915_svm *svm = sn->svm;
+	unsigned long length = range->end - range->start;
 
-	/*
-	 * serializes the update to mni->invalidate_seq done by caller and
-	 * prevents invalidation of the PTE from progressing while HW is being
-	 * programmed. This is very hacky and only works because the normal
-	 * notifier that does invalidation is always called after the range
-	 * notifier.
-	 */
 	if (mmu_notifier_range_blockable(range))
-		mutex_lock(&sn->svm->mutex);
-	else if (!mutex_trylock(&sn->svm->mutex))
+		mutex_lock(&svm->mutex);
+	else if (!mutex_trylock(&svm->mutex))
 		return false;
 	mmu_interval_set_seq(mni, cur_seq);
-	mutex_unlock(&sn->svm->mutex);
+	svm_unbind_addr(svm->vm, range->start, length);
+	mutex_unlock(&svm->mutex);
 	return true;
 }
 
 static const struct mmu_interval_notifier_ops i915_svm_mni_ops = {
 	.invalidate = i915_svm_range_invalidate,
 };
-
 
 /** register a mmu interval notifier to monitor vma change
  * @vma: vma to monitor
@@ -119,9 +114,9 @@ static void release_svm(struct kref *ref)
 		unregister_svm_notifier(vma, svm);
 	}
 
-	mmu_notifier_unregister(&svm->notifier, svm->notifier.mm);
 	mutex_destroy(&svm->mutex);
 	vm->svm = NULL;
+	mmdrop(svm->mm);
 	kfree(svm);
 }
 
@@ -173,6 +168,37 @@ static u32 i915_svm_build_sg(struct i915_address_space *vm,
 	sg_page_sizes |= sg->length;
 	sg_mark_end(sg);
 	return sg_page_sizes;
+}
+
+int i915_gem_vm_unbind_svm_buffer(struct i915_address_space *vm,
+				  struct prelim_drm_i915_gem_vm_bind *va)
+{
+	struct i915_svm *svm;
+	struct mm_struct *mm;
+	int ret = 0;
+
+	if (unlikely(!i915_vm_is_svm_enabled(vm)))
+		return -ENOTSUPP;
+
+	svm = vm_get_svm(vm);
+	if (!svm)
+		return -EINVAL;
+
+	mm = svm->mm;
+	if (mm != current->mm) {
+		ret = -EPERM;
+		goto unbind_done;
+	}
+
+	va->length += (va->start & ~PAGE_MASK);
+	va->start &= PAGE_MASK;
+	mutex_lock(&svm->mutex);
+	svm_unbind_addr(vm, va->start, va->length);
+	mutex_unlock(&svm->mutex);
+
+unbind_done:
+	vm_put_svm(vm);
+	return ret;
 }
 
 static int i915_hmm_convert_pfn(struct drm_i915_private *dev_priv,
@@ -289,46 +315,6 @@ fault_done:
 	return ret;
 }
 
-static void __i915_gem_vm_unbind_svm_buffer(struct i915_address_space *vm,
-					    u64 start, u64 length)
-{
-	struct i915_svm *svm = vm->svm;
-
-	mutex_lock(&svm->mutex);
-	/* FIXME: Need to flush the TLB */
-	svm_unbind_addr(vm, start, length);
-	mutex_unlock(&svm->mutex);
-}
-
-int i915_gem_vm_unbind_svm_buffer(struct i915_address_space *vm,
-				  struct prelim_drm_i915_gem_vm_bind *va)
-{
-	struct i915_svm *svm;
-	struct mm_struct *mm;
-	int ret = 0;
-
-	if (unlikely(!i915_vm_is_svm_enabled(vm)))
-		return -ENOTSUPP;
-
-	svm = vm_get_svm(vm);
-	if (!svm)
-		return -EINVAL;
-
-	mm = svm->notifier.mm;
-	if (mm != current->mm) {
-		ret = -EPERM;
-		goto unbind_done;
-	}
-
-	va->length += (va->start & ~PAGE_MASK);
-	va->start &= PAGE_MASK;
-	__i915_gem_vm_unbind_svm_buffer(vm, va->start, va->length);
-
-unbind_done:
-	vm_put_svm(vm);
-	return ret;
-}
-
 /* Determine whether read or/and write to vma is allowed
  * write: true means a read and write access; false: read only access
  */
@@ -418,9 +404,7 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 	if (!svm)
 		return -EINVAL;
 
-	mm = svm->notifier.mm;
-
-	//TODO: this need to be inside a mmap_lock!
+	mm = svm->mm;
 	vma = find_vma_intersection(mm, info->page_addr, info->page_addr + 4);
 	if (!vma) {
 		ret = -ENOENT;
@@ -500,7 +484,7 @@ int i915_gem_vm_bind_svm_buffer(struct i915_address_space *vm,
 	if (!svm)
 		return -EINVAL;
 
-	mm = svm->notifier.mm;
+	mm = svm->mm;
 	if (mm != current->mm) {
 		ret = -EPERM;
 		goto bind_done;
@@ -542,25 +526,6 @@ bind_done:
 	return ret;
 }
 
-static int
-i915_svm_invalidate_range_start(struct mmu_notifier *mn,
-				const struct mmu_notifier_range *update)
-{
-	struct i915_svm *svm = container_of(mn, struct i915_svm, notifier);
-	unsigned long length = update->end - update->start;
-
-	DRM_DEBUG_DRIVER("start 0x%lx length 0x%lx\n", update->start, length);
-	if (!mmu_notifier_range_blockable(update))
-		return -EAGAIN;
-
-	__i915_gem_vm_unbind_svm_buffer(svm->vm, update->start, length);
-	return 0;
-}
-
-static const struct mmu_notifier_ops i915_mn_ops = {
-	.invalidate_range_start = i915_svm_invalidate_range_start,
-};
-
 void i915_svm_unbind_mm(struct i915_address_space *vm)
 {
 	vm_put_svm(vm);
@@ -585,13 +550,8 @@ int i915_svm_bind_mm(struct i915_address_space *vm)
 	mutex_init(&svm->mutex);
 	kref_init(&svm->ref);
 	svm->vm = vm;
-
-	svm->notifier.ops = &i915_mn_ops;
-	ret = __mmu_notifier_register(&svm->notifier, mm);
-	if (ret) {
-		kfree(svm);
-		goto bind_out;
-	}
+	mmgrab(mm);
+	svm->mm = mm;
 
 	vm->svm = svm;
 bind_out:

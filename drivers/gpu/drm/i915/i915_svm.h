@@ -16,12 +16,8 @@ struct i915_svm {
 	/* i915 address space */
 	struct i915_address_space *vm;
 
-	struct mmu_notifier notifier;
+	struct mm_struct *mm;
 	struct mutex mutex; /* protects svm operations */
-	/*
-	 * XXX: Probably just make use of mmu_notifier's reference
-	 * counting (get/put) instead of our own.
-	 */
 	struct kref ref;
 };
 
