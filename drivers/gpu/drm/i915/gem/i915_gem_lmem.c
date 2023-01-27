@@ -11,8 +11,10 @@
 #include "gt/intel_engine_regs.h"
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_gt.h"
+#include "gt/intel_gt_clock_utils.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_ring.h"
+#include "gt/intel_rps.h"
 
 #include "i915_drv.h"
 #include "i915_gem_lmem.h"
@@ -359,7 +361,8 @@ clear_blt(struct intel_context *ce,
 	  struct i915_request **out)
 {
 	const int page_shift = min(__ffs(page_sizes), 16ul);
-	const u32 step = BIT(page_shift) << 14; /* 128-1024MiB */
+	const u32 step = min(BIT(page_shift) << 14, /* 128-1024MiB */
+			     ce->engine->gt->lmem_clear_chunk);
 	const bool use_ccs_clear =
 		flags & I915_BO_ALLOC_USER && HAS_FLAT_CCS(ce->engine->i915);
 	struct sgt_iter it;
@@ -786,6 +789,90 @@ int __i915_gem_lmem_object_init(struct intel_memory_region *mem,
 	i915_gem_object_init_memory_region(obj, mem);
 
 	return 0;
+}
+
+void i915_gem_init_lmem(struct intel_gt *gt)
+{
+	struct i915_buddy_block *block;
+	struct intel_context *ce;
+	struct i915_request *rq;
+	struct sg_table *pages;
+	intel_wakeref_t wf;
+	LIST_HEAD(blocks);
+	u64 offset;
+	u64 cycles;
+	int err = 0;
+
+	if (!gt->lmem)
+		return;
+
+	gt->lmem_clear_chunk = -4096;
+
+	pages = kmalloc(sizeof(*pages), GFP_KERNEL);
+	if (!pages)
+		return;
+
+	if (sg_alloc_table(pages, 1, GFP_KERNEL))
+		goto err_pages;
+
+	wf = intel_gt_pm_get(gt);
+	intel_rps_boost(&gt->rps);
+
+	ce = get_clear_context(gt);
+	if (!ce)
+		goto err_wf;
+
+	err = __intel_memory_region_get_pages_buddy(gt->lmem,
+						    SZ_16M, 0,
+						    &blocks);
+	if (err)
+		goto err_wf;
+
+	block = list_first_entry(&blocks, typeof(*block), link);
+	offset = i915_buddy_block_offset(block);
+
+	sg_dma_address(pages->sgl) = offset;
+	sg_dma_len(pages->sgl) = i915_buddy_block_size(&gt->lmem->mm, block);
+
+	cycles = -READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_CYCLES]);
+	err = clear_blt(ce, pages, sg_dma_len(pages->sgl), 0, &rq);
+	if (rq) {
+		i915_sw_fence_complete(&rq->submit);
+		if (i915_request_wait(rq, 0, HZ) < 0)
+			err = -ETIME;
+		else
+			err = err ?: rq->fence.error;
+		i915_request_put(rq);
+	}
+	cycles += READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_CYCLES]);
+	cycles = intel_gt_clock_interval_to_ns(gt, cycles);
+	if (err == 0 && cycles) {
+		u32 quantum_ns = 1000000; /* 1ms */
+		u64 chunk_size;
+
+		dev_info(gt->i915->drm.dev,
+			 "GT%d: %s %s clear bandwidth:%lld MB/s\n",
+			 gt->info.id, gt->lmem->name, ce->engine->name,
+			 div_u64(mul_u32_u32(1000, sg_dma_len(pages->sgl)), cycles));
+
+		chunk_size =
+			div_u64(mul_u32_u32(quantum_ns, sg_dma_len(pages->sgl)),
+				cycles);
+		chunk_size = round_up(chunk_size + 1, SZ_64K);
+		gt->lmem_clear_chunk = min_t(u64, chunk_size, SZ_1G);
+		drm_dbg(&gt->i915->drm,
+			"GT%d: %s %s clear chunk size:%luKiB\n",
+			gt->info.id, gt->lmem->name, ce->engine->name,
+			gt->lmem_clear_chunk >> 10);
+	}
+
+	__intel_memory_region_put_pages_buddy(gt->lmem, &blocks);
+err_wf:
+	intel_rps_cancel_boost(&gt->rps);
+	intel_gt_pm_put(gt, wf);
+	sg_free_table(pages);
+err_pages:
+	kfree(pages);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

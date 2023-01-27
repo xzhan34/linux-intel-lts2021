@@ -1109,6 +1109,8 @@ int i915_gem_init(struct drm_i915_private *dev_priv)
 		ret = intel_gt_init(gt);
 		if (ret)
 			goto err_unlock;
+
+		i915_gem_init_lmem(gt);
 	}
 
 	return 0;

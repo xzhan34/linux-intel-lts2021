@@ -223,6 +223,7 @@ struct intel_gt {
 
 	const struct intel_mmio_range *steering_table[NUM_STEERING_TYPES];
 	struct intel_migrate migrate;
+	unsigned long lmem_clear_chunk; /* XXX find me a better home! */
 
 	struct {
 		u8 groupid;

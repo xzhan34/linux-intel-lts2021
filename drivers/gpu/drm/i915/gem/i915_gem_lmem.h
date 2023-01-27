@@ -10,6 +10,7 @@
 
 struct drm_i915_private;
 struct drm_i915_gem_object;
+struct intel_gt;
 struct intel_memory_region;
 
 extern const struct drm_i915_gem_object_ops i915_gem_lmem_obj_ops;
@@ -38,5 +39,7 @@ int __i915_gem_lmem_object_init(struct intel_memory_region *mem,
 				struct drm_i915_gem_object *obj,
 				resource_size_t size,
 				unsigned int flags);
+
+void i915_gem_init_lmem(struct intel_gt *gt);
 
 #endif /* !__I915_GEM_LMEM_H */
