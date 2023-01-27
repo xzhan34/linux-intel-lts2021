@@ -1167,7 +1167,7 @@ struct prelim_drm_i915_gem_vm_bind {
 	/** vm to [un]bind **/
 	__u32 vm_id;
 
-	/** BO handle or file descriptor. Set 'fd' to -1 for system pages **/
+	/** BO handle or file descriptor **/
 	union {
 		__u32 handle; /* For unbind, it is reserved and must be 0 */
 		__s32 fd;

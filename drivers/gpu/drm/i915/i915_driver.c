@@ -2511,8 +2511,6 @@ static int i915_gem_vm_bind_ioctl(struct drm_device *dev, void *data,
 
 	if (!(args->flags & PRELIM_I915_GEM_VM_BIND_FD))
 		ret = i915_gem_vm_bind_obj(vm, args, file);
-	else if (args->fd == -1)
-		ret = i915_gem_vm_bind_svm_buffer(vm, args);
 	else
 		ret = -EINVAL;
 
@@ -2533,8 +2531,6 @@ static int i915_gem_vm_unbind_ioctl(struct drm_device *dev, void *data,
 
 	if (!(args->flags & PRELIM_I915_GEM_VM_BIND_FD))
 		ret = i915_gem_vm_unbind_obj(vm, args);
-	else if (args->fd == -1)
-		ret = i915_gem_vm_unbind_svm_buffer(vm, args);
 	else
 		ret = -EINVAL;
 

@@ -170,37 +170,6 @@ static u32 i915_svm_build_sg(struct i915_address_space *vm,
 	return sg_page_sizes;
 }
 
-int i915_gem_vm_unbind_svm_buffer(struct i915_address_space *vm,
-				  struct prelim_drm_i915_gem_vm_bind *va)
-{
-	struct i915_svm *svm;
-	struct mm_struct *mm;
-	int ret = 0;
-
-	if (unlikely(!i915_vm_is_svm_enabled(vm)))
-		return -ENOTSUPP;
-
-	svm = vm_get_svm(vm);
-	if (!svm)
-		return -EINVAL;
-
-	mm = svm->mm;
-	if (mm != current->mm) {
-		ret = -EPERM;
-		goto unbind_done;
-	}
-
-	va->length += (va->start & ~PAGE_MASK);
-	va->start &= PAGE_MASK;
-	mutex_lock(&svm->mutex);
-	svm_unbind_addr(vm, va->start, va->length);
-	mutex_unlock(&svm->mutex);
-
-unbind_done:
-	vm_put_svm(vm);
-	return ret;
-}
-
 static int i915_hmm_convert_pfn(struct drm_i915_private *dev_priv,
 				struct hmm_range *range)
 {
@@ -462,66 +431,6 @@ free_sg:
 unregister_notifier:
 	unregister_svm_notifier(vma, svm);
 put_svm:
-	vm_put_svm(vm);
-	return ret;
-}
-
-int i915_gem_vm_bind_svm_buffer(struct i915_address_space *vm,
-				struct prelim_drm_i915_gem_vm_bind *va)
-{
-	unsigned long *pfns, flags = HMM_PFN_REQ_FAULT;
-	struct svm_notifier sn;
-	struct i915_svm *svm;
-	struct mm_struct *mm;
-	struct sg_table st;
-	int ret = 0;
-	u64 npages;
-
-	if (unlikely(!i915_vm_is_svm_enabled(vm)))
-		return -ENOTSUPP;
-
-	svm = vm_get_svm(vm);
-	if (!svm)
-		return -EINVAL;
-
-	mm = svm->mm;
-	if (mm != current->mm) {
-		ret = -EPERM;
-		goto bind_done;
-	}
-
-	va->length += (va->start & ~PAGE_MASK);
-	va->start &= PAGE_MASK;
-	npages = va->length / PAGE_SIZE;
-	if (unlikely(sg_alloc_table(&st, npages, GFP_KERNEL))) {
-		ret = -ENOMEM;
-		goto bind_done;
-	}
-
-	pfns = kvmalloc_array(npages, sizeof(*pfns), GFP_KERNEL);
-	if (unlikely(!pfns)) {
-		ret = -ENOMEM;
-		goto range_done;
-	}
-
-	if (!(va->flags & PRELIM_I915_GEM_VM_BIND_READONLY))
-		flags |= HMM_PFN_REQ_WRITE;
-
-	memset64((u64 *)pfns, (u64)flags, npages);
-
-	sn.svm = svm;
-	ret = mmu_interval_notifier_insert(&sn.notifier, mm,
-					   va->start, va->length,
-					   &i915_svm_mni_ops);
-	if (!ret) {
-		ret = i915_range_fault(&sn, va->start, va->length, va->flags, &st, pfns);
-		mmu_interval_notifier_remove(&sn.notifier);
-	}
-
-	kvfree(pfns);
-range_done:
-	sg_free_table(&st);
-bind_done:
 	vm_put_svm(vm);
 	return ret;
 }
