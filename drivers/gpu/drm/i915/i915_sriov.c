@@ -11,6 +11,7 @@
 #include "i915_pci.h"
 #include "intel_pci_config.h"
 #include "gem/i915_gem_pm.h"
+#include "gem/i915_gem_context.h"
 
 #include "gt/intel_engine_heartbeat.h"
 #include "gt/intel_gt.h"
@@ -694,6 +695,58 @@ int i915_sriov_resume_early(struct drm_i915_private *i915)
 	return 0;
 }
 
+static void user_contexts_hwsp_rebase(struct drm_i915_private *i915)
+{
+	struct i915_gem_context *ctx;
+
+	spin_lock_irq(&i915->gem.contexts.lock);
+	rcu_read_lock();
+	list_for_each_entry_rcu(ctx, &i915->gem.contexts.list, link) {
+		struct i915_gem_engines_iter it;
+		struct intel_context *ce;
+
+		if (!kref_get_unless_zero(&ctx->ref))
+			continue;
+		spin_unlock_irq(&i915->gem.contexts.lock);
+
+		for_each_gem_engine(ce, rcu_dereference(ctx->engines), it) {
+			if (intel_context_is_pinned(ce)) {
+				intel_timeline_rebase_hwsp(ce->timeline);
+				ce->ops->reset(ce);
+			}
+		}
+
+		spin_lock_irq(&i915->gem.contexts.lock);
+		i915_gem_context_put(ctx);
+	}
+	rcu_read_unlock();
+	spin_unlock_irq(&i915->gem.contexts.lock);
+}
+
+static void intel_gt_default_contexts_hwsp_rebase(struct intel_gt *gt)
+{
+	struct intel_engine_cs *engine;
+	enum intel_engine_id eid;
+
+	for_each_engine(engine, gt, eid) {
+		struct intel_context *ce;
+
+		list_for_each_entry(ce, &engine->pinned_contexts_list,
+				    pinned_contexts_link) {
+			if (intel_context_is_pinned(ce)) {
+				intel_timeline_rebase_hwsp(ce->timeline);
+				ce->ops->reset(ce);
+			}
+		}
+	}
+}
+
+static void vf_post_migration_fixup_contexts(struct drm_i915_private *i915)
+{
+	intel_gt_default_contexts_hwsp_rebase(to_gt(i915));
+	user_contexts_hwsp_rebase(i915);
+}
+
 /**
  * vf_post_migration_shutdown - Clean up the kernel structures after VF migration.
  * @i915: the i915 struct
@@ -811,6 +864,7 @@ static void vf_post_migration_recovery(struct drm_i915_private *i915)
 		goto fail;
 
 	intel_iov_migration_fixup_ggtt_nodes(&to_gt(i915)->iov);
+	vf_post_migration_fixup_contexts(i915);
 
 	vf_post_migration_kickstart(i915);
 	i915_reset_backoff_leave(i915);
