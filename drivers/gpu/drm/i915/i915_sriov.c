@@ -767,6 +767,7 @@ static void vf_post_migration_shutdown(struct drm_i915_private *i915)
 	intel_guc_submission_pause(&gt->uc.guc);
 	i915_gem_drain_freed_objects(i915);
 	intel_uc_suspend(&gt->uc);
+	guc_submission_status_page_sanitization_disable(&gt->uc.guc);
 }
 
 /**
@@ -812,6 +813,7 @@ static void vf_post_migration_kickstart(struct drm_i915_private *i915)
 {
 	intel_runtime_pm_enable_interrupts(i915);
 	i915_gem_resume(i915);
+	guc_submission_status_page_sanitization_enable(&to_gt(i915)->uc.guc);
 	intel_guc_submission_restore(&to_gt(i915)->uc.guc);
 	intel_gt_heartbeats_restore(to_gt(i915), true);
 }

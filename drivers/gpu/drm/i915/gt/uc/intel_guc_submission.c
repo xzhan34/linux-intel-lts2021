@@ -4764,6 +4764,34 @@ int intel_guc_submission_setup(struct intel_engine_cs *engine)
 	return 0;
 }
 
+/**
+ * guc_submission_status_page_sanitization_disable - Disable the status page sanitization call.
+ * @guc: Graphics uC instance struct
+ */
+void guc_submission_status_page_sanitization_disable(struct intel_guc *guc)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+
+	for_each_engine(engine, gt, id)
+		engine->status_page.sanitize = 0;
+}
+
+/**
+ * guc_submission_status_page_sanitization_disable - Re-enable the status page sanitization call.
+ * @guc: Graphics uC instance struct
+ */
+void guc_submission_status_page_sanitization_enable(struct intel_guc *guc)
+{
+	struct intel_gt *gt = guc_to_gt(guc);
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+
+	for_each_engine(engine, gt, id)
+		engine->status_page.sanitize = guc_sanitize;
+}
+
 struct scheduling_policy {
 	/* internal data */
 	u32 max_words, num_words;
