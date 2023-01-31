@@ -22,6 +22,9 @@ struct drm_printer;
 #define priolist_for_each_request_consume(it, n, plist) \
 	list_for_each_entry_safe(it, n, &(plist)->requests, sched.link)
 
+#define priolist_for_each_request_reverse(it, plist) \
+	list_for_each_entry_reverse(it, &(plist)->requests, sched.link)
+
 void i915_sched_node_init(struct i915_sched_node *node);
 void i915_sched_node_reinit(struct i915_sched_node *node);
 

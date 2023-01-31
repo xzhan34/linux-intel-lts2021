@@ -745,6 +745,7 @@ static void vf_post_migration_fixup_contexts(struct drm_i915_private *i915)
 {
 	intel_gt_default_contexts_hwsp_rebase(to_gt(i915));
 	user_contexts_hwsp_rebase(i915);
+	guc_submission_revert_ring_heads(&to_gt(i915)->uc.guc);
 }
 
 /**

@@ -1640,6 +1640,51 @@ void intel_guc_submission_reset_prepare(struct intel_guc *guc)
 	scrub_guc_desc_for_outstanding_g2h(guc);
 }
 
+/**
+ * guc_submission_revert_ring_heads - Set ring heads to the start of scheduled submissions.
+ * @guc: Graphics uC instance struct
+ */
+void guc_submission_revert_ring_heads(struct intel_guc *guc)
+{
+	struct i915_sched_engine *sched_engine = guc->sched_engine;
+	struct rb_node *rb;
+	unsigned long flags;
+
+	if (!sched_engine)
+		return;
+
+	spin_lock_irqsave(&sched_engine->lock, flags);
+	for (rb = rb_last(&sched_engine->queue.rb_root); rb; rb = rb_prev(rb)) {
+		struct i915_priolist *pl = to_priolist(rb);
+		struct i915_request *rq;
+
+		priolist_for_each_request_reverse(rq, pl) {
+			u32 head = READ_ONCE(rq->ring->head);
+			u32 size = rq->ring->size;
+
+			/*
+			 * We need to revert the ring head to the beginning of a request.
+			 * Sounds simple, but it's a ring - it might have wrapped, either
+			 * within a request, or between requests. Assuming that a single
+			 * request is always smaller that 1/8 of the ring, we can
+			 * revert the head with high accuracy.
+			 */
+			if (((rq->tail > rq->head) && ((head > rq->head) ||
+			     ((head < size/4) && (rq->head > 3*size/4)))) ||
+			    ((rq->tail < rq->head) && ((head > rq->head) ||
+			     (head < rq->tail) || (head < size/4)))) {
+				u32 *regs = rq->context->lrc_reg_state;
+
+				WRITE_ONCE(rq->ring->head, rq->head);
+				intel_ring_set_tail(rq->ring, rq->head);
+				regs[CTX_RING_HEAD] = rq->ring->head;
+				regs[CTX_RING_TAIL] = rq->ring->tail;
+			}
+		}
+	}
+	spin_unlock_irqrestore(&sched_engine->lock, flags);
+}
+
 /*
  * guc_submission_unwind_all - stop waiting for unfinished requests,
  *    add them back to scheduled requests list instead
