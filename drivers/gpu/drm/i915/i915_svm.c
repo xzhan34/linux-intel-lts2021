@@ -43,6 +43,7 @@ static const struct mmu_interval_notifier_ops i915_svm_mni_ops = {
  * @svm: which i915_svm is monitoring the vma
  * if this vma is already been registered with a notifier, return it directly;
  * otherwise create and insert a new notifier.
+ * this function must be called with mmap_write_lock
  */
 static struct svm_notifier *register_svm_notifier(struct vm_area_struct *vma,
 						struct i915_svm *svm)
@@ -61,7 +62,7 @@ static struct svm_notifier *register_svm_notifier(struct vm_area_struct *vma,
 
 	start =  vma->vm_start;
 	length = vma->vm_end - vma->vm_start;
-	ret = mmu_interval_notifier_insert(&sn->notifier, vma->vm_mm,
+	ret = mmu_interval_notifier_insert_locked(&sn->notifier, vma->vm_mm,
 					   start, length,
 					   &i915_svm_mni_ops);
 	if (ret) {
@@ -90,7 +91,6 @@ static void unregister_svm_notifier(struct vm_area_struct *vma,
 	kfree(sn);
 	vma->vm_private_data = NULL;
 }
-
 static struct i915_svm *vm_get_svm(struct i915_address_space *vm)
 {
 	struct i915_svm *svm = vm->svm;
@@ -138,11 +138,11 @@ static u32 i915_svm_build_sg(struct i915_address_space *vm,
 
 	sg = NULL;
 	st->nents = 0;
-	npages = (range->end - range->start) / PAGE_SIZE;
+	npages = ((range->end - 1) >> PAGE_SHIFT) - (range->start >> PAGE_SHIFT) + 1;
 
 	/*
 	 * No need to dma map the host pages and later unmap it, as
-	 * GPU is not allowed to access it with SVM.
+	 * GPU is not allowed to access it with SVM. //TODO: seems not true
 	 * XXX: Need to dma map host pages for integrated graphics while
 	 * extending SVM support there.
 	 */
@@ -176,7 +176,7 @@ static int i915_hmm_convert_pfn(struct drm_i915_private *dev_priv,
 	unsigned long i, npages;
 	int regions = 0;
 
-	npages = (range->end - range->start) >> PAGE_SHIFT;
+	npages = ((range->end - 1) >> PAGE_SHIFT) - (range->start >> PAGE_SHIFT) + 1;
 	for (i = 0; i < npages; ++i) {
 		struct page *page;
 		unsigned long addr;
@@ -208,79 +208,127 @@ static int i915_hmm_convert_pfn(struct drm_i915_private *dev_priv,
 	return regions;
 }
 
-static int i915_range_fault(struct svm_notifier *sn,
-			    __u64 start, __u64 length, __u64 flags,
-			    struct sg_table *st, unsigned long *pfns)
+/** Populate physical pages of a virtual address range
+ * This function also read mmu notifier sequence # (
+ * mmu_interval_read_begin), for the purpose of later
+ * comparison (through mmu_interval_read_retry).
+ * This must be called with mmap read or write lock held.
+ * This function alloates hmm_range->hmm_pfns, it is caller's
+ * responsibility to free it.
+ * @sn: svm interval notifier of this virtual address range
+ * @start: start of the virtual address range, inclusive
+ * @end: end of the virtual address range, exclusive
+ * @hmm_range: pointer to hmm_range struct
+ * @write: populate pages with write permission
+ * returns: 0 for succuss; negative error no on failure
+ */
+static int svm_populate_range(struct svm_notifier *sn,
+			    __u64 start, __u64 end,
+			    struct hmm_range *hmm_range, bool write)
 {
 	unsigned long timeout =
 		jiffies + msecs_to_jiffies(HMM_RANGE_DEFAULT_TIMEOUT);
-	struct i915_svm *svm = sn->svm;
+	unsigned long *pfns, flags = HMM_PFN_REQ_FAULT;
+	u64 npages;
+	int ret;
+
+	mmap_assert_locked(sn->svm->mm);
+
+	npages = ((end - 1) >> PAGE_SHIFT) - (start >> PAGE_SHIFT) + 1;
+	pfns = kvmalloc_array(npages, sizeof(*pfns), GFP_KERNEL);
+	if (unlikely(!pfns))
+		return -ENOMEM;
+
+	if (write)
+		flags |= HMM_PFN_REQ_WRITE;
+
+	memset64((u64 *)pfns, (u64)flags, npages);
+	hmm_range->hmm_pfns = pfns;
+	hmm_range->notifier_seq = mmu_interval_read_begin(&sn->notifier);
+	hmm_range->notifier = &sn->notifier;
+	hmm_range->start = start;
+	hmm_range->end = end;
+	hmm_range->pfn_flags_mask = HMM_PFN_REQ_FAULT | HMM_PFN_REQ_WRITE;
+	hmm_range->dev_private_owner = sn->svm->vm->i915->drm.dev;
+
+	while (true) {
+		ret = hmm_range_fault(hmm_range);
+		if (time_after(jiffies, timeout))
+			goto free_pfns;
+
+		if (ret == -EBUSY)
+			continue;
+		break;
+	}
+
+free_pfns:
+	if (ret)
+		kvfree(pfns);
+	return ret;
+}
+
+/** bind a svm range to gpu, fill gpu page tables
+ * @svm: svm process that the range belongs to
+ * @range: hmm_range to bind to gpu
+ * @flags: binding flags
+ * Return 0 on success; negative error code on failure
+ * If -EAGAIN returns, it means mmu notifier was called (
+ * aka there was concurrent cpu page table update) during
+ * this function, caller has to retry hmm_range_fault
+ */
+static int svm_bind_range_to_gpu(struct i915_svm *svm,
+				struct hmm_range *range,
+				__u64 flags)
+{
+	u64 npages = ((range->end - 1) >> PAGE_SHIFT) - (range->start >> PAGE_SHIFT) + 1;
 	struct i915_address_space *vm = svm->vm;
-	/* Have HMM fault pages within the fault window to the GPU. */
-	struct hmm_range range = {
-		.notifier = &sn->notifier,
-		.start = sn->notifier.interval_tree.start,
-		.end = sn->notifier.interval_tree.last + 1,
-		.pfn_flags_mask = HMM_PFN_REQ_FAULT | HMM_PFN_REQ_WRITE,
-		.hmm_pfns = pfns,
-		.dev_private_owner = vm->i915->drm.dev,
-	};
-	struct mm_struct *mm = sn->notifier.mm;
-	struct i915_vm_pt_stash stash = {};
+	__u64 length = range->end - range->start;
+	struct i915_vm_pt_stash stash = { 0 };
+	__u64 start = range->start;
 	struct i915_gem_ww_ctx ww;
+	struct sg_table st;
 	u32 sg_page_sizes;
 	int regions;
 	long ret;
 
-	while (true) {
-		if (time_after(jiffies, timeout))
-			return -EBUSY;
+	if (unlikely(sg_alloc_table(&st, npages, GFP_KERNEL)))
+		return -ENOMEM;
 
-		range.notifier_seq = mmu_interval_read_begin(range.notifier);
-		mmap_read_lock(mm);
-		ret = hmm_range_fault(&range);
-		mmap_read_unlock(mm);
-		if (ret) {
-			if (ret == -EBUSY)
-				continue;
-			return ret;
-		}
-
-		/* Ensure the range is in one memory region */
-		regions = i915_hmm_convert_pfn(vm->i915, &range);
-		if (!regions ||
-		    ((regions & REGION_SMEM) && (regions & REGION_LMEM)))
-			return -EINVAL;
-
-		sg_page_sizes = i915_svm_build_sg(vm, &range, st);
-
-		/* XXX: Not an elegant solution, revisit */
-		i915_gem_ww_ctx_init(&ww, true);
-		ret = svm_bind_addr_prepare(vm, &stash, &ww, start, length);
-		if (ret)
-			goto fault_done;
-
-		mutex_lock(&svm->mutex);
-		if (mmu_interval_read_retry(range.notifier,
-					    range.notifier_seq)) {
-			svm_unbind_addr(vm, start, length);
-			mutex_unlock(&svm->mutex);
-			i915_vm_free_pt_stash(vm, &stash);
-			i915_gem_ww_ctx_fini(&ww);
-			continue;
-		}
-		break;
+	/* Ensure the range is in one memory region */
+	regions = i915_hmm_convert_pfn(vm->i915, range);
+	if (!regions ||
+		((regions & REGION_SMEM) && (regions & REGION_LMEM))) {
+		ret = -EINVAL;
+		goto free_sg;
 	}
 
-	flags = (flags & PRELIM_I915_GEM_VM_BIND_READONLY) ?
-		 I915_GTT_SVM_READONLY : 0;
+	sg_page_sizes = i915_svm_build_sg(vm, range, &st);
+
+	/* XXX: Not an elegant solution, revisit */
+	i915_gem_ww_ctx_init(&ww, true);
+	ret = svm_bind_addr_prepare(vm, &stash, &ww, start, length);
+	if (ret)
+	    goto fault_done;
+
+	mutex_lock(&svm->mutex);
+	if (mmu_interval_read_retry(range->notifier,
+		    range->notifier_seq)) {
+		svm_unbind_addr(vm, start, length);
+		ret = -EAGAIN;
+		goto unlock_svm;
+	}
+
 	flags |= (regions & REGION_LMEM) ? I915_GTT_SVM_LMEM : 0;
-	ret = svm_bind_addr_commit(vm, &stash, start, length, flags,
-				   st, sg_page_sizes);
+	//TODO: handle atomic fault - AE bit in page table
+	ret = svm_bind_addr_commit(vm, &stash, start, length,
+				   flags, &st, sg_page_sizes);
+unlock_svm:
 	mutex_unlock(&svm->mutex);
 	i915_vm_free_pt_stash(vm, &stash);
 fault_done:
 	i915_gem_ww_ctx_fini(&ww);
+free_sg:
+	sg_free_table(&st);
 	return ret;
 }
 
@@ -304,6 +352,7 @@ static bool svm_should_migrate(u64 va, enum intel_region_id dst_region, bool is_
 
 /**
  * svm_migrate_to_vram() - migrate backing store of a va range to vram
+ * Must be called with mmap_read_lock(mm) held.
  * @mm: the process mm_struct of the va range
  * @start: start of the va range
  * @length: length of the va range
@@ -319,10 +368,10 @@ static int svm_migrate_to_vram(struct mm_struct *mm,
 	struct i915_gem_ww_ctx ww;
 	int err = 0;
 
+	mmap_assert_locked(mm);
 	if (!mem->devmem)
 		return -EINVAL;
 
-	mmap_read_lock(mm);
 	i915_gem_ww_ctx_init(&ww, true);
 retry:
 	for (addr = start, end = start + length; addr < end;) {
@@ -352,7 +401,6 @@ out_ww:
 	}
 
 	i915_gem_ww_ctx_fini(&ww);
-	mmap_read_unlock(mm);
 	return 0;
 }
 
@@ -360,13 +408,13 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 				struct intel_gt *gt,
 				struct recoverable_page_fault_info *info)
 {
-	unsigned long *pfns, flags = HMM_PFN_REQ_FAULT;
+	struct hmm_range hmm_range;
 	struct vm_area_struct *vma;
+	bool mmap_unlocked = false;
 	u64 npages, start, length;
 	struct svm_notifier *sn;
 	struct i915_svm *svm;
 	struct mm_struct *mm;
-	struct sg_table st;
 	int ret = 0;
 
 	svm = vm_get_svm(vm);
@@ -374,27 +422,35 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 		return -EINVAL;
 
 	mm = svm->mm;
+	mmap_read_lock(mm);
 	vma = find_vma_intersection(mm, info->page_addr, info->page_addr + 4);
 	if (!vma) {
 		ret = -ENOENT;
-		goto put_svm;
+		goto mmap_unlock;
 	}
 
 	if (!svm_access_allowed (vma, info->access_type != ACCESS_TYPE_READ)) {
 		ret = -EPERM;
-		goto put_svm;
+		goto mmap_unlock;
 	}
 
+	/** We are inside a mmap_read_lock, but it requires a mmap_write_lock
+	 *  to register mmu notifier.
+	 */
+	mmap_read_unlock(mm);
+	mmap_write_lock(mm);
 	sn = register_svm_notifier(vma, svm);
 	if (IS_ERR(sn)) {
+		mmap_write_downgrade(mm);
 		ret = PTR_ERR(sn);
-		goto put_svm;
+		goto mmap_unlock;
 	}
+	mmap_write_downgrade(mm);
 
 	/** migrate the whole vma */
 	start =  vma->vm_start;
 	length = vma->vm_end - vma->vm_start;
-	npages = vma->vm_end / PAGE_SIZE - vma->vm_start / PAGE_SIZE + 1;
+	npages = ((vma->vm_end - 1) >> PAGE_SHIFT) - (vma->vm_start >> PAGE_SHIFT) + 1;
 
 	if (svm_should_migrate(start, gt->lmem->id, info->access_type == ACCESS_TYPE_ATOMIC))
 		/*
@@ -405,32 +461,29 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 		 */
 		svm_migrate_to_vram(mm, start, length, gt->lmem);
 
-	if (unlikely(sg_alloc_table(&st, npages, GFP_KERNEL))) {
-		ret = -ENOMEM;
+	ret = svm_populate_range(sn, vma->vm_start, vma->vm_end, &hmm_range,
+			vma->vm_flags & VM_WRITE);
+	if (ret)
 		goto unregister_notifier;
-	}
 
-	pfns = kvmalloc_array(npages, sizeof(*pfns), GFP_KERNEL);
-	if (unlikely(!pfns)) {
-		ret = -ENOMEM;
-		goto free_sg;
-	}
+	mmap_read_unlock(mm);
+	mmap_unlocked = true;
+	ret = svm_bind_range_to_gpu(svm, &hmm_range,
+		!(vma->vm_flags & VM_WRITE) ? I915_GTT_SVM_READONLY : 0);
+	/** Concurrent cpu page table update happened,
+	 *  Return successfully so we will retry everything
+	 *  on next gpu page fault.
+	 */
+	if (ret == -EAGAIN)
+		ret = 0;
 
-	if (vma->vm_flags & VM_WRITE)
-		flags |= HMM_PFN_REQ_WRITE;
-
-	memset64((u64 *)pfns, (u64)flags, npages);
-
-	ret = i915_range_fault(sn, start, length,
-		!(vma->vm_flags & VM_WRITE) ? PRELIM_I915_GEM_VM_BIND_READONLY : 0,
-		&st, pfns);
-
-	kvfree(pfns);
-free_sg:
-	sg_free_table(&st);
+	kvfree(hmm_range.hmm_pfns);
+	goto mmap_unlock;
 unregister_notifier:
 	unregister_svm_notifier(vma, svm);
-put_svm:
+mmap_unlock:
+	if (!mmap_unlocked)
+		mmap_read_unlock(mm);
 	vm_put_svm(vm);
 	return ret;
 }

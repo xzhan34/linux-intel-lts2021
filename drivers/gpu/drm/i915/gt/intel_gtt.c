@@ -756,6 +756,7 @@ void setup_private_pat(struct intel_gt *gt)
 		bdw_setup_private_ppat(uncore);
 }
 
+//TODO: fix memory leak for error cases
 int svm_bind_addr_prepare(struct i915_address_space *vm,
 			  struct i915_vm_pt_stash *stash,
 			  struct i915_gem_ww_ctx *ww,
