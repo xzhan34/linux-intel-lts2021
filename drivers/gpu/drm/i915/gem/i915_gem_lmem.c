@@ -568,6 +568,7 @@ chain_request(struct i915_request *rq, struct i915_request *chain, int prio)
 
 static int
 clear_blt(struct intel_context *ce,
+	  struct drm_i915_gem_object *fence,
 	  struct sg_table *sgt,
 	  unsigned int page_sizes,
 	  unsigned int flags,
@@ -613,6 +614,14 @@ clear_blt(struct intel_context *ce,
 		if (IS_ERR(rq)) {
 			err = PTR_ERR(rq);
 			break;
+		}
+
+		if (fence) {
+			err = i915_request_await_object(rq, fence, true);
+			if (err)
+				goto skip;
+
+			fence = NULL;
 		}
 
 		err = emit_start_timestamp(rq);
@@ -730,12 +739,58 @@ static int lmem_clear(struct drm_i915_gem_object *obj,
 	if (use_cpu_clear(gt, flags))
 		clear_cpu(mem, pages, 0);
 	else if (ce)
-		err = clear_blt(ce, pages, page_sizes, flags, out);
+		err = clear_blt(ce, NULL, pages, page_sizes, flags, out);
 	else if (flags & I915_BO_CPU_CLEAR)
 		err = -EIO;
 
 	if (wf)
 		intel_gt_pm_put(gt, wf);
+
+	return err;
+}
+
+/**
+ * i915_gem_object_clear_lmem - Clear local memory using the bliter
+ * @obj - the lmem object (and flat-ccs) to be cleared (fill with 0)
+ *
+ * Clears the lmem backing store of the object, and any implicit flat-ccs
+ * storage, reporting an error if the object has no lmem storage or if
+ * the blitter is unusable. The blitter operation is queued to HW, with
+ * the completion fence stored on the object. If it is required to know
+ * the result of clearing the lmem, wait upon i915_gem_object_migrate_sync().
+ */
+int i915_gem_object_clear_lmem(struct drm_i915_gem_object *obj)
+{
+	struct intel_context *ce;
+	int err;
+
+	if (!i915_gem_object_is_lmem(obj))
+		return -EINVAL;
+
+	ce = get_clear_context(obj->mm.region.mem->gt);
+	if (!ce)
+		return -EINVAL;
+
+	err = i915_gem_object_lock_interruptible(obj, NULL);
+	if (err)
+		return err;
+
+	if (obj->mm.pages) {
+		struct i915_request *rq = NULL;
+
+		err = clear_blt(ce, obj,
+				obj->mm.pages,
+				obj->mm.page_sizes.sg,
+				obj->flags,
+				&rq);
+		if (rq) {
+			i915_gem_object_migrate_prepare(obj, rq);
+			i915_sw_fence_complete(&rq->submit);
+			i915_request_put(rq);
+		}
+	}
+
+	i915_gem_object_unlock(obj);
 
 	return err;
 }
@@ -1084,7 +1139,7 @@ void i915_gem_init_lmem(struct intel_gt *gt)
 	sg_dma_len(pages->sgl) = i915_buddy_block_size(&gt->lmem->mm, block);
 
 	cycles = -READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_CYCLES]);
-	err = clear_blt(ce, pages, sg_dma_len(pages->sgl), 0, &rq);
+	err = clear_blt(ce, NULL, pages, sg_dma_len(pages->sgl), 0, &rq);
 	if (rq) {
 		i915_sw_fence_complete(&rq->submit);
 		if (i915_request_wait(rq, 0, HZ) < 0)
@@ -1176,7 +1231,7 @@ int i915_gem_clear_all_lmem(struct intel_gt *gt, struct drm_printer *p)
 				sg_dma_len(pages->sgl) = len;
 				GEM_BUG_ON(!sg_is_last(pages->sgl));
 
-				err = clear_blt(ce, pages, len, 0, &rq);
+				err = clear_blt(ce, NULL, pages, len, 0, &rq);
 				if (rq) {
 					i915_sw_fence_complete(&rq->submit);
 					if (last)

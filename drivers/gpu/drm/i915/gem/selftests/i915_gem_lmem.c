@@ -111,7 +111,7 @@ static int __igt_lmem_clear(struct drm_i915_private *i915, bool measure)
 
 			gpu = -READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_CYCLES]);
 			sync = -ktime_get();
-			err = clear_blt(ce, pages, size, 0, &rq);
+			err = clear_blt(ce, NULL, pages, size, 0, &rq);
 			if (rq) {
 				i915_sw_fence_complete(&rq->submit);
 				if (i915_request_wait(rq, I915_WAIT_INTERRUPTIBLE, HZ) < 0)

@@ -60,7 +60,8 @@ static const struct drm_gem_object_funcs i915_gem_object_funcs;
 void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
 				     struct i915_request *rq)
 {
-	GEM_WARN_ON(i915_active_fence_set(&obj->mm.migrate, rq));
+	/* Trust that the caller has always chained up correctly */
+	__i915_active_fence_set(&obj->mm.migrate, &rq->fence);
 }
 
 long i915_gem_object_migrate_wait(struct drm_i915_gem_object *obj,
