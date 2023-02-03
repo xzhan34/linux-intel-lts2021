@@ -398,7 +398,6 @@ intel_context_init(struct intel_context *ce, struct intel_engine_cs *engine)
 
 	spin_lock_init(&ce->guc_state.lock);
 	INIT_LIST_HEAD(&ce->guc_state.fences);
-	INIT_LIST_HEAD(&ce->guc_state.requests);
 
 	ce->guc_id.id = GUC_INVALID_CONTEXT_ID;
 	INIT_LIST_HEAD(&ce->guc_id.link);
@@ -530,11 +529,7 @@ retry:
 
 struct i915_request *intel_context_find_active_request(struct intel_context *ce)
 {
-	struct intel_context *parent = intel_context_to_parent(ce);
 	struct i915_request *rq, *active = NULL;
-	unsigned long flags;
-
-	GEM_BUG_ON(!intel_engine_uses_guc(ce->engine));
 
 	/*
 	 * We search the parent list to find an active request on the submitted
@@ -542,17 +537,15 @@ struct i915_request *intel_context_find_active_request(struct intel_context *ce)
 	 * in the relationship so we have to do a compare of each request's
 	 * context.
 	 */
-	spin_lock_irqsave(&parent->guc_state.lock, flags);
-	list_for_each_entry_reverse(rq, &parent->guc_state.requests,
-				    sched.link) {
-		if (rq->context != ce)
-			continue;
-		if (i915_request_completed(rq))
+	rcu_read_lock();
+	list_for_each_entry_reverse(rq, &ce->timeline->requests, link) {
+		if (__i915_request_is_complete(rq))
 			break;
 
-		active = rq;
+		if (__i915_request_has_started(rq))
+			active = rq;
 	}
-	spin_unlock_irqrestore(&parent->guc_state.lock, flags);
+	rcu_read_unlock();
 
 	return active;
 }

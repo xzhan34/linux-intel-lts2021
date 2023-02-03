@@ -465,8 +465,6 @@ int intel_guc_error_capture_process_msg(struct intel_guc *guc,
 struct intel_engine_cs *
 intel_guc_lookup_engine(struct intel_guc *guc, u8 guc_class, u8 instance);
 
-void intel_guc_find_hung_context(struct intel_engine_cs *engine);
-
 int intel_guc_global_policies_update(struct intel_guc *guc);
 
 void intel_guc_context_ban(struct intel_context *ce, struct i915_request *rq);
