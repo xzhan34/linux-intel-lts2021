@@ -12,8 +12,18 @@
 
 struct svm_notifier {
 	struct mmu_interval_notifier notifier;
+	struct work_struct unregister_notifier_work;
+	struct vm_area_struct *vma;
 	struct i915_svm *svm;
 };
+
+static void unregister_svm_notifier(struct vm_area_struct *vma,
+		struct i915_svm *svm);
+
+static inline struct svm_notifier *vma_to_sn(struct vm_area_struct *vma)
+{
+	return (struct svm_notifier *)vma->vm_private_data;
+}
 
 static bool i915_svm_range_invalidate(struct mmu_interval_notifier *mni,
 				      const struct mmu_notifier_range *range,
@@ -24,6 +34,16 @@ static bool i915_svm_range_invalidate(struct mmu_interval_notifier *mni,
 	struct i915_svm *svm = sn->svm;
 	unsigned long length = range->end - range->start;
 
+	/*
+	 * MMU_NOTIFY_RELEASE is called upon process exit to notify driver
+	 * to release any process resources, such as clear GPU page table
+	 * mapping or unregister mmu notifier etc. We already clear GPU
+	 * page table in i915_vm_release and unregister mmu notifier in
+	 * release_svm, upon process exit. So just simply return here.
+	 */
+	if (range->event == MMU_NOTIFY_RELEASE)
+		return true;
+
 	if (mmu_notifier_range_blockable(range))
 		mutex_lock(&svm->mutex);
 	else if (!mutex_trylock(&svm->mutex))
@@ -31,12 +51,25 @@ static bool i915_svm_range_invalidate(struct mmu_interval_notifier *mni,
 	mmu_interval_set_seq(mni, cur_seq);
 	svm_unbind_addr(svm->vm, range->start, length);
 	mutex_unlock(&svm->mutex);
+
+	if (range->event == MMU_NOTIFY_UNMAP && vma_to_sn(range->vma))
+		queue_work(system_unbound_wq, &sn->unregister_notifier_work);
+
 	return true;
 }
 
 static const struct mmu_interval_notifier_ops i915_svm_mni_ops = {
 	.invalidate = i915_svm_range_invalidate,
 };
+
+static void i915_svm_unregister_notifier_work(struct work_struct *work)
+{
+	struct svm_notifier *sn;
+
+	sn = container_of(work, typeof(*sn), unregister_notifier_work);
+
+	unregister_svm_notifier(sn->vma, sn->svm);
+}
 
 /** register a mmu interval notifier to monitor vma change
  * @vma: vma to monitor
@@ -52,7 +85,7 @@ static struct svm_notifier *register_svm_notifier(struct vm_area_struct *vma,
 	u64 start, length;
 	int ret = 0;
 
-	sn = (struct svm_notifier *)vma->vm_private_data;
+	sn = vma_to_sn(vma);
 	if (sn)
 		return sn;
 
@@ -71,7 +104,10 @@ static struct svm_notifier *register_svm_notifier(struct vm_area_struct *vma,
 	}
 
 	sn->svm = svm;
+	sn->vma = vma;
 	vma->vm_private_data = sn;
+	INIT_WORK(&sn->unregister_notifier_work, i915_svm_unregister_notifier_work);
+
 	return sn;
 }
 
@@ -80,7 +116,7 @@ static void unregister_svm_notifier(struct vm_area_struct *vma,
 {
 	struct svm_notifier *sn;
 
-	sn = (struct svm_notifier *)vma->vm_private_data;
+	sn = vma_to_sn(vma);
 	if (!sn)
 	    return;
 
