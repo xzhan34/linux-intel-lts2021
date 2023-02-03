@@ -180,6 +180,8 @@ config DRM_I915_SELFTEST
 	depends on DRM_I915
 	default n
 	select DRM_EXPORT_FOR_TESTS if m
+	select FTRACE
+	select TRACER_SNAPSHOT
 	select FAULT_INJECTION
 	select PRIME_NUMBERS
 	select CRC32
