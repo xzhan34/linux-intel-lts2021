@@ -1048,6 +1048,9 @@ i915_request_create(struct intel_context *ce)
 	struct intel_timeline *tl;
 	struct i915_request *rq;
 
+	if (intel_context_throttle(ce))
+		return ERR_PTR(-EINTR);
+
 	tl = intel_context_timeline_lock(ce);
 	if (IS_ERR(tl))
 		return ERR_CAST(tl);
