@@ -794,7 +794,7 @@ static void mtl_ctx_workarounds_init(struct intel_engine_cs *engine,
 	}
 
 	/* Wa_18019271663 */
-	wa_masked_en(wal, CACHE_MODE_1, MSAA_OPTIMIZATION_REDUC_DISABLE);
+	wa_mcr_masked_en(wal, XEHP_CACHE_MODE_1, MSAA_OPTIMIZATION_REDUC_DISABLE);
 }
 
 static void fakewa_disable_nestedbb_mode(struct intel_engine_cs *engine,
