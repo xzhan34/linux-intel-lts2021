@@ -230,6 +230,7 @@ static void gen8_ggtt_insert_page(struct i915_address_space *vm,
 }
 
 static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
+				     struct i915_vm_pt_stash *stash,
 				     struct i915_vma *vma,
 				     enum i915_cache_level level,
 				     u32 flags)
@@ -291,6 +292,7 @@ static void gen6_ggtt_insert_page(struct i915_address_space *vm,
  * through the GMADR mapped BAR (i915->mm.gtt->gtt).
  */
 static void gen6_ggtt_insert_entries(struct i915_address_space *vm,
+				     struct i915_vm_pt_stash *stash,
 				     struct i915_vma *vma,
 				     enum i915_cache_level level,
 				     u32 flags)
@@ -392,6 +394,7 @@ static void bxt_vtd_ggtt_insert_page__BKL(struct i915_address_space *vm,
 
 struct insert_entries {
 	struct i915_address_space *vm;
+	struct i915_vm_pt_stash *stash;
 	struct i915_vma *vma;
 	enum i915_cache_level level;
 	u32 flags;
@@ -401,18 +404,19 @@ static int bxt_vtd_ggtt_insert_entries__cb(void *_arg)
 {
 	struct insert_entries *arg = _arg;
 
-	gen8_ggtt_insert_entries(arg->vm, arg->vma, arg->level, arg->flags);
+	gen8_ggtt_insert_entries(arg->vm, arg->stash, arg->vma, arg->level, arg->flags);
 	bxt_vtd_ggtt_wa(arg->vm);
 
 	return 0;
 }
 
 static void bxt_vtd_ggtt_insert_entries__BKL(struct i915_address_space *vm,
+					     struct i915_vm_pt_stash *stash,
 					     struct i915_vma *vma,
 					     enum i915_cache_level level,
 					     u32 flags)
 {
-	struct insert_entries arg = { vm, vma, level, flags };
+	struct insert_entries arg = { vm, stash, vma, level, flags };
 
 	stop_machine(bxt_vtd_ggtt_insert_entries__cb, &arg, NULL);
 }
@@ -457,7 +461,7 @@ void intel_ggtt_bind_vma(struct i915_address_space *vm,
 	if (i915_gem_object_is_lmem(obj))
 		pte_flags |= PTE_LM;
 
-	vm->insert_entries(vm, vma, cache_level, pte_flags);
+	vm->insert_entries(vm, stash, vma, cache_level, pte_flags);
 	vma->page_sizes.gtt = I915_GTT_PAGE_SIZE;
 }
 
@@ -600,7 +604,7 @@ static void aliasing_gtt_bind_vma(struct i915_address_space *vm,
 			       stash, vma, cache_level, flags);
 
 	if (flags & I915_VMA_GLOBAL_BIND)
-		vm->insert_entries(vm, vma, cache_level, pte_flags);
+		vm->insert_entries(vm, stash, vma, cache_level, pte_flags);
 }
 
 static void aliasing_gtt_unbind_vma(struct i915_address_space *vm,

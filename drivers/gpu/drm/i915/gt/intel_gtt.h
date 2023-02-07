@@ -323,6 +323,7 @@ struct i915_address_space {
 			    enum i915_cache_level cache_level,
 			    u32 flags);
 	void (*insert_entries)(struct i915_address_space *vm,
+			       struct i915_vm_pt_stash *stash,
 			       struct i915_vma *vma,
 			       enum i915_cache_level cache_level,
 			       u32 flags);

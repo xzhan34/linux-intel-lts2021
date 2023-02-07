@@ -201,7 +201,7 @@ void ppgtt_bind_vma(struct i915_address_space *vm,
 	if (i915_gem_object_is_lmem(vma->obj))
 		pte_flags |= PTE_LM;
 
-	vm->insert_entries(vm, vma, cache_level, pte_flags);
+	vm->insert_entries(vm, stash, vma, cache_level, pte_flags);
 
 	/* Flush the PTE writes to memory */
 	i915_write_barrier(vm->i915);
