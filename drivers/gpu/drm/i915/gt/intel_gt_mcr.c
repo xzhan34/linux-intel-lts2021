@@ -524,10 +524,6 @@ void intel_gt_mcr_multicast_write_fw(struct intel_gt *gt, i915_mcr_reg_t reg, u3
  * expected to have the same value.  The read will target any non-terminated
  * instance and the write will be applied to all instances.
  *
- * This function assumes the caller is already holding any necessary forcewake
- * domains; use intel_gt_mcr_multicast_rmw() in cases where forcewake should
- * be obtained automatically.
- *
  * Context: Calls functions that take and release gt->mcr_lock
  *
  * Returns the old (unmodified) value read.
@@ -838,9 +834,6 @@ void intel_gt_mcr_get_ss_steering(struct intel_gt *gt, unsigned int dss,
  * on GAM registers which are a bit special --- although they're MCR registers,
  * reads (e.g., waiting for status updates) are always directed to the primary
  * instance.
- *
- * Note that this routine assumes the caller holds forcewake asserted, it is
- * not suitable for very long waits.
  *
  * Context: Calls a function that takes and releases gt->mcr_lock
  * Return: 0 if the register matches the desired condition, or -ETIMEDOUT.
