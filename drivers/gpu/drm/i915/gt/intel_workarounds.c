@@ -2595,18 +2595,16 @@ rcs_engine_wa_init(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 		 * Wa_1405543622:icl
 		 * Formerly known as WaGAPZPriorityScheme
 		 */
-		wa_write_or(wal,
-			    GEN8_GARBCNTL,
-			    GEN11_ARBITRATION_PRIO_ORDER_MASK);
+		wa_mcr_write_or(wal, GEN8_GARBCNTL,
+				GEN11_ARBITRATION_PRIO_ORDER_MASK);
 
 		/*
 		 * Wa_1604223664:icl
 		 * Formerly known as WaL3BankAddressHashing
 		 */
-		wa_write_clr_set(wal,
-				 GEN8_GARBCNTL,
-				 GEN11_HASH_CTRL_EXCL_MASK,
-				 GEN11_HASH_CTRL_EXCL_BIT0);
+		wa_mcr_write_clr_set(wal, GEN8_GARBCNTL,
+				     GEN11_HASH_CTRL_EXCL_MASK,
+				     GEN11_HASH_CTRL_EXCL_BIT0);
 		wa_write_clr_set(wal,
 				 GEN11_GLBLINVL,
 				 GEN11_BANK_HASH_ADDR_EXCL_MASK,
@@ -2621,9 +2619,7 @@ rcs_engine_wa_init(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 				GEN11_LQSC_CLEAN_EVICT_DISABLE);
 
 		/* Wa_1606682166:icl */
-		wa_write_or(wal,
-			    GEN7_SARCHKMD,
-			    GEN7_DISABLE_SAMPLER_PREFETCH);
+		wa_mcr_write_or(wal, SARCHKMD, DISABLE_SAMPLER_PREFETCH);
 
 		/* Wa_1409178092:icl */
 		wa_mcr_write_clr_set(wal,
@@ -2713,9 +2709,8 @@ rcs_engine_wa_init(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 	    IS_COFFEELAKE(i915) ||
 	    IS_COMETLAKE(i915)) {
 		/* WaEnableGapsTsvCreditFix:skl,kbl,cfl */
-		wa_write_or(wal,
-			    GEN8_GARBCNTL,
-			    GEN9_GAPS_TSV_CREDIT_DISABLE);
+		wa_mcr_write_or(wal, GEN8_GARBCNTL,
+				GEN9_GAPS_TSV_CREDIT_DISABLE);
 	}
 
 	if (IS_BROXTON(i915)) {
@@ -2750,8 +2745,8 @@ rcs_engine_wa_init(struct intel_engine_cs *engine, struct i915_wa_list *wal)
 				GEN8_LQSC_FLUSH_COHERENT_LINES);
 
 		/* Disable atomics in L3 to prevent unrecoverable hangs */
-		wa_write_clr_set(wal, GEN9_SCRATCH_LNCF1,
-				 GEN9_LNCF_NONIA_COHERENT_ATOMICS_ENABLE, 0);
+		wa_mcr_write_clr_set(wal, GEN9_SCRATCH_LNCF1,
+				     GEN9_LNCF_NONIA_COHERENT_ATOMICS_ENABLE, 0);
 		wa_mcr_write_clr_set(wal, GEN8_L3SQCREG4,
 				     GEN8_LQSQ_NONIA_COHERENT_ATOMICS_ENABLE, 0);
 		wa_mcr_write_clr_set(wal, GEN9_SCRATCH1,
@@ -3002,7 +2997,7 @@ add_render_compute_tuning_settings(struct drm_i915_private *i915,
 					THREAD_EX_ARB_MODE_RR_AFTER_DEP);
 
 	if (GRAPHICS_VER(i915) == 12 && GRAPHICS_VER_FULL(i915) < IP_VER(12, 50))
-		wa_write_clr(wal, GEN8_GARBCNTL, GEN12_BUS_HASH_CTL_BIT_EXC);
+		wa_write_clr(wal, GEN12_GARBCNTL, GEN12_BUS_HASH_CTL_BIT_EXC);
 }
 
 /*
