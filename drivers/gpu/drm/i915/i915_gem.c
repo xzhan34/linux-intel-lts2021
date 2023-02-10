@@ -71,11 +71,16 @@ insert_mappable_node(struct i915_ggtt *ggtt, struct drm_mm_node *node, u32 size)
 
 	memset(node, 0, sizeof(*node));
 	err = drm_mm_insert_node_in_range(&ggtt->vm.mm, node,
-					  size, 0, I915_COLOR_UNEVICTABLE,
+					  size + SZ_4K, 0,
+					  I915_COLOR_UNEVICTABLE,
 					  0, ggtt->mappable_end,
 					  DRM_MM_INSERT_LOW);
-
 	mutex_unlock(&ggtt->vm.mutex);
+
+	if (err == 0)
+		ggtt->vm.scratch_range(&ggtt->vm,
+				       node->start + size - SZ_4K,
+				       SZ_4K);
 
 	return err;
 }
@@ -83,6 +88,8 @@ insert_mappable_node(struct i915_ggtt *ggtt, struct drm_mm_node *node, u32 size)
 static void
 remove_mappable_node(struct i915_ggtt *ggtt, struct drm_mm_node *node)
 {
+	ggtt->vm.clear_range(&ggtt->vm, node->start, node->size);
+
 	mutex_lock(&ggtt->vm.mutex);
 	drm_mm_remove_node(node);
 	mutex_unlock(&ggtt->vm.mutex);
@@ -314,6 +321,7 @@ retry:
 
 	if (!i915_gem_object_is_tiled(obj))
 		vma = i915_gem_object_ggtt_pin_ww(obj, &ww, NULL, 0, 0,
+						  PIN_OFFSET_GUARD | SZ_4K |
 						  PIN_MAPPABLE |
 						  PIN_NONBLOCK /* NOWARN */ |
 						  PIN_NOEVICT);
@@ -333,12 +341,10 @@ retry:
 
 	ret = i915_gem_object_pin_pages(obj);
 	if (ret) {
-		if (drm_mm_node_allocated(node)) {
-			ggtt->vm.clear_range(&ggtt->vm, node->start, node->size);
+		if (drm_mm_node_allocated(node))
 			remove_mappable_node(ggtt, node);
-		} else {
+		else
 			i915_vma_unpin(vma);
-		}
 	}
 
 err_ww:
@@ -360,12 +366,10 @@ static void i915_gem_gtt_cleanup(struct drm_i915_gem_object *obj,
 	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
 
 	i915_gem_object_unpin_pages(obj);
-	if (drm_mm_node_allocated(node)) {
-		ggtt->vm.clear_range(&ggtt->vm, node->start, node->size);
+	if (drm_mm_node_allocated(node))
 		remove_mappable_node(ggtt, node);
-	} else {
+	else
 		i915_vma_unpin(vma);
-	}
 }
 
 static int
