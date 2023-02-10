@@ -292,6 +292,7 @@ out:
 static vm_fault_t vm_fault_gtt(struct vm_fault *vmf)
 {
 #define MIN_CHUNK_PAGES (SZ_1M >> PAGE_SHIFT)
+	const unsigned int guard = PIN_OFFSET_GUARD | SZ_4K;
 	struct vm_area_struct *area = vmf->vma;
 	struct i915_mmap_offset *mmo = area->vm_private_data;
 	struct drm_i915_gem_object *obj = mmo->obj;
@@ -336,6 +337,7 @@ retry:
 
 	/* Now pin it into the GTT as needed */
 	vma = i915_gem_object_ggtt_pin_ww(obj, &ww, NULL, 0, 0,
+					  guard |
 					  PIN_MAPPABLE |
 					  PIN_NONBLOCK /* NOWARN */ |
 					  PIN_NOEVICT);
@@ -354,11 +356,13 @@ retry:
 		 * all hope that the hardware is able to track future writes.
 		 */
 
-		vma = i915_gem_object_ggtt_pin_ww(obj, &ww, &view, 0, 0, flags);
+		vma = i915_gem_object_ggtt_pin_ww(obj, &ww, &view,
+						  0, 0, guard | flags);
 		if (IS_ERR(vma) && vma != ERR_PTR(-EDEADLK)) {
 			flags = PIN_MAPPABLE;
 			view.type = I915_GGTT_VIEW_PARTIAL;
-			vma = i915_gem_object_ggtt_pin_ww(obj, &ww, &view, 0, 0, flags);
+			vma = i915_gem_object_ggtt_pin_ww(obj, &ww, &view,
+							  0, 0, guard | flags);
 		}
 
 		/* The entire mappable GGTT is pinned? Unexpected! */
