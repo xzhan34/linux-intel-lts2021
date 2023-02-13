@@ -341,6 +341,9 @@ static void intel_detect_preproduction_hw(struct drm_i915_private *dev_priv)
 	pre |= IS_ICELAKE(dev_priv) && INTEL_REVID(dev_priv) < 0x7;
 	pre |= IS_TIGERLAKE(dev_priv) && INTEL_REVID(dev_priv) < 0x1;
 	pre |= IS_DG1(dev_priv) && INTEL_REVID(dev_priv) < 0x1;
+	pre |= IS_PONTEVECCHIO(dev_priv) &&
+		(IS_PVC_CT_STEP(dev_priv, STEP_A0, STEP_B0) ||
+		 IS_PVC_BD_STEP(dev_priv, STEP_A0, STEP_B0));
 
 	if (pre) {
 		drm_err(&dev_priv->drm, "This is a pre-production stepping. "
