@@ -1152,9 +1152,10 @@ void i915_gem_driver_remove(struct drm_i915_private *dev_priv)
 
 	intel_wakeref_auto_fini(&to_gt(dev_priv)->ggtt->userfault_wakeref);
 
-	i915_gem_suspend_late(dev_priv);
-	for_each_gt(gt, dev_priv, i)
+	for_each_gt(gt, dev_priv, i) {
+		intel_gt_suspend_late(gt);
 		intel_gt_driver_remove(gt);
+	}
 	dev_priv->uabi_engines = RB_ROOT;
 
 	/* Flush any outstanding unpin_work. */
