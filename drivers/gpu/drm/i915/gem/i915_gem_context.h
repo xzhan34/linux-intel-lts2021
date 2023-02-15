@@ -152,14 +152,14 @@ i915_gem_context_vm(struct i915_gem_context *ctx)
 }
 
 static inline struct i915_address_space *
-i915_gem_context_get_vm_rcu(struct i915_gem_context *ctx)
+i915_gem_context_get_eb_vm(struct i915_gem_context *ctx)
 {
 	struct i915_address_space *vm;
 
 	rcu_read_lock();
 	vm = rcu_dereference(ctx->vm);
 	if (!vm)
-		vm = &ctx->i915->ggtt.vm;
+		vm = &to_gt(ctx->i915)->ggtt->vm;
 	vm = i915_vm_get(vm);
 	rcu_read_unlock();
 
@@ -220,6 +220,9 @@ i915_gem_engines_iter_next(struct i915_gem_engines_iter *it);
 #define for_each_gem_engine(ce, engines, it) \
 	for (i915_gem_engines_iter_init(&(it), (engines)); \
 	     ((ce) = i915_gem_engines_iter_next(&(it)));)
+
+void i915_gem_context_module_exit(void);
+int i915_gem_context_module_init(void);
 
 struct i915_lut_handle *i915_lut_handle_alloc(void);
 void i915_lut_handle_free(struct i915_lut_handle *lut);

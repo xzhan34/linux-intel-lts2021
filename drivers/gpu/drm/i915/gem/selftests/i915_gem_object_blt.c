@@ -4,6 +4,7 @@
  */
 
 #include <linux/sort.h>
+#include <drm/drm_cache.h>
 
 #include "gt/intel_gt.h"
 #include "gt/intel_engine_user.h"
@@ -11,6 +12,7 @@
 #include "i915_selftest.h"
 
 #include "gem/i915_gem_context.h"
+#include "gem/i915_gem_internal.h"
 #include "selftests/igt_flush_test.h"
 #include "selftests/i915_random.h"
 #include "selftests/mock_drm.h"
@@ -577,7 +579,7 @@ int i915_gem_object_blt_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_copy_blt_ctx0),
 	};
 
-	if (intel_gt_is_wedged(&i915->gt))
+	if (intel_gt_is_wedged(to_gt(i915)))
 		return 0;
 
 	return i915_live_subtests(tests, i915);
@@ -590,7 +592,7 @@ int i915_gem_object_blt_perf_selftests(struct drm_i915_private *i915)
 		SUBTEST(perf_copy_blt),
 	};
 
-	if (intel_gt_is_wedged(&i915->gt))
+	if (intel_gt_is_wedged(to_gt(i915)))
 		return 0;
 
 	return i915_live_subtests(tests, i915);

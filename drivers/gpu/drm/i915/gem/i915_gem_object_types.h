@@ -10,6 +10,7 @@
 #include <linux/mmu_notifier.h>
 
 #include <drm/drm_gem.h>
+#include <drm/ttm/ttm_bo_api.h>
 #include <uapi/drm/i915_drm.h>
 
 #include "i915_active.h"
@@ -60,10 +61,26 @@ struct drm_i915_gem_object_ops {
 		     const struct drm_i915_gem_pread *arg);
 	int (*pwrite)(struct drm_i915_gem_object *obj,
 		      const struct drm_i915_gem_pwrite *arg);
+	u64 (*mmap_offset)(struct drm_i915_gem_object *obj);
 
 	int (*dmabuf_export)(struct drm_i915_gem_object *obj);
+
+	/**
+	 * adjust_lru - notify that the madvise value was updated
+	 * @obj: The gem object
+	 *
+	 * The madvise value may have been updated, or object was recently
+	 * referenced so act accordingly (Perhaps changing an LRU list etc).
+	 */
+	void (*adjust_lru)(struct drm_i915_gem_object *obj);
+
+	/**
+	 * delayed_free - Override the default delayed free implementation
+	 */
+	void (*delayed_free)(struct drm_i915_gem_object *obj);
 	void (*release)(struct drm_i915_gem_object *obj);
 
+	const struct vm_operations_struct *mmap_ops;
 	const char *name; /* friendly name for debug, e.g. lockdep classes */
 };
 
@@ -179,7 +196,16 @@ struct i915_gem_object_page_iter {
 };
 
 struct drm_i915_gem_object {
-	struct drm_gem_object base;
+	/*
+	 * We might have reason to revisit the below since it wastes
+	 * a lot of space for non-ttm gem objects.
+	 * In any case, always use the accessors for the ttm_buffer_object
+	 * when accessing it.
+	 */
+	union {
+		struct drm_gem_object base;
+		struct ttm_buffer_object __do_not_access;
+	};
 
 	const struct drm_i915_gem_object_ops *ops;
 
@@ -229,6 +255,10 @@ struct drm_i915_gem_object {
 	 * when i915_gem_ww_ctx_backoff() or i915_gem_ww_ctx_fini() are called.
 	 */
 	struct list_head obj_link;
+	/**
+	 * @shared_resv_from: The object shares the resv from this vm.
+	 */
+	struct i915_address_space *shares_resv_from;
 
 	union {
 		struct rcu_head rcu;
@@ -253,12 +283,15 @@ struct drm_i915_gem_object {
 #define I915_BO_ALLOC_VOLATILE   BIT(1)
 #define I915_BO_ALLOC_STRUCT_PAGE BIT(2)
 #define I915_BO_ALLOC_CPU_CLEAR  BIT(3)
+#define I915_BO_ALLOC_USER       BIT(4)
 #define I915_BO_ALLOC_FLAGS (I915_BO_ALLOC_CONTIGUOUS | \
 			     I915_BO_ALLOC_VOLATILE | \
 			     I915_BO_ALLOC_STRUCT_PAGE | \
-			     I915_BO_ALLOC_CPU_CLEAR)
-#define I915_BO_READONLY         BIT(4)
-#define I915_TILING_QUIRK_BIT    5 /* unknown swizzling; do not release! */
+			     I915_BO_ALLOC_CPU_CLEAR | \
+			     I915_BO_ALLOC_USER)
+#define I915_BO_READONLY         BIT(5)
+#define I915_TILING_QUIRK_BIT    6 /* unknown swizzling; do not release! */
+#define I915_BO_WAS_BOUND_BIT     9
 
 	/**
 	 * @cache_level: The desired GTT caching level.
@@ -366,6 +399,39 @@ struct drm_i915_gem_object {
 	 * Note that on shared LLC platforms we still apply the heavy flush for
 	 * I915_CACHE_NONE objects, under the assumption that this is going to
 	 * be used for scanout.
+	 *
+	 * Update: On some hardware there is now also the 'Bypass LLC' MOCS
+	 * entry, which defeats our @cache_coherent tracking, since userspace
+	 * can freely bypass the CPU cache when touching the pages with the GPU,
+	 * where the kernel is completely unaware. On such platform we need
+	 * apply the sledgehammer-on-acquire regardless of the @cache_coherent.
+	 *
+	 * Special care is taken on non-LLC platforms, to prevent potential
+	 * information leak. The driver currently ensures:
+	 *
+	 *   1. All userspace objects, by default, have @cache_level set as
+	 *   I915_CACHE_NONE. The only exception is userptr objects, where we
+	 *   instead force I915_CACHE_LLC, but we also don't allow userspace to
+	 *   ever change the @cache_level for such objects. Another special case
+	 *   is dma-buf, which doesn't rely on @cache_dirty,  but there we
+	 *   always do a forced flush when acquiring the pages, if there is a
+	 *   chance that the pages can be read directly from main memory with
+	 *   the GPU.
+	 *
+	 *   2. All I915_CACHE_NONE objects have @cache_dirty initially true.
+	 *
+	 *   3. All swapped-out objects(i.e shmem) have @cache_dirty set to
+	 *   true.
+	 *
+	 *   4. The @cache_dirty is never freely reset before the initial
+	 *   flush, even if userspace adjusts the @cache_level through the
+	 *   i915_gem_set_caching_ioctl.
+	 *
+	 *   5. All @cache_dirty objects(including swapped-in) are initially
+	 *   flushed with a synchronous call to drm_clflush_sg in
+	 *   __i915_gem_object_set_pages. The @cache_dirty can be freely reset
+	 *   at this point. All further asynchronous clfushes are never security
+	 *   critical, i.e userspace is free to race against itself.
 	 */
 	unsigned int cache_dirty:1;
 
@@ -398,6 +464,28 @@ struct drm_i915_gem_object {
 		 * instead go through the pin/unpin interfaces.
 		 */
 		atomic_t pages_pin_count;
+
+		/**
+		 * @shrink_pin: Prevents the pages from being made visible to
+		 * the shrinker, while the shrink_pin is non-zero. Most users
+		 * should pretty much never have to care about this, outside of
+		 * some special use cases.
+		 *
+		 * By default most objects will start out as visible to the
+		 * shrinker(if I915_GEM_OBJECT_IS_SHRINKABLE) as soon as the
+		 * backing pages are attached to the object, like in
+		 * __i915_gem_object_set_pages(). They will then be removed the
+		 * shrinker list once the pages are released.
+		 *
+		 * The @shrink_pin is incremented by calling
+		 * i915_gem_object_make_unshrinkable(), which will also remove
+		 * the object from the shrinker list, if the pin count was zero.
+		 *
+		 * Callers will then typically call
+		 * i915_gem_object_make_shrinkable() or
+		 * i915_gem_object_make_purgeable() to decrement the pin count,
+		 * and make the pages visible again.
+		 */
 		atomic_t shrink_pin;
 
 		/**
@@ -410,10 +498,13 @@ struct drm_i915_gem_object {
 		 * Memory region for this object.
 		 */
 		struct intel_memory_region *region;
+
 		/**
-		 * List of memory region blocks allocated for this object.
+		 * Memory manager resource allocated for this object. Only
+		 * needed for the mock region.
 		 */
-		struct list_head blocks;
+		struct ttm_resource *res;
+
 		/**
 		 * Element within memory_region->objects or region->purgeable
 		 * if the object is marked as DONTNEED. Access is protected by
@@ -456,7 +547,7 @@ struct drm_i915_gem_object {
 		struct i915_gem_object_page_iter get_dma_page;
 
 		/**
-		 * Element within i915->mm.unbound_list or i915->mm.bound_list,
+		 * Element within i915->mm.shrink_list or i915->mm.purge_list,
 		 * locked by i915->mm.obj_lock.
 		 */
 		struct list_head link;
@@ -472,6 +563,12 @@ struct drm_i915_gem_object {
 		 */
 		bool dirty:1;
 	} mm;
+
+	struct {
+		struct sg_table *cached_io_st;
+		struct i915_gem_object_page_iter get_io_page;
+		bool created:1;
+	} ttm;
 
 	/** Record of address bit 17 of each page at last unbind. */
 	unsigned long *bit_17;

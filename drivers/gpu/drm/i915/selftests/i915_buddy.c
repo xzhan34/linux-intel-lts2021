@@ -4,6 +4,7 @@
  */
 
 #include <linux/prime_numbers.h>
+#include <linux/string_helpers.h>
 
 #include "../i915_selftest.h"
 #include "i915_random.h"
@@ -18,8 +19,8 @@ static void __igt_dump_block(struct i915_buddy_mm *mm,
 	       i915_buddy_block_order(block),
 	       i915_buddy_block_offset(block),
 	       i915_buddy_block_size(mm, block),
-	       yesno(!block->parent),
-	       yesno(buddy));
+	       str_yes_no(!block->parent),
+	       str_yes_no(buddy));
 }
 
 static void igt_dump_block(struct i915_buddy_mm *mm,
@@ -166,8 +167,10 @@ static int igt_check_blocks(struct i915_buddy_mm *mm,
 		igt_dump_block(mm, prev);
 	}
 
-	pr_err("bad block, dump:\n");
-	igt_dump_block(mm, block);
+	if (block) {
+		pr_err("bad block, dump:\n");
+		igt_dump_block(mm, block);
+	}
 
 	return err;
 }

@@ -3,11 +3,14 @@
  * Copyright © 2020 Intel Corporation
  */
 
+#include <drm/drm_fourcc.h>
+
 #include "gem/i915_gem_ioctls.h"
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_region.h"
 
 #include "i915_drv.h"
+#include "i915_gem_create.h"
 #include "i915_trace.h"
 #include "i915_user_extensions.h"
 
@@ -85,13 +88,10 @@ i915_gem_setup(struct drm_i915_gem_object *obj, u64 size)
 		return -E2BIG;
 
 	/*
-	 * For now resort to CPU based clearing for device local-memory, in the
-	 * near future this will use the blitter engine for accelerated, GPU
-	 * based clearing.
+	 * I915_BO_ALLOC_USER will make sure the object is cleared before
+	 * any user access.
 	 */
-	flags = 0;
-	if (mr->type == INTEL_MEMORY_LOCAL)
-		flags = I915_BO_ALLOC_CPU_CLEAR;
+	flags = I915_BO_ALLOC_USER;
 
 	ret = mr->ops->init_object(mr, obj, size, flags);
 	if (ret)
@@ -334,9 +334,6 @@ static int ext_set_placements(struct i915_user_extension __user *base,
 			      void *data)
 {
 	struct drm_i915_gem_create_ext_memory_regions ext;
-
-	if (!IS_ENABLED(CONFIG_DRM_I915_UNSTABLE_FAKE_LMEM))
-		return -ENODEV;
 
 	if (copy_from_user(&ext, base, sizeof(ext)))
 		return -EFAULT;

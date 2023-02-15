@@ -20,11 +20,14 @@
 #include "i915_vma.h"
 #include "intel_engine_types.h"
 #include "intel_gt_buffer_pool_types.h"
+#include "intel_hwconfig.h"
 #include "intel_llc_types.h"
 #include "intel_reset_types.h"
 #include "intel_rc6_types.h"
 #include "intel_rps_types.h"
+#include "intel_migrate_types.h"
 #include "intel_wakeref.h"
+#include "pxp/intel_pxp_types.h"
 
 struct drm_i915_private;
 struct i915_ggtt;
@@ -70,6 +73,10 @@ struct intel_gt {
 	struct i915_ggtt *ggtt;
 
 	struct intel_uc uc;
+
+	struct mutex tlb_invalidate_lock;
+
+	struct i915_wa_list wa_list;
 
 	struct intel_gt_timelines {
 		spinlock_t lock; /* protects active_list */
@@ -173,13 +180,29 @@ struct intel_gt {
 	struct i915_vma *scratch;
 
 	const struct intel_mmio_range *steering_table[NUM_STEERING_TYPES];
+	struct intel_migrate migrate;
+
+	struct {
+		u8 groupid;
+		u8 instanceid;
+	} default_steering;
+
+	/*
+	 * Base of per-tile GTTMMADR where we can derive the MMIO and the GGTT.
+	 */
+	phys_addr_t phys_addr;
 
 	struct intel_gt_info {
+		unsigned int id;
+
 		intel_engine_mask_t engine_mask;
 
 		u32 l3bank_mask;
 
 		u8 num_engines;
+
+		/* General presence of SFC units */
+		u8 sfc_mask;
 
 		/* Media engine access to SFC per instance */
 		u8 vdbox_sfc_access;
@@ -188,7 +211,16 @@ struct intel_gt {
 		struct sseu_dev_info sseu;
 
 		unsigned long mslice_mask;
+
+		/** @hwconfig: hardware configuration data */
+		struct intel_hwconfig hwconfig;
 	} info;
+
+	struct {
+		u8 uc_index;
+	} mocs;
+
+	struct intel_pxp pxp;
 };
 
 enum intel_gt_scratch_field {

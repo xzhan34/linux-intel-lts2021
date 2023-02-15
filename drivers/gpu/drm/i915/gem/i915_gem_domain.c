@@ -9,12 +9,13 @@
 
 #include "i915_drv.h"
 #include "i915_gem_clflush.h"
+#include "i915_gem_domain.h"
 #include "i915_gem_gtt.h"
 #include "i915_gem_ioctls.h"
-#include "i915_gem_object.h"
-#include "i915_vma.h"
 #include "i915_gem_lmem.h"
 #include "i915_gem_mman.h"
+#include "i915_gem_object.h"
+#include "i915_vma.h"
 
 static bool gpu_write_needs_clflush(struct drm_i915_gem_object *obj)
 {
@@ -268,6 +269,9 @@ int i915_gem_get_caching_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_object *obj;
 	int err = 0;
 
+	if (IS_DGFX(to_i915(dev)))
+		return -ENODEV;
+
 	rcu_read_lock();
 	obj = i915_gem_object_lookup_rcu(file, args->handle);
 	if (!obj) {
@@ -302,6 +306,9 @@ int i915_gem_set_caching_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_object *obj;
 	enum i915_cache_level level;
 	int ret = 0;
+
+	if (IS_DGFX(i915))
+		return -ENODEV;
 
 	switch (args->caching) {
 	case I915_CACHING_NONE:
@@ -483,6 +490,9 @@ i915_gem_set_domain_ioctl(struct drm_device *dev, void *data,
 	u32 read_domains = args->read_domains;
 	u32 write_domain = args->write_domain;
 	int err;
+
+	if (IS_DGFX(to_i915(dev)))
+		return -ENODEV;
 
 	/* Only handle setting domains to types used by the CPU. */
 	if ((write_domain | read_domains) & I915_GEM_GPU_DOMAINS)
