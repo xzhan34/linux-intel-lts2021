@@ -875,6 +875,101 @@ err_pages:
 	kfree(pages);
 }
 
+int i915_gem_clear_all_lmem(struct intel_gt *gt, struct drm_printer *p)
+{
+	struct i915_request *last = NULL;
+	struct intel_memory_region *mr;
+	struct intel_context *ce;
+	struct sg_table *pages;
+	intel_wakeref_t wf;
+	u64 cycles, bytes;
+	int err = 0;
+	int i;
+
+	mr = gt->lmem;
+	if (!mr)
+		return 0;
+
+	pages = kmalloc(sizeof(*pages), GFP_KERNEL);
+	if (!pages)
+		return -ENOMEM;
+
+	if (sg_alloc_table(pages, 1, GFP_KERNEL)) {
+		err = -ENOMEM;
+		goto err_pages;
+	}
+
+	wf = intel_gt_pm_get(gt);
+	intel_rps_boost(&gt->rps);
+
+	ce = get_blitter_context(gt, BCS0);
+	if (!ce) {
+		err = -EIO;
+		goto err_wf;
+	}
+
+	cycles = -READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_CYCLES]);
+	bytes = -READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_BYTES]);
+
+	mutex_lock(&mr->mm_lock);
+	for (i = mr->mm.max_order; i >= 0; i--) {
+		struct i915_buddy_block *block;
+
+		list_for_each_entry(block, &mr->mm.free_list[i], link) {
+			u64 sz = i915_buddy_block_size(&mr->mm, block);
+			u64 offset = i915_buddy_block_offset(block);
+			struct i915_request *rq;
+
+			while (sz) { /* sg_dma_len() is unsigned int */
+				u64 len = min_t(u64, sz, SZ_2G);
+
+				sg_dma_address(pages->sgl) = offset;
+				sg_dma_len(pages->sgl) = len;
+				GEM_BUG_ON(!sg_is_last(pages->sgl));
+
+				err = clear_blt(ce, pages, len, 0, &rq);
+				if (rq) {
+					i915_sw_fence_complete(&rq->submit);
+					if (last)
+						i915_request_put(last);
+					last = rq;
+				}
+				if (err)
+					goto unlock;
+
+				sz -= len;
+				offset += len;
+			}
+		}
+	}
+unlock:
+	if (last) {
+		i915_request_wait(last, 0, MAX_SCHEDULE_TIMEOUT);
+		if (err == 0)
+			err = last->fence.error;
+		i915_request_put(last);
+	}
+	mutex_unlock(&mr->mm_lock);
+
+	bytes += READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_BYTES]);
+	cycles += READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_CYCLES]);
+	cycles = intel_gt_clock_interval_to_ns(gt, cycles);
+	if (err == 0 && cycles && p)
+		drm_printf(p, "%s%d, cleared %lluMiB in %lldms, %lldMiB/s\n",
+			   gt->name, gt->info.id,
+			   bytes >> 20,
+			   div_u64(cycles, NSEC_PER_MSEC),
+			   div64_u64(mul_u64_u32_shr(bytes, NSEC_PER_SEC, 20), cycles));
+
+err_wf:
+	intel_rps_cancel_boost(&gt->rps);
+	intel_gt_pm_put(gt, wf);
+	sg_free_table(pages);
+err_pages:
+	kfree(pages);
+	return err;
+}
+
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftests/i915_gem_lmem.c"
 #endif

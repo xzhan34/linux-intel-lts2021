@@ -14,6 +14,22 @@
 
 #define CPU_LATENCY 0 /* -1 to disable pm_qos, 0 to disable cstates */
 
+static int igt_lmem_touch(void *arg)
+{
+	struct drm_i915_private *i915 = arg;
+	struct drm_printer p = drm_info_printer(i915->drm.dev);
+	struct intel_gt *gt;
+	int id, err;
+
+	for_each_gt(gt, i915, id) {
+		err = i915_gem_clear_all_lmem(gt, &p);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
 static int igt_lmem_clear(void *arg)
 {
 	const u64 poison = make_u64(0xc5c55c5c, 0xa3a33a3a);
@@ -155,6 +171,7 @@ static int igt_lmem_clear(void *arg)
 int i915_gem_lmem_live_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
+		SUBTEST(igt_lmem_touch),
 		SUBTEST(igt_lmem_clear),
 	};
 

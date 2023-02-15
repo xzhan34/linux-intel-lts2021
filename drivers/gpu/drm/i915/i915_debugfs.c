@@ -33,6 +33,7 @@
 #include <drm/drm_debugfs.h>
 
 #include "gem/i915_gem_context.h"
+#include "gem/i915_gem_lmem.h"
 #include "gt/intel_engine_heartbeat.h"
 #include "gt/intel_engine_pm.h"
 #include "gt/intel_engine_regs.h"
@@ -721,6 +722,22 @@ static int workarounds_show(struct seq_file *m, void *unused)
 	return 0;
 }
 
+static int clear_lmem_show(struct seq_file *m, void *unused)
+{
+	struct drm_i915_private *i915 = m->private;
+	struct drm_printer p = drm_seq_file_printer(m);
+	struct intel_gt *gt;
+	int err, id;
+
+	for_each_gt(gt, i915, id) {
+		err = i915_gem_clear_all_lmem(gt, &p);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
 static int i915_wedged_get(void *data, u64 *val)
 {
 	struct drm_i915_private *i915 = data;
@@ -946,6 +963,7 @@ static const struct drm_info_list i915_debugfs_list[] = {
 	{"i915_sseu_status", i915_sseu_status, 0},
 	{"i915_rps_boost_info", i915_rps_boost_info, 0},
 	{"i915_workarounds", workarounds_show, 0},
+	{"i915_clear_lmem", clear_lmem_show, 0},
 };
 #define I915_DEBUGFS_ENTRIES ARRAY_SIZE(i915_debugfs_list)
 
