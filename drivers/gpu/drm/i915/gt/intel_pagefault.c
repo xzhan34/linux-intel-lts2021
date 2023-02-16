@@ -11,7 +11,10 @@
 
 #include "gen8_ppgtt.h"
 #include "intel_context.h"
+#include "intel_engine_heartbeat.h"
 #include "intel_gt.h"
+#include "intel_gt_debug.h"
+#include "intel_gt_mcr.h"
 #include "intel_gt_regs.h"
 #include "intel_tlb.h"
 #include "intel_pagefault.h"
@@ -294,9 +297,39 @@ mark_engine_as_active(struct intel_gt *gt,
 		   READ_ONCE(engine->stats.irq_count) + 1);
 }
 
+static struct i915_gpu_coredump *
+pf_coredump(struct intel_gt *gt, struct recoverable_page_fault_info *info)
+{
+	struct i915_gpu_coredump *error;
+	struct intel_engine_cs *engine;
+
+	engine = lookup_engine(gt, info->engine_class, info->engine_instance);
+	if (!engine)
+		return NULL;
+	GEM_BUG_ON(engine->gt != gt);
+
+	error = i915_gpu_coredump_create_for_engine(engine, GFP_KERNEL);
+	if (!error)
+		return NULL;
+
+	error->fault.addr = info->page_addr | BIT(0);
+	error->fault.type = info->fault_type;
+	error->fault.level = info->fault_level;
+	error->fault.access = info->access_type;
+
+	rcu_read_lock();
+	error->private = intel_engine_find_active_request(engine);
+	if (error->private)
+		error->private = i915_request_get_rcu(error->private);
+	rcu_read_unlock();
+
+	return error;
+}
+
 static struct dma_fence *
 handle_i915_mm_fault(struct intel_guc *guc,
-		     struct recoverable_page_fault_info *info)
+		     struct recoverable_page_fault_info *info,
+		     struct i915_gpu_coredump **dump)
 {
 	struct intel_gt *gt = guc_to_gt(guc);
 	struct dma_fence *fence = NULL;
@@ -318,6 +351,10 @@ handle_i915_mm_fault(struct intel_guc *guc,
 	if (vma)
 		vma = i915_vma_tryget(vma);
 	if (!vma) {
+		/* Each EU thread may trigger its own pf to the same address! */
+		if (!vm->invalidate_tlb_scratch)
+			*dump = pf_coredump(gt, info);
+
 		if (vm->has_scratch) {
 			/* Map the out-of-bound access to scratch page.
 			 *
@@ -440,6 +477,7 @@ struct fault_reply {
 	struct dma_fence_work base;
 	struct recoverable_page_fault_info info;
 	struct i915_sw_dma_fence_cb cb;
+	struct i915_gpu_coredump *dump;
 	struct intel_guc *guc;
 	struct intel_gt *gt;
 	intel_wakeref_t wakeref;
@@ -478,6 +516,25 @@ static int send_fault_reply(const struct fault_reply *f)
 	return intel_guc_send(f->guc, action, ARRAY_SIZE(action));
 }
 
+static void coredump_add_request(struct i915_gpu_coredump *dump,
+				 struct i915_request *rq,
+				 gfp_t gfp)
+{
+	struct intel_gt_coredump *gt = dump->gt;
+	struct intel_engine_capture_vma *vma;
+	struct i915_page_compress *compress;
+
+	compress = i915_vma_capture_prepare(gt);
+	if (!compress)
+		return;
+
+	vma = intel_engine_coredump_add_request(gt->engine, rq, gfp, compress);
+	if (vma)
+		intel_engine_coredump_add_vma(gt->engine, vma, compress);
+
+	i915_vma_capture_finish(gt, compress);
+}
+
 static void fault_complete(struct dma_fence_work *work)
 {
 	struct fault_reply *f = container_of(work, typeof(*f), base);
@@ -488,6 +545,31 @@ static void fault_complete(struct dma_fence_work *work)
 	}
 
 	GEM_WARN_ON(send_fault_reply(f));
+
+	if (f->dump) {
+		struct i915_gpu_coredump *dump = f->dump;
+		struct intel_gt_coredump *gt = dump->gt;
+
+		if (dump->private) {
+			coredump_add_request(dump, dump->private, GFP_KERNEL);
+			i915_request_put(dump->private);
+		}
+
+		if (intel_gt_mcr_read_any(f->gt, TD_CTL)) {
+			struct intel_engine_cs *engine =
+				(struct intel_engine_cs *)gt->engine->engine;
+
+			intel_eu_attentions_read(f->gt, &gt->attentions.resolved,
+						 INTEL_GT_ATTENTION_TIMEOUT_MS);
+
+			/* Reset and cleanup if there are any ATTN leftover */
+			intel_engine_schedule_heartbeat(engine);
+		}
+
+		i915_error_state_store(dump);
+		i915_gpu_coredump_put(dump);
+	}
+
 	intel_gt_pm_put(f->gt, f->wakeref);
 }
 
@@ -518,7 +600,7 @@ int intel_pagefault_req_process_msg(struct intel_guc *guc,
 	reply->gt = guc_to_gt(guc);
 	reply->wakeref = intel_gt_pm_get(reply->gt);
 
-	fence = handle_i915_mm_fault(guc, &reply->info);
+	fence = handle_i915_mm_fault(guc, &reply->info, &reply->dump);
 	if (IS_ERR(fence)) {
 		i915_sw_fence_set_error_once(&reply->base.chain, PTR_ERR(fence));
 	} else if (fence) {
@@ -526,6 +608,6 @@ int intel_pagefault_req_process_msg(struct intel_guc *guc,
 		dma_fence_put(fence);
 	}
 
-	dma_fence_work_commit_imm(&reply->base);
+	dma_fence_work_commit_imm_if(&reply->base, !reply->dump);
 	return 0;
 }

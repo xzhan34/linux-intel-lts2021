@@ -263,7 +263,6 @@ out:
  *
  * Return: 1 if threads waiting host attention.
  */
-
 int intel_gt_eu_threads_needing_attention(struct intel_gt* gt)
 {
 	return intel_gt_for_each_compute_slice_subslice(gt,

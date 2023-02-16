@@ -773,37 +773,39 @@ static void err_free_sgl(struct scatterlist *sgl)
 	}
 }
 
+static void __err_print_attn(struct drm_i915_error_state_buf *m,
+			     const char *name,
+			     const struct intel_eu_attentions *a,
+			     ktime_t epoc)
+{
+	int max = a->size * BITS_PER_BYTE;
+	const u32 *bm = (const u32 *)a->att;
+	unsigned int count;
+
+	count = intel_eu_attentions_count(a);
+
+	err_printf(m, "TD_ATT %s (%d):", name, count);
+
+	max /= BITS_PER_TYPE(*bm);
+	while (max--)
+		err_printf(m, " %08x", *bm++);
+
+	if (count && epoc)
+		err_printf(m, " %lldus after FEH\n",
+			   ktime_us_delta(a->ts, epoc));
+	else
+		err_printf(m, "\n");
+}
+
 static void err_print_gt_attentions(struct drm_i915_error_state_buf *m,
 				    struct intel_gt_coredump *gt)
 {
-	unsigned int dws;
-	u32 *a;
-	unsigned long *bm;
-	int n, bits, n_before, n_after;
-
-	bits = gt->attentions.bitmap_size * BITS_PER_BYTE;
-	bm = (unsigned long *)gt->attentions.att_before;
-	n_before = bitmap_weight(bm, bits);
-
-	bm = (unsigned long *)gt->attentions.att_after;
-	n_after = bitmap_weight(bm, bits);
-
-	dws = gt->attentions.bitmap_size / sizeof(u32);
+	const ktime_t halt_ts = gt->attentions.before.ts;
 
 	err_printf(m, "TD_CTL: 0x%08x\n", gt->attentions.td_ctl);
-	err_printf(m, "TD_ATT before (%d):", n_before);
-	a = (u32 *)gt->attentions.att_before;
-	for (n = 0; n < dws; n++)
-		err_printf(m, " %08x", a[n]);
-
-	err_printf(m, "\n");
-
-	err_printf(m, "TD_ATT after (%d):", n_after);
-	a = (u32 *)gt->attentions.att_after;
-	for (n = 0; n < dws; n++)
-		err_printf(m, " %08x", a[n]);
-
-	err_printf(m, "\n");
+	__err_print_attn(m, "before", &gt->attentions.before, 0);
+	__err_print_attn(m, "after", &gt->attentions.after, halt_ts);
+	__err_print_attn(m, "resolved", &gt->attentions.resolved, halt_ts);
 }
 
 static void err_print_gt_info(struct drm_i915_error_state_buf *m,
@@ -961,6 +963,15 @@ static void __err_print_to_sgl(struct drm_i915_error_state_buf *m,
 
 	err_printf(m, "RPM wakelock: %s\n", str_yes_no(error->wakelock));
 	err_printf(m, "PM suspended: %s\n", str_yes_no(error->suspended));
+
+	if (error->fault.addr) {
+		err_printf(m, "Fault addr: 0x%08x_%08x\n",
+			   upper_32_bits(error->fault.addr & ~BIT_ULL(0)),
+			   lower_32_bits(error->fault.addr & ~BIT_ULL(0)));
+		err_printf(m, "Fault type: %d\n", error->fault.type);
+		err_printf(m, "Fault level: %d\n", error->fault.level);
+		err_printf(m, "Fault access: %d\n", error->fault.access);
+	}
 
 	if (error->gt) {
 		bool print_guc_capture = false;
@@ -1393,25 +1404,6 @@ static void gt_record_fences(struct intel_gt_coredump *gt)
 				intel_uncore_read(uncore, FENCE_REG(i));
 	}
 	gt->nfence = i;
-}
-
-static int wait_thread_attention(struct intel_gt *gt,
-				 const unsigned int timeout_ms)
-{
-	const ktime_t end = ktime_add_ms(ktime_get_raw(), timeout_ms);
-
-	do {
-		/* XXX: how many threads to wait? */
-		if (intel_gt_eu_threads_needing_attention(gt))
-			return 0;
-
-		cpu_relax();
-	} while (!ktime_after(ktime_get_raw(), end));
-
-	if (intel_gt_eu_threads_needing_attention(gt))
-		return 0;
-
-	return -ETIMEDOUT;
 }
 
 static void engine_record_registers(struct intel_engine_coredump *ee)
@@ -2230,9 +2222,7 @@ static void gt_record_attentions(struct intel_gt_coredump *gt_dump)
 {
 	struct intel_gt *gt = (struct intel_gt *)gt_dump->_gt;
 	struct drm_i915_private *i915 = gt->i915;
-	u32 td_ctl, bitmap_size;
-	/* Need to wait for threads to report attention. */
-	const unsigned int timeout_ms = 100;
+	u32 td_ctl;
 
 	if (GRAPHICS_VER(i915) < 9)
 		return;
@@ -2240,41 +2230,39 @@ static void gt_record_attentions(struct intel_gt_coredump *gt_dump)
 	td_ctl = intel_gt_mcr_read_any(gt, TD_CTL);
 	gt_dump->attentions.td_ctl = td_ctl;
 
-	bitmap_size = min_t(int,
-			    intel_gt_eu_attention_bitmap_size(gt),
-			    sizeof(gt_dump->attentions.att_before));
-	gt_dump->attentions.bitmap_size = bitmap_size;
-
-	intel_gt_eu_attention_bitmap(gt, gt_dump->attentions.att_before,
-				     bitmap_size);
+	intel_eu_attentions_read(gt, &gt_dump->attentions.before, 0);
 
 	/* If there is no debug functionality, dont invoke sip */
 	if (!td_ctl)
 		return;
 
 	/* Halt on next thread dispatch */
-	if (!(td_ctl & TD_CTL_FORCE_EXTERNAL_HALT))
+	while (!(td_ctl & TD_CTL_FORCE_EXTERNAL_HALT)) {
 		intel_gt_mcr_multicast_write(gt, TD_CTL,
 					     td_ctl | TD_CTL_FORCE_EXTERNAL_HALT);
+		/*
+		 * The sleep is needed because some interrupts are ignored
+		 * by the HW, hence we allow the HW some time to acknowledge
+		 * that.
+		 */
+		udelay(200);
 
-	/*
-	 * The sleep is needed because some interrupts are ignored
-	 * by the HW, hence we allow the HW some time to acknowledge
-	 * that.
-	 */
-	udelay(200);
+		td_ctl = intel_gt_mcr_read_any(gt, TD_CTL);
+	}
 
 	/* Halt regardless of thread dependencies */
-	if (!(td_ctl & TD_CTL_FORCE_EXCEPTION))
+	while (!(td_ctl & TD_CTL_FORCE_EXCEPTION)) {
 		intel_gt_mcr_multicast_write(gt, TD_CTL,
 					     td_ctl | TD_CTL_FORCE_EXCEPTION);
+		udelay(200);
 
-	wait_thread_attention(gt, timeout_ms);
+		td_ctl = intel_gt_mcr_read_any(gt, TD_CTL);
+	}
+
+	intel_eu_attentions_read(gt, &gt_dump->attentions.after,
+				 INTEL_GT_ATTENTION_TIMEOUT_MS);
 
 	intel_gt_invalidate_l3_mmio(gt);
-
-	intel_gt_eu_attention_bitmap(gt, gt_dump->attentions.att_after,
-				     bitmap_size);
 }
 
 /*
@@ -2317,16 +2305,24 @@ static const char *error_msg(struct i915_gpu_coredump *error)
 		}
 	}
 
-	len = scnprintf(error->error_msg, sizeof(error->error_msg),
-			"GPU HANG: ecode %d:%x:%08x",
-			GRAPHICS_VER(error->i915), hung_classes,
-			generate_ecode(first));
+	if (error->fault.addr) {
+		len = scnprintf(error->error_msg, sizeof(error->error_msg),
+				"page fault @ 0x%016llx",
+				error->fault.addr & ~BIT_ULL(0));
+	} else {
+		len = scnprintf(error->error_msg, sizeof(error->error_msg),
+				"GPU HANG: ecode %d:%x:%08x",
+				GRAPHICS_VER(error->i915), hung_classes,
+				generate_ecode(first));
+	}
 	if (first && first->context.pid) {
 		/* Just show the first executing process, more is confusing */
 		len += scnprintf(error->error_msg + len,
 				 sizeof(error->error_msg) - len,
-				 ", in %s [%d]",
-				 first->context.comm, first->context.pid);
+				 ", %s in %s [%d]",
+				 first->engine->name,
+				 first->context.comm,
+				 first->context.pid);
 	}
 
 	return error->error_msg;
@@ -2391,6 +2387,7 @@ intel_gt_coredump_alloc(struct intel_gt *gt, gfp_t gfp, u32 dump_flags)
 
 	gc->_gt = gt;
 	gc->awake = intel_gt_pm_is_awake(gt);
+	gt_record_info(gc);
 
 	gt_record_display_regs(gc);
 	gt_record_global_nonguc_regs(gc);
@@ -2479,7 +2476,6 @@ i915_gpu_coredump(struct intel_gt *gt, intel_engine_mask_t engine_mask, u32 dump
 			}
 		}
 
-		gt_record_info(error->gt);
 		gt_record_engines(error->gt, engine_mask, compress, dump_flags);
 
 
@@ -2493,6 +2489,33 @@ i915_gpu_coredump(struct intel_gt *gt, intel_engine_mask_t engine_mask, u32 dump
 	return error;
 }
 
+struct i915_gpu_coredump *
+i915_gpu_coredump_create_for_engine(struct intel_engine_cs *engine, gfp_t gfp)
+{
+	struct i915_gpu_coredump *error;
+
+	error = i915_gpu_coredump_alloc(engine->i915, gfp);
+	if (!error)
+		return NULL;
+
+	error->gt = intel_gt_coredump_alloc(engine->gt, gfp, CORE_DUMP_FLAG_NONE);
+	if (!error->gt)
+		goto err;
+
+	error->gt->engine = intel_engine_coredump_alloc(engine, gfp, CORE_DUMP_FLAG_NONE);
+	if (!error->gt->engine)
+		goto err_gt;
+
+	error->gt->engine->hung = true;
+	return error;
+
+err_gt:
+	kfree(error->gt);
+err:
+	kfree(error);
+	return NULL;
+}
+
 void i915_error_state_store(struct i915_gpu_coredump *error)
 {
 	struct drm_i915_private *i915;
@@ -2502,7 +2525,7 @@ void i915_error_state_store(struct i915_gpu_coredump *error)
 		return;
 
 	i915 = error->i915;
-	drm_info(&i915->drm, "%s\n", error_msg(error));
+	dev_info(i915->drm.dev, "%s\n", error_msg(error));
 
 	i915_gpu_coredump_get(error);
 
@@ -2978,4 +3001,45 @@ void intel_klog_error_capture(struct intel_gt *gt,
 	kvfree(buf);
 
 	drm_info(&i915->drm, "[Capture/%d.%d] Dumped %zd bytes\n", l_count, line++, pos_err);
+}
+
+void intel_eu_attentions_read(struct intel_gt *gt,
+			      struct intel_eu_attentions *a,
+			      const unsigned int settle_time_ms)
+{
+	unsigned int prev = 0;
+	ktime_t end, now;
+
+	now = ktime_get_raw();
+	end = ktime_add_ms(now, settle_time_ms);
+
+	a->ts = 0;
+	a->size = min_t(int,
+			intel_gt_eu_attention_bitmap_size(gt),
+			sizeof(a->att));
+
+	do {
+		unsigned int attn;
+
+		intel_gt_eu_attention_bitmap(gt, a->att, a->size);
+		attn = intel_eu_attentions_count(a);
+
+		now = ktime_get_raw();
+
+		if (a->ts == 0)
+			a->ts = now;
+		else if (attn && attn != prev)
+			a->ts = now;
+
+		prev = attn;
+
+		if (settle_time_ms)
+			udelay(5);
+
+		/*
+		 * XXX We are gathering data for production SIP to find
+		 * the upper limit of settle time. For now, we wait full
+		 * timeout value regardless.
+		 */
+	} while (ktime_before(now, end));
 }
