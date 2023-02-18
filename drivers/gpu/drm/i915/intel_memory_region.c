@@ -8,6 +8,7 @@
 #include <uapi/drm/i915_drm.h>
 
 #include "gt/intel_gt_requests.h"
+#include "gem/i915_gem_object.h"
 
 #include "i915_buddy.h"
 #include "intel_memory_region.h"
@@ -272,6 +273,18 @@ static int __i915_gem_object_lock_to_evict(struct drm_i915_gem_object *obj,
 	return err;
 }
 
+static bool i915_gem_object_allows_eviction(struct drm_i915_gem_object *obj)
+{
+	/* Only evict user lmem only objects if overcommit is enabled */
+	if (!(obj->flags & I915_BO_ALLOC_USER))
+		return true;
+
+	if (obj->memory_mask & REGION_SMEM)
+		return true;
+
+	return i915_allows_overcommit(to_i915(obj->base.dev));
+}
+
 static int intel_memory_region_evict(struct intel_memory_region *mem,
 				     struct i915_gem_ww_ctx *ww,
 				     resource_size_t target)
@@ -358,7 +371,8 @@ next:
 			goto bookmark;
 		}
 
-		if (i915_gem_object_is_framebuffer(obj))
+		if (!i915_gem_object_allows_eviction(obj) ||
+		    i915_gem_object_is_framebuffer(obj))
 			goto put;
 
 		/* Flush activity prior to grabbing locks */

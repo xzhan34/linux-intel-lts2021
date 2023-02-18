@@ -377,6 +377,7 @@ struct prelim_drm_i915_query_item {
 #define PRELIM_DRM_I915_QUERY_CS_CYCLES			(PRELIM_DRM_I915_QUERY | 9)
 #define PRELIM_DRM_I915_QUERY_ENGINE_INFO		(PRELIM_DRM_I915_QUERY | 13)
 #define PRELIM_DRM_I915_QUERY_L3BANK_COUNT		(PRELIM_DRM_I915_QUERY | 14)
+#define PRELIM_DRM_I915_QUERY_LMEM_MEMORY_REGIONS	(PRELIM_DRM_I915_QUERY | 15)
 };
 
 /*
@@ -874,6 +875,43 @@ struct prelim_drm_i915_query_memory_regions {
 
 	/* Info about each supported region */
 	struct prelim_drm_i915_memory_region_info regions[];
+};
+
+/**
+ * struct prelim_drm_i915_lmem_memory_region_info
+ *
+ * Expose the available lmem region size in bytes as per the limit's
+ * set in prelim_sharedmem_alloc_limit, prelim_lmem_alloc_limit
+ */
+struct prelim_drm_i915_lmem_memory_region_info {
+	/** class:instance pair encoding */
+	struct prelim_drm_i915_gem_memory_class_instance region;
+
+	/** MBZ */
+	__u32 rsvd0;
+
+	/** Estimate of memory remaining  */
+	__u64 unallocated_usr_lmem_size;
+
+	/** Estimate of memory remaining */
+	__u64 unallocated_usr_shared_size;
+};
+
+/**
+ * struct prelim_drm_i915_query_lmem_memory_regions
+ *
+ * Region info query enumerates all lmem regions known to the driver by filling
+ * in an array of struct prelim_drm_i915_lmem_memory_region_info structures.
+ */
+struct prelim_drm_i915_query_lmem_memory_regions {
+	/** Number of supported regions */
+	__u32 num_lmem_regions;
+
+	/** MBZ */
+	__u32 rsvd[3];
+
+	/* Info about each supported region */
+	struct prelim_drm_i915_lmem_memory_region_info regions[];
 };
 
 /**

@@ -362,6 +362,41 @@ static int i915_gem_object_info_show(struct seq_file *m, void *data)
 	return 0;
 }
 
+static int
+i915_get_mem_region_acct_limit(struct seq_file *m, void *data, u32 index)
+{
+	struct drm_i915_private *i915 = m->private;
+	struct intel_memory_region *mr;
+	int id;
+
+	seq_printf(m, "usr_acct_limit:%u\n", i915->mm.user_acct_limit[index]);
+
+	for_each_memory_region(mr, i915, id) {
+		u64 mem_available;
+
+		if (mr->type != INTEL_MEMORY_LOCAL)
+			continue;
+
+		mem_available = mr->acct_limit[index];
+		seq_printf(m, "%s: available:%llu bytes\n", mr->name,
+			   mem_available);
+	}
+
+	return 0;
+}
+
+static int lmem_alloc_limit_info_show(struct seq_file *m, void *data)
+{
+	return i915_get_mem_region_acct_limit(m,  data,
+					      INTEL_MEMORY_OVERCOMMIT_LMEM);
+}
+
+static int sharedmem_alloc_limit_info_show(struct seq_file *m, void *data)
+{
+	return i915_get_mem_region_acct_limit(m,  data,
+					      INTEL_MEMORY_OVERCOMMIT_SHARED);
+}
+
 #if IS_ENABLED(CONFIG_DRM_I915_CAPTURE_ERROR)
 static ssize_t gpu_state_read(struct file *file, char __user *ubuf,
 			      size_t count, loff_t *pos)
@@ -1198,6 +1233,8 @@ DEFINE_I915_SHOW_ATTRIBUTE(i915_sseu_status);
 DEFINE_I915_SHOW_ATTRIBUTE(i915_rps_boost_info);
 DEFINE_I915_SHOW_ATTRIBUTE(workarounds);
 DEFINE_I915_SHOW_ATTRIBUTE(clear_lmem);
+DEFINE_I915_SHOW_ATTRIBUTE(lmem_alloc_limit_info);
+DEFINE_I915_SHOW_ATTRIBUTE(sharedmem_alloc_limit_info);
 
 static struct i915_debugfs_file i915_debugfs_list[] = {
 	{"i915_capabilities", &i915_capabilities_fops, NULL},
@@ -1210,6 +1247,8 @@ static struct i915_debugfs_file i915_debugfs_list[] = {
 	{"i915_rps_boost_info", &i915_rps_boost_info_fops, NULL},
 	{"i915_workarounds", &workarounds_fops, NULL},
 	{"i915_clear_lmem", &clear_lmem_fops, NULL},
+	{"lmem_alloc_limit_info", &lmem_alloc_limit_info_fops, NULL},
+	{"sharedmem_alloc_limit_info", &sharedmem_alloc_limit_info_fops, NULL},
 };
 
 static struct i915_debugfs_file i915_debugfs_files[] = {

@@ -591,6 +591,7 @@ void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 	GEM_BUG_ON(obj->swapto);
 
 	i915_drm_client_fini_bo(obj);
+	i915_gem_object_unaccount(obj);
 
 	__i915_gem_object_free_mmaps(obj);
 	__i915_gem_object_free_vma(obj);
