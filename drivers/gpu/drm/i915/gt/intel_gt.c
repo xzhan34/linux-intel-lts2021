@@ -1013,6 +1013,23 @@ get_reg_and_bit(const struct intel_engine_cs *engine, const bool gen8,
 	return rb;
 }
 
+static struct reg_and_bit
+get_mcr_reg_and_bit(const struct intel_engine_cs *engine,
+		    const i915_mcr_reg_t *regs, const unsigned int num)
+{
+	const unsigned int class = engine->class;
+	struct reg_and_bit rb = {};
+
+	if (drm_WARN_ON_ONCE(&engine->i915->drm,
+			     class >= num || !regs[class].reg))
+		return rb;
+
+	rb.mcr_reg = regs[class];
+	rb.bit = BIT(engine->instance);
+
+	return rb;
+}
+
 /*
  * HW architecture suggest typical invalidation time at 40us,
  * with pessimistic cases up to 100us and a recommendation to
@@ -1109,15 +1126,16 @@ void intel_gt_invalidate_tlbs(struct intel_gt *gt)
 			continue;
 
 		if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50)) {
-			u32 val = BIT(engine->instance);
+			rb = get_mcr_reg_and_bit(engine, xehp_regs, num);
+			if (!i915_mmio_reg_offset(rb.reg))
+				continue;
 
 			if (engine->class == VIDEO_DECODE_CLASS ||
 			    engine->class == VIDEO_ENHANCEMENT_CLASS ||
 			    engine->class == COMPUTE_CLASS)
-				val = _MASKED_BIT_ENABLE(val);
-			intel_gt_mcr_multicast_write_fw(gt,
-							xehp_regs[engine->class],
-							val);
+				rb.bit = _MASKED_BIT_ENABLE(rb.bit);
+
+			intel_gt_mcr_multicast_write_fw(gt, rb.mcr_reg, rb.bit);
 		} else {
 			rb = get_reg_and_bit(engine, regs == gen8_regs, regs, num);
 			if (!i915_mmio_reg_offset(rb.reg))
@@ -1148,12 +1166,11 @@ void intel_gt_invalidate_tlbs(struct intel_gt *gt)
 	for_each_engine_masked(engine, gt, awake, tmp) {
 		struct reg_and_bit rb;
 
-		if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50)) {
-			rb.mcr_reg = xehp_regs[engine->class];
-			rb.bit = BIT(engine->instance);
-		} else {
+		if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
+			rb = get_mcr_reg_and_bit(engine, xehp_regs, num);
+		else
 			rb = get_reg_and_bit(engine, regs == gen8_regs, regs, num);
-		}
+		GEM_BUG_ON(!i915_mmio_reg_offset(rb.reg));
 
 		if (wait_for_invalidate(gt, rb))
 			drm_err_ratelimited(&gt->i915->drm,
