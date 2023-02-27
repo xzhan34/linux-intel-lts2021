@@ -1132,7 +1132,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 				break;
 		}
 	} else if (i915_gem_object_is_lmem(vma->obj)) {
-		struct intel_memory_region *mem = vma->obj->mm.region;
+		struct intel_memory_region *mem = vma->obj->mm.region.mem;
 		dma_addr_t dma;
 
 		for_each_sgt_daddr(dma, iter, vma->pages) {

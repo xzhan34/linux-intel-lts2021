@@ -14,7 +14,8 @@ void
 i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
 				struct sg_table *pages)
 {
-	__intel_memory_region_put_pages_buddy(obj->mm.region, &obj->mm.blocks);
+	__intel_memory_region_put_pages_buddy(obj->mm.region.mem,
+					      &obj->mm.blocks);
 
 	obj->mm.dirty = false;
 	sg_free_table(pages);
@@ -26,7 +27,7 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 				unsigned int *page_sizes)
 {
 	const u64 max_segment = i915_sg_segment_size();
-	struct intel_memory_region *mem = obj->mm.region;
+	struct intel_memory_region *mem = obj->mm.region.mem;
 	struct list_head *blocks = &obj->mm.blocks;
 	resource_size_t size = obj->base.size;
 	resource_size_t prev_end;
@@ -117,9 +118,10 @@ err_free_sg:
 void i915_gem_object_init_memory_region(struct drm_i915_gem_object *obj,
 					struct intel_memory_region *mem)
 {
+	GEM_BUG_ON(i915_gem_object_has_pages(obj));
+
+	obj->mm.region.mem = intel_memory_region_get(mem);
 	INIT_LIST_HEAD(&obj->mm.blocks);
-	WARN_ON(i915_gem_object_has_pages(obj));
-	obj->mm.region = intel_memory_region_get(mem);
 
 	if (obj->base.size <= mem->min_page_size)
 		obj->flags |= I915_BO_ALLOC_CONTIGUOUS;
@@ -127,7 +129,7 @@ void i915_gem_object_init_memory_region(struct drm_i915_gem_object *obj,
 
 void i915_gem_object_release_memory_region(struct drm_i915_gem_object *obj)
 {
-	intel_memory_region_put(obj->mm.region);
+	intel_memory_region_put(obj->mm.region.mem);
 }
 
 struct drm_i915_gem_object *

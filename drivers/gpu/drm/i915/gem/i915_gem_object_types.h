@@ -488,6 +488,20 @@ struct drm_i915_gem_object {
 		 */
 		atomic_t shrink_pin;
 
+		struct intel_memory_region_link {
+			/**
+			 * Memory region for this object.
+			 */
+			struct intel_memory_region *mem;
+
+			/**
+			 * Element within memory_region->objects or region->purgeable
+			 * if the object is marked as DONTNEED. Access is protected by
+			 * region->obj_lock.
+			 */
+			struct list_head link;
+		} region;
+
 		/**
 		 * Priority list of potential placements for this object.
 		 */
@@ -495,22 +509,12 @@ struct drm_i915_gem_object {
 		int n_placements;
 
 		/**
-		 * Memory region for this object.
-		 */
-		struct intel_memory_region *region;
-
-		/**
 		 * Memory manager resource allocated for this object. Only
 		 * needed for the mock region.
 		 */
 		struct ttm_resource *res;
 		struct list_head blocks;
-		/**
-		 * Element within memory_region->objects or region->purgeable
-		 * if the object is marked as DONTNEED. Access is protected by
-		 * region->obj_lock.
-		 */
-		struct list_head region_link;
+
 		struct list_head tmp_link;
 
 		struct sg_table *pages;

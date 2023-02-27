@@ -394,10 +394,11 @@ intel_memory_region_create(struct intel_gt *gt,
 
 	INIT_WORK(&mem->pd_put.work, __intel_memory_region_put_block_work);
 
-	mutex_init(&mem->objects.lock);
+	spin_lock_init(&mem->objects.lock);
 	INIT_LIST_HEAD(&mem->objects.list);
-	INIT_LIST_HEAD(&mem->reserved);
 	INIT_LIST_HEAD(&mem->objects.purgeable);
+
+	INIT_LIST_HEAD(&mem->reserved);
 
 	mutex_init(&mem->mm_lock);
 
@@ -444,7 +445,6 @@ static void __intel_memory_region_destroy(struct kref *kref)
 		mem->ops->release(mem);
 
 	mutex_destroy(&mem->mm_lock);
-	mutex_destroy(&mem->objects.lock);
 	kfree(mem);
 }
 

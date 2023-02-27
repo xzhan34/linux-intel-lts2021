@@ -98,7 +98,7 @@ struct intel_memory_region {
 	struct list_head reserved;
 
 	struct {
-		struct mutex lock; /* Protects access to objects */
+		spinlock_t lock; /* Protects access to objects */
 		struct list_head list;
 		struct list_head purgeable;
 	} objects;

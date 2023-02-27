@@ -125,7 +125,7 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	INIT_LIST_HEAD(&obj->vma.list);
 
 	INIT_LIST_HEAD(&obj->mm.link);
-	INIT_LIST_HEAD(&obj->mm.region_link);
+	INIT_LIST_HEAD(&obj->mm.region.link);
 
 	INIT_LIST_HEAD(&obj->lut_list);
 	spin_lock_init(&obj->lut_lock);
@@ -138,7 +138,6 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	obj->ops = ops;
 	obj->flags = flags;
 
-	obj->mm.region = NULL;
 	obj->mm.madv = I915_MADV_WILLNEED;
 	INIT_RADIX_TREE(&obj->mm.get_page.radix, GFP_KERNEL | __GFP_NOWARN);
 	mutex_init(&obj->mm.get_page.lock);
@@ -344,7 +343,7 @@ void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 	atomic_set(&obj->mm.pages_pin_count, 0);
 	__i915_gem_object_put_pages(obj);
 	GEM_BUG_ON(i915_gem_object_has_pages(obj));
-	GEM_BUG_ON(!list_empty(&obj->mm.region_link));
+	GEM_BUG_ON(!list_empty(&obj->mm.region.link));
 	GEM_BUG_ON(!list_empty(&obj->mm.link));
 	bitmap_free(obj->bit_17);
 
@@ -489,7 +488,7 @@ bool i915_gem_object_can_migrate(struct drm_i915_gem_object *obj,
 	if (!mr)
 		return false;
 
-	if (obj->mm.region == mr)
+	if (obj->mm.region.mem == mr)
 		return true;
 
 	if (num_allowed <= 1)
@@ -518,8 +517,8 @@ static void lists_swap(struct list_head *a, struct list_head *b)
 static void
 swap_blocks(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor)
 {
-	struct intel_memory_region *a = obj->mm.region;
-	struct intel_memory_region *b = donor->mm.region;
+	struct intel_memory_region *a = obj->mm.region.mem;
+	struct intel_memory_region *b = donor->mm.region.mem;
 
 	GEM_BUG_ON(a == b);
 	if (a->id > b->id)
@@ -537,21 +536,21 @@ swap_blocks(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor)
 static void
 swap_region(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor)
 {
-	struct intel_memory_region *a = obj->mm.region;
-	struct intel_memory_region *b = donor->mm.region;
+	struct intel_memory_region *a = obj->mm.region.mem;
+	struct intel_memory_region *b = donor->mm.region.mem;
 
 	GEM_BUG_ON(a == b);
 	if (a->id > b->id)
 		swap(a, b);
 
-	mutex_lock(&a->objects.lock);
-	mutex_lock_nested(&b->objects.lock, SINGLE_DEPTH_NESTING);
+	spin_lock(&a->objects.lock);
+	spin_lock_nested(&b->objects.lock, SINGLE_DEPTH_NESTING);
 
-	lists_swap(&obj->mm.region_link, &donor->mm.region_link);
-	swap(obj->mm.region, donor->mm.region);
+	lists_swap(&obj->mm.region.link, &donor->mm.region.link);
+	swap(obj->mm.region.mem, donor->mm.region.mem);
 
-	mutex_unlock(&b->objects.lock);
-	mutex_unlock(&a->objects.lock);
+	spin_unlock(&b->objects.lock);
+	spin_unlock(&a->objects.lock);
 }
 
 static void
@@ -588,7 +587,7 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 	assert_object_held(obj);
 
 	GEM_BUG_ON(id >= INTEL_REGION_UNKNOWN);
-	if (obj->mm.region->id == id)
+	if (obj->mm.region.mem->id == id)
 		return 0;
 
 	if (GEM_WARN_ON(obj->mm.madv != I915_MADV_WILLNEED))
@@ -602,7 +601,7 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 
 	donor->base.resv = obj->base.resv;
 	assert_object_held(donor);
-	GEM_BUG_ON(donor->mm.region->id != id);
+	GEM_BUG_ON(donor->mm.region.mem->id != id);
 
 	/* Prevent concurrent access to the backing store by the user */
 	i915_gem_object_release_mmap(obj);
@@ -643,7 +642,7 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 	swap_shrinker(obj, donor);
 	swap_pages(obj, donor);
 
-	GEM_BUG_ON(obj->mm.region->id != id);
+	GEM_BUG_ON(obj->mm.region.mem->id != id);
 
 out:
 	/* Need to set I915_MADV_DONTNEED so that shrinker can free it */
@@ -701,8 +700,8 @@ i915_gem_object_read_from_page_iomap(struct drm_i915_gem_object *obj, u64 offset
 	void __iomem *src_map;
 	void __iomem *src_ptr;
 
-	src_map = io_mapping_map_wc(&obj->mm.region->iomap,
-				    dma - obj->mm.region->region.start,
+	src_map = io_mapping_map_wc(&obj->mm.region.mem->iomap,
+				    dma - obj->mm.region.mem->region.start,
 				    PAGE_SIZE);
 
 	src_ptr = src_map + offset_in_page(offset);
@@ -789,7 +788,7 @@ bool i915_gem_object_evictable(struct drm_i915_gem_object *obj)
  */
 bool i915_gem_object_migratable(struct drm_i915_gem_object *obj)
 {
-	struct intel_memory_region *mr = READ_ONCE(obj->mm.region);
+	struct intel_memory_region *mr = READ_ONCE(obj->mm.region.mem);
 
 	if (!mr)
 		return false;

@@ -1165,12 +1165,14 @@ static int perf_memcpy(void *arg)
 
 static void igt_mark_evictable(struct drm_i915_gem_object *obj)
 {
+	struct intel_memory_region *mem = obj->mm.region.mem;
+
 	i915_gem_object_unpin_pages(obj);
 	obj->mm.madv = I915_MADV_DONTNEED;
 
-	mutex_lock(&obj->mm.region->objects.lock);
-	list_move(&obj->mm.region_link, &obj->mm.region->objects.purgeable);
-	mutex_unlock(&obj->mm.region->objects.lock);
+	spin_lock(&mem->objects.lock);
+	list_move(&obj->mm.region.link, &mem->objects.purgeable);
+	spin_unlock(&mem->objects.lock);
 }
 
 static int igt_mock_shrink(void *arg)

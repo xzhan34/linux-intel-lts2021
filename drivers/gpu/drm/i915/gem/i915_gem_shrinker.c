@@ -297,12 +297,12 @@ int i915_gem_shrink_memory_region(struct intel_memory_region *mem,
 
 	purged = 0;
 
-	mutex_lock(&mem->objects.lock);
+	spin_lock(&mem->objects.lock);
 
 	while ((obj = list_first_entry_or_null(&mem->objects.purgeable,
 					       typeof(*obj),
-					       mm.region_link))) {
-		list_move_tail(&obj->mm.region_link, &purgeable);
+					       mm.region.link))) {
+		list_move_tail(&obj->mm.region.link, &purgeable);
 
 		if (!i915_gem_object_has_pages(obj))
 			continue;
@@ -313,7 +313,7 @@ int i915_gem_shrink_memory_region(struct intel_memory_region *mem,
 		if (!kref_get_unless_zero(&obj->base.refcount))
 			continue;
 
-		mutex_unlock(&mem->objects.lock);
+		spin_unlock(&mem->objects.lock);
 
 		if (!i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE)) {
 			if (i915_gem_object_trylock(obj)) {
@@ -329,7 +329,7 @@ int i915_gem_shrink_memory_region(struct intel_memory_region *mem,
 
 		i915_gem_object_put(obj);
 
-		mutex_lock(&mem->objects.lock);
+		spin_lock(&mem->objects.lock);
 
 		if (purged >= target) {
 			err = 0;
@@ -338,7 +338,7 @@ int i915_gem_shrink_memory_region(struct intel_memory_region *mem,
 	}
 
 	list_splice_tail(&purgeable, &mem->objects.purgeable);
-	mutex_unlock(&mem->objects.lock);
+	spin_unlock(&mem->objects.lock);
 	return err;
 }
 

@@ -97,7 +97,7 @@ pte_tlbinv(struct intel_context *ce,
 					 4, 4);
 
 	pr_info("%s(%s): Sampling %llx, with alignment %llx, using PTE size %x (phys %x, sg %x), invalidate:%llx+%llx\n",
-		ce->engine->name, va->obj->mm.region->name ?: "smem",
+		ce->engine->name, va->obj->mm.region.mem->name ?: "smem",
 		addr, align, va->page_sizes.gtt, va->page_sizes.phys, va->page_sizes.sg,
 		addr & -length, length);
 

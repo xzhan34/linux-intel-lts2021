@@ -113,12 +113,13 @@ void __iomem *
 i915_gem_object_lmem_io_map_page_atomic(struct drm_i915_gem_object *obj,
 					unsigned long n)
 {
+	struct intel_memory_region *mem = obj->mm.region.mem;
 	resource_size_t offset;
 
 	offset = i915_gem_object_get_dma_address(obj, n);
-	offset -= obj->mm.region->region.start;
+	offset -= mem->region.start;
 
-	return io_mapping_map_atomic_wc(&obj->mm.region->iomap, offset);
+	return io_mapping_map_atomic_wc(&mem->iomap, offset);
 }
 
 void __iomem *
@@ -126,14 +127,15 @@ i915_gem_object_lmem_io_map(struct drm_i915_gem_object *obj,
 			    unsigned long n,
 			    unsigned long size)
 {
+	struct intel_memory_region *mem = obj->mm.region.mem;
 	resource_size_t offset;
 
 	GEM_BUG_ON(!i915_gem_object_is_contiguous(obj));
 
 	offset = i915_gem_object_get_dma_address(obj, n);
-	offset -= obj->mm.region->region.start;
+	offset -= mem->region.start;
 
-	return io_mapping_map_wc(&obj->mm.region->iomap, offset, size);
+	return io_mapping_map_wc(&mem->iomap, offset, size);
 }
 
 /**
@@ -150,7 +152,7 @@ i915_gem_object_lmem_io_map(struct drm_i915_gem_object *obj,
  */
 bool i915_gem_object_validates_to_lmem(struct drm_i915_gem_object *obj)
 {
-	struct intel_memory_region *mr = READ_ONCE(obj->mm.region);
+	struct intel_memory_region *mr = READ_ONCE(obj->mm.region.mem);
 
 	return !i915_gem_object_migratable(obj) &&
 		mr && (mr->type == INTEL_MEMORY_LOCAL ||
@@ -173,7 +175,7 @@ bool i915_gem_object_validates_to_lmem(struct drm_i915_gem_object *obj)
  */
 bool i915_gem_object_is_lmem(const struct drm_i915_gem_object *obj)
 {
-	struct intel_memory_region *mr = READ_ONCE(obj->mm.region);
+	struct intel_memory_region *mr = READ_ONCE(obj->mm.region.mem);
 #if 0
 #ifdef CONFIG_LOCKDEP
 	if (i915_gem_object_migratable(obj) &&
@@ -481,7 +483,7 @@ static int lmem_clear(struct drm_i915_gem_object *obj,
 		      unsigned int page_sizes,
 		      struct i915_request **out)
 {
-	struct intel_memory_region *mem = obj->mm.region;
+	struct intel_memory_region *mem = obj->mm.region.mem;
 	unsigned int flags = obj->flags;
 	struct intel_gt *gt = mem->gt;
 	struct intel_context *ce;
@@ -749,6 +751,7 @@ void __iomem *
 i915_gem_object_lmem_io_map_page(struct drm_i915_gem_object *obj,
 				 unsigned long n)
 {
+	struct intel_memory_region *mem = obj->mm.region.mem;
 	resource_size_t offset;
 	int err;
 
@@ -757,9 +760,9 @@ i915_gem_object_lmem_io_map_page(struct drm_i915_gem_object *obj,
 		return IO_ERR_PTR(err);
 
 	offset = i915_gem_object_get_dma_address(obj, n);
-	offset -= obj->mm.region->region.start;
+	offset -= mem->region.start;
 
-	return io_mapping_map_wc(&obj->mm.region->iomap, offset, PAGE_SIZE);
+	return io_mapping_map_wc(&mem->iomap, offset, PAGE_SIZE);
 }
 
 struct drm_i915_gem_object *

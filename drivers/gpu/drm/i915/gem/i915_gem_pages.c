@@ -91,18 +91,18 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 		spin_unlock_irqrestore(&i915->mm.obj_lock, flags);
 	}
 
-	mem = obj->mm.region;
+	mem = obj->mm.region.mem;
 	if (mem) {
 		struct list_head *list;
 
-		mutex_lock(&mem->objects.lock);
-		GEM_WARN_ON(!list_empty(&obj->mm.region_link));
 		if (obj->mm.madv != I915_MADV_WILLNEED)
 			list = &mem->objects.purgeable;
 		else
 			list = &mem->objects.list;
-		list_move_tail(&obj->mm.region_link, list);
-		mutex_unlock(&mem->objects.lock);
+
+		spin_lock(&mem->objects.lock);
+		list_move_tail(&obj->mm.region.link, list);
+		spin_unlock(&mem->objects.lock);
 	}
 }
 
@@ -236,7 +236,7 @@ static bool is_iomap_addr(struct drm_i915_gem_object *obj, void *ptr)
 {
 	struct intel_memory_region *mem;
 
-	mem = obj->mm.region;
+	mem = obj->mm.region.mem;
 	if (!mem)
 		return false;
 
@@ -280,12 +280,12 @@ __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj)
 
 	i915_gem_object_make_unshrinkable(obj);
 
-	if (!list_empty(&obj->mm.region_link)) {
-		struct intel_memory_region *mem = obj->mm.region;
+	if (!list_empty(&obj->mm.region.link)) {
+		struct intel_memory_region *mem = obj->mm.region.mem;
 
-		mutex_lock(&mem->objects.lock);
-		list_del_init(&obj->mm.region_link);
-		mutex_unlock(&mem->objects.lock);
+		spin_lock(&mem->objects.lock);
+		list_del_init(&obj->mm.region.link);
+		spin_unlock(&mem->objects.lock);
 	}
 
 	if (obj->mm.mapping) {
@@ -395,8 +395,8 @@ static void *i915_gem_object_map_page(struct drm_i915_gem_object *obj,
 static void *i915_gem_object_map_pfn(struct drm_i915_gem_object *obj,
 				     enum i915_map_type type)
 {
-	resource_size_t iomap = obj->mm.region->iomap.base -
-		obj->mm.region->region.start;
+	struct intel_memory_region *mem = obj->mm.region.mem;
+	resource_size_t iomap = mem->iomap.base - mem->region.start;
 	unsigned long n_pfn = obj->base.size >> PAGE_SHIFT;
 	unsigned long stack[32], *pfns = stack, i;
 	struct sgt_iter iter;

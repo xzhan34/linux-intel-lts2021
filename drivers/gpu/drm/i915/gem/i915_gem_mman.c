@@ -269,8 +269,8 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 
 	iomap = -1;
 	if (!i915_gem_object_has_struct_page(obj)) {
-		iomap = obj->mm.region->iomap.base;
-		iomap -= obj->mm.region->region.start;
+		iomap = obj->mm.region.mem->iomap.base;
+		iomap -= obj->mm.region.mem->region.start;
 	}
 
 	/* PTEs are revoked in obj->ops->put_pages() */

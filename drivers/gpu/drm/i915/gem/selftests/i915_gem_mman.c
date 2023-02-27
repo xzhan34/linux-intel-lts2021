@@ -803,7 +803,7 @@ static int gtt_check(struct drm_i915_gem_object *obj)
 
 	if (memchr_inv((void __force *)map, POISON_FREE, obj->base.size)) {
 		pr_err("%s: Write via mmap did not land in backing store (GTT)\n",
-		       obj->mm.region->name);
+		       obj->mm.region.mem->name);
 		err = -EINVAL;
 	}
 	i915_vma_unpin_iomap(vma);
@@ -839,7 +839,7 @@ static int wc_check(struct drm_i915_gem_object *obj)
 
 	if (memchr_inv(vaddr, POISON_FREE, obj->base.size)) {
 		pr_err("%s: Write via mmap did not land in backing store (WC)\n",
-		       obj->mm.region->name);
+		       obj->mm.region.mem->name);
 		err = -EINVAL;
 	}
 	i915_gem_object_unpin_map(obj);
@@ -908,14 +908,14 @@ static int __igt_mmap(struct drm_i915_private *i915,
 	if (IS_ERR_VALUE(addr))
 		return addr;
 
-	pr_debug("igt_mmap(%s, %d) @ %lx\n", obj->mm.region->name, type, addr);
+	pr_debug("igt_mmap(%s, %d) @ %lx\n", obj->mm.region.mem->name, type, addr);
 
 	mmap_read_lock(current->mm);
 	area = vma_lookup(current->mm, addr);
 	mmap_read_unlock(current->mm);
 	if (!area) {
 		pr_err("%s: Did not create a vm_area_struct for the mmap\n",
-		       obj->mm.region->name);
+		       obj->mm.region.mem->name);
 		err = -EINVAL;
 		goto out_unmap;
 	}
@@ -926,14 +926,14 @@ static int __igt_mmap(struct drm_i915_private *i915,
 
 		if (get_user(x, ux)) {
 			pr_err("%s: Unable to read from mmap, offset:%zd\n",
-			       obj->mm.region->name, i * sizeof(x));
+			       obj->mm.region.mem->name, i * sizeof(x));
 			err = -EFAULT;
 			goto out_unmap;
 		}
 
 		if (x != expand32(POISON_INUSE)) {
 			pr_err("%s: Read incorrect value from mmap, offset:%zd, found:%x, expected:%x\n",
-			       obj->mm.region->name,
+			       obj->mm.region.mem->name,
 			       i * sizeof(x), x, expand32(POISON_INUSE));
 			err = -EINVAL;
 			goto out_unmap;
@@ -942,7 +942,7 @@ static int __igt_mmap(struct drm_i915_private *i915,
 		x = expand32(POISON_FREE);
 		if (put_user(x, ux)) {
 			pr_err("%s: Unable to write to mmap, offset:%zd\n",
-			       obj->mm.region->name, i * sizeof(x));
+			       obj->mm.region.mem->name, i * sizeof(x));
 			err = -EFAULT;
 			goto out_unmap;
 		}
@@ -1045,7 +1045,7 @@ static int __igt_mmap_access(struct drm_i915_private *i915,
 	err = __put_user(A, ptr);
 	if (err) {
 		pr_err("%s(%s): failed to write into user mmap\n",
-		       obj->mm.region->name, repr_mmap_type(type));
+		       obj->mm.region.mem->name, repr_mmap_type(type));
 		goto out_unmap;
 	}
 
@@ -1054,14 +1054,14 @@ static int __igt_mmap_access(struct drm_i915_private *i915,
 	err = access_process_vm(current, addr, &x, sizeof(x), 0);
 	if (err != sizeof(x)) {
 		pr_err("%s(%s): access_process_vm() read failed\n",
-		       obj->mm.region->name, repr_mmap_type(type));
+		       obj->mm.region.mem->name, repr_mmap_type(type));
 		goto out_unmap;
 	}
 
 	err = access_process_vm(current, addr, &B, sizeof(B), FOLL_WRITE);
 	if (err != sizeof(B)) {
 		pr_err("%s(%s): access_process_vm() write failed\n",
-		       obj->mm.region->name, repr_mmap_type(type));
+		       obj->mm.region.mem->name, repr_mmap_type(type));
 		goto out_unmap;
 	}
 
@@ -1070,13 +1070,13 @@ static int __igt_mmap_access(struct drm_i915_private *i915,
 	err = __get_user(y, ptr);
 	if (err) {
 		pr_err("%s(%s): failed to read from user mmap\n",
-		       obj->mm.region->name, repr_mmap_type(type));
+		       obj->mm.region.mem->name, repr_mmap_type(type));
 		goto out_unmap;
 	}
 
 	if (x != A || y != B) {
 		pr_err("%s(%s): failed to read/write values, found (%lx, %lx)\n",
-		       obj->mm.region->name, repr_mmap_type(type),
+		       obj->mm.region.mem->name, repr_mmap_type(type),
 		       x, y);
 		err = -EINVAL;
 		goto out_unmap;
@@ -1159,7 +1159,7 @@ static int __igt_mmap_gpu(struct drm_i915_private *i915,
 	ux = u64_to_user_ptr((u64)addr);
 	bbe = MI_BATCH_BUFFER_END;
 	if (put_user(bbe, ux)) {
-		pr_err("%s: Unable to write to mmap\n", obj->mm.region->name);
+		pr_err("%s: Unable to write to mmap\n", obj->mm.region.mem->name);
 		err = -EFAULT;
 		goto out_unmap;
 	}
@@ -1205,7 +1205,7 @@ retry:
 				drm_info_printer(engine->i915->drm.dev);
 
 			pr_err("%s(%s, %s): Failed to execute batch\n",
-			       __func__, engine->name, obj->mm.region->name);
+			       __func__, engine->name, obj->mm.region.mem->name);
 			intel_engine_dump(engine, &p,
 					  "%s\n", engine->name);
 
@@ -1340,7 +1340,7 @@ static int __igt_mmap_revoke(struct drm_i915_private *i915,
 
 	err = check_present(addr, obj->base.size);
 	if (err) {
-		pr_err("%s: was not present\n", obj->mm.region->name);
+		pr_err("%s: was not present\n", obj->mm.region.mem->name);
 		goto out_unmap;
 	}
 
@@ -1369,7 +1369,7 @@ static int __igt_mmap_revoke(struct drm_i915_private *i915,
 	if (!obj->ops->mmap_ops) {
 		err = check_absent(addr, obj->base.size);
 		if (err) {
-			pr_err("%s: was not absent\n", obj->mm.region->name);
+			pr_err("%s: was not absent\n", obj->mm.region.mem->name);
 			goto out_unmap;
 		}
 	} else {
@@ -1377,7 +1377,7 @@ static int __igt_mmap_revoke(struct drm_i915_private *i915,
 
 		err = check_present(addr, obj->base.size);
 		if (err) {
-			pr_err("%s: was not present\n", obj->mm.region->name);
+			pr_err("%s: was not present\n", obj->mm.region.mem->name);
 			goto out_unmap;
 		}
 	}

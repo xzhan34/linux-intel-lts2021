@@ -1045,21 +1045,18 @@ i915_gem_madvise_ioctl(struct drm_device *dev, void *data,
 	    !i915_gem_object_has_pages(obj))
 		i915_gem_object_truncate(obj);
 
-	if (obj->mm.region && i915_gem_object_has_pages(obj)) {
-		mutex_lock(&obj->mm.region->objects.lock);
+	if (obj->mm.region.mem && i915_gem_object_has_pages(obj)) {
+		struct intel_memory_region *mem = obj->mm.region.mem;
+		struct list_head *list;
 
-		switch (obj->mm.madv) {
-		case I915_MADV_WILLNEED:
-			list_move(&obj->mm.region_link,
-				  &obj->mm.region->objects.list);
-			break;
-		default:
-			list_move(&obj->mm.region_link,
-				  &obj->mm.region->objects.purgeable);
-			break;
-		}
+		if (obj->mm.madv == I915_MADV_WILLNEED)
+			list = &mem->objects.list;
+		else
+			list = &mem->objects.purgeable;
 
-		mutex_unlock(&obj->mm.region->objects.lock);
+		spin_lock(&mem->objects.lock);
+		list_move_tail(&obj->mm.region.link, list);
+		spin_unlock(&mem->objects.lock);
 	}
 
 	args->retained = obj->mm.madv != __I915_MADV_PURGED;
