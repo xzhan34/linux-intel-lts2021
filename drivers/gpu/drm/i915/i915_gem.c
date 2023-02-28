@@ -1044,30 +1044,11 @@ new_vma:
 	return vma;
 }
 
-int
-i915_gem_madvise_ioctl(struct drm_device *dev, void *data,
-		       struct drm_file *file_priv)
+static bool
+i915_gem_object_madvise(struct drm_i915_gem_object *obj,
+		        struct drm_i915_gem_madvise *args)
 {
-	struct drm_i915_private *i915 = to_i915(dev);
-	struct drm_i915_gem_madvise *args = data;
-	struct drm_i915_gem_object *obj;
-	int err;
-
-	switch (args->madv) {
-	case I915_MADV_DONTNEED:
-	case I915_MADV_WILLNEED:
-	    break;
-	default:
-	    return -EINVAL;
-	}
-
-	obj = i915_gem_object_lookup(file_priv, args->handle);
-	if (!obj)
-		return -ENOENT;
-
-	err = i915_gem_object_lock_interruptible(obj, NULL);
-	if (err)
-		goto out;
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 
 	if (i915_gem_object_has_pages(obj) &&
 	    i915_gem_object_is_tiled(obj) &&
@@ -1126,10 +1107,53 @@ i915_gem_madvise_ioctl(struct drm_device *dev, void *data,
 		spin_unlock(&mem->objects.lock);
 	}
 
-	args->retained = obj->mm.madv != __I915_MADV_PURGED;
+	return obj->mm.madv != __I915_MADV_PURGED;
+}
 
-	i915_gem_object_unlock(obj);
-out:
+int
+i915_gem_madvise_ioctl(struct drm_device *dev, void *data,
+		       struct drm_file *file_priv)
+{
+	struct drm_i915_gem_madvise *args = data;
+	struct drm_i915_gem_object *obj;
+	struct i915_gem_ww_ctx ww;
+	int err = 0;
+
+	switch (args->madv) {
+	case I915_MADV_DONTNEED:
+	case I915_MADV_WILLNEED:
+	    break;
+	default:
+	    return -EINVAL;
+	}
+
+	obj = i915_gem_object_lookup(file_priv, args->handle);
+	if (!obj)
+		return -ENOENT;
+
+	for_i915_gem_ww(&ww, err, true) {
+		if (!i915_gem_object_has_segments(obj)) {
+			err = i915_gem_object_lock(obj, &ww);
+			if (err)
+				continue;
+			args->retained = i915_gem_object_madvise(obj, args);
+		} else {
+			struct drm_i915_gem_object *sobj;
+			int retained = 0;
+
+			list_for_each_entry(sobj, &obj->segments, segment_link) {
+				err = i915_gem_object_lock(sobj, &ww);
+				if (err)
+					break;
+				retained += i915_gem_object_madvise(sobj, args);
+			}
+			if (err)
+				continue;
+
+			args->retained = retained > 0;
+		}
+	}
+
 	i915_gem_object_put(obj);
 	return err;
 }
