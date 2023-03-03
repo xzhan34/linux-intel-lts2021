@@ -55,6 +55,8 @@ struct hkr_msg_buf;
 #define HKR_DMA_DESC_LOW_OFF	0x0C
 #define HKR_DMA_DESC_HIGH_OFF	0x10
 
+#define HKR_EEPROM_DATA_OFF (HKR_MEM_BAR_BASE + 0x19000)
+#define HKR_SENSOR_EEPROM_SIZE 0x5b
 /* End of Memory layout */
 
 /* Define INT status from EP to host */

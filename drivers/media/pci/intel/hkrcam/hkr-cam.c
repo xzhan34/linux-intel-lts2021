@@ -36,11 +36,11 @@
 #define HKR_VENDOR_ID 0x8086
 #define HKR_PRODUCT_ID 0xabcd
 
-#define HKR_DEFAULT_WIDTH 1280
-#define HKR_DEFAULT_HEIGHT 720
+#define HKR_DEFAULT_WIDTH 1280U
+#define HKR_DEFAULT_HEIGHT 720U
 
-#define HKR_MAX_WIDTH 1920
-#define HKR_MAX_HEIGHT 1080
+#define HKR_MAX_WIDTH 3840U
+#define HKR_MAX_HEIGHT 2160U
 #define HKR_DEFAULT_CODE MEDIA_BUS_FMT
 
 #ifndef VFL_TYPE_VIDEO
@@ -685,6 +685,7 @@ static irqreturn_t hkr_irq(int irq, void *hkr_ptr)
 	struct hkr_device *hkr_dev = vb2_get_drv_priv(&q->vbq);
 	struct device *dev = hkr_dev->dev;
 	struct vb2_buffer *vb;
+
 	if (bufs_queued < 0) {
 		dev_err(dev, " No buffer available\n");
 		goto irq_done;
@@ -704,6 +705,7 @@ static irqreturn_t hkr_irq(int irq, void *hkr_ptr)
 	if (q->bufs[deq_index]) {
 		vb = &q->bufs[deq_index]->vbb.vb2_buf;
 		vb->timestamp = ktime_get_ns();
+
 		local_irq_save(flags);
 		q->bufs[deq_index] = NULL;
 		deq_index = (deq_index + 1) % HKR_MAX_BUFFER_NUM;
@@ -1324,6 +1326,7 @@ static int hkr_ctl_open(struct inode *inode, struct file *file)
 
 enum {
 	HKR_PCIE_CTL_GET_DEV_INFO,
+	HKR_PCIE_CTL_GET_DEV_EEPROM,
 	HKR_PCIE_CTL_DEVICE_RST,
 	HKR_PCIE_CTL_GET_UC_CFG,
 	HKR_PCIE_CTL_SET_UC,
@@ -1374,6 +1377,19 @@ static inline unsigned long hkr_copy_device_info(struct hkr_device *hkr_dev,
 	return 0;
 }
 
+static inline unsigned long hkr_get_device_eeprom(struct hkr_device *hkr_dev,
+               uint8_t *arg)
+{
+	int bytes;
+	bytes = copy_to_user(arg, hkr_dev->base + HKR_EEPROM_DATA_OFF + HKR_SENSOR_EEPROM_SIZE,
+			HKR_SENSOR_EEPROM_SIZE * 8);
+
+	if (bytes)
+		return -EFAULT;
+
+	return 0;
+}
+
 static long hkr_ctl_ioctl(struct file *filp, unsigned int cmd,
                           unsigned long arg)
 {
@@ -1384,6 +1400,9 @@ static long hkr_ctl_ioctl(struct file *filp, unsigned int cmd,
 	switch (cmd) {
 	case HKR_PCIE_CTL_GET_DEV_INFO:
 		ret = hkr_copy_device_info(hkr_dev, arg);
+		break;
+	case HKR_PCIE_CTL_GET_DEV_EEPROM:
+		ret = hkr_get_device_eeprom(hkr_dev, arg);
 		break;
 	case HKR_PCIE_CTL_DEVICE_RST:
 		ret = hkr_ctrl_reset_device(hkr_dev);
