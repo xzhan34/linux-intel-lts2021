@@ -947,7 +947,7 @@ void intel_gt_set_wedged(struct intel_gt *gt)
 	wakeref = intel_runtime_pm_get(gt->uncore->rpm);
 	mutex_lock(&gt->reset.mutex);
 
-	if (GEM_SHOW_DEBUG()) {
+	if (GEM_SHOW_DEBUG() && !i915_error_injected()) {
 		struct drm_printer p = drm_debug_printer(__func__);
 		struct intel_engine_cs *engine;
 		enum intel_engine_id id;
