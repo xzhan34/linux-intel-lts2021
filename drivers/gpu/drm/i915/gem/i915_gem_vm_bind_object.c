@@ -603,6 +603,7 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 		.metadata_list = LIST_HEAD_INIT(ext.metadata_list),
 		.vm = vm,
 	};
+	struct i915_vma *adjacency_start = NULL, *vma_prev = NULL;
 	struct i915_sw_fence *bind_fence = NULL;
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma, *vma_next;
@@ -720,15 +721,26 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 		/* increment va->start (embedded in pin_flags) */
 		if (pin_flags)
 			pin_flags += vma->size;
+
+		/* adjacency list is for use in unbind and capture_vma */
+		if (vma_prev)
+			vma_prev->adjacent_next = vma;
+		else
+			adjacency_start = vma;
+		vma_prev = vma;
 	}
 	i915_gem_ww_ctx_fini(&ww);
 	set_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags);
 
 	if (ret) {
-		/*
-		 * cleanup VMAs which failed or didn't attempt vma_bind_insert()
-		 * TODO cleanup VMAs where vma_bind_insert() succeeded
-		 */
+		/* cleanup VMAs where vma_bind_insert() succeeded */
+		for (vma = adjacency_start; vma; vma = vma_next) {
+			vma_next = vma->adjacent_next;
+			i915_gem_vm_bind_remove(vma);
+			i915_gem_vm_bind_release(vma);
+		}
+
+		/* cleanup VMAs which failed or didn't attempt vma_bind_insert() */
 		list_for_each_entry_safe(vma, vma_next, &vma_head, vm_bind_link) {
 			list_del_init(&vma->vm_bind_link);
 			i915_gem_vm_bind_unpublish(vma);
