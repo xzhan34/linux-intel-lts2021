@@ -1933,6 +1933,9 @@ static int wa_list_verify(struct intel_gt *gt,
 	unsigned int i;
 	int err = 0;
 
+	if (!wal->count)
+		return 0;
+
 	fw = wal_get_fw_for_rmw(uncore, wal);
 
 	intel_gt_mcr_lock(gt, &flags);
