@@ -470,6 +470,19 @@ static void intel_ipver_early_init(struct drm_i915_private *i915,
 		return;
 	}
 
+	/* VF can't access IPVER registers directly */
+	if (IS_SRIOV_VF(i915)) {
+		/* 14018060378 not ready yet, use hardcoded values from INTEL_INFO */
+		drm_info(&i915->drm, "Beware, driver is using hardcoded IPVER values!\n");
+		RUNTIME_INFO(i915)->graphics.ver = INTEL_INFO(i915)->graphics.ver;
+		RUNTIME_INFO(i915)->graphics.rel = INTEL_INFO(i915)->graphics.rel;
+		RUNTIME_INFO(i915)->media.ver = INTEL_INFO(i915)->media.ver;
+		RUNTIME_INFO(i915)->media.rel = INTEL_INFO(i915)->media.rel;
+		RUNTIME_INFO(i915)->display.ver = INTEL_INFO(i915)->display.ver;
+		RUNTIME_INFO(i915)->display.rel = INTEL_INFO(i915)->display.rel;
+		return;
+	}
+
 	IP_VER_READ(i915_mmio_reg_offset(GMD_ID_GRAPHICS), graphics);
 	/* Wa_22012778468:mtl */
 	if (ver == 0x0 && devinfo->platform == INTEL_METEORLAKE) {
