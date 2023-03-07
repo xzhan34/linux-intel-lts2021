@@ -315,7 +315,7 @@ void intel_engine_init__pm(struct intel_engine_cs *engine)
 	intel_wakeref_init(&engine->wakeref, rpm, &wf_ops, engine->name);
 	intel_engine_init_heartbeat(engine);
 
-	if (IS_METEORLAKE(i915) && engine->id == GSC0) {
+	if (IS_METEORLAKE(i915) && engine->id == GSC0 && !IS_SRIOV_VF(i915)) {
 		/* FIXME: Enable GSC CS Idle messaging */
 		intel_uncore_write(engine->gt->uncore,
 				   RC_PSMI_CTRL_GSCCS,
