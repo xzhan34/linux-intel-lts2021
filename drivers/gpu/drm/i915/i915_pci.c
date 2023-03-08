@@ -1347,23 +1347,27 @@ static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		return err;
 
 	if (i915_inject_probe_failure(pci_get_drvdata(pdev))) {
-		i915_pci_remove(pdev);
-		return -ENODEV;
+		err = -ENODEV;
+		goto err_remove;
 	}
 
 	err = i915_live_selftests(pdev);
-	if (err) {
-		i915_pci_remove(pdev);
-		return err > 0 ? -ENOTTY : err;
-	}
+	if (err)
+		goto err_remove;
+
+	err = i915_wip_selftests(pdev);
+	if (err)
+		goto err_remove;
 
 	err = i915_perf_selftests(pdev);
-	if (err) {
-		i915_pci_remove(pdev);
-		return err > 0 ? -ENOTTY : err;
-	}
+	if (err)
+		goto err_remove;
 
 	return 0;
+
+err_remove:
+	i915_pci_remove(pdev);
+	return err > 0 ? -ENOTTY : err;
 }
 
 static void i915_pci_shutdown(struct pci_dev *pdev)
