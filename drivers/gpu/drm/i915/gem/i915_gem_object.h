@@ -262,7 +262,7 @@ i915_gem_object_type_has(const struct drm_i915_gem_object *obj,
 static inline bool
 i915_gem_object_has_struct_page(const struct drm_i915_gem_object *obj)
 {
-	return obj->flags & I915_BO_ALLOC_STRUCT_PAGE;
+	return obj->flags & I915_BO_STRUCT_PAGE;
 }
 
 static inline bool

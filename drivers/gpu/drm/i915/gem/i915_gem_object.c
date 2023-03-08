@@ -85,7 +85,6 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	init_rcu_head(&obj->rcu);
 
 	obj->ops = ops;
-	GEM_BUG_ON(flags & ~I915_BO_ALLOC_FLAGS);
 	obj->flags = flags;
 
 	obj->mm.madv = I915_MADV_WILLNEED;

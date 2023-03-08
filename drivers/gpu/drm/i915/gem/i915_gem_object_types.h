@@ -281,18 +281,17 @@ struct drm_i915_gem_object {
 	unsigned long flags;
 #define I915_BO_ALLOC_CONTIGUOUS BIT(0)
 #define I915_BO_ALLOC_VOLATILE   BIT(1)
-#define I915_BO_ALLOC_STRUCT_PAGE BIT(2)
-#define I915_BO_ALLOC_CPU_CLEAR  BIT(3)
-#define I915_BO_ALLOC_USER       BIT(4)
+#define I915_BO_ALLOC_CPU_CLEAR  BIT(2)
+#define I915_BO_ALLOC_USER       BIT(3)
 #define I915_BO_ALLOC_FLAGS (I915_BO_ALLOC_CONTIGUOUS | \
 			     I915_BO_ALLOC_VOLATILE | \
-			     I915_BO_ALLOC_STRUCT_PAGE | \
 			     I915_BO_ALLOC_CPU_CLEAR | \
 			     I915_BO_ALLOC_USER)
-#define I915_BO_READONLY         BIT(5)
-#define I915_TILING_QUIRK_BIT    6 /* unknown swizzling; do not release! */
-#define I915_BO_PROTECTED         BIT(8)
-#define I915_BO_WAS_BOUND_BIT     9
+#define I915_BO_STRUCT_PAGE	BIT(4)
+#define I915_BO_READONLY	BIT(5)
+#define I915_TILING_QUIRK_BIT	6 /* unknown swizzling; do not release! */
+#define I915_BO_PROTECTED	BIT(8)
+#define I915_BO_WAS_BOUND_BIT	9
 
 	/**
 	 * @cache_level: The desired GTT caching level.

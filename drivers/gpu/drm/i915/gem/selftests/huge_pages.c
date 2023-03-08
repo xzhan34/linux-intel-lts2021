@@ -190,7 +190,7 @@ huge_pages_object(struct drm_i915_private *i915,
 
 	drm_gem_private_object_init(&i915->drm, &obj->base, size);
 	i915_gem_object_init(obj, &huge_page_ops, &lock_class,
-			     I915_BO_ALLOC_STRUCT_PAGE);
+			     I915_BO_STRUCT_PAGE);
 
 	i915_gem_object_set_volatile(obj);
 
