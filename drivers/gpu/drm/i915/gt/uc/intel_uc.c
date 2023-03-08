@@ -855,6 +855,9 @@ static int __uc_resume(struct intel_uc *uc, bool enable_communication)
 	struct intel_gt *gt = guc_to_gt(guc);
 	int err;
 
+	if (intel_gt_terminally_wedged(gt))
+		return 0;
+
 	if (!intel_guc_is_fw_running(guc))
 		return 0;
 
