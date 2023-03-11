@@ -337,6 +337,26 @@ static int __intel_engine_pulse(struct intel_engine_cs *engine)
 	GEM_BUG_ON(!intel_engine_has_preemption(engine));
 	GEM_BUG_ON(!intel_engine_pm_is_awake(engine));
 
+	/*
+	 * Reuse the last pulse if we know it hasn't already started.
+	 *
+	 * Before the pulse can start, it must perform the context switch,
+	 * forcing the active context away from the engine. As it has not
+	 * yet started, we know that we haven't yet flushed any other context,
+	 * thus the previously submitted pulse is still viable.
+	 */
+	rq = to_request(i915_active_fence_get(&ce->timeline->last_request));
+	if (rq) {
+		if (i915_request_has_sentinel(rq) &&
+		    !i915_request_started(rq)) {
+			i915_request_set_priority(rq, prio);
+			prio = 0;
+		}
+		i915_request_put(rq);
+		if (!prio)
+			return 0;
+	}
+
 	rq = heartbeat_create(ce, GFP_NOWAIT | __GFP_NOWARN);
 	if (IS_ERR(rq))
 		return PTR_ERR(rq);
