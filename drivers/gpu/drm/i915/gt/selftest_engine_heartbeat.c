@@ -11,6 +11,12 @@
 #include "i915_selftest.h"
 #include "selftest_engine_heartbeat.h"
 
+static void intel_engine_park_heartbeat_sync(struct intel_engine_cs *engine)
+{
+	cancel_delayed_work_sync(&engine->heartbeat.work);
+	i915_request_put(fetch_and_zero(&engine->heartbeat.systole));
+}
+
 static void reset_heartbeat(struct intel_engine_cs *engine)
 {
 	intel_engine_set_heartbeat(engine,
@@ -223,8 +229,7 @@ static int __live_heartbeat_fast(struct intel_engine_cs *engine)
 	for (i = 0; i < ARRAY_SIZE(times); i++) {
 		do {
 			/* Manufacture a tick */
-			intel_engine_park_heartbeat(engine);
-			GEM_BUG_ON(engine->heartbeat.systole);
+			intel_engine_park_heartbeat_sync(engine);
 			engine->serial++; /*  pretend we are not idle! */
 			intel_engine_unpark_heartbeat(engine);
 
@@ -395,7 +400,7 @@ void st_engine_heartbeat_disable(struct intel_engine_cs *engine)
 	engine->props.heartbeat_interval_ms = 0;
 
 	intel_engine_pm_get(engine);
-	intel_engine_park_heartbeat(engine);
+	intel_engine_park_heartbeat_sync(engine);
 }
 
 void st_engine_heartbeat_enable(struct intel_engine_cs *engine)
@@ -417,7 +422,7 @@ void st_engine_heartbeat_disable_no_pm(struct intel_engine_cs *engine)
 	 * heartbeat still won't be enabled because of the above = 0.
 	 */
 	if (intel_engine_pm_get_if_awake(engine)) {
-		intel_engine_park_heartbeat(engine);
+		intel_engine_park_heartbeat_sync(engine);
 		intel_engine_pm_put(engine);
 	}
 }

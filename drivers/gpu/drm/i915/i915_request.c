@@ -975,6 +975,8 @@ __i915_request_create(struct intel_context *ce, gfp_t gfp)
 	rq->ring = ce->ring;
 	rq->execution_mask = ce->engine->mask;
 
+	RCU_INIT_POINTER(rq->timeline, tl);
+
 	kref_init(&rq->fence.refcount);
 	rq->fence.flags = 0;
 	rq->fence.error = 0;
@@ -986,8 +988,6 @@ __i915_request_create(struct intel_context *ce, gfp_t gfp)
 
 	rq->fence.context = tl->fence_context;
 	rq->fence.seqno = seqno;
-
-	RCU_INIT_POINTER(rq->timeline, tl);
 	rq->hwsp_seqno = tl->hwsp_seqno;
 	GEM_BUG_ON(__i915_request_is_complete(rq));
 
