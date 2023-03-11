@@ -2297,7 +2297,8 @@ void intel_engine_dump(struct intel_engine_cs *engine,
 		drm_printf(m, "\tHeartbeat: %d ms ago\n",
 			   jiffies_to_msecs(jiffies - rq->emitted_jiffies));
 	else if (work_pending(&engine->heartbeat.work.work))
-		drm_printf(m, "\tHeartbeat: pending\n");
+		drm_printf(m, "\tHeartbeat: pending @ %lu interrupts\n",
+			   engine->heartbeat.interrupts);
 	else
 		drm_printf(m, "\tHeartbeat: idle\n");
 	rcu_read_unlock();

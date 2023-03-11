@@ -189,6 +189,18 @@ static struct i915_request *get_next_heartbeat(struct intel_timeline *tl)
 	return rq;
 }
 
+static bool engine_was_active(struct intel_engine_cs *engine)
+{
+	unsigned long count;
+
+	count = READ_ONCE(engine->stats.irq_count);
+	if (count == engine->heartbeat.interrupts)
+		return false;
+
+	engine->heartbeat.interrupts = count;
+	return true;
+}
+
 static unsigned long preempt_timeout(const struct i915_request *rq)
 {
 	long delay = READ_ONCE(rq->engine->props.preempt_timeout_ms);
@@ -241,7 +253,13 @@ static void heartbeat(struct work_struct *wrk)
 				rq->emitted_jiffies + msecs_to_jiffies(delay)))
 			goto out;
 
-		if (!i915_sw_fence_signaled(&rq->submit)) {
+		if (engine_was_active(engine)) {
+			/*
+			 * The engine is still making forward progress, we
+			 * don't yet need to worry about our outstanding
+			 * heartbeat.
+			 */
+		} else if (!i915_sw_fence_signaled(&rq->submit)) {
 			/*
 			 * Not yet submitted, system is stalled.
 			 *
@@ -284,6 +302,10 @@ static void heartbeat(struct work_struct *wrk)
 		rq->emitted_jiffies = jiffies;
 		goto out;
 	}
+
+	/* Has the engine stalled since the last heartbeat? */
+	if (engine_was_active(engine))
+		goto out;
 
 	/* Reuse the next active pulse on our timeline as the next heartbeat */
 	engine->heartbeat.systole = get_next_heartbeat(ce->timeline);
@@ -335,6 +357,9 @@ void intel_engine_park_heartbeat(struct intel_engine_cs *engine)
 {
 	if (cancel_delayed_work(&engine->heartbeat.work))
 		i915_request_put(fetch_and_zero(&engine->heartbeat.systole));
+
+	/* Wait until the engine is inactive again before sending a pulse */
+	engine->heartbeat.interrupts = 0;
 }
 
 void intel_gt_unpark_heartbeats(struct intel_gt *gt)

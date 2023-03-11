@@ -211,7 +211,6 @@ static int __live_heartbeat_fast(struct intel_engine_cs *engine)
 	const unsigned int error_threshold = max(20000u, jiffies_to_usecs(6));
 	struct intel_context *ce;
 	struct i915_request *rq;
-	ktime_t t0, t1;
 	u32 times[5];
 	int err;
 	int i;
@@ -248,13 +247,12 @@ static int __live_heartbeat_fast(struct intel_engine_cs *engine)
 			rcu_read_unlock();
 		} while (!rq);
 
-		t0 = ktime_get();
+		i915_request_wait(rq, 0, MAX_SCHEDULE_TIMEOUT);
 		while (rq == READ_ONCE(engine->heartbeat.systole))
 			yield(); /* work is on the local cpu! */
-		t1 = ktime_get();
 
+		times[i] = ktime_us_delta(ktime_get(), rq->fence.timestamp);
 		i915_request_put(rq);
-		times[i] = ktime_us_delta(t1, t0);
 	}
 
 	sort(times, ARRAY_SIZE(times), sizeof(times[0]), cmp_u32, NULL);
