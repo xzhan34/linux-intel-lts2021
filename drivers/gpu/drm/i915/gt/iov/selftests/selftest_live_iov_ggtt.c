@@ -25,6 +25,14 @@ static u64 iov_get_pte(struct intel_iov *iov, void __iomem *addr)
 	return gen8_get_pte(addr);
 }
 
+static void mtl_iov_set_pte(struct intel_iov *iov, void __iomem *addr, gen8_pte_t pte)
+{
+	gen8_set_pte(addr, pte);
+
+	/* XXX: hide MTL issue HSD 18028096950 and force flush by read some MMIO register */
+	(void) intel_uncore_read(iov_to_gt(iov)->uncore, GEN12_VF_CAP_REG);
+}
+
 static void gen8_set_masked_pte_val(struct intel_iov *iov, void __iomem *pte_addr,
 				    const u64 mask_size, const u8 mask_shift, u64 val)
 {
@@ -756,7 +764,11 @@ static int igt_vf_other_ggtt_via_pf(void *arg)
 
 static void init_defaults_pte_io(struct intel_iov *iov)
 {
-	iov->selftest.mmio_set_pte = iov_set_pte;
+	if (IS_METEORLAKE(iov_to_i915(iov)))
+		iov->selftest.mmio_set_pte = mtl_iov_set_pte;
+	else
+		iov->selftest.mmio_set_pte = iov_set_pte;
+
 	iov->selftest.mmio_get_pte = iov_get_pte;
 }
 
