@@ -77,9 +77,15 @@ vf_pte_is_value_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u6
 static bool pte_not_accessible(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
 			       gen8_pte_t *out)
 {
-	*out = iov->selftest.mmio_get_pte(iov, pte_addr);
+	u64 mask;
 
-	return *out == 0;
+	if (GRAPHICS_VER_FULL(iov_to_i915(iov)) < IP_VER(12, 70))
+		mask = ~0;
+	else
+		mask = GEN12_GGTT_PTE_ADDR_MASK | XEHPSDV_GGTT_PTE_VFID_MASK;
+
+	*out = iov->selftest.mmio_get_pte(iov, pte_addr);
+	return (*out & mask) == 0;
 }
 
 static bool
