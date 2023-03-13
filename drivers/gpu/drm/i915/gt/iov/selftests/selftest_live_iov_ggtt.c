@@ -171,6 +171,19 @@ pte_lmem_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_
 }
 
 static bool
+pte_pat_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, gen8_pte_t *out)
+{
+	return pte_is_value_modifiable(iov, pte_addr, ggtt_addr, MTL_GGTT_PTE_PAT_MASK, out);
+}
+
+static bool
+pte_pat_not_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr,
+			gen8_pte_t *out)
+{
+	return !pte_pat_modifiable(iov, pte_addr, ggtt_addr, out);
+}
+
+static bool
 pte_vfid_modifiable(struct intel_iov *iov, void __iomem *pte_addr, u64 ggtt_addr, gen8_pte_t *out)
 {
 	GEM_BUG_ON(!HAS_SRIOV(iov_to_i915(iov)));
@@ -297,6 +310,11 @@ static bool has_lmem(struct intel_iov *iov)
 	return HAS_LMEM(iov_to_i915(iov));
 }
 
+static bool has_pat(struct intel_iov *iov)
+{
+	return GRAPHICS_VER_FULL(iov_to_i915(iov)) >= IP_VER(12, 70);
+}
+
 static bool uses_l4wa(struct intel_iov *iov)
 {
 	return i915_is_mem_wa_enabled(iov_to_i915(iov), I915_WA_USE_FLAT_PPGTT_UPDATE);
@@ -379,6 +397,7 @@ static int igt_pf_iov_ggtt(struct intel_iov *iov)
 	struct i915_ggtt *ggtt = iov_to_gt(iov)->ggtt;
 	struct drm_mm_node ggtt_block = {};
 	static struct pte_testcase pte_testcases[] = {
+		{ .test = pte_pat_modifiable, .requires = has_pat },
 		{ .test = pte_gpa_modifiable },
 		{ .test = pte_vfid_modifiable },
 		{ .test = pte_lmem_modifiable, .requires = has_lmem },
@@ -446,6 +465,7 @@ static int igt_vf_iov_own_ggtt(struct intel_iov *iov, bool sanitycheck)
 {
 	gen8_pte_t __iomem *gsm = iov_to_gt(iov)->ggtt->gsm;
 	static struct pte_testcase pte_testcases[] = {
+		{ .test = pte_pat_modifiable, .requires = has_pat },
 		{ .test = pte_gpa_modifiable },
 		{ .test = pte_vfid_not_readable },
 		{ .test = pte_vfid_not_modifiable },
@@ -576,6 +596,7 @@ _test_other_ggtt_region(struct intel_iov *iov, gen8_pte_t __iomem *gsm,
 			struct drm_mm_node *ggtt_region)
 {
 	static struct pte_testcase pte_testcases[] = {
+		{ .test = pte_pat_not_modifiable, .requires = has_pat },
 		{ .test = pte_not_accessible },
 		{ .test = pte_gpa_not_modifiable },
 		{ .test = pte_vfid_not_modifiable },
