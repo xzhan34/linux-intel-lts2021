@@ -41,15 +41,12 @@ int intel_ring_pin(struct intel_ring *ring, struct i915_gem_ww_ctx *ww)
 	if (atomic_fetch_inc(&ring->pin_count))
 		return 0;
 
-	/* Ring wraparound at offset 0 sometimes hangs. No idea why. */
-	flags = PIN_OFFSET_BIAS | i915_ggtt_pin_bias(vma);
-
 	if (i915_gem_object_is_stolen(vma->obj))
-		flags |= PIN_MAPPABLE;
+		flags = PIN_MAPPABLE;
 	else
-		flags |= PIN_HIGH;
+		flags = PIN_HIGH;
 
-	ret = i915_ggtt_pin(vma, ww, 0, flags);
+	ret = i915_ggtt_pin_for_gt(vma, ww, 0, flags);
 	if (unlikely(ret))
 		goto err_unpin;
 

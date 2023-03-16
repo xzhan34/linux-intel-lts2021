@@ -726,7 +726,6 @@ struct i915_vma *intel_guc_allocate_vma(struct intel_guc *guc, u32 size)
 	struct intel_gt *gt = guc_to_gt(guc);
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
-	u64 flags;
 	int ret;
 
 	if (HAS_LMEM(gt->i915))
@@ -743,8 +742,7 @@ struct i915_vma *intel_guc_allocate_vma(struct intel_guc *guc, u32 size)
 	if (IS_ERR(vma))
 		goto err;
 
-	flags = PIN_OFFSET_BIAS | i915_ggtt_pin_bias(vma);
-	ret = i915_ggtt_pin(vma, NULL, 0, flags);
+	ret = i915_ggtt_pin_for_gt(vma, NULL, 0, 0);
 	if (ret) {
 		vma = ERR_PTR(ret);
 		goto err;

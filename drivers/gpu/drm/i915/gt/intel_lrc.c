@@ -1882,7 +1882,7 @@ void lrc_init_wa_ctx(struct intel_engine_cs *engine)
 retry:
 	err = i915_gem_object_lock(wa_ctx->vma->obj, &ww);
 	if (!err)
-		err = i915_ggtt_pin(wa_ctx->vma, &ww, 0, PIN_HIGH);
+		err = i915_ggtt_pin_for_gt(wa_ctx->vma, &ww, 0, PIN_HIGH);
 	if (err)
 		goto err;
 

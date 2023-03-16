@@ -101,10 +101,9 @@ static void intel_context_active_release(struct intel_context *ce)
 
 static int __context_pin_state(struct i915_vma *vma, struct i915_gem_ww_ctx *ww)
 {
-	unsigned int bias = i915_ggtt_pin_bias(vma) | PIN_OFFSET_BIAS;
 	int err;
 
-	err = i915_ggtt_pin(vma, ww, 0, bias | PIN_HIGH);
+	err = i915_ggtt_pin_for_gt(vma, ww, 0, PIN_HIGH);
 	if (err)
 		return err;
 

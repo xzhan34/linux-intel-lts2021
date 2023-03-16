@@ -202,7 +202,7 @@ int intel_timeline_pin(struct intel_timeline *tl, struct i915_gem_ww_ctx *ww)
 			return err;
 	}
 
-	err = i915_ggtt_pin(tl->hwsp_ggtt, ww, 0, PIN_HIGH);
+	err = i915_ggtt_pin_for_gt(tl->hwsp_ggtt, ww, 0, PIN_HIGH);
 	if (err)
 		return err;
 
