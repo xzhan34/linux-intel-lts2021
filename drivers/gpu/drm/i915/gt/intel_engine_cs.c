@@ -2118,7 +2118,11 @@ static void engine_dump_request(struct i915_request *rq, struct drm_printer *m, 
 
 	i915_request_show(m, rq, msg, 0);
 
-	drm_printf(m, "\t\tvm->poison:  0x%08x\n",
+	drm_printf(m, "\t\tce->lrc.lrca: 0x%08x\n",
+		   rq->context->lrc.lrca);
+	drm_printf(m, "\t\tce->lrc.ccid: 0x%08x\n",
+		   rq->context->lrc.ccid);
+	drm_printf(m, "\t\tvm->poison:   0x%08x\n",
 		   rq->context->vm->poison);
 	drm_printf(m, "\t\tring->start:  0x%08x\n",
 		   i915_ggtt_offset(rq->ring->vma));
