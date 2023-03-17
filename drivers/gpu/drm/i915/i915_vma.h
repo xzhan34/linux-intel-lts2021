@@ -160,6 +160,16 @@ static inline u32 i915_ggtt_pin_bias(struct i915_vma *vma)
 	return i915_vm_to_ggtt(vma->vm)->pin_bias;
 }
 
+static inline bool i915_vma_is_purged(const struct i915_vma *vma)
+{
+       return test_bit(I915_VMA_PURGED_BIT, __i915_vma_flags(vma));
+}
+
+static inline bool i915_vma_set_purged(struct i915_vma *vma)
+{
+       return !test_and_set_bit(I915_VMA_PURGED_BIT, __i915_vma_flags(vma));
+}
+
 static inline struct i915_vma *i915_vma_get(struct i915_vma *vma)
 {
 	i915_gem_object_get(vma->obj);
@@ -240,6 +250,7 @@ int __must_check i915_vma_unbind(struct i915_vma *vma);
 void i915_vma_unlink_ctx(struct i915_vma *vma);
 void i915_vma_close(struct i915_vma *vma);
 void i915_vma_reopen(struct i915_vma *vma);
+void i915_vma_unpublish(struct i915_vma *vma);
 
 static inline struct i915_vma *__i915_vma_get(struct i915_vma *vma)
 {

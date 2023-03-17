@@ -249,34 +249,42 @@ static void __i915_gem_object_free_mmaps(struct drm_i915_gem_object *obj)
 	}
 }
 
+static void __i915_gem_object_free_vma(struct drm_i915_gem_object *obj)
+{
+	struct i915_vma *vma;
+
+	if (list_empty(&obj->vma.list))
+		return;
+
+	/*
+	 * Note that the vma keeps an object reference while
+	 * it is active, so it *should* not sleep while we
+	 * destroy it. Our debug code errs insits it *might*.
+	 * For the moment, play along.
+	 */
+	spin_lock(&obj->vma.lock);
+	while ((vma = list_first_entry_or_null(&obj->vma.list,
+					       struct i915_vma,
+					       obj_link))) {
+		__i915_vma_get(vma);
+		spin_unlock(&obj->vma.lock);
+
+		mutex_lock(&vma->vm->mutex);
+		i915_vma_unpublish(vma);
+		mutex_unlock(&vma->vm->mutex);
+
+		__i915_vma_put(vma);
+		spin_lock(&obj->vma.lock);
+	}
+	spin_unlock(&obj->vma.lock);
+}
+
 void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 {
 	trace_i915_gem_object_destroy(obj);
 
-	if (!list_empty(&obj->vma.list)) {
-		struct i915_vma *vma;
-
-		/*
-		 * Note that the vma keeps an object reference while
-		 * it is active, so it *should* not sleep while we
-		 * destroy it. Our debug code errs insits it *might*.
-		 * For the moment, play along.
-		 */
-		spin_lock(&obj->vma.lock);
-		while ((vma = list_first_entry_or_null(&obj->vma.list,
-						       struct i915_vma,
-						       obj_link))) {
-			GEM_BUG_ON(vma->obj != obj);
-			spin_unlock(&obj->vma.lock);
-
-			__i915_vma_put(vma);
-
-			spin_lock(&obj->vma.lock);
-		}
-		spin_unlock(&obj->vma.lock);
-	}
-
 	__i915_gem_object_free_mmaps(obj);
+	__i915_gem_object_free_vma(obj);
 
 	GEM_BUG_ON(!list_empty(&obj->lut_list));
 

@@ -101,19 +101,8 @@ static void __i915_vm_close(struct i915_address_space *vm)
 	struct i915_vma *vma, *vn;
 
 	mutex_lock(&vm->mutex);
-	list_for_each_entry_safe(vma, vn, &vm->bound_list, vm_link) {
-		struct drm_i915_gem_object *obj = vma->obj;
-
-		/* Keep the obj (and hence the vma) alive as _we_ destroy it */
-		if (!kref_get_unless_zero(&obj->base.refcount))
-			continue;
-
-		atomic_and(~I915_VMA_PIN_MASK, &vma->flags);
-		WARN_ON(__i915_vma_unbind(vma));
-		__i915_vma_put(vma);
-
-		i915_gem_object_put(obj);
-	}
+	list_for_each_entry_safe(vma, vn, &vm->bound_list, vm_link)
+		i915_vma_unpublish(vma);
 	mutex_unlock(&vm->mutex);
 }
 
@@ -177,8 +166,8 @@ void i915_vm_release(struct kref *kref)
 
 static void i915_vm_close_work(struct work_struct *wrk)
 {
-	struct i915_address_space *vm = container_of(wrk, typeof(*vm),
-						     close_work);
+	struct i915_address_space *vm =
+		container_of(wrk, typeof(*vm), close_work);
 
 	__i915_vm_close(vm);
 	i915_vm_put(vm);

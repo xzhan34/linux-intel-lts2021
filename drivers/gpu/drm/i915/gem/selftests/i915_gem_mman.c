@@ -30,6 +30,17 @@ struct tile {
 	unsigned int swizzle;
 };
 
+static void i915_vma_remove(struct i915_vma *vma)
+{
+	struct i915_address_space *vm = i915_vm_get(vma->vm);
+
+	mutex_lock(&vm->mutex);
+	i915_vma_unpublish(vma);
+	mutex_unlock(&vm->mutex);
+
+	i915_vm_put(vm);
+}
+
 static u64 swizzle_bit(unsigned int bit, u64 offset)
 {
 	return (offset & BIT_ULL(bit)) >> (bit - 6);
@@ -169,7 +180,7 @@ static int check_partial_mapping(struct drm_i915_gem_object *obj,
 	kunmap(p);
 
 out:
-	__i915_vma_put(vma);
+	i915_vma_remove(vma);
 	return err;
 }
 
@@ -264,7 +275,7 @@ static int check_partial_mappings(struct drm_i915_gem_object *obj,
 		if (err)
 			return err;
 
-		__i915_vma_put(vma);
+		i915_vma_remove(vma);
 
 		if (igt_timeout(end_time,
 				"%s: timed out after tiling=%d stride=%d\n",

@@ -1191,6 +1191,7 @@ static void __vma_close(struct i915_vma *vma, struct intel_gt *gt)
 	 */
 	GEM_BUG_ON(i915_vma_is_closed(vma));
 	list_add(&vma->closed_link, &gt->closed_vma);
+	__i915_vma_get(vma);
 }
 
 void i915_vma_close(struct i915_vma *vma)
@@ -1217,6 +1218,8 @@ static void __i915_vma_remove_closed(struct i915_vma *vma)
 	spin_lock_irq(&gt->closed_lock);
 	list_del_init(&vma->closed_link);
 	spin_unlock_irq(&gt->closed_lock);
+
+	__i915_vma_put(vma);
 }
 
 void i915_vma_reopen(struct i915_vma *vma)
@@ -1225,18 +1228,22 @@ void i915_vma_reopen(struct i915_vma *vma)
 		__i915_vma_remove_closed(vma);
 }
 
-void i915_vma_release(struct kref *ref)
+void i915_vma_unpublish(struct i915_vma *vma)
 {
-	struct i915_vma *vma = container_of(ref, typeof(*vma), ref);
+	lockdep_assert_held(&vma->vm->mutex);
+
+	/* Drop the original ref held for a published vma, just once */
+	if (!i915_vma_set_purged(vma))
+		return;
 
 	if (drm_mm_node_allocated(&vma->node)) {
-		mutex_lock(&vma->vm->mutex);
+		GEM_BUG_ON(i915_vma_is_active(vma));
+
 		atomic_and(~I915_VMA_PIN_MASK, &vma->flags);
-		WARN_ON(__i915_vma_unbind(vma));
-		mutex_unlock(&vma->vm->mutex);
-		GEM_BUG_ON(drm_mm_node_allocated(&vma->node));
+		__i915_vma_evict(vma);
+
+		drm_mm_remove_node(&vma->node);
 	}
-	GEM_BUG_ON(i915_vma_is_active(vma));
 
 	if (vma->obj) {
 		struct drm_i915_gem_object *obj = vma->obj;
@@ -1248,7 +1255,16 @@ void i915_vma_release(struct kref *ref)
 		spin_unlock(&obj->vma.lock);
 	}
 
-	__i915_vma_remove_closed(vma);
+	__i915_vma_put(vma);
+}
+
+void i915_vma_release(struct kref *ref)
+{
+	struct i915_vma *vma = container_of(ref, typeof(*vma), ref);
+
+	GEM_BUG_ON(i915_vma_is_active(vma));
+	GEM_BUG_ON(drm_mm_node_allocated(&vma->node));
+
 	i915_vm_put(vma->vm);
 
 	i915_active_fini(&vma->active);
@@ -1261,34 +1277,20 @@ void i915_vma_parked(struct intel_gt *gt)
 	LIST_HEAD(closed);
 
 	spin_lock_irq(&gt->closed_lock);
-	list_for_each_entry_safe(vma, next, &gt->closed_vma, closed_link) {
-		struct drm_i915_gem_object *obj = vma->obj;
-		struct i915_address_space *vm = vma->vm;
-
-		/* XXX All to avoid keeping a reference on i915_vma itself */
-
-		if (!kref_get_unless_zero(&obj->base.refcount))
-			continue;
-
-		if (!i915_vm_tryopen(vm)) {
-			i915_gem_object_put(obj);
-			continue;
-		}
-
-		list_move(&vma->closed_link, &closed);
-	}
+	list_replace_init(&gt->closed_vma, &closed);
 	spin_unlock_irq(&gt->closed_lock);
 
 	/* As the GT is held idle, no vma can be reopened as we destroy them */
 	list_for_each_entry_safe(vma, next, &closed, closed_link) {
-		struct drm_i915_gem_object *obj = vma->obj;
 		struct i915_address_space *vm = vma->vm;
 
 		INIT_LIST_HEAD(&vma->closed_link);
-		__i915_vma_put(vma);
 
-		i915_vm_close(vm);
-		i915_gem_object_put(obj);
+		mutex_lock(&vm->mutex);
+		i915_vma_unpublish(vma);
+		mutex_unlock(&vm->mutex);
+
+		__i915_vma_put(vma);
 	}
 }
 
@@ -1472,7 +1474,7 @@ int __i915_vma_unbind(struct i915_vma *vma)
 	GEM_BUG_ON(i915_vma_is_active(vma));
 	__i915_vma_evict(vma);
 
-	drm_mm_remove_node(&vma->node); /* pairs with i915_vma_release() */
+	drm_mm_remove_node(&vma->node);
 	return 0;
 }
 
