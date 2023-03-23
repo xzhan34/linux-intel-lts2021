@@ -172,6 +172,13 @@ static struct i915_request *get_next_heartbeat(struct intel_timeline *tl)
 	return rq;
 }
 
+static unsigned long preempt_timeout(const struct i915_request *rq)
+{
+	long delay = READ_ONCE(rq->engine->props.preempt_timeout_ms);
+
+	return rq->emitted_jiffies + msecs_to_jiffies_timeout(delay);
+}
+
 static void heartbeat(struct work_struct *wrk)
 {
 	struct intel_engine_cs *engine =
@@ -243,6 +250,13 @@ static void heartbeat(struct work_struct *wrk)
 			local_bh_disable();
 			i915_request_set_priority(rq, prio);
 			local_bh_enable();
+		} else if (time_before(jiffies, preempt_timeout(rq))) {
+			/*
+			 * Give the engine-reset, triggered by a preemption
+			 * timeout, a chance to run before we force a full GT
+			 * reset.
+			 */
+			goto out;
 		} else {
 			reset_engine(engine, rq);
 		}
