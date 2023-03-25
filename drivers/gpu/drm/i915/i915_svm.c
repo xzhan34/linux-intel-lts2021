@@ -5,6 +5,7 @@
 
 #include <linux/mm_types.h>
 #include <linux/sched/mm.h>
+#include <linux/mm.h>
 
 #include "i915_svm.h"
 #include "intel_memory_region.h"
@@ -447,8 +448,8 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 	struct hmm_range hmm_range;
 	struct vm_area_struct *vma;
 	bool mmap_unlocked = false;
-	u64 npages, start, length;
 	struct svm_notifier *sn;
+	u64 start, end, length;
 	struct i915_svm *svm;
 	struct mm_struct *mm;
 	int ret = 0;
@@ -483,10 +484,16 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 	}
 	mmap_write_downgrade(mm);
 
-	/** migrate the whole vma */
-	start =  vma->vm_start;
-	length = vma->vm_end - vma->vm_start;
-	npages = ((vma->vm_end - 1) >> PAGE_SHIFT) - (vma->vm_start >> PAGE_SHIFT) + 1;
+	/** Migrate only 1 page for now.
+	 *  If perform of this scheme is bad, we can introduce a
+	 *  migration granularity parameter for user to select.
+	 */
+	start =  max(info->page_addr & PAGE_MASK, (u64)vma->vm_start);
+	end = min(ALIGN(info->page_addr + 1, PAGE_SIZE), (u64)vma->vm_end);
+	length = end - start;
+	DRM_DEBUG_DRIVER("%s fault address 0x%llx vma start 0x%lx migration start 0x%llx, \
+			vma end 0x%lx migration end 0x%llx\n",
+			__func__, info->page_addr, vma->vm_start, start, vma->vm_end, end);
 
 	if (svm_should_migrate(start, gt->lmem->id, info->access_type == ACCESS_TYPE_ATOMIC))
 		/*
@@ -496,8 +503,7 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 		 * resident in vram, we will fault again and retry migration.
 		 */
 		svm_migrate_to_vram(mm, start, length, gt->lmem);
-
-	ret = svm_populate_range(sn, vma->vm_start, vma->vm_end, &hmm_range,
+	ret = svm_populate_range(sn, start, end, &hmm_range,
 			vma->vm_flags & VM_WRITE);
 	if (ret)
 		goto unregister_notifier;
