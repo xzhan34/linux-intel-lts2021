@@ -1111,9 +1111,9 @@ static const struct snd_pcm_hardware avs_pcm_hardware = {
 				  SNDRV_PCM_FMTBIT_S24_LE |
 				  SNDRV_PCM_FMTBIT_S32_LE,
 	.buffer_bytes_max	= AZX_MAX_BUF_SIZE,
-	.period_bytes_min	= 128,
+	.period_bytes_min	= 4096,
 	.period_bytes_max	= AZX_MAX_BUF_SIZE / 2,
-	.periods_min		= 2,
+	.periods_min		= 4,
 	.periods_max		= AZX_MAX_FRAG,
 	.fifo_size		= 0,
 };
