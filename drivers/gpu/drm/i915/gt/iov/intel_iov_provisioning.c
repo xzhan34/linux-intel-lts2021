@@ -2754,10 +2754,9 @@ static int pf_push_configs(struct intel_iov *iov, unsigned int num)
 			if (unlikely(err < 0))
 				goto fail;
 		}
-
-		provisioning->num_pushed++;
 	}
 	err = 0;
+	provisioning->num_pushed = num;
 
 fail:
 	i915_vma_unpin_and_release(&vma, I915_VMA_RELEASE_MAP);
@@ -2777,8 +2776,8 @@ static int pf_push_no_configs(struct intel_iov *iov)
 		err = guc_action_update_vf_cfg(guc, n, 0, 0);
 		if (unlikely(err < 0))
 			break;
-		iov->pf.provisioning.num_pushed++;
 	}
+	iov->pf.provisioning.num_pushed = n;
 
 	return n ? -ESTALE : 0;
 }
