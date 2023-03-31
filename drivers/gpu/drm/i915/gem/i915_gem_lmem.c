@@ -324,8 +324,7 @@ lmem_swapout(struct drm_i915_gem_object *obj,
 		return PTR_ERR(dst);
 
 	/* Share the dma-resv between the shadow- and the parent object */
-	dst->base.resv = obj->base.resv;
-	assert_object_held(dst);
+	i915_gem_object_share_resv(obj, dst);
 
 	/*
 	 * create working object on the same region as 'obj',

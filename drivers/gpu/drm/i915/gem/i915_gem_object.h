@@ -163,14 +163,7 @@ i915_gem_object_put(struct drm_i915_gem_object *obj)
 	__drm_gem_object_put(&obj->base);
 }
 
-#ifdef CONFIG_LOCKDEP
-#define assert_object_held(obj) do {					\
-		dma_resv_assert_held((obj)->base.resv);			\
-		WARN_ON(!ww_mutex_is_locked(&(obj)->base.resv->lock)); \
-	} while (0)
-#else
-#define assert_object_held(obj) do { } while (0)
-#endif
+#define assert_object_held(obj) dma_resv_assert_held((obj)->base.resv)
 
 #define object_is_isolated(obj)					\
 	(!IS_ENABLED(CONFIG_LOCKDEP) ||				\
@@ -804,5 +797,8 @@ i915_gem_object_migrate_has_error(const struct drm_i915_gem_object *obj)
 {
 	return i915_active_fence_has_error(&obj->mm.migrate);
 }
+
+void i915_gem_object_share_resv(struct drm_i915_gem_object *parent,
+				struct drm_i915_gem_object *child);
 
 #endif

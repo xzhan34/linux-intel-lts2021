@@ -115,6 +115,56 @@ bool i915_gem_object_has_cache_level(const struct drm_i915_gem_object *obj,
 	return obj->pat_index == i915_gem_get_pat_index(obj_to_i915(obj), lvl);
 }
 
+static struct i915_resv *i915_resv_alloc(void)
+{
+	struct i915_resv *resv;
+
+	resv = kmalloc(sizeof(*resv), GFP_KERNEL);
+	if (!resv)
+		return NULL;
+
+	dma_resv_init(&resv->base);
+	resv->refcount = 1;
+	return resv;
+}
+
+static struct i915_resv *i915_resv_get(struct i915_resv *resv)
+{
+	dma_resv_assert_held(&resv->base);
+	resv->refcount++;
+
+	return resv;
+}
+
+static void i915_resv_put(struct i915_resv *resv)
+{
+	bool last;
+
+	if (likely(READ_ONCE(resv->refcount) == 1))
+		goto free;
+
+	dma_resv_lock(&resv->base, NULL);
+	last = --resv->refcount == 0;
+	dma_resv_unlock(&resv->base);
+	if (!last)
+		return;
+
+free:
+	dma_resv_fini(&resv->base);
+	kfree_rcu(resv, rcu);
+}
+
+void i915_gem_object_share_resv(struct drm_i915_gem_object *parent,
+				struct drm_i915_gem_object *child)
+{
+	assert_object_held(parent);
+	i915_resv_put(child->shares_resv);
+
+	GEM_BUG_ON(parent->base.resv != &parent->shares_resv->base);
+	child->shares_resv = i915_resv_get(parent->shares_resv);
+	child->base.resv = &child->shares_resv->base;
+}
+
 struct drm_i915_gem_object *i915_gem_object_alloc(void)
 {
 	struct drm_i915_gem_object *obj;
@@ -123,6 +173,13 @@ struct drm_i915_gem_object *i915_gem_object_alloc(void)
 	if (!obj)
 		return NULL;
 	obj->base.funcs = &i915_gem_object_funcs;
+
+	obj->shares_resv = i915_resv_alloc();
+	if (!obj->shares_resv) {
+		i915_gem_object_free(obj);
+		return NULL;
+	}
+	obj->base.resv = &obj->shares_resv->base;
 
 	INIT_LIST_HEAD(&obj->mm.region.link);
 	INIT_ACTIVE_FENCE(&obj->mm.migrate);
@@ -556,6 +613,7 @@ void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 
 	if (obj->shares_resv_from)
 		i915_vm_resv_put(obj->shares_resv_from);
+	i915_resv_put(obj->shares_resv);
 }
 
 static void __i915_gem_free_objects(struct drm_i915_private *i915,
@@ -823,7 +881,7 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 		if (nowait)
 			donor->flags |= I915_BO_FAULT_CLEAR;
 
-		donor->base.resv = obj->base.resv;
+		i915_gem_object_share_resv(obj, donor);
 	}
 	assert_object_held(donor);
 	GEM_BUG_ON(donor->mm.region.mem->id != id);

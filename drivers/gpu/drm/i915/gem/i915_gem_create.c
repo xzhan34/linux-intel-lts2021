@@ -451,8 +451,10 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 		goto vm_put;
 
 	if (obj->vm) {
+		i915_gem_object_lock(obj->vm->root_obj, NULL);
 		list_add_tail(&obj->priv_obj_link, &obj->vm->priv_obj_list);
-		obj->base.resv = obj->vm->root_obj->base.resv;
+		i915_gem_object_share_resv(obj->vm->root_obj, obj);
+		i915_gem_object_unlock(obj->vm->root_obj);
 		i915_vm_put(obj->vm);
 	}
 
@@ -666,8 +668,10 @@ i915_gem_create_ext_ioctl(struct drm_device *dev, void *data,
 		goto vm_put;
 
 	if (obj->vm) {
+		i915_gem_object_lock(obj->vm->root_obj, NULL);
 		list_add_tail(&obj->priv_obj_link, &obj->vm->priv_obj_list);
-		obj->base.resv = obj->vm->root_obj->base.resv;
+		i915_gem_object_share_resv(obj->vm->root_obj, obj);
+		i915_gem_object_unlock(obj->vm->root_obj);
 		i915_vm_put(obj->vm);
 	}
 

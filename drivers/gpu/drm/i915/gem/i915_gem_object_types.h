@@ -198,6 +198,14 @@ struct i915_gem_object_page_iter {
 	struct mutex lock; /* protects this cache */
 };
 
+struct i915_resv {
+	struct dma_resv base;
+	union {
+		unsigned long refcount;
+		struct rcu_head rcu;
+	};
+};
+
 struct drm_i915_gem_object {
 	/*
 	 * We might have reason to revisit the below since it wastes
@@ -268,6 +276,7 @@ struct drm_i915_gem_object {
 	 * @shared_resv_from: The object shares the resv from this vm.
 	 */
 	struct i915_address_space *shares_resv_from;
+	struct i915_resv *shares_resv;
 
 	union {
 		struct rcu_head rcu;
