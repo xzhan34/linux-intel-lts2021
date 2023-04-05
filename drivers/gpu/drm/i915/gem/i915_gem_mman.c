@@ -254,28 +254,6 @@ vm_fault_t i915_error_to_vmf_fault(int err)
 	}
 }
 
-static struct drm_i915_gem_object *
-object_lookup_segment(struct drm_i915_gem_object *obj, unsigned long offset,
-		      unsigned long *adjusted_offset)
-{
-	struct drm_i915_gem_object *sobj;
-	bool found = false;
-
-	/* XXX if efficiency is a concern, consider to switch to tree */
-	list_for_each_entry(sobj, &obj->segments, segment_link) {
-		if (offset >= sobj->segment_offset &&
-		    offset < sobj->segment_offset + sobj->base.size) {
-			if (adjusted_offset)
-				*adjusted_offset = offset - sobj->segment_offset;
-			found = true;
-			break;
-		}
-	}
-	GEM_BUG_ON(!found);
-
-	return sobj;
-}
-
 static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 {
 	struct vm_area_struct *area = vmf->vma;
@@ -310,8 +288,8 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 
 	/* for segmented BO, lookup and fill PTEs for just one segment */
 	if (i915_gem_object_has_segments(obj)) {
-		obj = object_lookup_segment(obj, page_offset << PAGE_SHIFT,
-					    NULL);
+		obj = i915_gem_object_lookup_segment(obj, page_offset << PAGE_SHIFT,
+						     NULL);
 		vm_start = area->vm_start + obj->segment_offset;
 		vm_size = obj->base.size;
 	} else {
@@ -524,7 +502,7 @@ vm_access(struct vm_area_struct *area, unsigned long addr,
 		return -EINVAL;
 
 	if (i915_gem_object_has_segments(obj)) {
-		obj = object_lookup_segment(obj, addr, &offset);
+		obj = i915_gem_object_lookup_segment(obj, addr, &offset);
 		if (len > obj->base.size - offset) {
 			/*  XXX more work to support multiple segments */
 			return -ENXIO;

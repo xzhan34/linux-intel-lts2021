@@ -124,7 +124,7 @@ i915_gem_copy_map_dma_buf(struct dma_buf_attachment *attach,
 		struct drm_i915_gem_object *sobj;
 
 		nents = 0;
-		list_for_each_entry(sobj, &obj->segments, segment_link)
+		for_each_object_segment(sobj, obj)
 			nents += sobj->mm.pages->orig_nents;
 	} else {
 		nents = obj->mm.pages->orig_nents;
@@ -141,7 +141,7 @@ i915_gem_copy_map_dma_buf(struct dma_buf_attachment *attach,
 
 	/* if segmented BO, obj starts as the first segment's BO */
 	if (i915_gem_object_has_segments(obj))
-		obj = list_first_entry(&obj->segments, typeof(*obj), segment_link);
+		obj = rb_entry(rb_first_cached(&obj->segments), typeof(*obj), segment_node);
 
 	while (count < nents && obj) {
 		struct scatterlist *dst_start = dst;
@@ -167,7 +167,8 @@ i915_gem_copy_map_dma_buf(struct dma_buf_attachment *attach,
 
 		/* advance to next segment object, or to the object's pair */
 		if (i915_gem_object_is_segment(obj)) {
-			obj = list_next_entry(obj, segment_link);
+			obj = rb_entry_safe(rb_next(&obj->segment_node),
+					    typeof(*obj), segment_node);
 			sidx++;
 		} else {
 			obj = obj->pair;
@@ -196,7 +197,7 @@ static void i915_gem_unmap_dma_buf(struct dma_buf_attachment *attach,
 		struct scatterlist *sgl = sgt->sgl;
 		struct drm_i915_gem_object *sobj;
 
-		list_for_each_entry(sobj, &obj->segments, segment_link) {
+		for_each_object_segment(sobj, obj) {
 			dmabuf_unmap_addr(attach->dev, sobj, sgl,
 					  sobj->mm.pages->orig_nents, dir,
 					  DMA_ATTR_SKIP_CPU_SYNC);
@@ -458,7 +459,7 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 
 		if (!fabric && p2p_distance < 0) {
 			if (i915_gem_object_has_segments(obj)) {
-				list_for_each_entry(sobj, &obj->segments, segment_link) {
+				for_each_object_segment(sobj, obj) {
 					err = i915_gem_object_lock(sobj, &ww);
 					if (err)
 						break;
@@ -491,14 +492,19 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 		}
 
 		if (i915_gem_object_has_segments(obj)) {
-			list_for_each_entry(sobj, &obj->segments, segment_link) {
+			for_each_object_segment(sobj, obj) {
+				struct rb_node *node;
+
 				err = i915_gem_object_pin_pages(sobj);
 				if (!err)
 					continue;
 
-				list_for_each_entry_continue_reverse(sobj, &obj->segments,
-								     segment_link)
+				for (node = rb_prev(&sobj->segment_node);
+				     node; node = rb_prev(node)) {
+					sobj = rb_entry(node, typeof(*sobj),
+							segment_node);
 					i915_gem_object_unpin_pages(sobj);
+				}
 				break;
 			}
 		} else {
@@ -521,7 +527,7 @@ static void i915_gem_dmabuf_detach(struct dma_buf *dmabuf,
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 
 	if (i915_gem_object_has_segments(obj)) {
-		list_for_each_entry(sobj, &obj->segments, segment_link)
+		for_each_object_segment(sobj, obj)
 			i915_gem_object_unpin_pages(sobj);
 	} else {
 		if (obj->pair)

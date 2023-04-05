@@ -566,18 +566,16 @@ static int vm_bind_get_vmas(struct i915_address_space *vm,
 	 * with one per segment of the BO.
 	 */
 	if (i915_gem_object_has_segments(obj)) {
-		size_t offset, remaining, start, vma_size;
+		unsigned long offset, remaining, start, vma_size;
+		struct rb_node *node;
 
 		start = va->start;
-		offset = va->offset;
 		remaining = va->length;
 
-		list_for_each_entry(vma_obj, &obj->segments, segment_link) {
-			if (offset >= vma_obj->base.size) {
-				offset -= vma_obj->base.size;
-				continue;
-			}
-
+		vma_obj = i915_gem_object_lookup_segment(obj, va->offset, &offset);
+		for (node = &vma_obj->segment_node; node && remaining;
+		     node = rb_next(node)) {
+			vma_obj = rb_entry(node, typeof(*vma_obj), segment_node);
 			vma_size = min_t(size_t, vma_obj->base.size - offset,
 					 remaining);
 			/*
@@ -605,8 +603,6 @@ static int vm_bind_get_vmas(struct i915_address_space *vm,
 			list_add_tail(&vma->vm_bind_link, vma_head);
 
 			remaining -= vma_size;
-			if (!remaining)
-				break;
 			start += vma_size;
 			offset = 0;
 		}

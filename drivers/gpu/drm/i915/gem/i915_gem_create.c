@@ -195,7 +195,7 @@ setup_object(struct drm_i915_gem_object *obj, u64 size,
 	GEM_BUG_ON(size != obj->base.size);
 
 	if (obj_segment_size) {
-		struct drm_i915_gem_object *sobj;
+		struct drm_i915_gem_object *sobj, *prev_obj = NULL;
 		u64 segment_offset = 0;
 		u64 segment_size;
 
@@ -215,12 +215,11 @@ setup_object(struct drm_i915_gem_object *obj, u64 size,
 				i915_gem_object_free(sobj);
 				break;
 			}
-			sobj->parent = obj;
-			sobj->segment_offset = segment_offset;
 
-			list_add_tail(&sobj->segment_link, &obj->segments);
+			i915_gem_object_add_segment(obj, sobj, prev_obj, segment_offset);
 			segment_offset += sobj->base.size;
 			size -= sobj->base.size;
+			prev_obj = sobj;
 			nsegments++;
 		}
 

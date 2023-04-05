@@ -222,8 +222,8 @@ struct drm_i915_gem_object {
 
 	const struct drm_i915_gem_object_ops *ops;
 
-	struct list_head segments;
-	struct list_head segment_link;
+	struct rb_root_cached segments;
+	struct rb_node segment_node;
 	unsigned long segment_offset;
 	struct drm_i915_gem_object *parent;
 

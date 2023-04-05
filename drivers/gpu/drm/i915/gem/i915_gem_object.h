@@ -22,6 +22,11 @@
 
 #define obj_to_i915(obj__) to_i915((obj__)->base.dev)
 
+#define for_each_object_segment(sobj__, obj__) \
+	for ((sobj__) = rb_entry_safe(rb_first_cached(&(obj__)->segments), typeof(*(sobj__)), segment_node); \
+	     (sobj__); \
+	     (sobj__) = rb_entry_safe(rb_next(&(sobj__)->segment_node), typeof(*(sobj__)), segment_node))
+
 static inline bool i915_gem_object_size_2big(u64 size)
 {
 	struct drm_i915_gem_object *obj;
@@ -95,6 +100,13 @@ int i915_gem_object_migrate_to_smem(struct drm_i915_gem_object *obj,
 
 void i915_gem_flush_free_objects(struct drm_i915_private *i915);
 
+struct drm_i915_gem_object *
+i915_gem_object_lookup_segment(struct drm_i915_gem_object *obj, unsigned long offset,
+			       unsigned long *adjusted_offset);
+void i915_gem_object_add_segment(struct drm_i915_gem_object *obj,
+				 struct drm_i915_gem_object *new_obj,
+				 struct drm_i915_gem_object *prev_obj,
+				 unsigned long offset);
 void i915_gem_object_release_segments(struct drm_i915_gem_object *obj);
 
 void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj,
@@ -298,13 +310,13 @@ static inline void i915_gem_object_unlock(struct drm_i915_gem_object *obj)
 static inline bool
 i915_gem_object_has_segments(struct drm_i915_gem_object *obj)
 {
-	return !list_empty(&obj->segments);
+	return !RB_EMPTY_ROOT(&obj->segments.rb_root);
 }
 
 static inline bool
 i915_gem_object_is_segment(struct drm_i915_gem_object *obj)
 {
-	return !list_empty(&obj->segment_link);
+	return !RB_EMPTY_NODE(&obj->segment_node);
 }
 
 static inline void

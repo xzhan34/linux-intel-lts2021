@@ -187,8 +187,8 @@ struct drm_i915_gem_object *i915_gem_object_alloc(void)
 	INIT_ACTIVE_FENCE(&obj->mm.migrate);
 
 	/* below could be used prior to i915_gem_object_init */
-	INIT_LIST_HEAD(&obj->segments);
-	INIT_LIST_HEAD(&obj->segment_link);
+	obj->segments = RB_ROOT_CACHED;
+	RB_CLEAR_NODE(&obj->segment_node);
 
 	return obj;
 }
@@ -452,7 +452,7 @@ int i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
 		if (!err && i915_gem_object_has_segments(obj)) {
 			struct drm_i915_gem_object *sobj;
 
-			list_for_each_entry(sobj, &obj->segments, segment_link) {
+			for_each_object_segment(sobj, obj) {
 				err = i915_gem_object_lock(sobj, &ww);
 				if (!err) {
 					err = __i915_gem_object_set_hint(sobj, &ww, args);
@@ -466,8 +466,12 @@ int i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
 				 * first rollback hints to the prior value.
 				 */
 				if (err) {
-					list_for_each_entry_continue_reverse(sobj, &obj->segments,
-									     segment_link) {
+					struct rb_node *node;
+
+					for (node = rb_prev(&sobj->segment_node);
+					     node; node = rb_prev(node)) {
+						sobj = rb_entry(node, typeof(*sobj),
+								segment_node);
 						sobj->mm.madv_atomic = old_madv_atomic;
 						sobj->mm.preferred_region = old_preferred_region;
 					}
@@ -715,19 +719,90 @@ static void __i915_gem_free_work(struct work_struct *work)
 	i915_gem_flush_free_objects(i915);
 }
 
+struct drm_i915_gem_object *
+i915_gem_object_lookup_segment(struct drm_i915_gem_object *obj, unsigned long offset,
+			       unsigned long *adjusted_offset)
+{
+	struct drm_i915_gem_object *sobj;
+	struct rb_node *node;
+	bool found = false;
+
+	if (offset) {
+		node = obj->segments.rb_root.rb_node;
+		while (node) {
+			sobj = rb_entry(node, typeof(*sobj), segment_node);
+
+			if (offset < sobj->segment_offset) {
+				node = node->rb_left;
+			} else if (offset >= sobj->segment_offset + sobj->base.size) {
+				node = node->rb_right;
+			} else {
+				found = true;
+				break;
+			}
+		}
+	} else {
+		/*
+		 * offset = 0 will always be the first segment in tree,
+		 * so use the optimized lookup
+		 */
+		node = rb_first_cached(&obj->segments);
+		sobj = rb_entry_safe(node, typeof(*sobj), segment_node);
+		found = sobj;
+	}
+
+	GEM_BUG_ON(!found);
+	if (adjusted_offset) {
+		GEM_BUG_ON(sobj->segment_offset > offset);
+		/* return the (smaller) offset into this segment */
+		*adjusted_offset = offset - sobj->segment_offset;
+	}
+
+	return sobj;
+}
+
+void i915_gem_object_add_segment(struct drm_i915_gem_object *obj,
+				 struct drm_i915_gem_object *new_obj,
+				 struct drm_i915_gem_object *prev_obj,
+				 unsigned long offset)
+{
+	struct rb_node **insert, *parent;
+
+	/*
+	 * We insert in order, so with caller providing previous object,
+	 * we do O(1) insertion and skip the usual rbtree lookup for the
+	 * insertion point.
+	 */
+	if (prev_obj) {
+		GEM_BUG_ON(offset == 0);
+		insert = &prev_obj->segment_node.rb_right;
+		parent = &prev_obj->segment_node;
+	} else {
+		GEM_BUG_ON(offset != 0);
+		insert = &obj->segments.rb_root.rb_node;
+		parent = NULL;
+	}
+
+	new_obj->parent = obj;
+	new_obj->segment_offset = offset;
+	rb_link_node(&new_obj->segment_node, parent, insert);
+	rb_insert_color_cached(&new_obj->segment_node, &obj->segments, offset == 0);
+}
+
 void i915_gem_object_release_segments(struct drm_i915_gem_object *obj)
 {
 	struct drm_i915_gem_object *sobj, *snext;
 
-	list_for_each_entry_safe(sobj, snext, &obj->segments, segment_link) {
+	rbtree_postorder_for_each_entry_safe(sobj, snext, &obj->segments.rb_root,
+					     segment_node) {
 		/* clear pointer to placements (owned by parent BO) */
 		sobj->mm.placements = NULL;
 		sobj->mm.n_placements = 0;
 		sobj->parent = NULL;
-		list_del_init(&sobj->segment_link);
 		/* release original reference from object_alloc */
 		i915_gem_object_put(sobj);
 	}
+	obj->segments = RB_ROOT_CACHED;
 }
 
 static void i915_gem_free_object(struct drm_gem_object *gem_obj)

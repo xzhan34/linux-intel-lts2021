@@ -1141,7 +1141,7 @@ i915_gem_madvise_ioctl(struct drm_device *dev, void *data,
 			struct drm_i915_gem_object *sobj;
 			int retained = 0;
 
-			list_for_each_entry(sobj, &obj->segments, segment_link) {
+			for_each_object_segment(sobj, obj) {
 				err = i915_gem_object_lock(sobj, &ww);
 				if (err)
 					break;
