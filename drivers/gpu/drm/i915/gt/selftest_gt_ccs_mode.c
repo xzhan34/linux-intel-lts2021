@@ -81,7 +81,7 @@ live_ccs_mode(struct intel_gt *gt, int num_engines, struct rnd_state *prng)
 	u32 count[MAX_ENGINE_INSTANCE + 1] = {};
 	intel_engine_mask_t config;
 	intel_wakeref_t wf;
-	int slices_per_engine;
+	int slices_per_engine = 0;
 	u32 ccs_mode;
 	int err = 0;
 	int i;
