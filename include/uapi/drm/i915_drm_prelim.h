@@ -339,6 +339,11 @@ struct prelim_drm_i915_perf_oa_buffer_info {
 	__u64 rsvd;   /* mbz */
 };
 
+struct prelim_drm_i915_gem_mmap_offset {
+	/* Specific MMAP offset for PCI memory barrier */
+#define PRELIM_I915_PCI_BARRIER_MMAP_OFFSET (0x50 << PAGE_SHIFT)
+};
+
 struct prelim_drm_i915_gem_memory_class_instance {
 	__u16 memory_class; /* see enum prelim_drm_i915_gem_memory_class */
 	__u16 memory_instance;
