@@ -117,3 +117,7 @@ obj-$(CONFIG_INTEL_SCU_PLATFORM)	+= intel_scu_pltdrv.o
 obj-$(CONFIG_INTEL_SCU_WDT)		+= intel_scu_wdt.o
 obj-$(CONFIG_INTEL_SCU_IPC_UTIL)	+= intel_scu_ipcutil.o
 obj-$(CONFIG_PMC_ATOM)			+= pmc_atom.o
+
+# sep and socwatch drivers
+obj-$(CONFIG_INTEL_SOCPERF)     += socperf/
+obj-$(CONFIG_INTEL_SOCWATCH)    += socwatch/ socperf/
