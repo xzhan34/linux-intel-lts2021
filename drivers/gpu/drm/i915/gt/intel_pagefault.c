@@ -705,6 +705,21 @@ static struct i915_vma *get_acc_vma(struct intel_guc *guc,
 	return i915_find_vma(vm, page_va);
 }
 
+const char *intel_acc_err2str(unsigned int err)
+{
+	static const char * const faults[] = {
+		[ACCESS_ERR_OK] = "",
+		[ACCESS_ERR_NOSUP] = "not supported",
+		[ACCESS_ERR_NULLVMA] = "null vma",
+		[ACCESS_ERR_USERPTR] = "userptr",
+	};
+
+	if (err > ARRAY_SIZE(faults) || !faults[err])
+		return "invalid acc err!";
+
+	return faults[err];
+}
+
 static int acc_migrate_to_lmem(struct intel_gt *gt, struct i915_vma *vma)
 {
 	struct i915_gem_ww_ctx ww;
@@ -741,27 +756,6 @@ retry:
 	return err;
 }
 
-static void print_access_counter(struct acc_info *info)
-{
-	DRM_DEBUG_DRIVER("Access counter request:\n"
-			"\tType: %s\n"
-			"\tASID: %d\n"
-			"\tVFID: %d\n"
-			"\tEngine: %s[%d]\n"
-			"\tGranularity: 0x%x KB Region/ %d KB sub-granularity\n"
-			"\tSub_Granularity Vector: 0x%08x\n"
-			"\tVA Range base: 0x%016llx\n",
-			info->access_type ? "AC_NTFY_VAL" : "AC_TRIG_VAL",
-			info->asid, info->vfid,
-			intel_engine_class_repr(info->engine_class),
-			info->engine_instance,
-			granularity_in_byte(info->granularity) / SZ_1K,
-			sub_granularity_in_byte(info->granularity) / SZ_1K,
-			info->sub_granularity,
-			info->va_range_base
-			);
-}
-
 static int handle_i915_acc(struct intel_guc *guc,
 			   struct acc_info *info)
 {
@@ -771,33 +765,24 @@ static int handle_i915_acc(struct intel_guc *guc,
 	mark_engine_as_active(gt, info->engine_class, info->engine_instance);
 
 	if (info->access_type) {
-		print_access_counter(info);
+		trace_intel_access_counter(gt, info, ACCESS_ERR_NOSUP);
 		return 0;
 	}
 
 	vma = get_acc_vma(guc, info);
 	if (!vma) {
-		print_access_counter(info);
-		DRM_DEBUG_DRIVER("get_acc_vma failed\n");
+		trace_intel_access_counter(gt, info, ACCESS_ERR_NULLVMA);
 		return 0;
 	}
 
 	if (i915_gem_object_is_userptr(vma->obj)) {
-		int err = i915_gem_object_userptr_submit_init(vma->obj);
-
-		if (err) {
-			print_access_counter(info);
-			DRM_DEBUG_DRIVER("userptr_submit_init failed %d\n", err);
-			goto put_vma;
-		}
+		trace_intel_access_counter(gt, info, ACCESS_ERR_USERPTR);
+		goto put_vma;
 	}
 
 	acc_migrate_to_lmem(gt, vma);
 
-	if (i915_gem_object_is_userptr(vma->obj))
-		i915_gem_object_userptr_submit_done(vma->obj);
-
-	trace_intel_access_counter(gt, info);
+	trace_intel_access_counter(gt, info, ACCESS_ERR_OK);
 put_vma:
 	i915_vma_put(vma);
 	__i915_vma_put(vma);
