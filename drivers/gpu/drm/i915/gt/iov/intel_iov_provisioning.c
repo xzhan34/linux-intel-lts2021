@@ -2861,13 +2861,14 @@ static void pf_reprovision_pf(struct intel_iov *iov)
 {
 	IOV_DEBUG(iov, "reprovisioning PF\n");
 
+	intel_iov_provisioning_force_vgt_mode(iov);
+
 	mutex_lock(pf_provisioning_mutex(iov));
 	pf_reprovision_sched_if_idle(iov);
 	pf_reprovision_reset_engine(iov);
 	pf_reprovision_sample_period(iov);
 	pf_reprovision_exec_quantum(iov, PFID);
 	pf_reprovision_preempt_timeout(iov, PFID);
-	iov->pf.provisioning.self_done = true;
 	mutex_unlock(pf_provisioning_mutex(iov));
 }
 
@@ -3257,4 +3258,4 @@ int intel_iov_provisioning_force_vgt_mode(struct intel_iov *iov)
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftests/selftest_live_iov_provisioning.c"
-#endif
+#endif /* CONFIG_DRM_I915_SELFTEST */
