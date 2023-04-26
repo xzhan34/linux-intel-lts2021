@@ -77,6 +77,9 @@ struct dma_fence *
 __i915_active_fence_set(struct i915_active_fence *active,
 			struct dma_fence *fence);
 
+void __i915_active_fence_replace(struct i915_active_fence *src,
+				 struct i915_active_fence *dst);
+
 /**
  * i915_active_fence_set - updates the tracker to watch the current fence
  * @active - the active tracker
@@ -100,6 +103,11 @@ __i915_active_fence_get(struct dma_fence __rcu **fencep)
 		fence = rcu_dereference(*fencep);
 		if (IS_ERR_OR_NULL(fence))
 			return fence;
+
+		if (!test_bit(DMA_FENCE_FLAG_ENABLE_SIGNAL_BIT,
+			      &fence->flags) &&
+		    dma_fence_is_signaled(fence))
+			continue;
 
 		if (!dma_fence_get_rcu(fence))
 			continue;

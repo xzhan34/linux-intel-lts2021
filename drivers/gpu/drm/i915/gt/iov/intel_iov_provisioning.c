@@ -2045,7 +2045,7 @@ static u64 pf_query_free_lmem(struct intel_iov *iov)
 	intel_gt_flush_buffer_pool(gt);
 	i915_gem_drain_workqueue(gt->i915);
 
-	return gt->lmem->avail;
+	return atomic64_read(&gt->lmem->avail);
 }
 
 /**

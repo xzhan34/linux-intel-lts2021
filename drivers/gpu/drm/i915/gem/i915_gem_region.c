@@ -12,10 +12,12 @@
 
 int
 i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
-				struct sg_table *pages)
+				struct sg_table *pages,
+				bool dirty)
 {
 	__intel_memory_region_put_pages_buddy(obj->mm.region.mem,
-					      &obj->mm.blocks);
+					      &obj->mm.blocks,
+					      dirty);
 	i915_drm_client_make_resident(obj, false);
 
 	sg_free_table(pages);
@@ -73,6 +75,12 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 	}
 	if (obj->flags & I915_BO_ALLOC_CONTIGUOUS)
 		flags |= I915_ALLOC_CONTIGUOUS;
+	if (obj->flags & (I915_BO_ALLOC_USER | I915_BO_CPU_CLEAR))
+		flags |= I915_BUDDY_ALLOC_WANT_CLEAR;
+	if (obj->mm.dirty) {
+		flags &= ~I915_BUDDY_ALLOC_WANT_CLEAR;
+		flags |= I915_BUDDY_ALLOC_ALLOW_ACTIVE;
+	}
 
 	ret = __intel_memory_region_get_pages_buddy(mem, ww, size, flags,
 						    blocks);

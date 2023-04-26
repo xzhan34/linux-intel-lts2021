@@ -197,7 +197,7 @@ rebuild_st:
 
 	__i915_gem_object_set_pages(obj, st, sg_page_sizes);
 
-	mem->avail -= size;
+	atomic64_sub(size, &mem->avail);
 
 	return 0;
 
@@ -354,7 +354,7 @@ void i915_gem_object_put_pages_shmem(struct drm_i915_gem_object *obj, struct sg_
 		check_release_pagevec(&pvec);
 	obj->mm.dirty = false;
 
-	mem->avail += size;
+	atomic64_add(size, &mem->avail);
 
 	sg_free_table(pages);
 	kfree(pages);

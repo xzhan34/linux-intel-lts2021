@@ -489,6 +489,7 @@ put_vma:
 			err = 0;
 	}
 
+	i915_gem_object_migrate_boost(vma->obj, I915_PRIORITY_MAX);
 	fence = i915_active_fence_get_or_error(&vma->active.excl);
 
 	i915_vma_put(vma);

@@ -42,7 +42,7 @@ unsigned int i915_gem_get_pat_index(struct drm_i915_private *i915,
 bool i915_gem_object_has_cache_level(const struct drm_i915_gem_object *obj,
 				     enum i915_cache_level lvl);
 void i915_gem_init__objects(struct drm_i915_private *i915);
-u32 i915_gem_object_max_page_size(struct drm_i915_gem_object *obj);
+u32 i915_gem_object_max_page_size(const struct drm_i915_gem_object *obj);
 
 void i915_objects_module_exit(void);
 int i915_objects_module_init(void);
@@ -836,10 +836,12 @@ bool i915_gem_object_should_migrate_lmem(struct drm_i915_gem_object *obj,
 
 void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
 				     struct i915_request *rq);
+void i915_gem_object_migrate_boost(struct drm_i915_gem_object *obj, int prio);
 long i915_gem_object_migrate_wait(struct drm_i915_gem_object *obj,
 				  unsigned int flags,
 				  long timeout);
 int i915_gem_object_migrate_sync(struct drm_i915_gem_object *obj);
+void i915_gem_object_migrate_decouple(struct drm_i915_gem_object *obj);
 void i915_gem_object_migrate_finish(struct drm_i915_gem_object *obj);
 
 static inline bool
@@ -852,6 +854,32 @@ static inline int
 i915_gem_object_migrate_has_error(const struct drm_i915_gem_object *obj)
 {
 	return i915_active_fence_has_error(&obj->mm.migrate);
+}
+
+/**
+ * i915_gem_object_inuse - Is this object accessible by userspace?
+ *
+ * An object may be published (accessible by others and userspace)
+ * only if either a GEM handle to this object exists, or if this
+ * object has been exported via dma-buf.
+ */
+static inline bool
+i915_gem_object_inuse(const struct drm_i915_gem_object *obj)
+{
+	return READ_ONCE(obj->base.handle_count) || obj->base.dma_buf;
+}
+
+/**
+ * i915_gem_object_mark_dirty - May this object contain modified pages?
+ *
+ * We try to optimise away handling of known clear pages, and so need to
+ * track whenever the object may be written to, either directly by the kernel
+ * or indirectly by userspace on the GPU.
+ */
+static inline void
+i915_gem_object_mark_dirty(struct drm_i915_gem_object *obj)
+{
+	obj->mm.dirty = true;
 }
 
 void i915_gem_object_share_resv(struct drm_i915_gem_object *parent,

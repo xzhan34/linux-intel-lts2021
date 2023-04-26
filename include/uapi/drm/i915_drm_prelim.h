@@ -1029,7 +1029,7 @@ struct prelim_drm_i915_query_lmem_memory_regions {
 	/** MBZ */
 	__u32 rsvd[3];
 
-	/* Info about each supported region */
+	/** Info about each supported region */
 	struct prelim_drm_i915_lmem_memory_region_info regions[];
 };
 

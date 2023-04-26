@@ -117,8 +117,6 @@ static int __context_pin_state(struct i915_vma *vma, struct i915_gem_ww_ctx *ww)
 	 * it cannot reclaim the object until we release it.
 	 */
 	i915_vma_make_unshrinkable(vma);
-	vma->obj->mm.dirty = true;
-
 	return 0;
 
 err_unpin:
@@ -519,7 +517,7 @@ void intel_context_enter_engine(struct intel_context *ce)
 void intel_context_exit_engine(struct intel_context *ce)
 {
 	intel_timeline_exit(ce->timeline);
-	intel_engine_pm_put(ce->engine);
+	intel_engine_pm_put_delay(ce->engine, 2); /* short keepalive */
 }
 
 int intel_context_prepare_remote_request(struct intel_context *ce,

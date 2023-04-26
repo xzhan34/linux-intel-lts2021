@@ -127,10 +127,12 @@ static int __gt_unpark(struct intel_wakeref *wf)
 static int __gt_park(struct intel_wakeref *wf)
 {
 	struct intel_gt *gt = container_of(wf, typeof(*gt), wakeref);
-	intel_wakeref_t wakeref = fetch_and_zero(&gt->awake);
 	struct drm_i915_private *i915 = gt->i915;
 
 	GT_TRACE(gt, "\n");
+
+	if (gt->lmem && intel_memory_region_park(gt->lmem))
+		return -EBUSY;
 
 	runtime_end(gt);
 	intel_gt_park_requests(gt);
@@ -148,8 +150,8 @@ static int __gt_park(struct intel_wakeref *wf)
 	intel_synchronize_irq(i915);
 
 	/* Defer dropping the display power well for 100ms, it's slow! */
-	GEM_BUG_ON(!wakeref);
-	intel_display_power_put_async(i915, POWER_DOMAIN_GT_IRQ, wakeref);
+	intel_display_power_put_async(i915, POWER_DOMAIN_GT_IRQ,
+				      fetch_and_zero(&gt->awake));
 
 	/* Wa_14017210380: mtl */
 	mtl_mc6_wa_media_not_busy(gt);

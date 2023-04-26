@@ -325,7 +325,7 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 
 		if (area->vm_flags & VM_WRITE) {
 			GEM_BUG_ON(!i915_gem_object_has_pinned_pages(obj));
-			obj->mm.dirty = true;
+			i915_gem_object_mark_dirty(obj);
 		}
 
 		i915_gem_object_unpin_pages(obj);
@@ -461,7 +461,7 @@ retry:
 	if (write) {
 		GEM_BUG_ON(!i915_gem_object_has_pinned_pages(obj));
 		i915_vma_set_ggtt_write(vma);
-		obj->mm.dirty = true;
+		i915_gem_object_mark_dirty(obj);
 	}
 
 err_fence:

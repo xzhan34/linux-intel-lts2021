@@ -46,8 +46,10 @@ struct intel_engine_cs;
 struct intel_uncore;
 
 enum intel_gt_counters { /* u64 indices into gt->counters */
-	INTEL_GT_CLEAR_CYCLES = 0,
-	INTEL_GT_CLEAR_BYTES,
+	INTEL_GT_CLEAR_ALLOC_CYCLES = 0,
+	INTEL_GT_CLEAR_ALLOC_BYTES,
+	INTEL_GT_CLEAR_FREE_CYCLES,
+	INTEL_GT_CLEAR_FREE_BYTES,
 };
 
 /* Count of GT Correctable and FATAL HW ERRORS */
@@ -306,6 +308,8 @@ struct intel_gt {
 		 * Idle is defined as active == 0, active is active > 0.
 		 */
 		ktime_t start;
+
+		local64_t migration_stall;
 	} stats;
 
 	struct intel_engine_cs *engine[I915_NUM_ENGINES];
@@ -378,7 +382,6 @@ struct intel_gt {
 
 	const struct intel_mmio_range *steering_table[NUM_STEERING_TYPES];
 	struct intel_migrate migrate;
-	unsigned long lmem_clear_chunk; /* XXX find me a better home! */
 
 	struct {
 		u8 groupid;

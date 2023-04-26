@@ -307,7 +307,7 @@ static void show_xfer(struct seq_file *m,
 	if (!time)
 		return;
 
-	seq_printf(m, "GT%d %s: %llu MiB in %llums, %llu MiB/s\n",
+	seq_printf(m, "GT%d %-12s: %llu MiB in %llums, %llu MiB/s\n",
 		   gt->info.id, name,
 		   bytes >> 20,
 		   div_u64(time, NSEC_PER_MSEC),
@@ -367,12 +367,22 @@ static int i915_gem_object_info_show(struct seq_file *m, void *data)
 			   mr->name, &mr->total, &mr->avail, &mr->evict);
 
 	for_each_gt(gt, i915, id) {
+		u64 t;
+
+		t = local64_read(&gt->stats.migration_stall);
+		if (t >> 20)
+			seq_printf(m, "GT%d migration stalls: %lldms\n",
+				   id, div_u64(t, NSEC_PER_MSEC));
+
 		if (!gt->counters.map)
 			continue;
 
-		show_xfer(m, gt, "clear",
-			  gt->counters.map[INTEL_GT_CLEAR_BYTES],
-			  gt->counters.map[INTEL_GT_CLEAR_CYCLES]);
+		show_xfer(m, gt, "clear-on-alloc",
+			  gt->counters.map[INTEL_GT_CLEAR_ALLOC_BYTES],
+			  gt->counters.map[INTEL_GT_CLEAR_ALLOC_CYCLES]);
+		show_xfer(m, gt, "clear-on-free",
+			  gt->counters.map[INTEL_GT_CLEAR_FREE_BYTES],
+			  gt->counters.map[INTEL_GT_CLEAR_FREE_CYCLES]);
 	}
 
 	evict_stats(m, "Blitter", &i915->mm.blt_swap_stats);
@@ -391,14 +401,11 @@ i915_get_mem_region_acct_limit(struct seq_file *m, void *data, u32 index)
 	seq_printf(m, "usr_acct_limit:%u\n", i915->mm.user_acct_limit[index]);
 
 	for_each_memory_region(mr, i915, id) {
-		u64 mem_available;
-
 		if (mr->type != INTEL_MEMORY_LOCAL)
 			continue;
 
-		mem_available = mr->acct_limit[index];
-		seq_printf(m, "%s: available:%llu bytes\n", mr->name,
-			   mem_available);
+		seq_printf(m, "%s: available:%pa bytes\n",
+			   mr->name, &mr->acct_limit[index]);
 	}
 
 	return 0;

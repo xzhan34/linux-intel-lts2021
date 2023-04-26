@@ -432,7 +432,6 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 	int err;
 
 	fabric = update_fabric(dmabuf, attach->importer_priv);
-
 	p2p_distance = object_to_attachment_p2p_distance(obj, attach);
 
 	if (fabric < 0)
@@ -444,7 +443,7 @@ static int i915_gem_dmabuf_attach(struct dma_buf *dmabuf,
 
 	trace_i915_dma_buf_attach(obj, fabric, p2p_distance);
 
-	pvc_wa_disallow_rc6(ce->engine->i915);
+	pvc_wa_disallow_rc6(gt->i915);
 	for_i915_gem_ww(&ww, err, true) {
 		err = i915_gem_object_lock(obj, &ww);
 		if (err)

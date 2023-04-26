@@ -585,7 +585,7 @@ void __i915_gem_object_flush_map(struct drm_i915_gem_object *obj,
 				     offset, size, obj->base.size));
 
 	wmb(); /* let all previous writes be visible to coherent partners */
-	obj->mm.dirty = true;
+	i915_gem_object_mark_dirty(obj);
 
 	if (obj->cache_coherent & I915_BO_CACHE_COHERENT_FOR_WRITE)
 		return;

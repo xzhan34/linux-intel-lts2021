@@ -64,11 +64,26 @@ void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
 	__i915_active_fence_set(&obj->mm.migrate, &rq->fence);
 }
 
+void i915_gem_object_migrate_boost(struct drm_i915_gem_object *obj, int prio)
+{
+	struct dma_fence *fence;
+
+	fence = i915_active_fence_get(&obj->mm.migrate);
+	if (!fence)
+		return;
+
+	if (dma_fence_is_i915(fence))
+		i915_request_set_priority(to_request(fence), prio);
+
+	dma_fence_put(fence);
+}
+
 long i915_gem_object_migrate_wait(struct drm_i915_gem_object *obj,
 				  unsigned int flags,
 				  long timeout)
 {
 	struct dma_fence *fence;
+	ktime_t start;
 
 	fence = i915_active_fence_get_or_error(&obj->mm.migrate);
 	if (likely(!fence))
@@ -77,7 +92,10 @@ long i915_gem_object_migrate_wait(struct drm_i915_gem_object *obj,
 	if (IS_ERR(fence))
 		return PTR_ERR(fence);
 
+	start = ktime_get_raw();
 	timeout = i915_request_wait(to_request(fence), flags, timeout);
+	local64_add(ktime_get_raw() - start,
+		    &obj->mm.region.mem->gt->stats.migration_stall);
 	if (fence->error)
 		timeout = fence->error;
 
@@ -94,6 +112,22 @@ int i915_gem_object_migrate_sync(struct drm_i915_gem_object *obj)
 					     MAX_SCHEDULE_TIMEOUT);
 
 	return timeout < 0 ? timeout : 0;
+}
+
+void i915_gem_object_migrate_decouple(struct drm_i915_gem_object *obj)
+{
+	struct dma_fence *f;
+
+	rcu_read_lock();
+	f = xchg(&obj->mm.migrate.fence, NULL);
+	if (unlikely(!IS_ERR_OR_NULL(f))) {
+		unsigned long flags;
+
+		spin_lock_irqsave(f->lock, flags);
+		list_del_init(&obj->mm.migrate.cb.node);
+		spin_unlock_irqrestore(f->lock, flags);
+	}
+	rcu_read_unlock();
 }
 
 void i915_gem_object_migrate_finish(struct drm_i915_gem_object *obj)
@@ -936,20 +970,7 @@ static void lists_swap(struct list_head *a, struct list_head *b)
 static void
 swap_blocks(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor)
 {
-	struct intel_memory_region *a = obj->mm.region.mem;
-	struct intel_memory_region *b = donor->mm.region.mem;
-
-	GEM_BUG_ON(a == b);
-	if (a->id > b->id)
-		swap(a, b);
-
-	mutex_lock(&a->mm_lock);
-	mutex_lock_nested(&b->mm_lock, SINGLE_DEPTH_NESTING);
-
 	lists_swap(&obj->mm.blocks, &donor->mm.blocks);
-
-	mutex_unlock(&b->mm_lock);
-	mutex_unlock(&a->mm_lock);
 }
 
 static void
@@ -987,12 +1008,16 @@ swap_shrinker(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor
 static void
 swap_pages(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor)
 {
+	__i915_active_fence_replace(&donor->mm.migrate, &obj->mm.migrate);
+
 	swap(obj->mm.pages, donor->mm.pages);
 	swap(obj->mm.mapping, donor->mm.mapping);
 	swap(obj->mm.page_sizes, donor->mm.page_sizes);
 
 	__i915_gem_object_reset_page_iter(obj, obj->mm.pages);
 	__i915_gem_object_reset_page_iter(donor, donor->mm.pages);
+
+	donor->mm.dirty = obj->mm.dirty;
 }
 
 int i915_gem_object_migrate(struct drm_i915_gem_object *obj,

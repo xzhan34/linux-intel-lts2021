@@ -549,10 +549,10 @@ int __i915_vma_bind(struct i915_vma *vma,
 		vma->ops->bind_vma(vma->vm, NULL, vma, pat_index, bind_flags);
 	}
 
-	if (bind_flags & PIN_RESIDENT && vma->obj)
-		vma->obj->mm.dirty = true;
-
 	atomic_or(bind_flags, &vma->flags);
+	if (bind_flags & PIN_RESIDENT && vma->obj)
+		i915_gem_object_mark_dirty(vma->obj);
+
 	return 0;
 }
 
@@ -1438,11 +1438,6 @@ int i915_ggtt_pin_for_gt(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	return i915_ggtt_pin(vma, ww, align, flags);
 }
 
-static bool object_inuse(struct drm_i915_gem_object *obj)
-{
-	return READ_ONCE(obj->base.handle_count);
-}
-
 void i915_vma_close(struct i915_vma *vma)
 {
 	struct i915_address_space *vm = vma->vm;
@@ -1468,7 +1463,7 @@ void i915_vma_close(struct i915_vma *vma)
 		struct drm_i915_gem_object *obj = vma->obj;
 		bool inuse =
 			!i915_vma_is_persistent(vma) &&
-			object_inuse(obj) &&
+			i915_gem_object_inuse(obj) &&
 			!i915_is_ggtt_or_dpt(vm);
 
 		if (inuse) {
@@ -1746,7 +1741,6 @@ int _i915_vma_move_to_active(struct i915_vma *vma,
 		i915_active_add_request(&vma->fence->active, rq);
 
 	obj->read_domains |= I915_GEM_GPU_DOMAINS;
-	obj->mm.dirty = true;
 
 	return 0;
 }

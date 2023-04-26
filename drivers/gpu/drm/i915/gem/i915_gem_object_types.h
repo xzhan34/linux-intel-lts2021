@@ -686,6 +686,11 @@ struct drm_i915_gem_object {
 		void *gvt_info;
 	};
 
+	/*
+	 * To store the memory mask which represents the user preference about
+	 * which memory region the object should reside in
+	 */
+	u32 memory_mask;
 	struct drm_i915_gem_object *swapto;
 
 	struct {
@@ -697,12 +702,6 @@ struct drm_i915_gem_object {
 		/* Whether this object currently resides in local memory */
 		bool resident:1;
 	} client;
-
-	/*
-	 * To store the memory mask which represents the user preference about
-	 * which memory region the object should reside in
-	 */
-	u32 memory_mask;
 
 	/*
 	 * Implicity scaling uses two objects, allow them to be connected

@@ -25,10 +25,21 @@ struct create_ext {
 	u32 pair_id;
 };
 
-static u32 placement_mask(struct intel_memory_region **placements,
-			  int n_placements);
+static u32 placement_mask(struct intel_memory_region *const *placements,
+			  int n_placements)
+{
+	u32 mask = 0;
+	int i;
 
-u32 i915_gem_object_max_page_size(struct drm_i915_gem_object *obj)
+	for (i = 0; i < n_placements; i++)
+		mask |= BIT(placements[i]->id);
+
+	GEM_BUG_ON(!mask);
+
+	return mask;
+}
+
+u32 i915_gem_object_max_page_size(const struct drm_i915_gem_object *obj)
 {
 	u32 max_page_size = I915_GTT_PAGE_SIZE_4K;
 	int i;
@@ -64,7 +75,8 @@ static void object_set_placements(struct drm_i915_gem_object *obj,
 		obj->mm.n_placements = n_placements;
 	}
 
-	obj->memory_mask = placement_mask(obj->mm.placements, obj->mm.n_placements);
+	obj->memory_mask =
+		placement_mask(obj->mm.placements, obj->mm.n_placements);
 }
 
 static u64 object_limit(struct drm_i915_gem_object *obj)
@@ -137,23 +149,10 @@ static int i915_gem_publish(struct drm_i915_gem_object *obj,
 static u64 get_object_segment_size(u64 obj_size, u64 requested_size)
 {
 	/* require 2+ chunks */
-	if  (!(requested_size && obj_size >= requested_size << 1))
+	if (!(requested_size && obj_size >= requested_size << 1))
 		return 0;
+
 	return requested_size;
-}
-
-static u32 placement_mask(struct intel_memory_region **placements,
-			  int n_placements)
-{
-	u32 mask = 0;
-	int i;
-
-	for (i = 0; i < n_placements; i++)
-		mask |= BIT(placements[i]->id);
-
-	GEM_BUG_ON(!mask);
-
-	return mask;
 }
 
 static int
@@ -248,7 +247,7 @@ static int account_size(struct drm_i915_private *i915, unsigned long
 		struct intel_memory_region *mr = i915->mm.regions[region_id];
 		int ret = 0;
 
-		mutex_lock(&mr->mm_lock);
+		spin_lock(&mr->acct_lock);
 
 		if (!i915_allows_overcommit(i915)) {
 			if (size > 0 && mr->acct_limit[acct] < size)
@@ -260,7 +259,7 @@ static int account_size(struct drm_i915_private *i915, unsigned long
 		if (!ret)
 			mr->acct_user[acct] += size;
 
-		mutex_unlock(&mr->mm_lock);
+		spin_unlock(&mr->acct_lock);
 
 		if (ret) {
 			account_size(i915, region_mask & (BIT(region_id) - 1),
@@ -655,8 +654,6 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_object *obj;
 	int ret;
 
-	i915_gem_flush_free_objects(i915);
-
 	obj = i915_gem_object_alloc();
 	if (!obj)
 		return -ENOMEM;
@@ -876,8 +873,6 @@ i915_gem_create_ext_ioctl(struct drm_device *dev, void *data,
 	if (args->flags)
 		return -EINVAL;
 
-	i915_gem_flush_free_objects(i915);
-
 	obj = i915_gem_object_alloc();
 	if (!obj)
 		return -ENOMEM;
@@ -947,8 +942,6 @@ i915_gem_object_create_user(struct drm_i915_private *i915, u64 size,
 {
 	struct drm_i915_gem_object *obj;
 	int ret;
-
-	i915_gem_flush_free_objects(i915);
 
 	obj = i915_gem_object_alloc();
 	if (!obj)
