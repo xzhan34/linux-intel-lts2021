@@ -18,6 +18,7 @@
 #include "intel_uc.h"
 
 #include "i915_drv.h"
+#include "i915_hwmon.h"
 
 static const struct intel_uc_ops uc_ops_off;
 static const struct intel_uc_ops uc_ops_on;
@@ -510,6 +511,7 @@ static int __uc_init_hw(struct intel_uc *uc)
 	struct intel_guc *guc = &uc->guc;
 	struct intel_huc *huc = &uc->huc;
 	int ret, attempts;
+	bool pl1en;
 
 	GEM_BUG_ON(!intel_uc_supports_guc(uc));
 	GEM_BUG_ON(!intel_uc_wants_guc(uc));
@@ -524,12 +526,12 @@ static int __uc_init_hw(struct intel_uc *uc)
 		      intel_uc_fw_is_overridden(&guc->fw) ||
 		      intel_uc_wants_guc_submission(uc) ?
 		      intel_uc_fw_status_to_error(guc->fw.status) : 0;
-		goto err_sanitize;
+		goto err_out;
 	}
 
 	ret = uc_init_wopcm(uc);
 	if (ret)
-		goto err_sanitize;
+		goto err_out;
 
 	intel_guc_reset_interrupts(guc);
 
@@ -540,6 +542,9 @@ static int __uc_init_hw(struct intel_uc *uc)
 	else
 		/* Always retry at least once in case something weird happens */
 		attempts = 2;
+
+	/* Disable a potentially low PL1 power limit to allow freq to be raised */
+	i915_hwmon_power_max_disable(i915, &pl1en);
 
 	intel_rps_raise_unslice(&uc_to_gt(uc)->rps);
 
@@ -597,6 +602,8 @@ static int __uc_init_hw(struct intel_uc *uc)
 		intel_rps_lower_unslice(&uc_to_gt(uc)->rps);
 	}
 
+	i915_hwmon_power_max_restore(i915, pl1en);
+
 	ret = intel_guc_g2g_register(guc);
 	if (ret)
 		drm_info(&i915->drm,
@@ -625,7 +632,8 @@ err_rps:
 	/* Return GT back to RPn */
 	intel_rps_lower_unslice(&uc_to_gt(uc)->rps);
 
-err_sanitize:
+	i915_hwmon_power_max_restore(i915, pl1en);
+err_out:
 	__uc_sanitize(uc);
 
 	if (!ret) {
