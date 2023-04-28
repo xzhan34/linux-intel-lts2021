@@ -345,12 +345,10 @@ struct intel_gt {
 	 * kernels so does not require any allocation of compute slices.
 	 */
 	struct {
-		/* Serialize CCS mode access */
-		struct mutex mutex;
-		/* Active CCS engines */
-		intel_engine_mask_t active;
-		/* CCS context -> C-slice */
-		intel_engine_mask_t config;
+		struct mutex mutex; /* Serialize CCS mode access */
+		intel_engine_mask_t active; /* Active CCS engines */
+		intel_engine_mask_t config; /* CCS context -> C-slice */
+		u32 mode; /* CCS_MODE shadow */
 	} ccs;
 
 	enum intel_submission_method submission_method;

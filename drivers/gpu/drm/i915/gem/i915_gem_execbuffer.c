@@ -4230,23 +4230,6 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 	if (unlikely(err))
 		goto err_sfence;
 
-	/*
-	 * For any client that wishes to use compute engines, even if
-	 * they are not requiring them for this execbuf, we will change
-	 * the CCS mode and the configuration, and this configuration
-	 * will remain locked until those compute engines are idle.
-	 * That is a second client wishing to use a different compute
-	 * mode will have to wait until the first is finished, even
-	 * if both do not use compute in this sequence. The benefit
-	 * is that the system is always ready for the first client if
-	 * they need to use compute in conjunction with the context
-	 * and must not block.
-	 */
-	err = intel_gt_configure_ccs_mode(eb.context->engine->gt,
-					  eb.gem_context->engine_mask);
-	if (err)
-		goto err_exit;
-
 	i915_gem_vm_bind_lock(eb.context->vm);
 
 	err = eb_lookup_vmas(&eb);
@@ -4271,6 +4254,23 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 	}
 
 	ww_acquire_done(&eb.ww.ctx);
+
+	/*
+	 * For any client that wishes to use compute engines, even if
+	 * they are not requiring them for this execbuf, we will change
+	 * the CCS mode and the configuration, and this configuration
+	 * will remain locked until those compute engines are idle.
+	 * That is a second client wishing to use a different compute
+	 * mode will have to wait until the first is finished, even
+	 * if both do not use compute in this sequence. The benefit
+	 * is that the system is always ready for the first client if
+	 * they need to use compute in conjunction with the context
+	 * and must not block.
+	 */
+	err = intel_gt_configure_ccs_mode(eb.context->engine->gt,
+					  eb.gem_context->engine_mask);
+	if (err)
+		goto err_vma;
 
 	/* All GPU relocation batches must be submitted prior to the user rq */
 	GEM_BUG_ON(eb.reloc_cache.rq);
@@ -4341,7 +4341,6 @@ err_vma:
 		intel_context_put(eb.reloc_context);
 err_vm_bind_unlock:
 	i915_gem_vm_bind_unlock(eb.context->vm);
-err_exit:
 	eb_exit(&eb);
 err_sfence:
 	kfree(sfence);
