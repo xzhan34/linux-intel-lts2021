@@ -14,6 +14,7 @@
 #include "i915_gem_vm_bind.h"
 #include "i915_sw_fence_work.h"
 #include "i915_user_extensions.h"
+#include "i915_debugger.h"
 
 struct user_fence {
 	struct mm_struct *mm;
@@ -448,6 +449,8 @@ int i915_gem_vm_unbind_obj(struct i915_address_space *vm,
 	if (va->handle)
 		return -EINVAL;
 
+	i915_debugger_wait_on_discovery(vm->i915, vm->client);
+
 	va->start = intel_noncanonical_addr(INTEL_PPGTT_MSB(vm->i915),
 					    va->start);
 	/* XXX: Support async and delayed unbind */
@@ -725,6 +728,8 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	if (ret)
 		goto put_obj;
 
+	i915_debugger_wait_on_discovery(vm->i915, vm->client);
+
 	ret = i915_gem_vm_bind_lock_interruptible(vm);
 	if (ret)
 		goto put_obj;
@@ -780,6 +785,8 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 		list_splice_tail_init(&ext.metadata_list, &vma->metadata_list);
 		spin_unlock(&vma->metadata_lock);
 	}
+	/* The metadata is in VMA so debugger can prepare the event properly */
+	i915_debugger_vma_prepare(vm->client, vma, PRELIM_DRM_I915_DEBUG_EVENT_CREATE);
 
 	i915_gem_ww_ctx_init(&ww, true);
 	list_for_each_entry_safe(vma, vma_next, &vma_head, vm_bind_link) {

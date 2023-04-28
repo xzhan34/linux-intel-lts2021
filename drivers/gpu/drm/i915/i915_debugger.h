@@ -29,23 +29,22 @@ void i915_debugger_fini(struct drm_i915_private *i915);
 void i915_debugger_wait_on_discovery(struct drm_i915_private *i915,
 				     struct i915_drm_client *client);
 
-void i915_debugger_client_register(struct i915_drm_client *client,
-				   struct task_struct *task);
 void i915_debugger_client_release(struct i915_drm_client *client);
 
-void i915_debugger_client_create(const struct i915_drm_client *client);
+void i915_debugger_client_create(struct i915_drm_client *client);
 void i915_debugger_client_destroy(struct i915_drm_client *client);
 
-void i915_debugger_context_create(const struct i915_gem_context *ctx);
-void i915_debugger_context_destroy(const struct i915_gem_context *ctx);
+void i915_debugger_context_create(struct i915_gem_context *ctx);
+void i915_debugger_context_destroy(struct i915_gem_context *ctx);
 
-void i915_debugger_uuid_create(const struct i915_drm_client *client,
-			       const struct i915_uuid_resource *uuid);
-void i915_debugger_uuid_destroy(const struct i915_drm_client *client,
-				const struct i915_uuid_resource *uuid);
+void i915_debugger_uuid_create(struct i915_drm_client *client,
+			       struct i915_uuid_resource *uuid);
+
+void i915_debugger_uuid_destroy(struct i915_drm_client *client,
+				struct i915_uuid_resource *uuid);
 
 void i915_debugger_vm_create(struct i915_drm_client *client,
-			    struct i915_address_space *vm);
+			     struct i915_address_space *vm);
 void i915_debugger_vm_destroy(struct i915_drm_client *client,
 			      struct i915_address_space *vm);
 
@@ -53,6 +52,12 @@ void i915_debugger_vma_insert(struct i915_drm_client *client,
 			      struct i915_vma *vma);
 void i915_debugger_vma_evict(struct i915_drm_client *client,
 			     struct i915_vma *vma);
+void i915_debugger_vma_prepare(struct i915_drm_client *client,
+			       struct i915_vma *vma,
+			       u32 flags);
+void i915_debugger_vma_finalize(struct i915_drm_client *client,
+				struct i915_vma *vma,
+				int error);
 
 void i915_debugger_context_param_vm(const struct i915_drm_client *client,
 				    struct i915_gem_context *ctx,
@@ -87,20 +92,18 @@ static inline void i915_debugger_fini(struct drm_i915_private *i915) { }
 static inline void i915_debugger_wait_on_discovery(struct drm_i915_private *i915,
 						   struct i915_drm_client *client) { }
 
-static inline void i915_debugger_client_register(struct i915_drm_client *client,
-						 struct task_struct *task) { }
 static inline void i915_debugger_client_release(struct i915_drm_client *client) { }
 
-static inline void i915_debugger_client_create(const struct i915_drm_client *client) { }
+static inline void i915_debugger_client_create(struct i915_drm_client *client) { }
 static inline void i915_debugger_client_destroy(struct i915_drm_client *client) { }
 
-static inline void i915_debugger_context_create(const struct i915_gem_context *ctx) { }
-static inline void i915_debugger_context_destroy(const struct i915_gem_context *ctx) { }
+static inline void i915_debugger_context_create(struct i915_gem_context *ctx) { }
+static inline void i915_debugger_context_destroy(struct i915_gem_context *ctx) { }
 
-static inline void i915_debugger_uuid_create(const struct i915_drm_client *client,
-					     const struct i915_uuid_resource *uuid) { }
-static inline void i915_debugger_uuid_destroy(const struct i915_drm_client *client,
-					      const struct i915_uuid_resource *uuid) { }
+static inline void i915_debugger_uuid_create(struct i915_drm_client *client,
+					     struct i915_uuid_resource *uuid) { }
+static inline void i915_debugger_uuid_destroy(struct i915_drm_client *client,
+					       struct i915_uuid_resource *uuid) { }
 
 static inline void i915_debugger_vm_create(struct i915_drm_client *client,
 					   struct i915_address_space *vm) { }
@@ -111,6 +114,13 @@ static inline void i915_debugger_vma_insert(struct i915_drm_client *client,
 					    struct i915_vma *vma) { }
 static inline void i915_debugger_vma_evict(struct i915_drm_client *client,
 					   struct i915_vma *vma) { }
+
+static inline void i915_debugger_vma_prepare(struct i915_drm_client *client,
+					     struct i915_vma *vma,
+					     u32 flags) { }
+static inline void i915_debugger_vma_finalize(struct i915_drm_client *client,
+					      struct i915_vma *vma,
+					      int error) { }
 
 static inline void i915_debugger_context_param_vm(const struct i915_drm_client *client,
 						  struct i915_gem_context *ctx,

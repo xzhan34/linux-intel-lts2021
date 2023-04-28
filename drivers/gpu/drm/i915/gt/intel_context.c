@@ -439,7 +439,7 @@ intel_context_init(struct intel_context *ce, struct intel_engine_cs *engine)
 	ce->sseu = engine->sseu;
 	ce->ring = NULL;
 	ce->ring_size = SZ_4K;
-	get_random_bytes(&ce->dbg_id.lrc_id, sizeof(ce->dbg_id.lrc_id));
+	get_random_bytes(&ce->debugger_lrc_id, sizeof(ce->debugger_lrc_id));
 
 	ewma_runtime_init(&ce->stats.runtime.avg);
 

@@ -255,9 +255,6 @@ static void intel_context_set_gem(struct intel_context *ce,
 	if (i915_gem_context_has_sip(ctx))
 		__set_bit(CONTEXT_DEBUG, &ce->flags);
 
-	/* XXX this should be set only with context that have sip */
-	ce->dbg_id.gem_context_id = ctx->id;
-
 	if (test_bit(UCONTEXT_RUNALONE, &ctx->user_flags))
 		__set_bit(CONTEXT_RUNALONE, &ce->flags);
 }
@@ -635,6 +632,10 @@ static void context_close(struct i915_gem_context *ctx)
 	struct i915_address_space *vm;
 	struct i915_drm_client *client;
 
+	client = ctx->client;
+	if (client)
+		i915_debugger_wait_on_discovery(ctx->i915, client);
+
 	/* Flush any concurrent set_engines() */
 	mutex_lock(&ctx->engines_mutex);
 	unpin_engines(__context_engines_static(ctx));
@@ -642,11 +643,8 @@ static void context_close(struct i915_gem_context *ctx)
 	i915_gem_context_set_closed(ctx);
 	mutex_unlock(&ctx->engines_mutex);
 
-	client = ctx->client;
-	if (client) {
-		i915_debugger_wait_on_discovery(ctx->i915, client);
+	if (client)
 		i915_debugger_context_destroy(ctx);
-	}
 
 	mutex_lock(&ctx->mutex);
 
@@ -660,11 +658,6 @@ static void context_close(struct i915_gem_context *ctx)
 	lut_close(ctx);
 
 	vm = i915_gem_context_vm(ctx);
-	if (vm) {
-		if (client)
-			i915_debugger_vm_destroy(client, vm);
-		i915_vm_close(vm);
-	}
 
 	if (ctx->syncobj)
 		drm_syncobj_put(ctx->syncobj);
@@ -678,6 +671,12 @@ static void context_close(struct i915_gem_context *ctx)
 	}
 
 	mutex_unlock(&ctx->mutex);
+
+	if (vm) {
+		if (client)
+			i915_debugger_vm_destroy(client, vm);
+		i915_vm_close(vm);
+	}
 
 	/* WA for VLK-20104 */
 	if (ctx->bcs0_pm_disabled) {
@@ -1133,15 +1132,9 @@ static int gem_context_register(struct i915_gem_context *ctx,
 	/* And finally expose ourselves to userspace via the idr */
 	i915_gem_context_get(ctx);
 	ret = xa_alloc(&fpriv->context_xa, id, ctx, xa_limit_32b, GFP_KERNEL);
-	if (!ret) {
-		ctx->id = *id;
+	if (!ret)
 		i915_debugger_context_create(ctx);
-		if (vm) {
-			i915_debugger_vm_create(client, vm);
-			i915_debugger_context_param_vm(client, ctx, vm);
-		}
-		i915_debugger_context_param_engines(ctx);
-	}
+
 	i915_gem_context_put(ctx);
 	if (!ret)
 		return 0;
@@ -1469,8 +1462,10 @@ static int set_ppgtt(struct drm_i915_file_private *file_priv,
 		goto unlock;
 	}
 
-	if (vm == rcu_access_pointer(ctx->vm))
-		goto unlock;
+	if (vm == rcu_access_pointer(ctx->vm)) {
+		mutex_unlock(&ctx->mutex);
+		goto out;
+	}
 
 	old = __set_ppgtt(ctx, vm);
 	if (!old) {
@@ -1478,8 +1473,6 @@ static int set_ppgtt(struct drm_i915_file_private *file_priv,
 		goto unlock;
 	}
 
-	if (!is_ctx_create)
-		i915_debugger_vm_destroy(file_priv->client, old);
 	/* Teardown the existing obj:vma cache, it will have to be rebuilt. */
 	lut_close(ctx);
 
@@ -1490,13 +1483,16 @@ static int set_ppgtt(struct drm_i915_file_private *file_priv,
 	 */
 	context_apply_all(ctx, __apply_ppgtt, vm);
 
-	i915_vm_close(old);
-
-	if (!is_ctx_create)
-		i915_debugger_context_param_vm(file_priv->client, ctx, vm);
-
 unlock:
 	mutex_unlock(&ctx->mutex);
+
+	if (!err) {
+		if (!is_ctx_create) {
+			i915_debugger_vm_destroy(file_priv->client, old);
+			i915_debugger_context_param_vm(file_priv->client, ctx, vm);
+		}
+		i915_vm_close(old);
+	}
 out:
 	i915_vm_put(vm);
 	return err;

@@ -2888,7 +2888,6 @@ err:
 
 void i915_uuid_init(struct i915_drm_client *client)
 {
-	xa_init_flags(&client->uuids_xa, XA_FLAGS_ALLOC);
 	__uuid_init_classes(client);
 }
 
@@ -2897,9 +2896,14 @@ void i915_uuid_cleanup(struct i915_drm_client *client)
 	struct i915_uuid_resource *uuid_res = NULL;
 	unsigned long idx;
 
+	/*
+	 * Generaly lock should not be needed but EU Debugger
+	 * discovery thread scans this table
+	 */
+	xa_lock(&client->uuids_xa);
 	xa_for_each(&client->uuids_xa, idx, uuid_res)
 		i915_uuid_put(uuid_res);
-
+	xa_unlock(&client->uuids_xa);
 	xa_destroy(&client->uuids_xa);
 }
 

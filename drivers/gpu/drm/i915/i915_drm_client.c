@@ -590,6 +590,7 @@ i915_drm_client_add(struct i915_drm_clients *clients,
 	mutex_init(&client->update_lock);
 	spin_lock_init(&client->ctx_lock);
 	INIT_LIST_HEAD(&client->ctx_list);
+	xa_init_flags(&client->uuids_xa, XA_FLAGS_ALLOC);
 
 	client->file = file;
 
@@ -609,9 +610,8 @@ i915_drm_client_add(struct i915_drm_clients *clients,
 		goto err_register;
 
 	GEM_WARN_ON(task != current);
-	i915_debugger_client_register(client, current);
-	i915_debugger_client_create(client);
 
+	i915_debugger_client_create(client);
 	i915_uuid_init(client);
 	return client;
 

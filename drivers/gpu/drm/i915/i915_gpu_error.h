@@ -428,11 +428,13 @@ static inline void i915_uuid_get(struct i915_uuid_resource *uuid_res)
 {
 	kref_get(&uuid_res->ref);
 }
+
 void __i915_uuid_free(struct kref *ref);
 static inline void i915_uuid_put(struct i915_uuid_resource *uuid_res)
 {
 	kref_put(&uuid_res->ref, __i915_uuid_free);
 }
+
 #else
 
 static inline void intel_klog_error_capture(struct intel_gt *gt,

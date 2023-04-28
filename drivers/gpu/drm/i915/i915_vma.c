@@ -1214,9 +1214,6 @@ int i915_vma_pin_ww(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	if (try_qad_pin(vma, flags & I915_VMA_BIND_MASK))
 		return 0;
 
-	i915_debugger_wait_on_discovery(vma->vm->i915, /* wait for vm event */
-					vma->vm->client);
-
 	/*
 	 * Restrict faults to persistent vmas unless faults are enabled using
 	 * modparam enable_pagefault.
@@ -1368,6 +1365,7 @@ err_rpm:
 	if (make_resident)
 		vma_put_pages(vma);
 
+	i915_debugger_vma_finalize(vma->vm->client, vma, err);
 	return err;
 }
 
