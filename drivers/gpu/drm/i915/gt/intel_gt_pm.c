@@ -333,6 +333,7 @@ int intel_gt_resume(struct intel_gt *gt)
 	intel_pxp_resume(&gt->pxp);
 
 	user_forcewake(gt, false);
+	gt->suspend = false;
 
 out_fw:
 	intel_uncore_forcewake_put(gt->uncore, FORCEWAKE_ALL);
@@ -394,6 +395,7 @@ void intel_gt_suspend_late(struct intel_gt *gt)
 
 	GEM_BUG_ON(gt->awake);
 
+	gt->suspend = true;
 	intel_uc_suspend(&gt->uc);
 
 	/*

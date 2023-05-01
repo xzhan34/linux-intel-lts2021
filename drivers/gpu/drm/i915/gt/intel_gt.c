@@ -86,6 +86,8 @@ void intel_gt_log_driver_error(struct intel_gt *gt,
 
 void intel_gt_common_init_early(struct intel_gt *gt)
 {
+	gt->suspend = true;
+
 	spin_lock_init(gt->irq_lock);
 
 	init_llist_head(&gt->watchdog.list);

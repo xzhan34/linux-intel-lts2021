@@ -151,7 +151,7 @@ static int emit_update_counters(struct i915_request *rq, u64 size, int idx)
 static struct intel_context *
 get_blitter_context(const struct intel_gt *gt, int idx)
 {
-	if (intel_gt_is_wedged(gt))
+	if (intel_gt_is_wedged(gt) || gt->suspend)
 		return NULL;
 
 	return gt->engine[idx] ? gt->engine[idx]->blitter_context : NULL;

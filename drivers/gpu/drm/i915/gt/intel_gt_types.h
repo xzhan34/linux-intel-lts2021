@@ -266,6 +266,7 @@ struct intel_gt {
 	 * is a slight delay before we do so.
 	 */
 	intel_wakeref_t awake;
+	bool suspend;
 
 	u32 clock_frequency;
 	u32 clock_period_ns;
