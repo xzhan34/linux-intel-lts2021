@@ -33,7 +33,6 @@
 #include <drm/drm_debugfs.h>
 
 #include "gem/i915_gem_context.h"
-#include "gem/i915_gem_lmem.h"
 #include "gt/intel_engine_heartbeat.h"
 #include "gt/intel_engine_pm.h"
 #include "gt/intel_engine_regs.h"
@@ -839,22 +838,6 @@ static int workarounds_show(struct seq_file *m, void *unused)
 	return 0;
 }
 
-static int clear_lmem_show(struct seq_file *m, void *unused)
-{
-	struct drm_i915_private *i915 = m->private;
-	struct drm_printer p = drm_seq_file_printer(m);
-	struct intel_gt *gt;
-	int err, id;
-
-	for_each_gt(gt, i915, id) {
-		err = i915_gem_clear_all_lmem(gt, &p);
-		if (err)
-			return err;
-	}
-
-	return 0;
-}
-
 static int i915_l4wa_open(struct inode *inode, struct file *file)
 {
 	struct drm_i915_private *i915 = inode->i_private;
@@ -919,6 +902,40 @@ static int i915_wedged_set(void *data, u64 val)
 DEFINE_I915_SIMPLE_ATTRIBUTE(i915_wedged_fops,
 			     i915_wedged_get, i915_wedged_set,
 			     "%llu\n");
+
+static int lmemtest_get(void *data, u64 *val)
+{
+	struct drm_i915_private *i915 = data;
+	struct intel_gt *gt;
+	unsigned int i;
+
+	*val = 0;
+	for_each_gt(gt, i915, i)
+		if (gt->lmem)
+			*val |= gt->lmem->memtest;
+
+	return 0;
+}
+
+static int lmemtest_set(void *data, u64 val)
+{
+	struct drm_i915_private *i915 = data;
+	struct intel_gt *gt;
+	unsigned int i;
+	int err = 0;
+
+	for_each_gt(gt, i915, i) {
+		err = i915_gem_lmemtest(gt, &gt->lmem->memtest);
+		if (err)
+			break;
+	}
+
+	return err;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(lmemtest_fops,
+			lmemtest_get, lmemtest_set,
+			"0x%016llx\n");
 
 static int
 i915_perf_noa_delay_set(void *data, u64 val)
@@ -1269,7 +1286,6 @@ DEFINE_I915_SHOW_ATTRIBUTE(i915_sseu_status);
 DEFINE_I915_SHOW_ATTRIBUTE(i915_rps_boost_info);
 DEFINE_I915_SHOW_ATTRIBUTE(sriov_info);
 DEFINE_I915_SHOW_ATTRIBUTE(workarounds);
-DEFINE_I915_SHOW_ATTRIBUTE(clear_lmem);
 DEFINE_I915_SHOW_ATTRIBUTE(lmem_alloc_limit_info);
 DEFINE_I915_SHOW_ATTRIBUTE(sharedmem_alloc_limit_info);
 
@@ -1284,7 +1300,6 @@ static struct i915_debugfs_file i915_debugfs_list[] = {
 	{"i915_rps_boost_info", &i915_rps_boost_info_fops, NULL},
 	{"i915_sriov_info", &sriov_info_fops, NULL},
 	{"i915_workarounds", &workarounds_fops, NULL},
-	{"i915_clear_lmem", &clear_lmem_fops, NULL},
 	{"lmem_alloc_limit_info", &lmem_alloc_limit_info_fops, NULL},
 	{"sharedmem_alloc_limit_info", &sharedmem_alloc_limit_info_fops, NULL},
 };
@@ -1304,6 +1319,7 @@ static struct i915_debugfs_file i915_debugfs_files[] = {
 	{"i915_error_state", &i915_error_state_fops},
 	{"i915_gpu_info", &i915_gpu_info_fops},
 #endif
+	{"lmemtest", &lmemtest_fops},
 };
 
 static const struct i915_debugfs_file i915_vf_debugfs_files[] = {

@@ -30,17 +30,28 @@ static const struct pci_device_id clear_bandwidth[] = {
 static int igt_lmem_touch(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
-	struct drm_printer p = drm_info_printer(i915->drm.dev);
 	struct intel_gt *gt;
-	int id, err;
+	int id, ret = 0;
 
 	for_each_gt(gt, i915, id) {
-		err = i915_gem_clear_all_lmem(gt, &p);
-		if (err)
-			return err;
+		u64 bits = 0;
+		int err;
+
+		err = i915_gem_lmemtest(gt, &bits);
+		if (bits) {
+			char prefix[80];
+
+			snprintf(prefix, sizeof(prefix), "%s%d memory error: ",
+				 gt->name, gt->info.id);
+			print_hex_dump(KERN_ERR, prefix, DUMP_PREFIX_NONE,
+					16, 1, &bits, sizeof(bits), false);
+			err = -EINVAL;
+		}
+		if (err && !ret)
+			ret = err;
 	}
 
-	return 0;
+	return ret;
 }
 
 static int sync_blocks(struct list_head *blocks, long timeout)

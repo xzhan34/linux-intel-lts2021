@@ -297,6 +297,12 @@ static void heartbeat(struct work_struct *wrk)
 			local_bh_disable();
 			i915_request_set_priority(rq, prio);
 			local_bh_enable();
+		} else if (rq->sched.attr.priority >= I915_PRIORITY_UNPREEMPTABLE) {
+			/*
+			 * Don't reset the kernel if we are delierately
+			 * preventing preemption - for example, when
+			 * implementing a manual RunAlone mode.
+			 */
 		} else if (time_before(jiffies, preempt_timeout(rq))) {
 			/*
 			 * Give the engine-reset, triggered by a preemption

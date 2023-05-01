@@ -388,6 +388,15 @@ __update_stat(struct i915_mm_swap_stat *stat,
 	}
 }
 
+static u32 *__emit_flush(u32 *cs, unsigned int flags)
+{
+	*cs++ = (MI_FLUSH_DW + 1) | flags;
+	*cs++ = 0;
+	*cs++ = 0;
+	*cs++ = 0;
+	return cs;
+}
+
 static int emit_flush(struct i915_request *rq, unsigned int flags)
 {
 	u32 *cs;
@@ -396,12 +405,9 @@ static int emit_flush(struct i915_request *rq, unsigned int flags)
 	if (IS_ERR(cs))
 		return PTR_ERR(cs);
 
-	*cs++ = (MI_FLUSH_DW + 1) | flags;
-	*cs++ = 0;
-	*cs++ = 0;
-	*cs++ = 0;
-
+	cs = __emit_flush(cs, flags);
 	intel_ring_advance(rq, cs);
+
 	return 0;
 }
 
@@ -1497,15 +1503,249 @@ err_wf:
 	intel_gt_pm_put(gt, wf);
 }
 
-int i915_gem_clear_all_lmem(struct intel_gt *gt, struct drm_printer *p)
+enum {
+	BITS = 0,
+	VALUE,
+	DATA,
+};
+
+static u32 *emit_xor_or(u32 *cs, u32 x, u64 offset)
 {
-	struct i915_request *rq = NULL;
+	*cs++ = MI_LOAD_REGISTER_IMM(2) | MI_LRI_LRM_CS_MMIO;
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR(0, VALUE));
+	*cs++ = x;
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR_UDW(0, VALUE));
+	*cs++ = x;
+
+	*cs++ = MI_LOAD_REGISTER_MEM_GEN8 | MI_LRI_LRM_CS_MMIO;
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR(0, DATA));
+	*cs++ = lower_32_bits(offset);
+	*cs++ = upper_32_bits(offset);
+	*cs++ = MI_LOAD_REGISTER_MEM_GEN8 | MI_LRI_LRM_CS_MMIO;
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR_UDW(0, DATA));
+	*cs++ = lower_32_bits(offset + 4);
+	*cs++ = upper_32_bits(offset + 4);
+
+	*cs++ = MI_MATH(8);
+	*cs++ = MI_MATH_LOAD(MI_MATH_REG_SRCA, MI_MATH_REG(VALUE));
+	*cs++ = MI_MATH_LOAD(MI_MATH_REG_SRCB, MI_MATH_REG(DATA));
+	*cs++ = MI_MATH_XOR;
+	*cs++ = MI_MATH_STORE(MI_MATH_REG(DATA), MI_MATH_REG_ACCU);
+	*cs++ = MI_MATH_LOAD(MI_MATH_REG_SRCA, MI_MATH_REG(BITS));
+	*cs++ = MI_MATH_LOAD(MI_MATH_REG_SRCB, MI_MATH_REG(DATA));
+	*cs++ = MI_MATH_OR;
+	*cs++ = MI_MATH_STORE(MI_MATH_REG(BITS), MI_MATH_REG_ACCU);
+
+	return cs;
+}
+
+static int
+set_gpr(struct intel_context *ce,
+	int gpr, u64 val,
+	struct i915_request **chain)
+{
+	struct i915_request *rq;
+	u32 *cs;
+
+	rq = i915_request_create_locked(ce, GFP_KERNEL);
+	if (IS_ERR(rq))
+		return PTR_ERR(rq);
+
+	cs = intel_ring_begin(rq, 6);
+	if (IS_ERR(cs)) {
+		i915_request_add(rq);
+		return PTR_ERR(cs);
+	}
+
+	*cs++ = MI_LOAD_REGISTER_IMM(2) | MI_LRI_LRM_CS_MMIO;
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR(0, gpr));
+	*cs++ = lower_32_bits(val);
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR_UDW(0, gpr));
+	*cs++ = upper_32_bits(val);
+	*cs++ = MI_NOOP;
+	intel_ring_advance(rq, cs);
+
+	*chain = chain_request(rq, *chain);
+	return 0;
+}
+
+static int
+get_gpr(struct intel_context *ce,
+	int gpr, u32 offset,
+	struct i915_request **chain)
+{
+	struct i915_request *rq;
+	u32 *cs;
+
+	rq = i915_request_create_locked(ce, GFP_KERNEL);
+	if (IS_ERR(rq))
+		return PTR_ERR(rq);
+
+	cs = intel_ring_begin(rq, 8);
+	if (IS_ERR(cs)) {
+		i915_request_add(rq);
+		return PTR_ERR(cs);
+	}
+
+	*cs++ = MI_STORE_REGISTER_MEM_GEN8 | MI_USE_GGTT | MI_LRI_LRM_CS_MMIO;
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR(0, gpr));
+	*cs++ = offset;
+	*cs++ = 0;
+	*cs++ = MI_STORE_REGISTER_MEM_GEN8 | MI_USE_GGTT | MI_LRI_LRM_CS_MMIO;
+	*cs++ = i915_mmio_reg_offset(GEN8_RING_CS_GPR_UDW(0, gpr));
+	*cs++ = offset + 4;
+	*cs++ = 0;
+	intel_ring_advance(rq, cs);
+
+	*chain = chain_request(rq, *chain);
+	return 0;
+}
+
+static void *hwsp(struct intel_context *ce, int offset)
+{
+	void *va;
+
+	va = ce->lrc_reg_state;
+	va -= PAGE_SIZE;
+	va += offset;
+
+	return va;
+}
+
+static u32 hwsp_offset(struct intel_context *ce, void *va)
+{
+	return i915_ggtt_offset(ce->state) + offset_in_page(va);
+}
+
+static int
+run_alone(struct intel_gt *gt, intel_engine_mask_t ex, u32 offset)
+{
+	struct intel_engine_cs *engine;
+	intel_engine_mask_t tmp;
+
+	for_each_engine_masked(engine, gt, gt->info.engine_mask & ~ex, tmp) {
+		struct i915_request *rq;
+		u32 *cs;
+
+		rq = intel_engine_create_kernel_request(engine);
+		if (IS_ERR(rq))
+			return PTR_ERR(rq);
+
+		cs = intel_ring_begin(rq, 8);
+		if (IS_ERR(cs)) {
+			i915_request_add(rq);
+			return PTR_ERR(cs);
+		}
+
+		/* We have begun! */
+		*cs++ = MI_ARB_ON_OFF | MI_ARB_DISABLE;
+		*cs++ = MI_ATOMIC | MI_USE_GGTT | MI_ATOMIC_DEC;
+		*cs++ = offset;
+		*cs++ = 0;
+
+		/* Wait for completion */
+		*cs++ = MI_SEMAPHORE_WAIT |
+			MI_SEMAPHORE_GLOBAL_GTT |
+			MI_SEMAPHORE_POLL |
+			MI_SEMAPHORE_SAD_EQ_SDD;
+		*cs++ = 0xffffffff;
+		*cs++ = offset + 4;
+		*cs++ = 0;
+
+		intel_ring_advance(rq, cs);
+
+		i915_request_set_priority(rq, I915_PRIORITY_UNPREEMPTABLE);
+		i915_request_add(rq);
+	}
+
+	return 0;
+}
+
+static int
+wait_for_run_alone(struct intel_context *ce,
+		   u32 *sema,
+		   struct i915_request **chain)
+{
+	const u32 offset = hwsp_offset(ce, sema);
+	struct i915_request *rq;
+	u32 *cs;
+
+	rq = i915_request_create_locked(ce, GFP_KERNEL);
+	if (IS_ERR(rq))
+		return PTR_ERR(rq);
+
+	cs = intel_ring_begin(rq, 8);
+	if (IS_ERR(cs)) {
+		i915_request_add(rq);
+		return PTR_ERR(cs);
+	}
+
+	/* We have begun! */
+	*cs++ = MI_ARB_ON_OFF | MI_ARB_DISABLE;
+	*cs++ = MI_ATOMIC | MI_USE_GGTT | MI_ATOMIC_DEC;
+	*cs++ = offset;
+	*cs++ = 0;
+
+	/* Wait for everyone */
+	*cs++ = MI_SEMAPHORE_WAIT |
+		MI_SEMAPHORE_GLOBAL_GTT |
+		MI_SEMAPHORE_POLL |
+		MI_SEMAPHORE_SAD_EQ_SDD;
+	*cs++ = 0;
+	*cs++ = offset;
+	*cs++ = 0;
+
+	intel_ring_advance(rq, cs);
+
+	GEM_BUG_ON(sema[0] == 0);
+	GEM_BUG_ON(sema[1] != 0);
+
+	*chain = chain_request(rq, *chain);
+	return 0;
+}
+
+static unsigned int
+__max_order(const struct i915_buddy_mm *mm, unsigned long n_pages)
+{
+	if (n_pages >> mm->max_order)
+		return mm->max_order;
+
+	return __fls(n_pages);
+}
+
+static u32 expand_u32_from_u8(u32 x)
+{
+	return x << 24 | x << 16 | x << 8 | x;
+}
+
+static int suboffset(int i, int len, int sz)
+{
+	/* Leave space for a 64b read */
+	return prandom_u32_max(min(len - i * sz, sz)) & -8;
+}
+
+int i915_gem_lmemtest(struct intel_gt *gt, u64 *error_bits)
+{
+	static const u8 values[] = { 0, 0x0f, 0xa3, 0x5c, 0xf0, 0xff };
+	struct list_head *phases[] = {
+		&gt->lmem->objects.list,
+		&gt->lmem->objects.purgeable,
+		NULL
+	}, **phase = phases;
+	struct intel_memory_region_link bookmark = {};
+	struct intel_memory_region_link *pos;
+	struct i915_buddy_block *swp, *block;
+	struct i915_request *last = NULL;
 	struct intel_memory_region *mr;
+	struct drm_mm_node *node, *nn;
+	const int semaphore = 0x800;
 	struct intel_context *ce;
+	struct drm_mm pinned;
 	intel_wakeref_t wf;
-	u64 cycles, bytes;
+	u64 swp_offset;
+	u64 start, end;
 	int err = 0;
-	int i;
+	u32 *sema;
 
 	mr = gt->lmem;
 	if (!mr)
@@ -1514,50 +1754,208 @@ int i915_gem_clear_all_lmem(struct intel_gt *gt, struct drm_printer *p)
 	wf = intel_gt_pm_get(gt);
 	intel_rps_boost(&gt->rps);
 
-	ce = get_blitter_context(gt, BCS0);
+	ce = get_blitter_context(gt, BCS0); /* use the fastest engine */
 	if (!ce) {
 		err = -EIO;
 		goto err_wf;
 	}
 
-	cycles = -READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_FREE_CYCLES]);
-	bytes = -READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_FREE_BYTES]);
-
-	for (i = mr->mm.max_order; err == 0 && i >= 0; i--) {
-		struct i915_buddy_list *bl = &mr->mm.dirty_list[i];
-		struct list_head dirty;
-
-		buddy_list_remove(bl, &dirty);
-
-		err = clear_blt(ce, NULL,
-				&mr->mm, &dirty,
-				INTEL_GT_CLEAR_FREE_CYCLES, false,
-				&rq);
-		if (err == 0)
-			bl = &mr->mm.clear_list[i];
-
-		buddy_list_add(&dirty, bl);
+	/* Allocate temporary storage for contents */
+	swp = i915_buddy_alloc(&mr->mm, __max_order(&mr->mm, SZ_16M >> ilog2(mr->mm.chunk_size)));
+	if (IS_ERR(swp)) {
+		err = PTR_ERR(swp);
+		goto err_wf;
 	}
-	mr->mm.defrag = true; /* recombine all cleared blocks on idle */
+	GEM_BUG_ON(i915_buddy_block_size(&mr->mm, swp) != SZ_16M);
+	swp_offset = i915_buddy_block_offset(swp);
 
-	if (rq) {
-		i915_sw_fence_complete(&rq->submit);
-		i915_request_wait(rq, 0, MAX_SCHEDULE_TIMEOUT);
-		if (err == 0)
-			err = rq->fence.error;
-		i915_request_put(rq);
+	/* Track all pinned blocks in use by the kernel; these are vital */
+	drm_mm_init(&pinned, gt->flat.start, mr->total);
+	node = kzalloc(sizeof(*node), GFP_KERNEL);
+	if (!node) {
+		err = -ENOMEM;
+		goto err_buddy;
 	}
+	node->start = swp_offset;
+	node->size = i915_buddy_block_size(&mr->mm, swp);
+	err = drm_mm_reserve_node(&pinned, node);
+	if (err)
+		goto err_buddy;
 
-	bytes += READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_FREE_BYTES]);
-	cycles += READ_ONCE(gt->counters.map[INTEL_GT_CLEAR_FREE_CYCLES]);
-	cycles = intel_gt_clock_interval_to_ns(gt, cycles);
-	if (err == 0 && cycles && p)
-		drm_printf(p, "%s%d, cleared %lluMiB in %lldms, %lldMiB/s\n",
-			   gt->name, gt->info.id,
-			   bytes >> 20,
-			   div_u64(cycles, NSEC_PER_MSEC),
-			   div64_u64(mul_u64_u32_shr(bytes, NSEC_PER_SEC, 20), cycles));
+	spin_lock(&mr->objects.lock);
+	do list_for_each_entry(pos, *phase, link) {
+		struct drm_i915_gem_object *obj;
+		struct list_head *blocks;
 
+		if (!pos->mem)
+			continue;
+
+		/* Only skip testing memory regions pinned by the kernel */
+		obj = container_of(pos, typeof(*obj), mm.region);
+		if (obj->flags & I915_BO_ALLOC_USER ||
+		    !i915_gem_object_has_pinned_pages(obj))
+			continue;
+
+		list_add(&bookmark.link, &pos->link);
+		blocks = &obj->mm.blocks;
+		spin_unlock(&mr->objects.lock);
+
+		list_for_each_entry(block, blocks, link) {
+			node = kzalloc(sizeof(*node), GFP_KERNEL);
+			if (!node) {
+				err = -ENOMEM;
+				goto err_buddy;
+			}
+			node->start = i915_buddy_block_offset(block);
+			node->size = i915_buddy_block_size(&mr->mm, block);
+			err = drm_mm_reserve_node(&pinned, node);
+			if (err)
+				goto err_buddy;
+		}
+
+		spin_lock(&mr->objects.lock);
+		__list_del_entry(&bookmark.link);
+		pos = &bookmark;
+	} while (*++phase);
+	spin_unlock(&mr->objects.lock);
+
+	/* Stall execution on all other engines */
+	sema = memset32(hwsp(ce, semaphore), 0, 4);
+	sema[0] = hweight32(gt->info.engine_mask);
+	i915_write_barrier(gt->i915);
+
+	err = run_alone(gt, ce->engine->mask, hwsp_offset(ce, sema));
+	if (err)
+		goto err_buddy;
+
+	/* Destructively write test every block not used by the kernel */
+	mutex_lock(&ce->timeline->mutex);
+	intel_context_enter(ce);
+
+	err = wait_for_run_alone(ce, sema, &last);
+	if (err)
+		goto out;
+
+	err = set_gpr(ce, BITS, mr->memtest, &last);
+	if (err)
+		goto out;
+
+	drm_mm_for_each_hole(node, &pinned, start, end) {
+		while (start < end) {
+			const u32 len = min_t(u64, end - start, SZ_16M);
+			const int sample = DIV_ROUND_UP(len, SZ_2M);
+			struct i915_request *rq;
+			u32 mocs = 0;
+			int v, i;
+			u32 *cs;
+
+			rq = i915_request_create_locked(ce, GFP_KERNEL);
+			if (IS_ERR(rq)) {
+				err = PTR_ERR(rq);
+				goto out;
+			}
+
+			cs = intel_ring_begin(rq, ARRAY_SIZE(values) * (20 + 22 * sample) + 2 * 10);
+			if (IS_ERR(cs)) {
+				err = PTR_ERR(cs);
+				last = chain_request(rq, last);
+				goto out;
+			}
+
+			/* Keep a copy of the original user data */
+			*cs++ = GEN9_XY_FAST_COPY_BLT_CMD | (10 - 2);
+			*cs++ = BLT_DEPTH_32 | PAGE_SIZE | mocs;
+			*cs++ = 0;
+			*cs++ = len >> PAGE_SHIFT << 16 | PAGE_SIZE / 4;
+			*cs++ = lower_32_bits(swp_offset);
+			*cs++ = upper_32_bits(swp_offset);
+			*cs++ = 0;
+			*cs++ = PAGE_SIZE | mocs;
+			*cs++ = lower_32_bits(start);
+			*cs++ = upper_32_bits(start);
+
+			/* Overwrite with a few altenating bit patterns */
+			for (v = 0; v < ARRAY_SIZE(values); v++) {
+				u32 x = expand_u32_from_u8(values[v]);
+				int pkt;
+
+				pkt = 16;
+				if (GRAPHICS_VER_FULL(gt->i915) < IP_VER(12, 50))
+					pkt = 11;
+
+				*cs++ = GEN9_XY_FAST_COLOR_BLT_CMD |
+					XY_FAST_COLOR_BLT_DEPTH_32 |
+					(pkt - 2);
+				*cs++ = mocs | (PAGE_SIZE - 1);
+				*cs++ = 0;
+				*cs++ = len >> PAGE_SHIFT << 16 | PAGE_SIZE / 4;
+				*cs++ = lower_32_bits(start);
+				*cs++ = upper_32_bits(start);
+				*cs++ = 0;
+				*cs++ = x;
+				*cs++ = 0;
+				*cs++ = 0;
+				*cs++ = 0;
+				*cs++ = 0;
+				*cs++ = 0;
+				*cs++ = 0;
+				*cs++ = 0;
+				*cs++ = 0;
+
+				cs = __emit_flush(cs, 0);
+
+				/* Randomly sample for bit errors */
+				for (i = 0; i < sample; i++) {
+					u64 addr;
+
+					addr = start;
+					addr += i * SZ_2M;
+					addr += suboffset(i, len, SZ_2M);
+
+					cs = emit_xor_or(cs, x, addr);
+				}
+			}
+
+			/* Restore user contents */
+			*cs++ = GEN9_XY_FAST_COPY_BLT_CMD | (10 - 2);
+			*cs++ = BLT_DEPTH_32 | PAGE_SIZE | mocs;
+			*cs++ = 0;
+			*cs++ = len >> PAGE_SHIFT << 16 | PAGE_SIZE / 4;
+			*cs++ = lower_32_bits(start);
+			*cs++ = upper_32_bits(start);
+			*cs++ = 0;
+			*cs++ = PAGE_SIZE | mocs;
+			*cs++ = lower_32_bits(swp_offset);
+			*cs++ = upper_32_bits(swp_offset);
+
+			intel_ring_advance(rq, cs);
+			last = chain_request(rq, last);
+
+			start += len;
+		}
+	}
+out:
+	if (err == 0)
+		err = get_gpr(ce, BITS, hwsp_offset(ce, sema + 2), &last);
+	if (last) {
+		i915_sw_fence_complete(&last->submit);
+		i915_request_wait(last, 0, MAX_SCHEDULE_TIMEOUT);
+		if (err == 0)
+			err = last->fence.error;
+		i915_request_put(last);
+	}
+	if (err == 0)
+		memcpy(error_bits, sema + 2, sizeof(*error_bits));
+	intel_context_exit(ce);
+	mutex_unlock(&ce->timeline->mutex);
+
+err_buddy:
+	WRITE_ONCE(sema[1], 0xffffffff);
+	i915_write_barrier(gt->i915);
+
+	drm_mm_for_each_node_safe(node, nn, &pinned)
+		kfree(node);
+	i915_buddy_free(&mr->mm, swp);
 err_wf:
 	intel_rps_cancel_boost(&gt->rps);
 	intel_gt_pm_put(gt, wf);

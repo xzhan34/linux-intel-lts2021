@@ -124,7 +124,7 @@ struct intel_memory_region {
 	enum intel_region_id id;
 	char name[16];
 	struct intel_gt *gt; /* GT closest to this region. */
-	bool private; /* not for userspace */
+	u64 memtest;
 
 	struct list_head reserved;
 
@@ -136,6 +136,7 @@ struct intel_memory_region {
 	} objects;
 
 	bool is_range_manager;
+	bool private; /* not for userspace */
 
 	void *region_private;
 };
