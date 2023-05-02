@@ -583,8 +583,9 @@ static void mei_me_check_fw_reset(struct mei_device *dev)
 		dev_err(dev->dev, "failed to read firmware status: %d\n", ret);
 		goto end;
 	}
-	fw_pm_event = fw_status.status[1] & FW_PM_EVENT_MASK;
-	if (fw_pm_event == FW_PM_CMOFF_TO_CMX_ERROR || fw_pm_event == FW_PM_CM_RESET_ERROR) {
+	fw_pm_event = fw_status.status[1] & PCI_CFG_HFS_2_PM_EVENT_MASK;
+	if (fw_pm_event == PCI_CFG_HFS_2_PM_CMOFF_TO_CMX_ERROR ||
+	    fw_pm_event == PCI_CFG_HFS_2_PM_CM_RESET_ERROR) {
 		if (dev->saved_fw_status_flag) {
 			char fw_sts_str[MEI_FW_STATUS_STR_SZ] = {0};
 
@@ -601,6 +602,24 @@ end:
 }
 
 /**
+ * mei_me_print_reset_info - print reset info, if available
+ *
+ * @dev: mei device
+ */
+static void mei_me_print_reset_info(struct mei_device *dev)
+{
+	char fw_sts_str[MEI_FW_STATUS_STR_SZ] = {0};
+
+	if (!dev->saved_fw_status_flag)
+		return;
+
+	mei_fw_status2str(&dev->saved_fw_status, fw_sts_str, sizeof(fw_sts_str));
+	dev_warn(dev->dev, "link reset: dev_state = %u fw status = %s\n",
+		 dev->saved_dev_state, fw_sts_str);
+	dev->saved_fw_status_flag = false;
+}
+
+/**
  * mei_me_hw_start - hw start routine
  *
  * @dev: mei device
@@ -613,12 +632,13 @@ static int mei_me_hw_start(struct mei_device *dev)
 	if (dev->dev->offline)
 		return 0;
 
+	ret = mei_me_hw_ready_wait(dev);
 	if (kind_is_gsc(dev) || kind_is_gscfi(dev))
 		mei_me_check_fw_reset(dev);
-
-	ret = mei_me_hw_ready_wait(dev);
-	if (ret)
+	if (ret) {
+		mei_me_print_reset_info(dev);
 		return ret;
+	}
 	dev_dbg(dev->dev, "hw is ready\n");
 
 	mei_me_host_set_ready(dev);
