@@ -658,7 +658,7 @@ u64 intel_context_get_avg_runtime_ns(struct intel_context *ce)
 	return avg;
 }
 
-int intel_context_throttle(const struct intel_context *ce)
+int intel_context_throttle(const struct intel_context *ce, long timeout)
 {
 	const struct intel_timeline *tl = ce->timeline;
 	const struct intel_ring *ring = ce->ring;
@@ -683,10 +683,11 @@ int intel_context_throttle(const struct intel_context *ce)
 			if (i915_request_get_rcu(rq)) {
 				rcu_read_unlock();
 
-				if (i915_request_wait(rq,
-						      I915_WAIT_INTERRUPTIBLE,
-						      MAX_SCHEDULE_TIMEOUT) < 0)
-					err = -EINTR;
+				timeout = i915_request_wait(rq,
+							    I915_WAIT_INTERRUPTIBLE,
+							    timeout);
+				if (timeout < 0)
+					err = timeout;
 
 				rcu_read_lock();
 				i915_request_put(rq);

@@ -244,7 +244,7 @@ static inline void intel_context_exit(struct intel_context *ce)
 	ce->ops->exit(ce);
 }
 
-int intel_context_throttle(const struct intel_context *ce);
+int intel_context_throttle(const struct intel_context *ce, long timeout);
 
 static inline bool intel_context_is_active(const struct intel_context *ce)
 {

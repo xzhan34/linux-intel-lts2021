@@ -1149,7 +1149,8 @@ _i915_request_create(struct intel_context *ce, gfp_t gfp)
 	struct intel_timeline *tl;
 	struct i915_request *rq;
 
-	if (gfpflags_allow_blocking(gfp) && intel_context_throttle(ce))
+	if (gfpflags_allow_blocking(gfp) &&
+	    intel_context_throttle(ce, MAX_SCHEDULE_TIMEOUT))
 		return ERR_PTR(-EINTR);
 
 	tl = intel_context_timeline_lock(ce);

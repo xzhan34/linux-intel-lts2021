@@ -720,7 +720,11 @@ clear_blt(struct intel_context *ce,
 	GEM_BUG_ON(ce->vm != ce->engine->gt->vm);
 	GEM_BUG_ON(!drm_mm_node_allocated(&ce->engine->gt->flat));
 
-	err = intel_context_throttle(ce);
+	/*
+	 * Don't saturate the ring if we are opportunistically clearing;
+	 * leave some space and bandwidth for clear-on-alloc if required.
+	 */
+	err = intel_context_throttle(ce, dirty ? 0 : MAX_SCHEDULE_TIMEOUT);
 	if (err)
 		return err;
 
