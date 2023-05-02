@@ -1914,6 +1914,9 @@ retry:
 	if (err)
 		goto err_ww;
 
+	if (i915_vma_is_bound(vma, PIN_RESIDENT))
+		goto err_ww;
+
 	err = i915_vma_bind(vma, &ww);
 err_ww:
 	if (err == -EDEADLK) {
