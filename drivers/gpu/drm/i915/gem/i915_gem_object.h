@@ -308,13 +308,13 @@ static inline void i915_gem_object_unlock(struct drm_i915_gem_object *obj)
 }
 
 static inline bool
-i915_gem_object_has_segments(struct drm_i915_gem_object *obj)
+i915_gem_object_has_segments(const struct drm_i915_gem_object *obj)
 {
 	return !RB_EMPTY_ROOT(&obj->segments.rb_root);
 }
 
 static inline bool
-i915_gem_object_is_segment(struct drm_i915_gem_object *obj)
+i915_gem_object_is_segment(const struct drm_i915_gem_object *obj)
 {
 	return !RB_EMPTY_NODE(&obj->segment_node);
 }
@@ -864,10 +864,13 @@ i915_gem_object_migrate_has_error(const struct drm_i915_gem_object *obj)
  * An object may be published (accessible by others and userspace)
  * only if either a GEM handle to this object exists, or if this
  * object has been exported via dma-buf.
+ * For BO segments, we have to test if parent BO is accessible.
  */
 static inline bool
 i915_gem_object_inuse(const struct drm_i915_gem_object *obj)
 {
+	if (obj->parent)
+		obj = obj->parent;
 	return READ_ONCE(obj->base.handle_count) || obj->base.dma_buf;
 }
 
