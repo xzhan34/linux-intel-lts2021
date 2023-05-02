@@ -64,6 +64,25 @@ void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
 	__i915_active_fence_set(&obj->mm.migrate, &rq->fence);
 }
 
+int i915_gem_object_migrate_await(struct drm_i915_gem_object *obj,
+				  struct i915_request *rq)
+{
+	struct dma_fence *fence;
+	int err;
+
+	fence = i915_active_fence_get_or_error(&obj->mm.migrate);
+	if (likely(!fence))
+		return 0;
+
+	if (IS_ERR(fence))
+		return PTR_ERR(fence);
+
+	err = i915_request_await_dma_fence(rq, fence);
+	dma_fence_put(fence);
+
+	return err;
+}
+
 void i915_gem_object_migrate_boost(struct drm_i915_gem_object *obj, int prio)
 {
 	struct dma_fence *fence;

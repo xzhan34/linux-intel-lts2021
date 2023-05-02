@@ -836,6 +836,8 @@ bool i915_gem_object_should_migrate_lmem(struct drm_i915_gem_object *obj,
 
 void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
 				     struct i915_request *rq);
+int i915_gem_object_migrate_await(struct drm_i915_gem_object *obj,
+				  struct i915_request *rq);
 void i915_gem_object_migrate_boost(struct drm_i915_gem_object *obj, int prio);
 long i915_gem_object_migrate_wait(struct drm_i915_gem_object *obj,
 				  unsigned int flags,

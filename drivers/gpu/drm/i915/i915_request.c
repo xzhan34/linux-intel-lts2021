@@ -1740,7 +1740,11 @@ i915_request_await_object(struct i915_request *to,
 			  bool write)
 {
 	struct dma_fence *excl;
-	int ret = 0;
+	int ret;
+
+	ret = i915_gem_object_migrate_await(obj, to);
+	if (ret)
+		return ret;
 
 	if (write) {
 		struct dma_fence **shared;

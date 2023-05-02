@@ -1958,11 +1958,17 @@ static void guc_cancel_context_requests(struct intel_context *ce)
 	struct intel_timeline *tl;
 	struct i915_request *rq;
 
+	/* We can only immediately mark EIO if we haven't used semaphores. */
+	GEM_BUG_ON(intel_engine_has_semaphores(ce->engine));
+
 	tl = ce->timeline;
 	if (!tl)
 		return;
 
 	list_for_each_entry_reverse(rq, &tl->requests, link) {
+		if (!i915_request_is_active(rq))
+			continue;
+
 		if (!i915_request_mark_eio(rq))
 			break;
 

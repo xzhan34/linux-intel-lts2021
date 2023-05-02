@@ -43,24 +43,21 @@ static int igt_lmem_touch(void *arg)
 	return 0;
 }
 
-static int sync_blocks(struct list_head *blocks)
+static int sync_blocks(struct list_head *blocks, long timeout)
 {
 	struct i915_buddy_block *block;
 
 	list_for_each_entry(block, blocks, link) {
 		struct dma_fence *f;
-		int err;
 
 		f = i915_active_fence_get(&block->active);
 		if (!f)
 			continue;
 
-		if (i915_request_wait(to_request(f), I915_WAIT_INTERRUPTIBLE, HZ) < 0)
-			err = -ETIME;
-
+		timeout = i915_request_wait(to_request(f), I915_WAIT_INTERRUPTIBLE, timeout);
 		dma_fence_put(f);
-		if (err)
-			return err;
+		if (timeout < 0)
+			return timeout;
 	}
 
 	return 0;
@@ -110,7 +107,7 @@ static int __igt_lmem_clear(struct drm_i915_private *i915, bool measure)
 				break;
 			}
 
-			err = sync_blocks(&blocks);
+			err = sync_blocks(&blocks, HZ);
 			if (err)
 				break;
 

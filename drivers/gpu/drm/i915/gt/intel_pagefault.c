@@ -715,7 +715,7 @@ const char *intel_acc_err2str(unsigned int err)
 		[ACCESS_ERR_USERPTR] = "userptr",
 	};
 
-	if (err > ARRAY_SIZE(faults) || !faults[err])
+	if (err >= ARRAY_SIZE(faults) || !faults[err])
 		return "invalid acc err!";
 
 	return faults[err];

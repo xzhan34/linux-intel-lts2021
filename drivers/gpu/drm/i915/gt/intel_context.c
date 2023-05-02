@@ -602,7 +602,7 @@ __intel_context_find_active_request(struct intel_context *ce,
 		if (__i915_request_is_complete(rq))
 			break;
 
-		if (__i915_request_has_started(rq))
+		if (i915_request_is_active(rq))
 			active = rq;
 	}
 
