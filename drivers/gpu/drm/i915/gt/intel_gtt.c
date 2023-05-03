@@ -419,8 +419,7 @@ static u32 poison_scratch_page(struct drm_i915_gem_object *scratch)
 	u32 val;
 
 	val = 0;
-	if (!HAS_NULL_PAGE(to_i915(scratch->base.dev)) &&
-	     IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM)) {
+	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM)) {
 		/*
 		 * Partially randomise the scratch page.
 		 *
