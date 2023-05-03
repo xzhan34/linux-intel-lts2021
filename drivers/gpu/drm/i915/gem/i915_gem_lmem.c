@@ -1830,7 +1830,7 @@ int i915_gem_lmemtest(struct intel_gt *gt, u64 *error_bits)
 
 	err = run_alone(gt, ce->engine->mask, hwsp_offset(ce, sema));
 	if (err)
-		goto err_buddy;
+		goto err_sema;
 
 	/* Destructively write test every block not used by the kernel */
 	mutex_lock(&ce->timeline->mutex);
@@ -1953,10 +1953,11 @@ out:
 	intel_context_exit(ce);
 	mutex_unlock(&ce->timeline->mutex);
 
-err_buddy:
+err_sema:
 	WRITE_ONCE(sema[1], 0xffffffff);
 	i915_write_barrier(gt->i915);
 
+err_buddy:
 	drm_mm_for_each_node_safe(node, nn, &pinned)
 		kfree(node);
 	i915_buddy_free(&mr->mm, swp);
