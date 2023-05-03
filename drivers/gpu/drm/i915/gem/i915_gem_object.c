@@ -328,6 +328,36 @@ void i915_gem_object_set_cache_coherency(struct drm_i915_gem_object *obj,
 		!(obj->cache_coherent & I915_BO_CACHE_COHERENT_FOR_WRITE);
 }
 
+/**
+ * i915_gem_object_set_pat_index - set PAT index to be used in PTE encode
+ * @obj: #drm_i915_gem_object
+ * @pat_index: PAT index
+ *
+ * This is a clone of i915_gem_object_set_cache_coherency taking pat index
+ * instead of cache_level as its second argument.
+ */
+void i915_gem_object_set_pat_index(struct drm_i915_gem_object *obj,
+				   unsigned int pat_index)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+
+	if (obj->pat_index == pat_index)
+		return;
+
+	obj->pat_index = pat_index;
+
+	if (pat_index != i915_gem_get_pat_index(i915, I915_CACHE_NONE))
+		obj->cache_coherent = (I915_BO_CACHE_COHERENT_FOR_READ |
+				       I915_BO_CACHE_COHERENT_FOR_WRITE);
+	else if (i915_gem_object_use_llc(obj))
+		obj->cache_coherent = I915_BO_CACHE_COHERENT_FOR_READ;
+	else
+		obj->cache_coherent = 0;
+
+	obj->cache_dirty =
+		!(obj->cache_coherent & I915_BO_CACHE_COHERENT_FOR_WRITE);
+}
+
 bool i915_gem_object_can_bypass_llc(struct drm_i915_gem_object *obj)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
