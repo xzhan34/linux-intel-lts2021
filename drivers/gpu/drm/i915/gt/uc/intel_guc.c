@@ -1339,10 +1339,8 @@ static int guc_send_invalidate_tlb(struct intel_guc *guc, u32 *action, u32 size)
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	struct intel_gt *gt = guc_to_gt(guc);
 	u64 rstcnt = atomic_read(&gt->reset.engines_reset_count);
-	ktime_t before, after;
-	u32 seqno, elapsed;
-	long timeout;
 	int err = 0;
+	u32 seqno;
 
 	init_waitqueue_head(&_wq.wq);
 
@@ -1388,35 +1386,18 @@ static int guc_send_invalidate_tlb(struct intel_guc *guc, u32 *action, u32 size)
  * the timeout. So keep a larger timeout that accounts for this individual
  * timeout and max number of outstanding invalidation requests that can be
  * queued in CT buffer.
- *
- * Although the invalidation request itself should complete within 1ms,
- * the request might be in a long queue of other, slower, CTB requests. If
- * the CTB buffer is fully backed up, a multi-second delay is possible.
- *
- * FIXME: Wait for the CTB buffer processing to pass the TLB invalidation
- * before beginning the timeout.
  */
 #define OUTSTANDING_GUC_TIMEOUT_PERIOD  (HZ)
-	before = ktime_get();
-	for (elapsed = 0; elapsed < 3; elapsed++) {
-		timeout = must_wait_woken(&wait, OUTSTANDING_GUC_TIMEOUT_PERIOD);
-		if (timeout)
-			break;
-		after = ktime_get();
-		drm_dbg(&gt->i915->drm, "TLB invalidation (seqno:%u) pending for %lldms\n",
-			seqno, ktime_to_ms(ktime_sub(after, before)));
-	}
-	if (!timeout) {
+	if (!must_wait_woken(&wait, OUTSTANDING_GUC_TIMEOUT_PERIOD)) {
+		/*
+		 * XXX: Failure of tlb invalidation is critical and would
+		 * warrant a gt reset.
+		 */
 		if (gt->reset.flags == 0 &&
-		    rstcnt == atomic_read(&gt->reset.engines_reset_count)) {
-			/*
-			 * XXX: Failure of tlb invalidation is critical and
-			 * warrants a gt reset.
-			 */
-			drm_err(&gt->i915->drm,
-				"tlb invalidation response timed out for seqno %u\n", seqno);
-			intel_gt_set_wedged(gt);
-		}
+		    rstcnt == atomic_read(&gt->reset.engines_reset_count))
+			drm_info(&gt->i915->drm,
+				 "tlb invalidation response timed out for seqno %u\n", seqno);
+
 		err = -ETIME;
 	}
 out:
