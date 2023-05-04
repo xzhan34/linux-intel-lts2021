@@ -116,7 +116,7 @@ struct intel_memory_region {
 	resource_size_t acct_limit[2];
 	resource_size_t acct_user[2];
 
-	/* Track actual LMEM size, without stolen memory */
+	/* Track actual LMEM size, including stolen memory */
 	resource_size_t actual_physical_mem;
 
 	u16 type;
