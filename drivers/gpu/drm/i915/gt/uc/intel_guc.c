@@ -12,6 +12,7 @@
 #include "intel_guc.h"
 #include "intel_guc_ads.h"
 #include "intel_guc_capture.h"
+#include "intel_guc_print.h"
 #include "intel_guc_slpc.h"
 #include "intel_guc_submission.h"
 #include "i915_drv.h"
@@ -114,8 +115,8 @@ static void gen9_enable_guc_interrupts(struct intel_guc *guc)
 	guc->interrupts.enabled = true;
 
 	spin_lock_irq(gt->irq_lock);
-	WARN_ON_ONCE(intel_uncore_read(gt->uncore, GEN8_GT_IIR(2)) &
-		     gt->pm_guc_events);
+	guc_WARN_ON_ONCE(guc, intel_uncore_read(gt->uncore, GEN8_GT_IIR(2)) &
+			 gt->pm_guc_events);
 	gen6_gt_pm_enable_irq(gt, gt->pm_guc_events);
 	spin_unlock_irq(gt->irq_lock);
 }
@@ -438,7 +439,7 @@ static void guc_init_params(struct intel_guc *guc)
 	params[GUC_CTL_DEVID] = guc_ctl_devid(guc);
 
 	for (i = 0; i < GUC_CTL_MAX_DWORDS; i++)
-		DRM_DEBUG_DRIVER("param[%2d] = %#x\n", i, params[i]);
+		guc_dbg(guc, "param[%2d] = %#x\n", i, params[i]);
 }
 
 static int guc_action_register_g2g_buffer(struct intel_guc *guc, u32 type, u32 dst,
@@ -667,7 +668,6 @@ void intel_guc_dump_time_info(struct intel_guc *guc, struct drm_printer *p)
 
 static int __guc_init(struct intel_guc *guc)
 {
-	struct intel_gt *gt = guc_to_gt(guc);
 	int ret;
 
 	ret = intel_uc_fw_init(&guc->fw);
@@ -735,7 +735,7 @@ err_log:
 err_fw:
 	intel_uc_fw_fini(&guc->fw);
 out:
-	i915_probe_error(gt->i915, "failed with %d\n", ret);
+	guc_probe_error(guc, "failed with %pe\n", ERR_PTR(ret));
 	return ret;
 }
 
@@ -810,13 +810,12 @@ static void __vf_guc_fini(struct intel_guc *guc)
 int intel_guc_send_mmio(struct intel_guc *guc, const u32 *request, u32 len,
 			u32 *response_buf, u32 response_buf_size)
 {
-	struct drm_i915_private *i915 = guc_to_gt(guc)->i915;
 	struct intel_uncore *uncore = guc_to_gt(guc)->uncore;
 	u32 header;
 	int i;
 	int ret;
 
-	ret = i915_inject_probe_error(i915, -ENXIO);
+	ret = i915_inject_probe_error(uncore->i915, -ENXIO);
 	if (ret)
 		return ret;
 
@@ -851,13 +850,13 @@ retry:
 					   10, 10, &header);
 	if (unlikely(ret)) {
 timeout:
-		drm_err(&i915->drm, "mmio request %#x: no reply %x\n",
+		guc_err(guc, "mmio request %#x: no reply %x\n",
 			request[0], header);
 		goto out;
 	}
 
 	if (FIELD_GET(GUC_HXG_MSG_0_TYPE, header) == GUC_HXG_TYPE_NO_RESPONSE_BUSY) {
-		int loop = IS_SRIOV_VF(i915) ? 20 : 1;
+		int loop = IS_SRIOV_VF(uncore->i915) ? 20 : 1;
 
 #define done ({ header = intel_uncore_read(uncore, guc_send_reg(guc, 0)); \
 		FIELD_GET(GUC_HXG_MSG_0_ORIGIN, header) != GUC_HXG_ORIGIN_GUC || \
@@ -866,7 +865,7 @@ timeout:
 busy_loop:
 		ret = wait_for(done, 1000);
 		if (unlikely(ret && --loop)) {
-			drm_dbg(&i915->drm, "mmio request %#x: still busy, countdown %u\n",
+			guc_dbg(guc, "mmio request %#x: still busy, countdown %u\n",
 				request[0], loop);
 			goto busy_loop;
 		}
@@ -881,7 +880,7 @@ busy_loop:
 	if (FIELD_GET(GUC_HXG_MSG_0_TYPE, header) == GUC_HXG_TYPE_NO_RESPONSE_RETRY) {
 		u32 reason = FIELD_GET(GUC_HXG_RETRY_MSG_0_REASON, header);
 
-		drm_dbg(&i915->drm, "mmio request %#x: retrying, reason %u\n",
+		guc_dbg(guc, "mmio request %#x: retrying, reason %u\n",
 			request[0], reason);
 		goto retry;
 	}
@@ -891,13 +890,13 @@ busy_loop:
 		u32 error = FIELD_GET(GUC_HXG_FAILURE_MSG_0_ERROR, header);
 
 		if (error == INTEL_GUC_RESPONSE_VF_MIGRATED) {
-			drm_dbg(&i915->drm, "mmio request %#x: migrated!\n", request[0]);
-			i915_sriov_vf_start_migration_recovery(i915);
+			guc_err(guc, "mmio request %#x: migrated!\n", request[0]);
+			i915_sriov_vf_start_migration_recovery(uncore->i915);
 			ret = -EREMOTEIO;
 			goto out;
 		}
 
-		drm_err(&i915->drm, "mmio request %#x: failure %x/%u\n",
+		guc_err(guc, "mmio request %#x: failure %x/%u\n",
 			request[0], error, hint);
 		ret = -ENXIO;
 		goto out;
@@ -905,7 +904,7 @@ busy_loop:
 
 	if (FIELD_GET(GUC_HXG_MSG_0_TYPE, header) != GUC_HXG_TYPE_RESPONSE_SUCCESS) {
 proto:
-		drm_err(&i915->drm, "mmio request %#x: unexpected reply %#x\n",
+		guc_err(guc, "mmio request %#x: unexpected reply %#x\n",
 			request[0], header);
 		ret = -EPROTO;
 		goto out;
@@ -952,9 +951,9 @@ int intel_guc_to_host_process_recv_msg(struct intel_guc *guc,
 	msg = payload[0] & guc->msg_enabled_mask;
 
 	if (msg & INTEL_GUC_RECV_MSG_CRASH_DUMP_POSTED)
-		drm_err(&guc_to_gt(guc)->i915->drm, "Received early GuC crash dump notification!\n");
+		guc_err(guc, "Received early crash dump notification!\n");
 	if (msg & INTEL_GUC_RECV_MSG_EXCEPTION)
-		drm_err(&guc_to_gt(guc)->i915->drm, "Received early GuC exception notification!\n");
+		guc_err(guc, "Received early exception notification!\n");
 
 	return 0;
 }
@@ -1047,7 +1046,8 @@ int intel_guc_suspend(struct intel_guc *guc)
 		 */
 		ret = intel_guc_send_mmio(guc, action, ARRAY_SIZE(action), NULL, 0);
 		if (ret)
-			DRM_ERROR("GuC suspend: RESET_CLIENT action failed with error %d!\n", ret);
+			guc_err(guc, "suspend: RESET_CLIENT action failed with %pe\n",
+				ERR_PTR(ret));
 	}
 
 	/* Signal that the GuC isn't running. */
@@ -1285,12 +1285,11 @@ static int __guc_action_self_cfg(struct intel_guc *guc, u16 key, u16 len, u64 va
 
 static int __guc_self_cfg(struct intel_guc *guc, u16 key, u16 len, u64 value)
 {
-	struct drm_i915_private *i915 = guc_to_gt(guc)->i915;
 	int err = __guc_action_self_cfg(guc, key, len, value);
 
 	if (unlikely(err))
-		i915_probe_error(i915, "Unsuccessful self-config (%pe) key %#hx value %#llx\n",
-				 ERR_PTR(err), key, value);
+		guc_probe_error(guc, "Unsuccessful self-config (%pe) key %#hx value %#llx\n",
+				ERR_PTR(err), key, value);
 	return err;
 }
 

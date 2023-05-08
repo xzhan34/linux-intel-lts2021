@@ -14,6 +14,7 @@
 #include "gt/intel_gt_regs.h"
 #include "gt/intel_rps.h"
 #include "intel_guc_fw.h"
+#include "intel_guc_print.h"
 #include "i915_drv.h"
 
 static void guc_prepare_xfer(struct intel_gt *gt)
@@ -145,9 +146,10 @@ static inline bool guc_load_done(struct intel_uncore *uncore, u32 *status, bool 
 	return false;
 }
 
-static int guc_wait_ucode(struct intel_uncore *uncore)
+static int guc_wait_ucode(struct intel_guc *guc)
 {
-	struct drm_device *drm = &uncore->i915->drm;
+	struct intel_gt *gt = guc_to_gt(guc);
+	struct intel_uncore *uncore = gt->uncore;
 	bool success;
 	u32 status;
 	int ret;
@@ -184,7 +186,7 @@ static int guc_wait_ucode(struct intel_uncore *uncore)
 		if (!ret || !success)
 			break;
 
-		drm_dbg(drm, "GuC load still in progress, count = %d, freq = %dMHz\n",
+		guc_dbg(guc, "load still in progress, count = %d, freq = %dMHz\n",
 			count, intel_rps_read_actual_frequency(&uncore->gt->rps));
 	}
 	after = ktime_get();
@@ -194,9 +196,9 @@ static int guc_wait_ucode(struct intel_uncore *uncore)
 		u32 ukernel = REG_FIELD_GET(GS_UKERNEL_MASK, status);
 		u32 bootrom = REG_FIELD_GET(GS_BOOTROM_MASK, status);
 
-		drm_info(drm, "GuC load failed: status = 0x%08X, time = %lldms, freq = %dMHz, ret = %d\n",
+		guc_info(guc, "load failed: status = 0x%08X, time = %lldms, freq = %dMHz, ret = %d\n",
 			 status, delta_ms, intel_rps_read_actual_frequency(&uncore->gt->rps), ret);
-		drm_info(drm, "GuC load failed: status: Reset = %d, "
+		guc_info(guc, "load failed: status: Reset = %d, "
 			"BootROM = 0x%02X, UKernel = 0x%02X, "
 			"MIA = 0x%02X, Auth = 0x%02X\n",
 			REG_FIELD_GET(GS_MIA_IN_RESET, status),
@@ -206,24 +208,24 @@ static int guc_wait_ucode(struct intel_uncore *uncore)
 			REG_FIELD_GET(GS_AUTH_STATUS_MASK, status));
 
 		if (bootrom == INTEL_BOOTROM_STATUS_RSA_FAILED) {
-			drm_info(drm, "GuC firmware signature verification failed\n");
+			guc_info(guc, "firmware signature verification failed\n");
 			ret = -ENOEXEC;
 		}
 
 		switch (ukernel) {
 			case INTEL_GUC_LOAD_STATUS_EXCEPTION:
-				drm_info(drm, "GuC firmware exception. EIP: %#x\n",
+				guc_info(guc, "firmware exception. EIP: %#x\n",
 					 intel_uncore_read(uncore, SOFT_SCRATCH(13)));
 				ret = -ENXIO;
 				break;
 
 			case INTEL_GUC_LOAD_STATUS_INIT_MMIO_SAVE_RESTORE_INVALID:
-				drm_info(drm, "Illegal register in save/restore workaround list\n");
+				guc_info(guc, "Illegal register in save/restore workaround list\n");
 				ret = -EPERM;
 				break;
 
 			case INTEL_GUC_LOAD_STATUS_HWCONFIG_DECRYPTION_START:
-				drm_info(drm, "GuC still decoding hwconfig table.\n");
+				guc_info(guc, "still decoding hwconfig table.\n");
 				ret = -ETIMEDOUT;
 				break;
 		}
@@ -243,19 +245,19 @@ static int guc_wait_ucode(struct intel_uncore *uncore)
 		 * increase.
 		 */
 		if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM) && ret == -ETIMEDOUT) {
-			drm_info(drm, "EIP: %#x, EIPC: %#x\n",
+			guc_info(guc, "EIP: %#x, EIPC: %#x\n",
 				 intel_uncore_read(uncore, GUC_EIP),
 				 intel_uncore_read(uncore, GUC_EIP_COUNTER));
 			msleep(1);
-			drm_info(drm, "EIP: %#x, EIPC: %#x\n",
+			guc_info(guc, "EIP: %#x, EIPC: %#x\n",
 				 intel_uncore_read(uncore, GUC_EIP),
 				 intel_uncore_read(uncore, GUC_EIP_COUNTER));
 		}
 	} else if (delta_ms > 200) {
-		drm_warn(drm, "Excessive GuC init time: %lldms! [freq = %dMHz, before = %dMHz, status = 0x%08X, count = %d, ret = %d]\n",
+		guc_warn(guc, "Excessive GuC init time: %lldms! [freq = %dMHz, before = %dMHz, status = 0x%08X, count = %d, ret = %d]\n",
 			 delta_ms, intel_rps_read_actual_frequency(&uncore->gt->rps), before_freq, status, count, ret);
 	} else {
-		drm_dbg(drm, "GuC init took %lldms, freq = %dMHz, before = %dMHz, status = 0x%08X, count = %d, ret = %d\n",
+		guc_dbg(guc, "GuC init took %lldms, freq = %dMHz, before = %dMHz, status = 0x%08X, count = %d, ret = %d\n",
 			delta_ms, intel_rps_read_actual_frequency(&uncore->gt->rps), before_freq, status, count, ret);
 	}
 
@@ -302,7 +304,7 @@ int intel_guc_fw_upload(struct intel_guc *guc)
 	if (ret)
 		goto out;
 
-	ret = guc_wait_ucode(uncore);
+	ret = guc_wait_ucode(guc);
 	if (ret)
 		goto out;
 

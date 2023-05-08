@@ -10,6 +10,7 @@
 #include "intel_gt.h"
 #include "intel_gt_mcr.h"
 #include "intel_gt_pm.h"
+#include "intel_gt_print.h"
 #include "intel_gt_regs.h"
 #include "intel_tlb.h"
 #include "uc/intel_guc.h"
@@ -139,8 +140,7 @@ static void mmio_invalidate_full(struct intel_gt *gt)
 		return;
 	}
 
-	if (drm_WARN_ONCE(&i915->drm, !num,
-			  "Platform does not implement TLB invalidation!"))
+	if (gt_WARN_ONCE(gt, !num, "Platform does not implement TLB invalidation!"))
 		return;
 
 	intel_uncore_forcewake_get(uncore, FORCEWAKE_ALL);
@@ -207,9 +207,8 @@ static void mmio_invalidate_full(struct intel_gt *gt)
 		GEM_BUG_ON(!i915_mmio_reg_offset(rb.reg));
 
 		if (wait_for_invalidate(gt, rb))
-			drm_err_ratelimited(&gt->i915->drm,
-					    "%s TLB invalidation did not complete in %ums!\n",
-					    engine->name, TLB_INVAL_TIMEOUT_MS);
+			gt_err_ratelimited(gt, "%s TLB invalidation did not complete in %ums!\n",
+					   engine->name, TLB_INVAL_TIMEOUT_MS);
 	}
 
 	/*

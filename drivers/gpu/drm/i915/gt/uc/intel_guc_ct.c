@@ -11,6 +11,7 @@
 
 #include "i915_drv.h"
 #include "intel_guc_ct.h"
+#include "intel_guc_print.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_pagefault.h"
 #include "gt/iov/intel_iov_event.h"
@@ -35,32 +36,17 @@ static inline struct intel_guc *ct_to_guc(struct intel_guc_ct *ct)
 	return container_of(ct, struct intel_guc, ct);
 }
 
-static inline struct intel_gt *ct_to_gt(struct intel_guc_ct *ct)
-{
-	return guc_to_gt(ct_to_guc(ct));
-}
-
-static inline struct drm_i915_private *ct_to_i915(struct intel_guc_ct *ct)
-{
-	return ct_to_gt(ct)->i915;
-}
-
-static inline struct drm_device *ct_to_drm(struct intel_guc_ct *ct)
-{
-	return &ct_to_i915(ct)->drm;
-}
-
 #define CT_ERROR(_ct, _fmt, ...) \
-	intel_gt_log_driver_error(ct_to_gt(_ct), INTEL_GT_DRIVER_ERROR_GUC_COMMUNICATION, \
-				  "CT%u: " _fmt, ct_to_gt(_ct)->info.id, ##__VA_ARGS__)
+	intel_gt_log_driver_error(guc_to_gt(ct_to_guc(_ct)), INTEL_GT_DRIVER_ERROR_GUC_COMMUNICATION, \
+				  "CT: " _fmt, ##__VA_ARGS__)
 #ifdef CONFIG_DRM_I915_DEBUG_GUC
 #define CT_DEBUG(_ct, _fmt, ...) \
-	drm_dbg(ct_to_drm(_ct), "CT%u: " _fmt, ct_to_gt(_ct)->info.id, ##__VA_ARGS__)
+	guc_dbg(ct_to_guc(_ct), "CT: " _fmt, ##__VA_ARGS__)
 #else
 #define CT_DEBUG(...)	do { } while (0)
 #endif
 #define CT_PROBE_ERROR(_ct, _fmt, ...) \
-	i915_probe_error(ct_to_i915(ct), "CT%u: " _fmt, ct_to_gt(_ct)->info.id, ##__VA_ARGS__)
+	guc_probe_error(ct_to_guc(ct), "CT: " _fmt, ##__VA_ARGS__)
 
 /**
  * DOC: CTB Blob
@@ -133,7 +119,7 @@ void intel_guc_ct_init_early(struct intel_guc_ct *ct)
 	init_waitqueue_head(&ct->wq);
 
 	/* FIXME: MTL cache coherency issue - HSD 22016122933 */
-	if (IS_METEORLAKE(ct_to_i915(ct))) {
+	if (IS_METEORLAKE(guc_to_gt(ct_to_guc(ct))->i915)) {
 		ct->mtl_workaround.delay = msecs_to_jiffies(100); /* 100 ms */
 		INIT_DELAYED_WORK(&ct->mtl_workaround.work,
 				  mtl_workaround_worker_func);
@@ -299,7 +285,7 @@ void intel_guc_ct_sanitize(struct intel_guc_ct *ct)
 	ct->enabled = false;
 
 	/* FIXME: MTL cache coherency issue - HSD 22016122933 */
-	if (IS_METEORLAKE(ct_to_i915(ct)) && ct->mtl_workaround.work.wq)
+	if (IS_METEORLAKE(guc_to_gt(ct_to_guc(ct))->i915) && ct->mtl_workaround.work.wq)
 		cancel_delayed_work_sync(&ct->mtl_workaround.work);
 }
 
@@ -314,7 +300,7 @@ void intel_guc_ct_fini(struct intel_guc_ct *ct)
 	GEM_BUG_ON(ct->enabled);
 
 	/* FIXME: MTL cache coherency issue - HSD 22016122933 */
-	if (IS_METEORLAKE(ct_to_i915(ct)) && ct->mtl_workaround.work.wq)
+	if (IS_METEORLAKE(guc_to_gt(ct_to_guc(ct))->i915) && ct->mtl_workaround.work.wq)
 		cancel_delayed_work_sync(&ct->mtl_workaround.work);
 
 	tasklet_kill(&ct->receive_tasklet);
@@ -378,7 +364,7 @@ int intel_guc_ct_enable(struct intel_guc_ct *ct)
 	ct->dead_ct_reason = CT_DEAD_ALIVE;
 
 	/* FIXME: MTL cache coherency issue - HSD 22016122933 */
-	if (IS_METEORLAKE(ct_to_i915(ct)))
+	if (IS_METEORLAKE(guc_to_gt(ct_to_guc(ct))->i915))
 		mod_delayed_work(system_highpri_wq, &ct->mtl_workaround.work,
 				 ct->mtl_workaround.delay);
 
@@ -405,7 +391,7 @@ void intel_guc_ct_disable(struct intel_guc_ct *ct)
 
 	ct->enabled = false;
 	/* FIXME: MTL cache coherency issue - HSD 22016122933 */
-	if (IS_METEORLAKE(ct_to_i915(ct)))
+	if (IS_METEORLAKE(guc_to_gt(ct_to_guc(ct))->i915))
 		cancel_delayed_work_sync(&ct->mtl_workaround.work);
 
 	if (intel_guc_is_fw_running(guc)) {
@@ -447,7 +433,7 @@ static int ct_write(struct intel_guc_ct *ct,
 		if (desc->status) {
 			if (desc->status & ~GUC_CTB_STATUS_MIGRATED)
 				goto corrupted;
-			if (!IS_SRIOV_VF(ct_to_i915(ct)))
+			if (!IS_SRIOV_VF(guc_to_gt(ct_to_guc(ct))->i915))
 				goto corrupted;
 			return -EREMCHG;
 		}
@@ -504,7 +490,7 @@ static int ct_write(struct intel_guc_ct *ct,
 	 * make sure H2G buffer update and LRC tail update (if this triggering a
 	 * submission) are visible before updating the descriptor tail
 	 */
-	i915_write_barrier(ct_to_i915(ct));
+	i915_write_barrier(guc_to_gt(ct_to_guc(ct))->i915);
 
 	/* update local copies */
 	ctb->tail = tail;
@@ -514,14 +500,14 @@ static int ct_write(struct intel_guc_ct *ct,
 	/* now update descriptor */
 	WRITE_ONCE(desc->tail, tail);
 	/* FIXME: MTL cache coherency issue - HSD 22016122933 */
-	if (IS_METEORLAKE(ct_to_i915(ct))) {
+	if (IS_METEORLAKE(guc_to_gt(ct_to_guc(ct))->i915)) {
 		u32 desc_tail = READ_ONCE(desc->tail);
 
 		if (tail != desc_tail) {
 			CT_ERROR(ct, "Lost H2G: %u/%u\n", tail, desc_tail);
 			WRITE_ONCE(desc->tail, tail);
 			READ_ONCE(desc->tail);
-			intel_uncore_read(ct_to_gt(ct)->uncore,
+			intel_uncore_read(guc_to_gt(ct_to_guc(ct))->uncore,
 					  ct_to_guc(ct)->notify_reg);
 		}
 	}
@@ -532,7 +518,7 @@ static int ct_write(struct intel_guc_ct *ct,
 	 * the interrupt to GuC, so an explicit flush is not required.
 	 * Just leave a comment here for now.
 	 */
-	/* i915_write_barrier(ct_to_i915(ct)); */
+	/* i915_write_barrier(guc_to_gt(ct_to_guc(ct))->i915); */
 
 	return 0;
 
@@ -578,7 +564,7 @@ static int wait_for_ct_request_update(struct intel_guc_ct *ct, struct ct_request
 	(!(ct_enabled = intel_guc_ct_enabled(ct)) || \
 	 FIELD_GET(GUC_HXG_MSG_0_ORIGIN, READ_ONCE(req->status)) == \
 	 GUC_HXG_ORIGIN_GUC)
-	intel_boost_fake_int_timer(ct_to_gt(ct), true);
+	intel_boost_fake_int_timer(guc_to_gt(ct_to_guc(ct)), true);
 	err = wait_for_us(done, GUC_CTB_RESPONSE_TIMEOUT_SHORT_MS);
 	if (err)
 		err = wait_for(done, GUC_CTB_RESPONSE_TIMEOUT_LONG_MS);
@@ -589,7 +575,7 @@ static int wait_for_ct_request_update(struct intel_guc_ct *ct, struct ct_request
 	if (unlikely(err))
 		DRM_ERROR("CT: fence %u err %d\n", req->fence, err);
 
-	intel_boost_fake_int_timer(ct_to_gt(ct), false);
+	intel_boost_fake_int_timer(guc_to_gt(ct_to_guc(ct)), false);
 
 	*status = req->status;
 	return err;
@@ -738,7 +724,7 @@ out:
 	spin_unlock_irqrestore(&ctb->lock, spin_flags);
 
 	if (unlikely(ret == -EREMCHG))
-		i915_sriov_vf_start_migration_recovery(ct_to_i915(ct));
+		i915_sriov_vf_start_migration_recovery(guc_to_gt(ct_to_guc(ct))->i915);
 
 	return ret;
 }
@@ -864,7 +850,7 @@ unlink:
 		 * of action parameters may no longer be valid after migration. Also,
 		 * the action itself might no longer be needed since HW was reset.
 		 */
-		i915_sriov_vf_start_migration_recovery(ct_to_i915(ct));
+		i915_sriov_vf_start_migration_recovery(guc_to_gt(ct_to_guc(ct))->i915);
 	}
 
 	if (unlikely(send_again))
@@ -879,22 +865,21 @@ unlink:
 int intel_guc_ct_send(struct intel_guc_ct *ct, const u32 *action, u32 len,
 		      u32 *response_buf, u32 response_buf_size, u32 flags)
 {
+	struct intel_guc *guc = ct_to_guc(ct);
+	struct intel_gt *gt = guc_to_gt(guc);
 	u32 status = ~0; /* undefined */
 	int ret;
 
-	ret = i915_inject_probe_error((ct_to_i915(ct)), -ENXIO);
+	ret = i915_inject_probe_error(gt->i915, -ENXIO);
 	if (ret)
 		return ret;
 
-	ret = i915_inject_probe_error((ct_to_i915(ct)), -EBUSY);
+	ret = i915_inject_probe_error(gt->i915, -EBUSY);
 	if (ret)
 		return ret;
 
 	if (unlikely(!ct->enabled)) {
-		struct intel_guc *guc = ct_to_guc(ct);
-		struct intel_uc *uc = container_of(guc, struct intel_uc, guc);
-
-		WARN(!uc->reset_in_progress, "Unexpected send: action=%#x\n", *action);
+		WARN(!gt->uc.reset_in_progress, "Unexpected send: action=%#x\n", *action);
 		return -ENODEV;
 	}
 
@@ -980,7 +965,7 @@ static int ct_read(struct intel_guc_ct *ct, struct ct_incoming_msg **msg)
 			 */
 			if (status & ~GUC_CTB_STATUS_MIGRATED)
 				goto corrupted;
-			if (!IS_SRIOV_VF(ct_to_i915(ct)))
+			if (!IS_SRIOV_VF(guc_to_gt(ct_to_guc(ct))->i915))
 				goto corrupted;
 			desc->status &= ~GUC_CTB_STATUS_MIGRATED;
 			return -EREMCHG;
@@ -1062,7 +1047,7 @@ static int ct_read(struct intel_guc_ct *ct, struct ct_incoming_msg **msg)
 	 * Wa_22016122933: Making sure the head update is
 	 * visible to GuC right away
 	 */
-	i915_write_barrier(ct_to_i915(ct));
+	i915_write_barrier(guc_to_gt(ct_to_guc(ct))->i915);
 
 	return available - len;
 
@@ -1136,7 +1121,7 @@ static int ct_handle_response(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *request)
 {
 	struct intel_guc *guc = ct_to_guc(ct);
-	struct intel_gt *gt = ct_to_gt(ct);
+	struct intel_gt *gt = guc_to_gt(guc);
 	struct intel_iov *iov = &gt->iov;
 	const u32 *hxg;
 	const u32 *payload;
@@ -1309,7 +1294,7 @@ static int ct_handle_event(struct intel_guc_ct *ct, struct ct_incoming_msg *requ
 		if (action == INTEL_GUC_ACTION_TLB_INVALIDATION_DONE)
 			intel_guc_tlb_invalidation_done(ct_to_guc(ct),  payload[0]);
 		else
-			intel_gt_pagefault_process_cat_error_msg(ct_to_gt(ct), payload[0]);
+			intel_gt_pagefault_process_cat_error_msg(guc_to_gt(ct_to_guc(ct)), payload[0]);
 
 		ct_free_msg(request);
 		return 0;
@@ -1407,7 +1392,7 @@ retry:
 	spin_unlock_irqrestore(&ctb->lock, flags);
 	if (ret < 0) {
 		if (ret == -EREMCHG) {
-			i915_sriov_vf_start_migration_recovery(ct_to_i915(ct));
+			i915_sriov_vf_start_migration_recovery(guc_to_gt(ct_to_guc(ct))->i915);
 			goto retry;
 		}
 		return ret;
@@ -1450,7 +1435,7 @@ void intel_guc_ct_event_handler(struct intel_guc_ct *ct)
 		 * handle such an event properly, we should abandon it.
 		 * In this case, calling WARN is not recommended.
 		 */
-		WARN(!HAS_MEMORY_IRQ_STATUS(ct_to_i915(ct)),
+		WARN(!HAS_MEMORY_IRQ_STATUS(guc_to_gt(ct_to_guc(ct))->i915),
 		     "Unexpected GuC event received while CT disabled!\n");
 		return;
 	}
@@ -1484,7 +1469,7 @@ static noinline void mtl_workaround_worker_func(struct work_struct *wrk)
 			CT_ERROR(ct, "Lost H2G: %u/%u\n", send_tail, desc_tail);
 			WRITE_ONCE(send_desc->tail, send_tail);
 			READ_ONCE(send_desc->tail);
-			intel_uncore_read(ct_to_gt(ct)->uncore,
+			intel_uncore_read(guc_to_gt(ct_to_guc(ct))->uncore,
 					  ct_to_guc(ct)->notify_reg);
 			intel_guc_notify(ct_to_guc(ct));
 		}
@@ -1527,7 +1512,6 @@ static void ct_dead_ct_worker_func(struct work_struct *w)
 
 	ct->dead_ct_reported = true;
 
-	drm_info(&ct_to_i915(ct)->drm, "CTB is dead - reason=0x%X\n",
-		 ct->dead_ct_reason);
-	intel_klog_error_capture(ct_to_gt(ct), (intel_engine_mask_t) ~0U);
+	guc_info(ct_to_guc(ct), "CTB is dead - reason=0x%X\n", ct->dead_ct_reason);
+	intel_klog_error_capture(guc_to_gt(ct_to_guc(ct)), (intel_engine_mask_t) ~0U);
 }
