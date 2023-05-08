@@ -1258,6 +1258,7 @@ static const struct intel_device_info pvc_info = {
 	 * Runtime Suspend D3, therefore disabling Runtime PM.
 	 */
 	.has_runtime_pm = 0,
+	.has_null_page = 1,
 	.require_force_probe = 1,
 	PVC_CACHELEVEL,
 };
