@@ -260,6 +260,8 @@ static void signal_irq_work(struct irq_work *work)
 			llist_entry(signal, typeof(*rq), signal_node);
 		struct list_head cb_list;
 
+		i915_request_mark_complete(rq);
+
 		if (rq->engine->sched_engine->retire_inflight_request_prio)
 			rq->engine->sched_engine->retire_inflight_request_prio(rq);
 
@@ -356,7 +358,7 @@ void intel_breadcrumbs_remove_wait(struct intel_breadcrumbs *b,
 
 void __intel_breadcrumbs_park(struct intel_breadcrumbs *b)
 {
-	if (b->irq_enabled) /* last chance for a missed wakeup! */
+	if (READ_ONCE(b->irq_enabled)) /* last chance for a missed wakeup! */
 		wake_up_all(&b->wq);
 
 	if (!READ_ONCE(b->irq_armed))

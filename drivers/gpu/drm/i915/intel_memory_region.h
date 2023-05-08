@@ -196,8 +196,6 @@ intel_memory_region_set_name(struct intel_memory_region *mem,
 int intel_memory_region_reserve(struct intel_memory_region *mem,
 				u64 offset, u64 size);
 
-int intel_memory_region_park(struct intel_memory_region *mem);
-
 int intel_memory_regions_add_svm(struct drm_i915_private *i915);
 void intel_memory_regions_remove(struct drm_i915_private *i915);
 

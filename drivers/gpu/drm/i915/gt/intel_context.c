@@ -670,7 +670,7 @@ int intel_context_throttle(const struct intel_context *ce, long timeout)
 
 	rcu_read_lock();
 	list_for_each_entry_reverse(rq, &tl->requests, link) {
-		if (__i915_request_is_complete(rq))
+		if (i915_request_signaled(rq))
 			break;
 
 		if (rq->ring != ring)
@@ -680,7 +680,8 @@ int intel_context_throttle(const struct intel_context *ce, long timeout)
 		if (__intel_ring_space(rq->postfix,
 				       ring->emit,
 				       ring->size) < ring->size / 2) {
-			if (i915_request_get_rcu(rq)) {
+			if (!__i915_request_is_complete(rq) &&
+			    i915_request_get_rcu(rq)) {
 				rcu_read_unlock();
 
 				timeout = i915_request_wait(rq,

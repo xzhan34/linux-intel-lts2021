@@ -135,8 +135,6 @@ static int i915_gem_object_put_pages_internal(struct drm_i915_gem_object *obj,
 	i915_gem_gtt_finish_pages(obj, pages);
 	internal_free_pages(pages);
 
-	obj->mm.dirty = false;
-
 	__start_cpu_write(obj);
 
 	return 0;

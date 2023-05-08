@@ -140,7 +140,11 @@ static bool i915_fence_signaled(struct dma_fence *fence)
 	if (!i915_request_is_active(rq))
 		return false;
 
-	return i915_request_completed(rq);
+	if (!__i915_request_is_complete(rq))
+		return false;
+
+	i915_request_mark_complete(rq);
+	return true;
 }
 
 static bool i915_fence_enable_signaling(struct dma_fence *fence)
@@ -1627,7 +1631,7 @@ i915_request_await_request(struct i915_request *to, struct i915_request *from)
 	GEM_BUG_ON(to == from);
 	GEM_BUG_ON(to->timeline == from->timeline);
 
-	if (i915_request_completed(from)) {
+	if (i915_request_signaled(from)) {
 		i915_sw_fence_set_error_once(&to->submit, from->fence.error);
 		return 0;
 	}
@@ -1791,7 +1795,7 @@ __i915_request_ensure_parallel_ordering(struct i915_request *rq,
 
 	prev = request_to_parent(rq)->parallel.last_rq;
 	if (prev) {
-		if (!__i915_request_is_complete(prev)) {
+		if (!i915_request_signaled(prev)) {
 			i915_sw_fence_await_sw_fence(&rq->submit,
 						     &prev->submit,
 						     &rq->submitq);
@@ -1822,7 +1826,7 @@ __i915_request_ensure_ordering(struct i915_request *rq,
 	prev = to_request(__i915_active_fence_set(&timeline->last_request,
 						  &rq->fence));
 
-	if (prev && !__i915_request_is_complete(prev)) {
+	if (prev) {
 		bool uses_guc = intel_engine_uses_guc(rq->engine);
 		bool pow2 = is_power_of_2(READ_ONCE(prev->engine)->mask |
 					  rq->engine->mask);

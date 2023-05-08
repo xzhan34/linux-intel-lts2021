@@ -85,7 +85,6 @@ int map_pt_dma(struct i915_address_space *vm, struct drm_i915_gem_object *obj)
 		return PTR_ERR(vaddr);
 
 	i915_gem_object_make_unshrinkable(obj);
-	i915_gem_object_mark_dirty(obj);
 	return 0;
 }
 
@@ -100,7 +99,6 @@ int map_pt_dma_locked(struct i915_address_space *vm, struct drm_i915_gem_object 
 		return PTR_ERR(vaddr);
 
 	i915_gem_object_make_unshrinkable(obj);
-	i915_gem_object_mark_dirty(obj);
 	return 0;
 }
 

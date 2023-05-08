@@ -754,7 +754,8 @@ static int __gen8_ppgtt_alloc(struct i915_address_space * const vm,
 			spin_lock(&pd->lock);
 			if (likely(!pd->entry[idx])) {
 				stash->pt[!!lvl] = pt->stash;
-				atomic_set(&pt->used, 0);
+				pt->stash = NULL;
+				GEM_BUG_ON(atomic_read(&pt->used));
 				if (vm->top == 4) {
 					/* hold the pd, update it in insert */
 					atomic_inc(px_used(pd));

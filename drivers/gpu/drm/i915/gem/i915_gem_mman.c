@@ -323,10 +323,8 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 		err = remap_io_sg(area, vm_start, vm_size,
 				  obj->mm.pages->sgl, iomap);
 
-		if (area->vm_flags & VM_WRITE) {
+		if (area->vm_flags & VM_WRITE)
 			GEM_BUG_ON(!i915_gem_object_has_pinned_pages(obj));
-			i915_gem_object_mark_dirty(obj);
-		}
 
 		i915_gem_object_unpin_pages(obj);
 	} while (err == -ENXIO);
@@ -461,7 +459,6 @@ retry:
 	if (write) {
 		GEM_BUG_ON(!i915_gem_object_has_pinned_pages(obj));
 		i915_vma_set_ggtt_write(vma);
-		i915_gem_object_mark_dirty(obj);
 	}
 
 err_fence:

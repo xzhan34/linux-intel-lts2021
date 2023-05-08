@@ -146,7 +146,6 @@ i915_gem_object_set_to_wc_domain(struct drm_i915_gem_object *obj, bool write)
 	if (write) {
 		obj->read_domains = I915_GEM_DOMAIN_WC;
 		obj->write_domain = I915_GEM_DOMAIN_WC;
-		i915_gem_object_mark_dirty(obj);
 	}
 
 	i915_gem_object_unpin_pages(obj);
@@ -209,7 +208,6 @@ i915_gem_object_set_to_gtt_domain(struct drm_i915_gem_object *obj, bool write)
 
 		obj->read_domains = I915_GEM_DOMAIN_GTT;
 		obj->write_domain = I915_GEM_DOMAIN_GTT;
-		i915_gem_object_mark_dirty(obj);
 
 		spin_lock(&obj->vma.lock);
 		for_each_ggtt_vma(vma, obj)
@@ -726,7 +724,6 @@ int i915_gem_object_prepare_write(struct drm_i915_gem_object *obj,
 
 out:
 	i915_gem_object_invalidate_frontbuffer(obj, ORIGIN_CPU);
-	i915_gem_object_mark_dirty(obj);
 	/* return with the pages pinned */
 	return 0;
 

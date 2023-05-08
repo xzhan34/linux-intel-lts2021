@@ -616,12 +616,6 @@ struct drm_i915_gem_object {
 #define I915_BO_ATOMIC_SYSTEM	1
 #define I915_BO_ATOMIC_DEVICE	2
 
-		/**
-		 * This is set if the object has been written to since the
-		 * pages were last acquired.
-		 */
-		bool dirty:1;
-
 		/*
 		 * Track the completion of the page construction if using the
 		 * blitter for swapin/swapout and for clears. Following

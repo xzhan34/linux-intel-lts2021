@@ -72,6 +72,7 @@ struct i915_buddy_block {
 struct i915_buddy_list {
 	struct list_head list;
 	spinlock_t lock;
+	bool defrag;
 };
 
 /*
@@ -101,8 +102,6 @@ struct i915_buddy_mm {
 	/* Must be at least PAGE_SIZE */
 	u64 chunk_size;
 	u64 size;
-
-	bool defrag:1;
 };
 
 static inline u64
@@ -217,19 +216,15 @@ int i915_buddy_alloc_range(struct i915_buddy_mm *mm,
 			   struct list_head *blocks,
 			   u64 start, u64 size);
 
-void __i915_buddy_free(struct i915_buddy_mm *mm,
-		       struct i915_buddy_block *block,
-		       bool dirty);
-void i915_buddy_free(struct i915_buddy_mm *mm,
-		     struct i915_buddy_block *block);
+void i915_buddy_mark_free(struct i915_buddy_mm *mm,
+			  struct i915_buddy_block *block);
 
-void __i915_buddy_free_list(struct i915_buddy_mm *mm,
-			    struct list_head *objects,
-			    bool dirty);
-void i915_buddy_free_list(struct i915_buddy_mm *mm,
-			  struct list_head *objects);
+void i915_buddy_free(struct i915_buddy_mm *mm, struct i915_buddy_block *block);
+void i915_buddy_free_list(struct i915_buddy_mm *mm, struct list_head *objects);
 
-void i915_buddy_defrag(struct i915_buddy_mm *mm, unsigned int merge);
+bool i915_buddy_defrag(struct i915_buddy_mm *mm,
+		       unsigned int min_order,
+		       unsigned int max_order);
 
 void i915_buddy_module_exit(void);
 int i915_buddy_module_init(void);

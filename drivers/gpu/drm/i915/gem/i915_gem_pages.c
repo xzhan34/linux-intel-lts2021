@@ -585,7 +585,6 @@ void __i915_gem_object_flush_map(struct drm_i915_gem_object *obj,
 				     offset, size, obj->base.size));
 
 	wmb(); /* let all previous writes be visible to coherent partners */
-	i915_gem_object_mark_dirty(obj);
 
 	if (obj->cache_coherent & I915_BO_CACHE_COHERENT_FOR_WRITE)
 		return;
@@ -749,19 +748,6 @@ struct page *
 
 	sg = i915_gem_object_get_sg(obj, n, &offset);
 	return nth_page(sg_page(sg), offset);
-}
-
-/* Like i915_gem_object_get_page(), but mark the returned page dirty */
-struct page *
-(i915_gem_object_get_dirty_page)(struct drm_i915_gem_object *obj, pgoff_t n)
-{
-	struct page *page;
-
-	page = i915_gem_object_get_page(obj, n);
-	if (!obj->mm.dirty)
-		set_page_dirty(page);
-
-	return page;
 }
 
 dma_addr_t

@@ -206,7 +206,7 @@ i915_debugfs_describe_obj(struct seq_file *m, struct drm_i915_gem_object *obj)
 	struct i915_vma *vma;
 	int pin_count = 0;
 
-	seq_printf(m, "%pK: %c%c%c %8zdKiB %02x %02x %s%s%s",
+	seq_printf(m, "%pK: %c%c%c %8zdKiB %02x %02x %s%s",
 		   &obj->base,
 		   get_tiling_flag(obj),
 		   get_global_flag(obj),
@@ -215,7 +215,6 @@ i915_debugfs_describe_obj(struct seq_file *m, struct drm_i915_gem_object *obj)
 		   obj->read_domains,
 		   obj->write_domain,
 		   i915_cache_level_str(obj),
-		   obj->mm.dirty ? " dirty" : "",
 		   obj->mm.madv == I915_MADV_DONTNEED ? " purgeable" : "");
 	if (obj->base.name)
 		seq_printf(m, " (name: %d)", obj->base.name);
@@ -382,6 +381,9 @@ static int i915_gem_object_info_show(struct seq_file *m, void *data)
 		show_xfer(m, gt, "clear-on-free",
 			  gt->counters.map[INTEL_GT_CLEAR_FREE_BYTES],
 			  gt->counters.map[INTEL_GT_CLEAR_FREE_CYCLES]);
+		show_xfer(m, gt, "clear-on-idle",
+			  gt->counters.map[INTEL_GT_CLEAR_IDLE_BYTES],
+			  gt->counters.map[INTEL_GT_CLEAR_IDLE_CYCLES]);
 	}
 
 	evict_stats(m, "Blitter", &i915->mm.blt_swap_stats);

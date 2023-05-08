@@ -801,7 +801,7 @@ i915_gem_get_locking_ctx(const struct drm_i915_gem_object *obj)
 {
 	struct ww_acquire_ctx *ctx;
 
-	ctx = obj->base.resv->lock.ctx;
+	ctx = READ_ONCE(obj->base.resv->lock.ctx);
 	if (!ctx)
 		return NULL;
 
@@ -874,19 +874,6 @@ i915_gem_object_inuse(const struct drm_i915_gem_object *obj)
 	if (obj->parent)
 		obj = obj->parent;
 	return READ_ONCE(obj->base.handle_count) || obj->base.dma_buf;
-}
-
-/**
- * i915_gem_object_mark_dirty - May this object contain modified pages?
- *
- * We try to optimise away handling of known clear pages, and so need to
- * track whenever the object may be written to, either directly by the kernel
- * or indirectly by userspace on the GPU.
- */
-static inline void
-i915_gem_object_mark_dirty(struct drm_i915_gem_object *obj)
-{
-	obj->mm.dirty = true;
 }
 
 void i915_gem_object_share_resv(struct drm_i915_gem_object *parent,

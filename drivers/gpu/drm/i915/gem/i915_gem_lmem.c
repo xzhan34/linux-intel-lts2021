@@ -186,6 +186,8 @@ chain_request(struct i915_request *rq, struct i915_request *chain)
 {
 	struct intel_timeline *tl = rq->context->timeline;
 
+	GEM_BUG_ON(rq == chain);
+
 	/*
 	 * Hold the request until the next is chained. We need
 	 * a complete chain in order to propagate any error to the
@@ -987,7 +989,7 @@ int i915_gem_object_clear_lmem(struct drm_i915_gem_object *obj)
 
 		err = clear_blt(ce, obj,
 				&obj->mm.region.mem->mm, &obj->mm.blocks,
-				INTEL_GT_CLEAR_ALLOC_CYCLES, obj->mm.dirty,
+				INTEL_GT_CLEAR_ALLOC_CYCLES, true,
 				&rq);
 		if (rq) {
 			i915_gem_object_migrate_prepare(obj, rq);
@@ -1060,9 +1062,9 @@ static bool need_swap(const struct drm_i915_gem_object *obj)
 static int
 lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 {
-	bool dirty = obj->mm.dirty;
+	bool dirty;
 
-	if (dirty && need_swap(obj)) {
+	if (need_swap(obj)) {
 		unsigned int sizes = obj->mm.page_sizes.phys;
 		int err;
 
@@ -1104,7 +1106,8 @@ lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 	 *   will need to performed on the active pages and thus require a
 	 *   synchronisation penalty anyway.
 	 */
-	if (dirty && obj->flags & I915_BO_ALLOC_USER && freed(obj)) {
+	dirty = true;
+	if (obj->flags & I915_BO_ALLOC_USER && freed(obj)) {
 		struct intel_gt *gt = obj->mm.region.mem->gt;
 		intel_wakeref_t wf;
 
@@ -1116,11 +1119,10 @@ lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 			if (unlikely(!ce))
 				continue;
 
-			if (!clear_blt(ce, NULL,
-				       &obj->mm.region.mem->mm, &obj->mm.blocks,
-				       INTEL_GT_CLEAR_FREE_CYCLES, true,
-				       &rq))
-				dirty = false;
+			dirty = clear_blt(ce, NULL,
+					  &obj->mm.region.mem->mm, &obj->mm.blocks,
+					  INTEL_GT_CLEAR_FREE_CYCLES, true,
+					  &rq);
 
 			if (rq) {
 				dma_fence_enable_sw_signaling(&rq->fence);
@@ -1366,16 +1368,32 @@ int __i915_gem_lmem_object_init(struct intel_memory_region *mem,
 	return 0;
 }
 
-static void
+static bool
 buddy_list_remove(struct i915_buddy_list *bl, struct list_head *list)
 {
-	struct i915_buddy_link *pos;
+	struct i915_buddy_link *pos, *n;
+	bool ret = false;
+
+	if (list_empty(&bl->list))
+		return false;
 
 	spin_lock(&bl->lock);
-	list_for_each_entry(pos, &bl->list, link)
-		pos->list = NULL;
-	list_replace_init(&bl->list, list);
+	list_for_each_entry_safe(pos, n, &bl->list, link) {
+		if (unlikely(!pos->list)) { /* defrag bookmark! */
+			list_del_init(&pos->link);
+			continue;
+		}
+
+		GEM_BUG_ON(pos->list != bl);
+		WRITE_ONCE(pos->list, NULL);
+	}
+	if (!list_empty(&bl->list)) {
+		list_replace_init(&bl->list, list);
+		ret = true;
+	}
 	spin_unlock(&bl->lock);
+
+	return ret;
 }
 
 static void
@@ -1384,9 +1402,12 @@ buddy_list_add(struct list_head *old, struct i915_buddy_list *bl)
 	struct i915_buddy_link *pos;
 
 	spin_lock(&bl->lock);
-	list_for_each_entry(pos, old, link)
-		pos->list = bl;
+	list_for_each_entry(pos, old, link) {
+		GEM_BUG_ON(pos->list);
+		WRITE_ONCE(pos->list, bl);
+	}
 	list_splice_tail(old, &bl->list);
+	WRITE_ONCE(bl->defrag, true);
 	spin_unlock(&bl->lock);
 }
 
@@ -1408,7 +1429,7 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 	/* Gradually clear (upto half each pass) local memory */
 	for (i = mem->mm.max_order; i >= 0; i--) {
 		bl = &mem->mm.dirty_list[i];
-		if (!list_empty(&bl->list))
+		if (buddy_list_remove(bl, &dirty))
 			break;
 	}
 	if (i < 0)
@@ -1417,15 +1438,11 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 	__intel_wakeref_defer_park(&mem->gt->wakeref);
 	mutex_unlock(&mem->gt->wakeref.mutex);
 
-	buddy_list_remove(bl, &dirty);
-
 	if (clear_blt(ce, NULL,
 		      &mem->mm, &dirty,
 		      INTEL_GT_CLEAR_FREE_CYCLES, false,
-		      &rq) == 0) {
+		      &rq) == 0)
 		bl = &mem->mm.clear_list[i];
-		mem->mm.defrag = true;
-	}
 
 	buddy_list_add(&dirty, bl);
 

@@ -310,6 +310,7 @@ i915_gem_userptr_put_pages(struct drm_i915_gem_object *obj,
 {
 	struct sgt_iter sgt_iter;
 	struct page *page;
+	bool dirty;
 
 	if (!pages)
 		return 0;
@@ -322,11 +323,10 @@ i915_gem_userptr_put_pages(struct drm_i915_gem_object *obj,
 	 * just in case. However, if we set the vma as being read-only we know
 	 * that the object will never have been written to.
 	 */
-	if (i915_gem_object_is_readonly(obj))
-		obj->mm.dirty = false;
+	dirty = !i915_gem_object_is_readonly(obj);
 
 	for_each_sgt_page(page, sgt_iter, pages) {
-		if (obj->mm.dirty && trylock_page(page)) {
+		if (dirty && trylock_page(page)) {
 			/*
 			 * As this may not be anonymous memory (e.g. shmem)
 			 * but exist on a real mapping, we have to lock
@@ -351,7 +351,6 @@ i915_gem_userptr_put_pages(struct drm_i915_gem_object *obj,
 
 		mark_page_accessed(page);
 	}
-	obj->mm.dirty = false;
 
 	sg_free_table(pages);
 	kfree(pages);

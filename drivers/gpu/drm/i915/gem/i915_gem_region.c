@@ -15,9 +15,13 @@ i915_gem_object_put_pages_buddy(struct drm_i915_gem_object *obj,
 				struct sg_table *pages,
 				bool dirty)
 {
-	__intel_memory_region_put_pages_buddy(obj->mm.region.mem,
-					      &obj->mm.blocks,
-					      dirty);
+	struct intel_memory_region *mem = obj->mm.region.mem;
+
+	spin_lock(&mem->objects.lock);
+	list_del_init(&obj->mm.region.link);
+	spin_unlock(&mem->objects.lock);
+
+	__intel_memory_region_put_pages_buddy(mem, &obj->mm.blocks, dirty);
 	i915_drm_client_make_resident(obj, false);
 
 	sg_free_table(pages);
@@ -77,7 +81,7 @@ i915_gem_object_get_pages_buddy(struct drm_i915_gem_object *obj,
 		flags |= I915_ALLOC_CONTIGUOUS;
 	if (obj->flags & (I915_BO_ALLOC_USER | I915_BO_CPU_CLEAR))
 		flags |= I915_BUDDY_ALLOC_WANT_CLEAR;
-	if (obj->mm.dirty) {
+	if (obj->swapto) {
 		flags &= ~I915_BUDDY_ALLOC_WANT_CLEAR;
 		flags |= I915_BUDDY_ALLOC_ALLOW_ACTIVE;
 	}
@@ -165,6 +169,7 @@ void i915_gem_object_release_memory_region(struct drm_i915_gem_object *obj)
 	if (!mem)
 		return;
 
+	/* Added to the region list before get_pages failed? */
 	if (!list_empty(&obj->mm.region.link)) {
 		spin_lock(&mem->objects.lock);
 		list_del_init(&obj->mm.region.link);

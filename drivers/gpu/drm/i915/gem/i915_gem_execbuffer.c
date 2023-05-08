@@ -997,6 +997,9 @@ static struct i915_vma *eb_lookup_vma(struct i915_execbuffer *eb, u32 handle)
 		if (likely(vma))
 			return vma;
 
+		if (signal_pending(current))
+			return ERR_PTR(-ERESTARTSYS);
+
 		obj = i915_gem_object_lookup(eb->file, handle);
 		if (unlikely(!obj))
 			return ERR_PTR(-ENOENT);
@@ -1040,6 +1043,8 @@ static struct i915_vma *eb_lookup_vma(struct i915_execbuffer *eb, u32 handle)
 		i915_gem_object_put(obj);
 		if (err != -EEXIST)
 			return ERR_PTR(err);
+
+		cond_resched();
 	} while (1);
 }
 
@@ -1531,8 +1536,6 @@ static void *reloc_kmap(struct drm_i915_gem_object *obj,
 	}
 
 	page = i915_gem_object_get_page(obj, pageno);
-	if (!obj->mm.dirty)
-		set_page_dirty(page);
 
 	vaddr = kmap_atomic(page);
 	cache->vaddr = unmask_flags(cache->vaddr) | (unsigned long)vaddr;

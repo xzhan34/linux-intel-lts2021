@@ -137,6 +137,9 @@ void i915_gem_object_migrate_decouple(struct drm_i915_gem_object *obj)
 {
 	struct dma_fence *f;
 
+	if (!i915_active_fence_isset(&obj->mm.migrate))
+		return;
+
 	rcu_read_lock();
 	f = xchg(&obj->mm.migrate.fence, NULL);
 	if (unlikely(!IS_ERR_OR_NULL(f))) {
@@ -1065,8 +1068,6 @@ swap_pages(struct drm_i915_gem_object *obj, struct drm_i915_gem_object *donor)
 
 	__i915_gem_object_reset_page_iter(obj, obj->mm.pages);
 	__i915_gem_object_reset_page_iter(donor, donor->mm.pages);
-
-	donor->mm.dirty = obj->mm.dirty;
 }
 
 int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
@@ -1128,7 +1129,6 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 			i915_gem_object_put(obj->swapto);
 			obj->swapto = NULL;
 		}
-		obj->mm.dirty = true;
 		madv = I915_MADV_WILLNEED;
 	} else if (i915_gem_object_has_pages(obj)) { /* lmem <-> lmem */
 		err = i915_gem_object_ww_copy_blt(obj, donor, ww, ce, nowait);
@@ -1290,11 +1290,9 @@ i915_gem_object_finish_memcpy(struct object_memcpy_info *info)
 	if (i915_gem_object_is_lmem(info->obj)) {
 		intel_runtime_pm_put(&i915->runtime_pm, info->wakeref);
 	} else {
-		if (info->write) {
+		if (info->write)
 			i915_gem_object_flush_frontbuffer(info->obj,
 							  ORIGIN_CPU);
-			info->obj->mm.dirty = true;
-		}
 	}
 	i915_gem_object_unpin_pages(info->obj);
 }
@@ -2064,7 +2062,6 @@ request:
 	wake_up_locked(&i915->mm.window_queue);
 	spin_unlock(&i915->mm.window_queue.lock);
 
-	dst->mm.dirty = true;
 	i915_gem_object_unpin_pages(src);
 	i915_gem_object_unpin_pages(dst);
 

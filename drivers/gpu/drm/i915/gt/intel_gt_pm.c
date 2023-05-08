@@ -131,7 +131,7 @@ static int __gt_park(struct intel_wakeref *wf)
 
 	GT_TRACE(gt, "\n");
 
-	if (gt->lmem && intel_memory_region_park(gt->lmem))
+	if (gt->lmem && i915_gem_lmem_park(gt->lmem))
 		return -EBUSY;
 
 	runtime_end(gt);

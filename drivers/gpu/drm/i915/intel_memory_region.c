@@ -179,14 +179,17 @@ intel_memory_region_free_pages(struct intel_memory_region *mem,
 			       bool dirty)
 {
 	struct i915_buddy_block *block, *on;
+	u64 avail = 0;
 
 	list_for_each_entry_safe(block, on, blocks, link) {
-		u64 size = i915_buddy_block_size(&mem->mm, block);
-		__i915_buddy_free(&mem->mm, block, dirty);
-		atomic64_add(size, &mem->avail);
+		avail += i915_buddy_block_size(&mem->mm, block);
+		if (dirty && i915_buddy_block_is_clear(block))
+			i915_buddy_block_set_clear(block, false);
+		i915_buddy_mark_free(&mem->mm, block);
 	}
-
 	INIT_LIST_HEAD(blocks);
+
+	atomic64_add(avail, &mem->avail);
 }
 
 void
@@ -341,7 +344,6 @@ next:
 	spin_lock(&mem->objects.lock);
 	list_for_each_entry(pos, *phase, link) {
 		struct drm_i915_gem_object *obj;
-		bool dirty;
 
 		if (!pos->mem) /* skip over other bookmarks */
 			continue;
@@ -362,7 +364,6 @@ next:
 			list_del_init(&pos->link);
 			list_replace_init(&obj->mm.blocks, &blocks);
 			found += obj->base.size;
-			dirty = obj->mm.dirty;
 			obj = NULL;
 		} else {
 			list_move_tail(&pos->link, &still_in_list);
@@ -373,7 +374,7 @@ next:
 		if (!obj) {
 			__intel_memory_region_put_pages_buddy(mem,
 							      &blocks,
-							      dirty);
+							      true);
 			goto bookmark;
 		}
 
@@ -410,11 +411,9 @@ next:
 		err = i915_gem_object_unbind(obj, ww, 0);
 		if (err == 0)
 			err = __i915_gem_object_put_pages(obj);
-		if (err == 0) {
+		if (err == 0)
 			/* conservative estimate of reclaimed pages */
 			found += obj->base.size;
-			wait = false; /* wait again after forward progress */
-		}
 
 unlock:
 		i915_gem_object_unlock(obj);
@@ -436,7 +435,7 @@ bookmark:
 	}
 	list_splice_tail_init(&still_in_list, *phase);
 	spin_unlock(&mem->objects.lock);
-	if (err || found >= target)
+	if (err || found)
 		return err;
 
 	if (!wait && busy) {
@@ -496,7 +495,7 @@ bookmark:
 	 * no forward progress, do we conclude that it is better to report
 	 * failure.
 	 */
-	return found ? 0 : -ENXIO;
+	return -ENXIO;
 }
 
 static unsigned int
@@ -537,10 +536,9 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 	unsigned int min_order = 0;
 	unsigned long n_pages;
 	unsigned int order;
-	bool defrag;
+	int retry = 0;
 
 	GEM_BUG_ON(!IS_ALIGNED(size, mem->mm.chunk_size));
-	GEM_BUG_ON(!list_empty(blocks));
 
 	GEM_BUG_ON((flags & (I915_ALLOC_CHUNK_4K |
 			     I915_ALLOC_CHUNK_64K |
@@ -571,16 +569,19 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 	order = __max_order(mem, n_pages);
 	GEM_BUG_ON(order < min_order);
 
-	defrag = mem->mm.defrag;
 	do {
 		resource_size_t sz = mem->mm.chunk_size << order;
 		struct i915_buddy_block *block;
 
-		block = ERR_PTR(-ENXIO);
-		if (available_chunks(mem, sz))
-			block = __i915_buddy_alloc(&mem->mm, order, flags);
+		if (!available_chunks(mem, sz)) {
+			retry = 0; /* wait our turn, don't break early */
+			goto evict;
+		}
+
+		block = __i915_buddy_alloc(&mem->mm, order, flags);
 		if (!IS_ERR(block)) {
 			GEM_BUG_ON(i915_buddy_block_order(block) != order);
+			GEM_BUG_ON(i915_buddy_block_is_free(block));
 			atomic64_sub(sz, &mem->avail);
 			list_add_tail(&block->link, blocks);
 			block->private = mem;
@@ -591,25 +592,31 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 
 			while (!(n_pages >> order))
 				order--;
-		} else if (defrag) {
-			i915_buddy_defrag(&mem->mm, min_order);
-			order = __max_order(mem, n_pages);
-			defrag = false;
-		} else if (order-- == min_order) {
+
+			retry = 0;
+			continue;
+		}
+
+		if (i915_buddy_defrag(&mem->mm, min_order, order))
+			/* Merged a few blocks, try again */
+			continue;
+
+		if (order-- == min_order) {
 			int err;
 
-			/* Reserve the memory we reclaim for ourselves! */
+evict:			/* Reserve the memory we reclaim for ourselves! */
 			sz = n_pages * mem->mm.chunk_size;
 			atomic64_add(sz, &mem->evict);
 			err = intel_memory_region_evict(mem, ww, sz);
 			atomic64_sub(sz, &mem->evict);
-			if (err) {
+			if (err == -EDEADLK || (err && retry)) {
 				intel_memory_region_free_pages(mem, blocks, false);
 				return err;
 			}
 
 			order = __max_order(mem, n_pages);
-			defrag = mem->mm.defrag;
+			i915_buddy_defrag(&mem->mm, min_order, order);
+			retry = err;
 		}
 	} while (1);
 }
@@ -757,17 +764,6 @@ void intel_memory_region_set_name(struct intel_memory_region *mem,
 	va_start(ap, fmt);
 	vsnprintf(mem->name, sizeof(mem->name), fmt, ap);
 	va_end(ap);
-}
-
-int intel_memory_region_park(struct intel_memory_region *mem)
-{
-	if (mem->mm.defrag)
-		i915_buddy_defrag(&mem->mm, 0);
-
-	if (i915_gem_lmem_park(mem))
-		return -EBUSY;
-
-	return 0;
 }
 
 static void __intel_memory_region_destroy(struct kref *kref)

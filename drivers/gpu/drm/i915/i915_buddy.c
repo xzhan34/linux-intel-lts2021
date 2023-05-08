@@ -43,7 +43,7 @@ static void __clear_free(struct i915_buddy_block *block)
 	GEM_BUG_ON(!block->node.list);
 	lockdep_assert_held(&block->node.list->lock);
 
-	block->node.list = NULL;
+	WRITE_ONCE(block->node.list, NULL);
 	list_del(&block->node.link);
 }
 
@@ -53,7 +53,7 @@ clear_free(struct i915_buddy_block *block, struct i915_buddy_list *bl)
 	bool ret = false;
 
 	spin_lock(&bl->lock);
-	if (likely(block->node.list == bl)) {
+	if (likely(READ_ONCE(block->node.list) == bl)) {
 		__clear_free(block);
 		ret = true;
 	}
@@ -68,20 +68,24 @@ static void __mark_free(struct i915_buddy_list *bl,
 	struct list_head *head;
 
 	spin_lock(&bl->lock);
+	GEM_BUG_ON(block->node.list);
 	head = &bl->list;
-	if (i915_buddy_block_is_active(block))
+	if (i915_buddy_block_is_active(block)) {
+		WRITE_ONCE(bl->defrag, true);
 		head = head->prev;
+	}
 	list_add(&block->node.link, head);
-	block->node.list = bl;
+	WRITE_ONCE(block->node.list, bl);
 	spin_unlock(&bl->lock);
 }
 
-static void mark_free(struct i915_buddy_mm *mm,
-		      struct i915_buddy_block *block)
+void i915_buddy_mark_free(struct i915_buddy_mm *mm,
+			  struct i915_buddy_block *block)
 {
-	struct i915_buddy_list *bl
-		= &(i915_buddy_block_is_clear(block) ? mm->clear_list : mm->dirty_list)[i915_buddy_block_order(block)];
+	struct i915_buddy_list *bl =
+		&(i915_buddy_block_is_clear(block) ? mm->clear_list : mm->dirty_list)[i915_buddy_block_order(block)];
 
+	GEM_BUG_ON(i915_buddy_block_order(block) > mm->max_order);
 
 	__mark_free(bl, block);
 }
@@ -176,7 +180,7 @@ int i915_buddy_init(struct i915_buddy_mm *mm, u64 start, u64 end, u64 chunk)
 		if (order > mm->max_order)
 			mm->max_order = order;
  
-		mark_free(mm, root);
+		i915_buddy_mark_free(mm, root);
 		roots[i++] = root;
 		GEM_BUG_ON(i > 2 * max_order + 1);
  
@@ -233,7 +237,7 @@ split_block(struct i915_buddy_mm *mm, struct i915_buddy_block *block)
 		dma_fence_put(f);
 	}
 
-	mark_free(mm, block->right);
+	i915_buddy_mark_free(mm, block->right);
 
 	return block->left;
 }
@@ -257,12 +261,14 @@ share_fence(const struct i915_buddy_block *a, const struct i915_buddy_block *b)
 	return block_fence(a) == block_fence(b);
 }
 
-void __i915_buddy_free(struct i915_buddy_mm *mm,
-		       struct i915_buddy_block *block,
-		       bool dirty)
+static unsigned int
+__i915_buddy_free(struct i915_buddy_mm *mm,
+		  struct i915_buddy_block *block,
+		  bool dirty)
 {
 	const bool clear = !dirty && i915_buddy_block_is_clear(block);
 	struct i915_buddy_block *parent;
+	int order;
 
 	/*
 	 * __i915_buddy_free() processes both a block that is being freed
@@ -286,7 +292,7 @@ void __i915_buddy_free(struct i915_buddy_mm *mm,
 
 		/* Beware fragmentation! */
 		if (!share_fence(block, buddy)) {
-			mm->defrag = true;
+			WRITE_ONCE(bl->defrag, true);
 			break;
 		}
 
@@ -301,11 +307,14 @@ void __i915_buddy_free(struct i915_buddy_mm *mm,
 
 		block = parent;
 	}
+	GEM_BUG_ON(block->node.list);
+	order = i915_buddy_block_order(block);
 
 	if (clear != __i915_buddy_block_is_clear(block))
 		i915_buddy_block_set_clear(block, clear);
 
-	mark_free(mm, block);
+	i915_buddy_mark_free(mm, block);
+	return order;
 }
 
 void i915_buddy_free(struct i915_buddy_mm *mm,
@@ -314,9 +323,9 @@ void i915_buddy_free(struct i915_buddy_mm *mm,
 	__i915_buddy_free(mm, block, true);
 }
 
-void __i915_buddy_free_list(struct i915_buddy_mm *mm,
-			    struct list_head *objects,
-			    bool dirty)
+static void __i915_buddy_free_list(struct i915_buddy_mm *mm,
+				   struct list_head *objects,
+				   bool dirty)
 {
 	struct i915_buddy_block *block, *on;
 
@@ -332,50 +341,56 @@ void i915_buddy_free_list(struct i915_buddy_mm *mm, struct list_head *objects)
 	__i915_buddy_free_list(mm, objects, true);
 }
 
-void i915_buddy_defrag(struct i915_buddy_mm *mm, unsigned int merge)
+bool i915_buddy_defrag(struct i915_buddy_mm *mm,
+		       unsigned int min_order,
+		       unsigned int max_order)
 {
+	unsigned int i = min(max_order, mm->max_order + 1);
 	struct i915_buddy_link bookmark = {};
-	struct list_head *pos;
-	unsigned int i;
+	struct i915_buddy_block *block;
+	bool merged = false;
 
-	mm->defrag = false;
-
-	for (i = 0; i < mm->max_order; ++i) {
+	while (i-- && !merged) {
 		struct i915_buddy_list *lists[] = {
 			&mm->clear_list[i],
 			&mm->dirty_list[i],
 			NULL,
-		}, **it;
+		}, **it, *list;
 
-		for (it = lists; *it; it++) {
-			spin_lock(&(*it)->lock);
-			list_for_each(pos, &(*it)->list) {
-				struct i915_buddy_block *block =
-					list_entry(pos, struct i915_buddy_block, link);
+		for (it = lists; (list = *it); it++) {
+			if (!fetch_and_zero(&list->defrag))
+				continue;
 
-				if (!block->node.list)
+			spin_lock(&list->lock);
+			list_for_each_entry(block, &list->list, node.link) {
+				if (unlikely(!block->node.list))
 					continue;
 
-				GEM_BUG_ON(block->node.list != *it);
+				if (unlikely(!block->parent))
+					continue;
 
-				if (i915_buddy_block_is_active(block)) {
-					mm->defrag = true;
+				if (i915_buddy_block_is_active(block))
 					break;
-				}
 
-				list_add(&bookmark.link, pos);
+				GEM_BUG_ON(block->node.list != list);
+				list_add(&bookmark.link, &block->node.link);
 				__clear_free(block);
-				spin_unlock(&(*it)->lock);
+				spin_unlock(&list->lock);
 
-				__i915_buddy_free(mm, block, i < merge);
+				merged |= __i915_buddy_free(mm, block, i < min_order) >= max_order;
 
-				spin_lock(&(*it)->lock);
+				spin_lock(&list->lock);
+				if (unlikely(list_empty(&bookmark.link)))
+					break; /* iteration was interrupted */
+
 				__list_del_entry(&bookmark.link);
-				pos = &bookmark.link;
+				block = container_of(&bookmark, typeof(*block), node);
 			}
-			spin_unlock(&(*it)->lock);
+			spin_unlock(&list->lock);
 		}
 	}
+
+	return merged;
 }
 
 static struct i915_buddy_block *buddy_list_first(struct list_head *head)
@@ -387,6 +402,14 @@ static struct i915_buddy_block *buddy_list_first(struct list_head *head)
 			return container_of(pos, struct i915_buddy_block, node);
 
 	return NULL;
+}
+
+static struct i915_buddy_block *
+__mark_used(const struct i915_buddy_mm *mm, struct i915_buddy_block *block)
+{
+	GEM_BUG_ON(block->node.list);
+	kmemleak_update_trace(block);
+	return block;
 }
 
 /*
@@ -402,7 +425,6 @@ __i915_buddy_alloc(struct i915_buddy_mm *mm, unsigned int order, unsigned int fl
 {
 	struct i915_buddy_list *lists[2] = { mm->dirty_list, mm->clear_list };
 	struct i915_buddy_block *block;
-	struct i915_buddy_list *bl;
 	unsigned int n;
 
 	if (flags & I915_BUDDY_ALLOC_WANT_CLEAR)
@@ -413,12 +435,13 @@ __i915_buddy_alloc(struct i915_buddy_mm *mm, unsigned int order, unsigned int fl
 	 * preferring to only return a cleared chunk to those requiring
 	 * zeroed memory (i.e. user allocations).
 	 */
-restart:for (n = 0;  n < ARRAY_SIZE(lists); n++) {
+	for (n = 0; n < ARRAY_SIZE(lists); n++) {
 		struct i915_buddy_block *active = NULL;
 		unsigned int i;
 
 		for (i = order; i <= mm->max_order; ++i) {
-			bl = &lists[n][i];
+			struct i915_buddy_list *bl = &lists[n][i];
+
 			if (list_empty(&bl->list))
 				continue;
 
@@ -428,49 +451,45 @@ restart:for (n = 0;  n < ARRAY_SIZE(lists); n++) {
 				GEM_BUG_ON(block->node.list != bl);
 
 				if (!i915_buddy_block_is_active(block) ||
-				    flags & I915_BUDDY_ALLOC_ALLOW_ACTIVE)
+				    flags & I915_BUDDY_ALLOC_ALLOW_ACTIVE) {
+					__clear_free(block);
+					spin_unlock(&bl->lock);
+					if (active)
+						i915_buddy_mark_free(mm, active);
 					goto found;
+				}
 
-				if (!active)
+				if (!active) {
+					__clear_free(block);
 					active = block;
+				}
 			}
 			spin_unlock(&bl->lock);
 		}
 
 		if (active) {
 			block = active;
-			bl = READ_ONCE(block->node.list);
-			if (bl) {
-				spin_lock(&bl->lock);
-				if (likely(block->node.list == bl))
-					goto found;
-				spin_unlock(&bl->lock);
-			}
-
-			goto restart;
+			goto found;
 		}
-
 	}
 	return ERR_PTR(-ENOSPC);
 
 found:
-	__clear_free(block);
-	spin_unlock(&bl->lock);
-
+	GEM_BUG_ON(i915_buddy_block_order(block) < order);
 	do {
 		struct i915_buddy_block *low;
 
-		if (i915_buddy_block_order(block) == order) {
-			kmemleak_update_trace(block);
-			return block;
-		}
+		if (i915_buddy_block_order(block) == order)
+			return __mark_used(mm, block);
 
 		low = split_block(mm, block);
 		if (IS_ERR(low)) {
-			__i915_buddy_free(mm, block, false);
+			i915_buddy_mark_free(mm, block);
 			return low;
 		}
 
+		GEM_BUG_ON(i915_buddy_block_order(low) != i915_buddy_block_order(block) - 1);
+		GEM_BUG_ON(i915_buddy_block_offset(low) != i915_buddy_block_offset(block));
 		block = low;
 	} while (1);
 }
@@ -538,7 +557,7 @@ static int alloc_range(struct i915_buddy_mm *mm,
 		u64 b_end = b_start + i915_buddy_block_size(mm, block) - 1;
 
 		if (contains(start, end, b_start, b_end)) {
-			list_add_tail(&block->link, out);
+			list_add_tail(&__mark_used(mm, block)->link, out);
 			continue;
 		}
 
@@ -547,10 +566,10 @@ static int alloc_range(struct i915_buddy_mm *mm,
 
 			low = split_block(mm, block);
 			if (IS_ERR(low)) {
-				mark_free(mm, block);
+				i915_buddy_mark_free(mm, block);
 				return PTR_ERR(low);
 			}
-			mark_free(mm, low);
+			i915_buddy_mark_free(mm, low);
 		}
 
 		err = add_dfs_block(mm, block->right, start, end, &dfs);
@@ -608,8 +627,14 @@ err_free:
 
 void i915_buddy_discard_clears(struct i915_buddy_mm *mm)
 {
+	int i;
+
 	/* Recombine all split blocks */
-	i915_buddy_defrag(mm, UINT_MAX);
+	for (i = 0; i <= mm->max_order; i++) {
+		mm->clear_list[i].defrag = true;
+		mm->dirty_list[i].defrag = true;
+	}
+	i915_buddy_defrag(mm, UINT_MAX, UINT_MAX);
 }
 
 void i915_buddy_fini(struct i915_buddy_mm *mm)
@@ -617,7 +642,6 @@ void i915_buddy_fini(struct i915_buddy_mm *mm)
 	int i;
 
 	i915_buddy_discard_clears(mm);
-	GEM_BUG_ON(mm->defrag);
 
 	for (i = 0; i < mm->n_roots; ++i)
 		i915_block_free(mm->roots[i]);

@@ -154,8 +154,6 @@ static int put_huge_pages(struct drm_i915_gem_object *obj,
 	i915_gem_gtt_finish_pages(obj, pages);
 	huge_pages_free_pages(pages);
 
-	obj->mm.dirty = false;
-
 	__start_cpu_write(obj);
 
 	return 0;
@@ -306,8 +304,6 @@ static int fake_put_huge_pages(struct drm_i915_gem_object *obj,
 				struct sg_table *pages)
 {
 	fake_free_huge_pages(obj, pages);
-	obj->mm.dirty = false;
-
 	return 0;
 }
 

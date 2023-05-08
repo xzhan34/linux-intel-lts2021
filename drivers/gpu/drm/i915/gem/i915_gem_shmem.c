@@ -300,9 +300,6 @@ __i915_gem_object_release_shmem(struct drm_i915_gem_object *obj,
 
 	GEM_BUG_ON(obj->mm.madv == __I915_MADV_PURGED);
 
-	if (obj->mm.madv == I915_MADV_DONTNEED)
-		obj->mm.dirty = false;
-
 	if (needs_clflush &&
 	    (obj->read_domains & I915_GEM_DOMAIN_CPU) == 0 &&
 	    !(obj->cache_coherent & I915_BO_CACHE_COHERENT_FOR_READ))
@@ -341,18 +338,16 @@ void i915_gem_object_put_pages_shmem(struct drm_i915_gem_object *obj, struct sg_
 
 	pagevec_init(&pvec);
 	for_each_sgt_page(page, sgt_iter, pages) {
-		if (obj->mm.dirty)
+		if (obj->mm.madv == I915_MADV_WILLNEED) {
 			set_page_dirty(page);
-
-		if (obj->mm.madv == I915_MADV_WILLNEED)
 			mark_page_accessed(page);
+		}
 
 		if (!pagevec_add(&pvec, page))
 			check_release_pagevec(&pvec);
 	}
 	if (pagevec_count(&pvec))
 		check_release_pagevec(&pvec);
-	obj->mm.dirty = false;
 
 	atomic64_add(size, &mem->avail);
 

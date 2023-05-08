@@ -218,10 +218,12 @@ struct intel_gt;
 struct i915_page_table {
 	struct drm_i915_gem_object *base;
 	union {
-		atomic_t used;
+		struct {
+			atomic_t used;
+			bool is_compact:1;
+		};
 		struct i915_page_table *stash;
 	};
-	bool is_compact;
 };
 
 struct i915_page_directory {
