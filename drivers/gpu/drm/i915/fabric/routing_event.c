@@ -233,7 +233,7 @@ static int rem_routing_disable_set(const char *val,
 	return err;
 }
 
-static struct kernel_param_ops disable_ops = {
+static const struct kernel_param_ops disable_ops = {
 	.set = rem_routing_disable_set,
 	.get = param_get_bool,
 };

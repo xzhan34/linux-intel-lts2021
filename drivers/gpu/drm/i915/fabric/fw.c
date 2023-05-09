@@ -41,6 +41,7 @@
  * delays is a minimum of 1 second)
  */
 #define MAX_200MS_RETRIES (5 * 60 * 10)
+#define ONE_MINUTE_COUNT 300 /* (300 * 200ms) = 1 min */
 
 #define MODULE_TYPE_CSS_GENERIC	(6)
 #define HEADER_VER_RSA		(0x00010000)
@@ -1626,11 +1627,13 @@ static void fw_initialization_complete(struct fdev *dev)
 	/*
 	 * A failure before init_fw() will leave memory in use by the PSCBIN
 	 * thread.  Wait for PSCBIN thread to complete before cleanup.
-	 *
-	 * NOTE: Under certain circumstances this can lead to task-hung
-	 *       message.  On driver unload or psc.done completion the hang
-	 *       will resolve.
+	 * The abort ensures clean up if an error has occurred by causing the psc thread to exit.
+	 * Completing the abort completion wakes the PSC thread (if it exists) and ensures it
+	 * reaches the done completion in a timely manner, avoiding the need to handle timeouts on
+	 * the done completion here.
 	 */
+
+	complete_all(&dev->psc.abort);
 	wait_for_completion(&dev->psc.done);
 
 	dev_info(fdev_dev(dev), "Firmware Version: %s\n",
@@ -1746,6 +1749,9 @@ static void fetch_platform_specific_config(struct fdev *dev)
 
 	if (fetching_psc_from_spi)
 		do {
+			/* Only emit one time after 1 minute */
+			if (cnt == ONE_MINUTE_COUNT)
+				dev_info(fdev_dev(dev), "Waiting on psc data from spi device\n");
 			dev->psc.err = request_pscdata_from_spi(dev);
 		} while (dev->psc.err == -ENODEV &&
 			 cnt++ < MAX_200MS_RETRIES &&
@@ -1861,6 +1867,24 @@ static const char *get_fw_image(struct fdev *dev)
 	return NULL;
 }
 
+/**
+ * load_and_init_fw() - Loads and initializes the device with firmware
+ *
+ * @dev: Fabric device object
+ *
+ * Multiple work items are started with this function:
+ *  1 per device to retrieve the device PSCBIN
+ *  1 per sub-device for firmware load and initialization
+ *
+ * The firmware initialization is dependent on the PSCBIN and will block until the PSCBIN is
+ * available.
+ *
+ * The PSCBIN load is put on a work queue because it may need to wait for the SPI driver to load.
+ * If this was done inline, the wait could block the probe for MAX_200MS_RETRIES before failing.
+ *
+ * Return: 0 on success, -EINVAL if firmware cannot be found, other values indicate a
+ * non-recoverable error.
+ */
 int load_and_init_fw(struct fdev *dev)
 {
 	const char *fw_image = NULL;

@@ -927,7 +927,7 @@ static enum cmd_rsp nl_process_fport_properties_query(struct sk_buff *msg,
 		 * Otherwise, only lpns specified in the message are examined
 		 * and added to the response.
 		 */
-		lock_shared(&routable_lock);
+		down_write(&routable_lock); /* exclusive lock */
 
 		if (bitmap_empty(port_mask, PORT_COUNT)) {
 			for_each_fabric_lpn(lpn, sd) {
@@ -943,7 +943,7 @@ static enum cmd_rsp nl_process_fport_properties_query(struct sk_buff *msg,
 			}
 		}
 
-		unlock_shared(&routable_lock);
+		up_write(&routable_lock);
 	}
 
 	fdev_put(sd->fdev);

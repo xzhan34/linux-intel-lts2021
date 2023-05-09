@@ -1181,46 +1181,30 @@ static inline bool dev_is_preload(struct fdev *dev)
 }
 
 /*
- * The routing lock protects data structures that must not change during
- * routing, specifically all routing fields of all elements in the routable
- * list.
+ * routable_lock affects ALL devices in the system and protects data structures that must not
+ * change during routing, specifically all routing fields of all elements in the routable list. It
+ * also protects port state written by port manager instances that affect routing. Individual port
+ * managers must be blocked from updating their state while they are being used by routing but must
+ * not be blocked from updating their own state by port managers working on other tiles.
  *
- * Individual port manager instances can update state FOR THEIR TILE ONLY while
- * holding a shared lock, since the routing engine will always use an exclusive
- * lock.
+ * rw_semaphore down_write operations take the lock exclusively (traditionally protecting the data
+ * for writing) and down_read operations take it in a shared manner (traditionally protecting the
+ * data for reading). Port managers exclusively access their own data in single threads are thus
+ * allowed to update their own data while using a shared read lock. All other consumers must use an
+ * exclusive write lock to access that data.
+ *
+ * Routing and general consumers must use down_write and treat routable_lock as a mutex to acquire
+ * read/write access to all data protected by the lock. Port managers (only) may use down_read to
+ * access ONE tile's data and must be guaranteed to be race free independent of the lock.
+ *
+ * Routing data structures that are not written by port managers can be protected for read-only
+ * access using down_read() to obtain a shared lock in the traditional manner. During a routing
+ * sweep, after routing has computed new routing state, that state is frozen and the exclusive
+ * write lock is downgraded to a shared read lock for remaining device programming. A shared lock is
+ * also used to protect debugfs read access of frozen routing state.
  */
 extern struct rw_semaphore routable_lock;
 extern struct list_head routable_list;
-
-/*
- * The following map r/w semaphore operations to exclusive/shared lock
- * operations. Thus, the routing engine and any agent that is updating the
- * overall structure of routing-affecting data structures must protect them
- * with:
- *	lock_exclusive(&routable_lock);
- * and
- *	unlock_exclusive(&routable_lock);
- *
- * Readers of these data structures and port manager agents that are writing
- * port state data solely for consumption by the routing engine can instead
- * use:
- *	lock_shared(&routable_lock);
- * and
- *	unlock_shared(&routable_lock);
- *
- * Trylock versions are available as well as an operation that can downgrade
- * the lock from exclusive to shared. The latter prevents the structure from
- * being changed (e.g., addition or removal of subdevices or devices) but
- * allows other agents to get the shared lock.
- */
-
-#define lock_exclusive			down_write
-#define lock_exclusive_trylock		down_write_trylock
-#define lock_shared			down_read
-#define lock_shared_trylock		down_read_trylock
-#define lock_downgrade_to_shared	downgrade_write
-#define unlock_exclusive		up_write
-#define unlock_shared			up_read
 
 static inline struct device *sd_dev(const struct fsubdev *sd)
 {

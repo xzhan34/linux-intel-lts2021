@@ -411,6 +411,8 @@ static const char * const mbdb_counter_names[] = {
 	"unmatched responses         : ",
 	"timedout responses          : ",
 	"retry responses             : ",
+	"outbound seqnum mismatches  : ",
+	"inbound seqnum mismatches   : ",
 };
 
 #define MAILBOX_COUNTERS_FILE_NAME "mailbox_counters"

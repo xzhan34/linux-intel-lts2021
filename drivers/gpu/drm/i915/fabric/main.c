@@ -344,7 +344,7 @@ static struct query_info *handle_query(void *handle, u32 fabric_id)
 static int mappings_ref_get(struct fdev *dev)
 {
 	/* protect port_unroute_list read */
-	lock_shared(&routable_lock);
+	down_write(&routable_lock); /* exclusive lock */
 	mutex_lock(&dev->mappings_ref.lock);
 
 	dev_dbg(fdev_dev(dev), "count: %d\n", dev->mappings_ref.count);
@@ -352,14 +352,14 @@ static int mappings_ref_get(struct fdev *dev)
 	if (!list_empty(&dev->port_unroute_list) ||
 	    dev->mappings_ref.remove_in_progress) {
 		mutex_unlock(&dev->mappings_ref.lock);
-		unlock_shared(&routable_lock);
+		up_write(&routable_lock);
 		return -EBUSY;
 	}
 
 	dev->mappings_ref.count++;
 
 	mutex_unlock(&dev->mappings_ref.lock);
-	unlock_shared(&routable_lock);
+	up_write(&routable_lock);
 
 	return 0;
 }

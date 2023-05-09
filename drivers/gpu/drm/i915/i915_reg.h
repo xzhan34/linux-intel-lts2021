@@ -8624,7 +8624,6 @@ enum skl_power_gate {
 							   _ICL_PIPE_DSS_CTL2_PB, \
 							   _ICL_PIPE_DSS_CTL2_PC)
 
-
 #define PKG_ADDR_RANGE			_MMIO(0x41B0)
 #define   PKG_ADDR_RANGE_RANGE_SHIFT	20
 #define   PKG_ADDR_RANGE_BASE_SHIFT	1

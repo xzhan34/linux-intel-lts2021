@@ -365,7 +365,7 @@ static int query_fabric_connectivity(struct drm_i915_private *i915,
 	info.bandwidth = 0;
 	info.latency = 0;
 
-	/* "Local" access will be on chip, not fabric (bandwith = 0) */
+	/* "Local" access will be on chip, not fabric (bandwidth = 0) */
 	if (info.fabric_id == i915->intel_iaf.fabric_id)
 		goto done;
 
@@ -375,7 +375,7 @@ static int query_fabric_connectivity(struct drm_i915_private *i915,
 		goto done;
 	/*
 	 * Examine the query information for connectivity.
-	 * Minimum bandwidth value is the bandwith, 0 == no connectivity
+	 * Minimum bandwidth value is the bandwidth, 0 == no connectivity
 	 * Latency is averaged.
 	 */
 	cnt = qi->src_cnt * qi->dst_cnt;

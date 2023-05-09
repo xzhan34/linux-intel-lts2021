@@ -1203,7 +1203,7 @@ static void update_ports_work(struct work_struct *work)
 	fio.status_changed = false;
 
 	/* lock may take a while to acquire if routing is running */
-	lock_shared(&routable_lock);
+	down_read(&routable_lock); /* shared lock */
 
 	/*
 	 * Note that it is possible that update_ports could be queued again
@@ -1360,7 +1360,7 @@ static void update_ports_work(struct work_struct *work)
 	if (fio.request_deisolation)
 		deisolate_all_ports();
 
-	unlock_shared(&routable_lock);
+	up_read(&routable_lock);
 
 	if (initializing || fio.status_changed)
 		publish_status_updates(sd);
@@ -1685,9 +1685,9 @@ int disable_fports(struct fsubdev *sd, unsigned long *lpnmask, u8 max_ports)
 	u8 lpn;
 
 	/* routing lock, then mappings lock */
-	lock_exclusive(&routable_lock);
+	down_write(&routable_lock); /* exclusive lock */
 	if (mappings_ref_check(sd->fdev)) {
-		unlock_exclusive(&routable_lock);
+		up_write(&routable_lock);
 		return -EAGAIN;
 	}
 
@@ -1699,7 +1699,7 @@ int disable_fports(struct fsubdev *sd, unsigned long *lpnmask, u8 max_ports)
 			list_add_tail(&p->unroute_link, &sd->fdev->port_unroute_list);
 		any_was_enabled |= enabled;
 	}
-	unlock_exclusive(&routable_lock);
+	up_write(&routable_lock);
 
 	return any_was_enabled ? signal_pm_thread(sd, NL_PM_CMD_EVENT) : 0;
 }
@@ -1725,9 +1725,9 @@ int disable_usage_fports(struct fsubdev *sd, unsigned long *lpnmask, u8 max_port
 	struct fport *p;
 	u8 lpn;
 
-	lock_exclusive(&routable_lock);
+	down_write(&routable_lock); /* exclusive lock */
 	if (mappings_ref_check(sd->fdev)) {
-		unlock_exclusive(&routable_lock);
+		up_write(&routable_lock);
 		return -EAGAIN;
 	}
 
@@ -1738,7 +1738,7 @@ int disable_usage_fports(struct fsubdev *sd, unsigned long *lpnmask, u8 max_port
 			list_add_tail(&p->unroute_link, &sd->fdev->port_unroute_list);
 		any_was_routable |= routable;
 	}
-	unlock_exclusive(&routable_lock);
+	up_write(&routable_lock);
 
 	if (any_was_routable)
 		rem_request();
