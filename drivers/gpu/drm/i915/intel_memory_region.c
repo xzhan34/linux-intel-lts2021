@@ -495,7 +495,7 @@ bookmark:
 	 * no forward progress, do we conclude that it is better to report
 	 * failure.
 	 */
-	return -ENXIO;
+	return atomic64_read(&mem->evict) <= target ? -ENXIO : 0;
 }
 
 static unsigned int
@@ -536,7 +536,6 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 	unsigned int min_order = 0;
 	unsigned long n_pages;
 	unsigned int order;
-	int retry = 0;
 
 	GEM_BUG_ON(!IS_ALIGNED(size, mem->mm.chunk_size));
 
@@ -573,10 +572,8 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 		resource_size_t sz = mem->mm.chunk_size << order;
 		struct i915_buddy_block *block;
 
-		if (!available_chunks(mem, sz)) {
-			retry = 0; /* wait our turn, don't break early */
+		if (!available_chunks(mem, sz))
 			goto evict;
-		}
 
 		block = __i915_buddy_alloc(&mem->mm, order, flags);
 		if (!IS_ERR(block)) {
@@ -593,7 +590,6 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 			while (!(n_pages >> order))
 				order--;
 
-			retry = 0;
 			continue;
 		}
 
@@ -609,14 +605,13 @@ evict:			/* Reserve the memory we reclaim for ourselves! */
 			atomic64_add(sz, &mem->evict);
 			err = intel_memory_region_evict(mem, ww, sz);
 			atomic64_sub(sz, &mem->evict);
-			if (err == -EDEADLK || (err && retry)) {
+			if (err) {
 				intel_memory_region_free_pages(mem, blocks, false);
 				return err;
 			}
 
 			order = __max_order(mem, n_pages);
 			i915_buddy_defrag(&mem->mm, min_order, order);
-			retry = err;
 		}
 	} while (1);
 }
