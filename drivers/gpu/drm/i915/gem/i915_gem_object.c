@@ -542,7 +542,7 @@ int i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
 				err = i915_gem_object_lock(sobj, &ww);
 				if (!err) {
 					err = __i915_gem_object_set_hint(sobj, &ww, args);
-					i915_gem_object_unlock(sobj);
+					i915_gem_ww_unlock_single(sobj);
 				}
 
 				/*
