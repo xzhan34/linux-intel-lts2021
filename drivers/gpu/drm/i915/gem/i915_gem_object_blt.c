@@ -805,6 +805,10 @@ static int __i915_gem_object_ww_copy_blt(struct drm_i915_gem_object *src,
 	if (IS_ERR(vma[1]))
 		return PTR_ERR(vma[1]);
 
+	/** Mark the vmas as persistent to bypass deferred vma closing */
+	__set_bit(I915_VMA_PERSISTENT_BIT, __i915_vma_flags(vma[0]));
+	__set_bit(I915_VMA_PERSISTENT_BIT, __i915_vma_flags(vma[1]));
+
 	if (src->base.size >= dst->base.size)
 		dst->flags |= I915_BO_SKIP_CLEAR;
 
