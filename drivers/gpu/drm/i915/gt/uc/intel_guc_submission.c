@@ -1966,15 +1966,14 @@ static void guc_cancel_context_requests(struct intel_context *ce)
 	if (!tl)
 		return;
 
-	list_for_each_entry_reverse(rq, &tl->requests, link) {
+	rcu_read_lock();
+	list_for_each_entry(rq, &tl->requests, link) {
 		if (!i915_request_is_active(rq))
-			continue;
-
-		if (!i915_request_mark_eio(rq))
 			break;
 
-		i915_request_put(rq);
+		i915_request_put(i915_request_mark_eio(rq));
 	}
+	rcu_read_unlock();
 }
 
 static void

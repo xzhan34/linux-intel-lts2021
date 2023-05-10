@@ -183,7 +183,7 @@ intel_memory_region_free_pages(struct intel_memory_region *mem,
 
 	list_for_each_entry_safe(block, on, blocks, link) {
 		avail += i915_buddy_block_size(&mem->mm, block);
-		if (dirty && i915_buddy_block_is_clear(block))
+		if (dirty && __i915_buddy_block_is_clear(block))
 			i915_buddy_block_set_clear(block, false);
 		i915_buddy_mark_free(&mem->mm, block);
 	}
@@ -408,7 +408,12 @@ next:
 		if (!i915_gem_object_has_pages(obj))
 			goto unlock;
 
-		err = i915_gem_object_unbind(obj, ww, 0);
+		if (__i915_gem_object_wait(obj, I915_WAIT_ALL, 0) < 0) {
+			busy = true;
+			goto unlock;
+		}
+
+		err = i915_gem_object_unbind(obj, ww, I915_GEM_OBJECT_UNBIND_ACTIVE);
 		if (err == 0)
 			err = __i915_gem_object_put_pages(obj);
 		if (err == 0)

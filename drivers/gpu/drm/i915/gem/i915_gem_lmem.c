@@ -460,6 +460,8 @@ emit_ccs_clear(struct i915_request *rq, u64 offset, u32 length)
 	return emit_flush(rq, MI_FLUSH_DW_LLC | MI_FLUSH_DW_CCS);
 }
 
+#define MAX_PAGE_SHIFT 16ul
+
 static int
 lmem_swapout(struct drm_i915_gem_object *obj,
 	     struct sg_table *pages, unsigned int sizes)
@@ -781,10 +783,15 @@ clear_blt(struct intel_context *ce,
 
 		do {
 			u32 length = min_t(u64, sz, step);
-			const int page_shift = min(__ffs(length), 16ul);
+			int page_shift = min(__ffs(length), MAX_PAGE_SHIFT);
 
 			GEM_BUG_ON(offset < ce->engine->gt->flat.start);
 			GEM_BUG_ON(offset + length > ce->engine->gt->flat.start + ce->engine->gt->flat.size);
+
+			if (length >> page_shift > S16_MAX) {
+				page_shift = min(__ffs(sz), MAX_PAGE_SHIFT);
+				length = round_down(length, BIT(page_shift));
+			}
 
 			if (!rq || submit_request(rq, out, SZ_4K)) {
 				rq = i915_request_create_locked(ce, I915_GFP_ALLOW_FAIL);
@@ -1378,6 +1385,7 @@ buddy_list_remove(struct i915_buddy_list *bl, struct list_head *list)
 		return false;
 
 	spin_lock(&bl->lock);
+	WRITE_ONCE(bl->defrag, true);
 	list_for_each_entry_safe(pos, n, &bl->list, link) {
 		if (unlikely(!pos->list)) { /* defrag bookmark! */
 			list_del_init(&pos->link);
@@ -1440,7 +1448,7 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 
 	if (clear_blt(ce, NULL,
 		      &mem->mm, &dirty,
-		      INTEL_GT_CLEAR_FREE_CYCLES, false,
+		      INTEL_GT_CLEAR_IDLE_CYCLES, false,
 		      &rq) == 0)
 		bl = &mem->mm.clear_list[i];
 

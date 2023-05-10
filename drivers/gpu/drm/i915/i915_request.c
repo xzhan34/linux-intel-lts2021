@@ -1577,8 +1577,10 @@ i915_request_await_execution(struct i915_request *rq,
 
 	do {
 		fence = *child++;
-		if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))
+		if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags)) {
+			i915_sw_fence_set_error_once(&rq->submit, fence->error);
 			continue;
+		}
 
 		if (fence->context == rq->fence.context)
 			continue;
@@ -1680,8 +1682,10 @@ i915_request_await_dma_fence(struct i915_request *rq, struct dma_fence *fence)
 
 	do {
 		fence = *child++;
-		if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))
+		if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags)) {
+			i915_sw_fence_set_error_once(&rq->submit, fence->error);
 			continue;
+		}
 
 		if (dma_fence_is_lr(fence) || dma_fence_is_suspend(fence))
 			return -EBUSY;
@@ -1744,43 +1748,33 @@ i915_request_await_object(struct i915_request *to,
 			  struct drm_i915_gem_object *obj,
 			  bool write)
 {
-	struct dma_fence *excl;
-	int ret;
+	struct dma_fence *excl, **shared = &excl;
+	unsigned int count;
+	int ret = 0;
 
 	ret = i915_gem_object_migrate_await(obj, to);
 	if (ret)
 		return ret;
 
 	if (write) {
-		struct dma_fence **shared;
-		unsigned int count, i;
-
-		ret = dma_resv_get_fences(obj->base.resv, &excl, &count,
-					  &shared);
-		if (ret)
-			return ret;
-
-		for (i = 0; i < count; i++) {
-			ret = i915_request_await_dma_fence(to, shared[i]);
-			if (ret)
-				break;
-
-			dma_fence_put(shared[i]);
-		}
-
-		for (; i < count; i++)
-			dma_fence_put(shared[i]);
-		kfree(shared);
+		ret = dma_resv_get_fences(obj->base.resv,
+					  NULL, &count, &shared);
 	} else {
 		excl = dma_resv_get_excl_unlocked(obj->base.resv);
+		count = !!excl;
 	}
 
-	if (excl) {
-		if (ret == 0)
-			ret = i915_request_await_dma_fence(to, excl);
+	while (count--) {
+		struct dma_fence *fence = shared[count];
 
-		dma_fence_put(excl);
+		if (ret == 0 && !dma_fence_is_signaled(fence))
+			ret = i915_request_await_dma_fence(to, fence);
+
+		dma_fence_put(fence);
 	}
+
+	if (shared != &excl)
+		kfree(shared);
 
 	return ret;
 }
