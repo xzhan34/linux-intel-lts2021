@@ -5995,6 +5995,8 @@ enum gt_vctr_registers {
 #define PVC_SOC_PSF_2			(13)
 #define PVC_SOC_PSF_1			(12)
 #define PVC_SOC_PSF_0			(11)
+#define PVC_SOC_MDFI_SOUTH		(6)
+#define PVC_SOC_MDFI_EAST		(4)
 #define SOC_PSF_CSC_2			(10)
 #define SOC_PSF_CSC_1			(9)
 #define SOC_PSF_CSC_0			(8)
@@ -6051,8 +6053,6 @@ enum gt_vctr_registers {
 #define SOC_GLOBAL_ERR_STAT_MASTER_REG(base, x) _MMIO(_PICK_EVEN((x), \
 							base + _SOC_GCOERRSTS, \
 							base + _SOC_GNFERRSTS))
-#define PVC_SOC_MDFI_SOUTH		(6)
-#define PVC_SOC_MDFI_EAST		(4)
 #define PVC_SOC_CD0_MDFI		(18)
 #define PVC_SOC_CD0			(17)
 #define PVC_SOC_HBM_SS1_7		(17)
