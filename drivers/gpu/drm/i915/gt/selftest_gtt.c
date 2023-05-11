@@ -939,7 +939,7 @@ mem_write_tearing(struct intel_gt *gt,
 		err = PTR_ERR(ppgtt);
 		goto out_b;
 	}
-	if (ppgtt->vm.poison != -1) {
+	if (ppgtt->vm.poison != -1 && ppgtt->vm.scratch[0]) {
 		struct drm_i915_gem_object *scratch = ppgtt->vm.scratch[0];
 
 		ppgtt->vm.poison = 0xffffffff;

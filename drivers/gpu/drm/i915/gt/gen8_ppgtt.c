@@ -230,7 +230,7 @@ static bool
 release_pd_entry_wa_bcs(struct i915_page_directory * const pd,
 			const unsigned short idx,
 			struct i915_page_table * const pt,
-			const struct drm_i915_gem_object * const scratch,
+			u64 scratch_encode,
 			u32 **cmd)
 {
 	bool free = false;
@@ -240,7 +240,7 @@ release_pd_entry_wa_bcs(struct i915_page_directory * const pd,
 
 	spin_lock(&pd->lock);
 	if (atomic_dec_and_test(&pt->used)) {
-		*cmd = fill_cmd_pte(*cmd, px_dma(pd), idx, scratch->encode);
+		*cmd = fill_cmd_pte(*cmd, px_dma(pd), idx, scratch_encode);
 		pd->entry[idx] = NULL;
 		atomic_dec(px_used(pd));
 		free = true;
@@ -494,7 +494,7 @@ static void gen8_ppgtt_cleanup(struct i915_address_space *vm)
 		__gen8_ppgtt_cleanup(vm, ppgtt->pd,
 				     gen8_pd_top_count(vm), vm->top);
 
-	free_scratch(vm);
+	i915_vm_free_scratch(vm);
 }
 
 static u64 __gen8_ppgtt_clear(struct i915_address_space * const vm,
@@ -502,7 +502,7 @@ static u64 __gen8_ppgtt_clear(struct i915_address_space * const vm,
 			      u64 start, const u64 end, int lvl,
 			      u32 **cmd, int *nptes)
 {
-	const struct drm_i915_gem_object * const scratch = vm->scratch[lvl];
+	u64 scratch_encode = i915_vm_scratch_encode(vm, lvl);
 	unsigned int idx, len;
 
 	GEM_BUG_ON(end > vm->total >> GEN8_PTE_SHIFT);
@@ -532,11 +532,11 @@ static u64 __gen8_ppgtt_clear(struct i915_address_space * const vm,
 			DBG("%s(%p):{ lvl:%d, idx:%d, start:%llx, end:%llx } removing pd\n",
 			    __func__, vm, lvl + 1, idx, start, end);
 			if (!cmd) {
-				clear_pd_entry(pd, idx, scratch);
+				clear_pd_entry(pd, idx, scratch_encode);
 				/* Ensure write visible to HW before __gen8_ppgtt_cleanup() */
 				i915_write_barrier(vm->i915);
 			} else {
-				*cmd = fill_cmd_pte(*cmd, px_dma(pd), idx, scratch->encode);
+				*cmd = fill_cmd_pte(*cmd, px_dma(pd), idx, scratch_encode);
 				pd->entry[idx] = NULL;
 				atomic_dec(px_used(pd));
 				*nptes = *nptes + 1;
@@ -579,7 +579,7 @@ static u64 __gen8_ppgtt_clear(struct i915_address_space * const vm,
 			vaddr = px_vaddr(pt, NULL);
 			if (!cmd) {
 				memset64(vaddr + pte,
-					 vm->scratch[0]->encode,
+					 i915_vm_scratch0_encode(vm),
 					 num_ptes);
 				/* Make sure visible to HW */
 				i915_write_barrier(vm->i915);
@@ -587,7 +587,7 @@ static u64 __gen8_ppgtt_clear(struct i915_address_space * const vm,
 
 				*cmd = fill_value_blt(vm->gt, *cmd, px_dma(pt),
 						      pte, num_ptes,
-						      vm->scratch[0]->encode,
+						      i915_vm_scratch0_encode(vm),
 						      px_dma(vm->scratch[1]));
 				*nptes += 1;
 			}
@@ -597,10 +597,10 @@ static u64 __gen8_ppgtt_clear(struct i915_address_space * const vm,
 		}
 
 		if (!cmd)
-			freepx = release_pd_entry(pd, idx, pt, scratch);
+			freepx = release_pd_entry(pd, idx, pt, scratch_encode);
 
 		else {
-			freepx = release_pd_entry_wa_bcs(pd, idx, pt, scratch, cmd);
+			freepx = release_pd_entry_wa_bcs(pd, idx, pt, scratch_encode, cmd);
 			*nptes += 1;
 		}
 		if (freepx)
@@ -742,12 +742,12 @@ static int __gen8_ppgtt_alloc(struct i915_address_space * const vm,
 
 			if (!cmd) {
 				/* TODO: need page size to decide what level of page tables are needed */
-				fill_px(pt, vm->scratch[lvl]->encode);
+				fill_px(pt, i915_vm_scratch_encode(vm, lvl));
 				/* Ensure this entry visible to HW before set pd */
 				i915_write_barrier(vm->i915);
 			} else {
 				*cmd = fill_page_blt(vm->gt, *cmd, px_dma(pt),
-						     vm->scratch[lvl]->encode,
+						     i915_vm_scratch_encode(vm, lvl),
 						     px_dma(vm->scratch[lvl + 1]));
 				*nptes += 1;
 			}
@@ -1025,7 +1025,7 @@ static void __gen8_ppgtt_dump(struct i915_address_space * const vm,
 			pdpe = gen8_pd_index(start, lvl);
 			vaddr = px_vaddr(pt, NULL);
 			while (count) {
-				if (vaddr[pdpe] != vm->scratch[lvl]->encode)
+				if (vaddr[pdpe] != i915_vm_scratch_encode(vm, lvl))
 					DRM_DEBUG_DRIVER(format, prefix[lvl],
 							 pdpe, start,
 							 vaddr[pdpe]);
@@ -1565,7 +1565,7 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 			if (I915_SELFTEST_ONLY(vma->vm->scrub_64K)) {
 				u16 i;
 
-				encode = vma->vm->scratch[0]->encode;
+				encode = i915_vm_scratch0_encode(vma->vm);
 				vaddr = px_vaddr(i915_pt_entry(pd, maybe_64K),
 						 &needs_flush);
 
@@ -1759,7 +1759,7 @@ static void gen8_ppgtt_insert_wa(struct i915_address_space *vm,
 	GEM_WARN_ON(i915_gem_resume_engines(vm->i915));
 }
 
-static void init_scratch_blt(struct i915_address_space *vm, struct intel_pte_bo *bo, int index)
+static void init_scratch_blt(struct i915_address_space *vm, struct intel_pte_bo *bo, bool valid)
 {
 	int i;
 	void *src;
@@ -1771,7 +1771,7 @@ static void init_scratch_blt(struct i915_address_space *vm, struct intel_pte_bo 
 
 	for (i = 0; i < vm->top; i++)
 		memset64(src + i * PAGE_SIZE,
-			 vm->scratch[i]->fault_encode[index],
+			 i915_vm_fault_encode(vm, i, valid),
 			 PAGE_SIZE >> 3);
 }
 
@@ -1781,7 +1781,6 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 	struct intel_pte_bo *bo;
 	intel_wakeref_t wakeref;
 	u32 *cmd = NULL;
-	u32 pte_flags;
 	int ret;
 	int i;
 
@@ -1802,19 +1801,9 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 		return 0;
 	}
 
-	ret = setup_scratch_page(vm);
+	ret = i915_vm_setup_scratch0(vm, vm->has_read_only);
 	if (ret)
 		return ret;
-
-	pte_flags = vm->has_read_only;
-	if (i915_gem_object_is_lmem(vm->scratch[0]))
-		pte_flags |= PTE_LM;
-
-	vm->scratch[0]->encode =
-		vm->pte_encode(px_dma(vm->scratch[0]),
-			       i915_gem_get_pat_index(vm->i915,
-						      I915_CACHE_NONE),
-			       pte_flags);
 
 	/*
 	 * FIXME: the null page support started from pre-gen12, but
@@ -1830,7 +1819,7 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 	 * returns 0, no TLB impact.
 	 */
 	if (HAS_NULL_PAGE(gt->i915))
-		vm->scratch[0]->encode |= PTE_NULL_PAGE;
+  		vm->scratch_encode[0] |= PTE_NULL_PAGE;
 
 	wakeref = l4wa_pm_get(gt);
 	if (wakeref) {
@@ -1853,43 +1842,22 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 			goto free_scratch;
 		}
 
-		obj->encode = gen8_pde_encode(px_dma(obj), I915_CACHE_NONE);
-
+		vm->scratch_encode[i] = gen8_pde_encode(px_dma(obj), I915_CACHE_NONE);
 		vm->scratch[i] = obj;
 	}
-	/*
-	 * Irrespective of vm->has_scratch, for systems with recoverable
-	 * pagefaults enabled, we should not map the entire address space to
-	 * valid scratch while initializing the vm. Doing so, would  prevent from
-	 * generating any faults at all. On such platforms, mapping to scratch
-	 * page is handled in the page fault handler itself.
-	 */
-	if (!vm->has_scratch ||
-	    i915_vm_page_fault_enabled(vm) ||
-	    is_vm_pasid_active(vm)) {
-		u64 invalid_pte;
-		memset(&invalid_pte, 0xAA, sizeof(u64));
-		for (i = 0; i <= vm->top; i++) {
-			vm->scratch[i]->fault_encode[1] = vm->scratch[i]->encode;
-			/* To use Null page for scratch leaf page to avoid TLB invalidation */
-			if ((i == 0) & i915_vm_page_fault_enabled(vm))
-				vm->scratch[i]->fault_encode[1] |= PTE_NULL_PAGE;
-			vm->scratch[i]->fault_encode[0] = invalid_pte;
-		}
-	}
 	if (cmd)
-		init_scratch_blt(vm, bo, 0);
+		init_scratch_blt(vm, bo, false);
 retry:
 
 	for (i = 1; i <= vm->top; i++) {
 		if (!cmd) {
-			fill_px(vm->scratch[i], vm->scratch[i - 1]->encode);
+			fill_px(vm->scratch[i], i915_vm_scratch_encode(vm, i - 1));
 			/* Make sure visible to HW */
 			i915_write_barrier(vm->i915);
 		} else {
 			u64 src_offset = i915_vma_offset(bo->vma) + INTEL_FLAT_PPGTT_BB_SCRATCH_OFFSET + (i - 1) * PAGE_SIZE;
 			cmd = fill_page_blt(vm->gt, cmd, px_dma(vm->scratch[i]),
-					    vm->scratch[i - 1]->encode, src_offset);
+					    i915_vm_scratch_encode(vm, i - 1), src_offset);
 		}
 	}
 
@@ -1911,9 +1879,7 @@ retry:
 	return 0;
 
 free_scratch:
-	while (i--)
-		i915_gem_object_put(vm->scratch[i]);
-	vm->scratch[0] = NULL;
+	i915_vm_free_scratch(vm);
 
 	if (cmd) {
 		intel_flat_ppgtt_put_pte_bo(&gt->fpp, bo);
@@ -1946,7 +1912,7 @@ static int gen8_preallocate_top_level_pdp(struct i915_ppgtt *ppgtt)
 			return err;
 		}
 
-		fill_px(pde, vm->scratch[1]->encode);
+		fill_px(pde, i915_vm_scratch_encode(vm, 1));
 		set_pd_entry(pd, idx, pde);
 		atomic_inc(px_used(pde)); /* keep pinned */
 	}
@@ -1987,9 +1953,9 @@ gen8_alloc_top_pd(struct i915_address_space *vm)
 		struct intel_pte_bo *bo = get_next_batch(&gt->fpp);
 		u64 src_offset = i915_vma_offset(bo->vma) + INTEL_FLAT_PPGTT_BB_SCRATCH_OFFSET + vm->top * PAGE_SIZE;
 
-		init_scratch_blt(vm, bo, 0);
+		init_scratch_blt(vm, bo, false);
 		cmd = fill_value_blt(vm->gt, bo->cmd, px_dma(pd), 0, count,
-				     vm->scratch[vm->top]->encode, src_offset);
+				     i915_vm_scratch_encode(vm, vm->top), src_offset);
 
 		GEM_BUG_ON(cmd >= bo->cmd + bo->vma->size / sizeof(*bo->cmd));
 		*cmd++ = MI_BATCH_BUFFER_END;
@@ -2003,7 +1969,7 @@ gen8_alloc_top_pd(struct i915_address_space *vm)
 	}
 
 	if (!cmd) {
-		fill_page_dma(px_base(pd), vm->scratch[vm->top]->encode, count);
+		fill_page_dma(px_base(pd), i915_vm_scratch_encode(vm, vm->top), count);
 		/* Make sure visible to HW */
 		i915_write_barrier(vm->i915);
 	}
@@ -2094,7 +2060,7 @@ int intel_flat_lmem_ppgtt_init(struct i915_address_space *vm,
 				goto err_out;
 			}
 
-			fill_px(pde, vm->scratch[lvl]->encode);
+			fill_px(pde, i915_vm_scratch_encode(vm, lvl));
 		}
 
 		atomic_inc(&pde->pt.used); /* alive until vm is gone */
@@ -2264,7 +2230,7 @@ static int __gen12_init_fault_scratch(struct i915_address_space * const vm,
 				      u64 * const start, const u64 end, int lvl,
 				      bool valid, u32 **cmd, int *nptes, u64 src_offset)
 {
-	const struct drm_i915_gem_object * const scratch = vm->scratch[lvl];
+	u64 fault_encode = i915_vm_fault_encode(vm, lvl, valid);
 	unsigned int idx, len;
 	int ret = 0;
 
@@ -2282,11 +2248,10 @@ static int __gen12_init_fault_scratch(struct i915_address_space * const vm,
 
 			if (!cmd) {
 				vaddr = px_vaddr(pd, NULL);
-				vaddr[idx] = scratch->fault_encode[valid];
+				vaddr[idx] = fault_encode;
 				i915_write_barrier(vm->i915);
 			} else {
-				*cmd = fill_cmd_pte(*cmd, px_dma(pd), idx,
-						    scratch->fault_encode[valid]);
+				*cmd = fill_cmd_pte(*cmd, px_dma(pd), idx, fault_encode);
 				*nptes += 1;
 			}
 
@@ -2295,11 +2260,11 @@ static int __gen12_init_fault_scratch(struct i915_address_space * const vm,
 					unsigned int idx = gen8_pd_index(*start, i - 1);
 					if (!cmd) {
 						vaddr = px_vaddr(vm->scratch[i], NULL);
-						vaddr[idx] = vm->scratch[i -1]->fault_encode[valid];
+						vaddr[idx] = i915_vm_fault_encode(vm, i - 1, valid);
 						i915_write_barrier(vm->i915);
 					} else {
 						*cmd = fill_cmd_pte(*cmd, px_dma(vm->scratch[i]), idx,
-								    vm->scratch[i -1]->fault_encode[valid]);
+								    i915_vm_fault_encode(vm, i - 1, valid));
 						*nptes += 1;
 					}
 				}
@@ -2325,13 +2290,12 @@ static int __gen12_init_fault_scratch(struct i915_address_space * const vm,
 
 				if (!cmd) {
 					u64 *vaddr = px_vaddr(pt, NULL);
-					memset64(vaddr + pte, vm->scratch[0]->fault_encode[valid],
-						 num_ptes);
+					memset64(vaddr + pte, i915_vm_fault_encode(vm, 0, valid), num_ptes);
 					i915_write_barrier(vm->i915);
 				} else {
 					*cmd = fill_value_blt(vm->gt, *cmd, px_dma(pt),
 							      pte, num_ptes,
-							      vm->scratch[0]->fault_encode[valid], src_offset);
+							      i915_vm_fault_encode(vm, 0, valid), src_offset);
 					*nptes += 1;
 				}
 				*start += num_ptes;

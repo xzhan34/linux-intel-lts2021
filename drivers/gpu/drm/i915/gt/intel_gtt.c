@@ -133,7 +133,7 @@ static void __i915_vm_close(struct i915_address_space *vm)
 int i915_vm_lock_objects(struct i915_address_space *vm,
 			 struct i915_gem_ww_ctx *ww)
 {
-	if (vm->scratch[0]->base.resv == &vm->_resv) {
+	if (vm->scratch[0] && (vm->scratch[0]->base.resv == &vm->_resv)) {
 		return i915_gem_object_lock(vm->scratch[0], ww);
 	} else {
 		struct i915_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
@@ -440,9 +440,10 @@ static u32 poison_scratch_page(struct drm_i915_gem_object *scratch)
 	return val;
 }
 
-int setup_scratch_page(struct i915_address_space *vm)
+int i915_vm_setup_scratch0(struct i915_address_space *vm, bool read_only)
 {
 	unsigned long size;
+	u32 pte_flags;
 
 	/*
 	 * In order to utilize 64K pages for an object with a size < 2M, we will
@@ -491,6 +492,16 @@ int setup_scratch_page(struct i915_address_space *vm)
 
 		vm->scratch[0] = obj;
 		vm->scratch_order = get_order(size);
+
+		pte_flags = read_only ? PTE_READ_ONLY : 0;
+		if (i915_gem_object_is_lmem(vm->scratch[0]))
+			pte_flags |= PTE_LM;
+		vm->scratch_encode[0] =
+			vm->pte_encode(px_dma(vm->scratch[0]),
+				       i915_gem_get_pat_index(vm->i915,
+							     I915_CACHE_NONE),
+				       pte_flags);
+
 		return 0;
 
 skip_obj:
@@ -515,15 +526,43 @@ skip:
 	} while (1);
 }
 
-void free_scratch(struct i915_address_space *vm)
+u64 i915_vm_fault_encode(struct i915_address_space *vm, int lvl, bool valid)
+{
+	if (!valid)
+		return INVALID_PTE;
+	else
+		return vm->scratch_encode[lvl];
+}
+
+u64 i915_vm_scratch_encode(struct i915_address_space *vm, int lvl)
+{
+	bool valid = true;
+
+	/*
+	 * Irrespective of vm->has_scratch, for systems with recoverable
+	 * pagefaults enabled, we should not map the entire address space to
+	 * valid scratch while initializing the vm. Doing so, would  prevent from
+	 * generating any faults at all. On such platforms, mapping to scratch
+	 * page is handled in the page fault handler itself.
+	 */
+	if (!vm->has_scratch ||
+	    is_vm_pasid_active(vm) ||
+	    i915_vm_page_fault_enabled(vm))
+		valid = false;
+
+	return i915_vm_fault_encode(vm, lvl, valid);
+}
+
+void i915_vm_free_scratch(struct i915_address_space *vm)
 {
 	int i;
 
-	if (!vm->scratch[0])
-		return;
-
-	for (i = 0; i <= vm->top; i++)
-		i915_gem_object_put(vm->scratch[i]);
+	for (i = 0; i <= vm->top; i++) {
+		if (vm->scratch[i]) {
+			i915_gem_object_put(vm->scratch[i]);
+			vm->scratch[i] = NULL;
+		}
+	}
 }
 
 void gtt_write_workarounds(struct intel_gt *gt)

@@ -439,7 +439,7 @@ static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
 
 	end = gte + vma->guard / I915_GTT_PAGE_SIZE;
 	while (gte < end)
-		gen8_set_pte(gte++, vm->scratch[0]->encode);
+		gen8_set_pte(gte++, i915_vm_ggtt_scratch0_encode(vm));
 
 	end += (vma->node.size - vma->guard) / I915_GTT_PAGE_SIZE;
 	for_each_sgt_daddr(addr, iter, vma->pages)
@@ -448,7 +448,7 @@ static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
 
 	/* Fill the allocated but "unused" space beyond the end of the buffer */
 	while (gte < end)
-		gen8_set_pte(gte++, vm->scratch[0]->encode);
+		gen8_set_pte(gte++, i915_vm_ggtt_scratch0_encode(vm));
 
 	/*
 	 * We want to flush the TLBs only after we're certain all the PTE
@@ -521,7 +521,7 @@ static void gen8_ggtt_insert_entries_wa_bcs(struct i915_address_space *vm,
 		}
 		*cs++ = MI_UPDATE_GTT | (2 * num_entries);
 		*cs++ = start;
-		memset64((u64 *)cs, vm->scratch[0]->encode, num_entries);
+		memset64((u64 *)cs, i915_vm_ggtt_scratch0_encode(vm), num_entries);
 		cs += num_entries * 2;
 		intel_ring_advance(rq, cs);
 
@@ -567,8 +567,8 @@ static void gen8_ggtt_insert_entries_wa_bcs(struct i915_address_space *vm,
 		}
 
 		for (;count < num_entries; count++) {
-			*cs++ = lower_32_bits(vm->scratch[0]->encode);
-			*cs++ = upper_32_bits(vm->scratch[0]->encode);
+			*cs++ = lower_32_bits(i915_vm_ggtt_scratch0_encode(vm));
+			*cs++ = upper_32_bits(i915_vm_ggtt_scratch0_encode(vm));
 		}
 		intel_ring_advance(rq, cs);
 
@@ -703,7 +703,7 @@ static void gen6_ggtt_insert_entries(struct i915_address_space *vm,
 
 	end = gte + vma->guard / I915_GTT_PAGE_SIZE;
 	while (gte < end)
-		gen8_set_pte(gte++, vm->scratch[0]->encode);
+		gen8_set_pte(gte++, i915_vm_ggtt_scratch0_encode(vm));
 
 	end += (vma->node.size - vma->guard) / I915_GTT_PAGE_SIZE;
 	for_each_sgt_daddr(addr, iter, vma->pages)
@@ -712,7 +712,7 @@ static void gen6_ggtt_insert_entries(struct i915_address_space *vm,
 
 	/* Fill the allocated but "unused" space beyond the end of the buffer */
 	while (gte < end)
-		iowrite32(vm->scratch[0]->encode, gte++);
+		iowrite32(i915_vm_ggtt_scratch0_encode(vm), gte++);
 
 	/*
 	 * We want to flush the TLBs only after we're certain all the PTE
@@ -729,7 +729,7 @@ static void gen8_ggtt_clear_range(struct i915_address_space *vm,
 	unsigned long num_entries = length / I915_GTT_PAGE_SIZE;
 	gen8_pte_t __iomem *pte =
 		(gen8_pte_t __iomem *)ggtt->gsm + first_entry;
-	const gen8_pte_t scratch = vm->scratch[0]->encode;
+	const gen8_pte_t scratch = i915_vm_ggtt_scratch0_encode(vm);
 
 	while (num_entries--)
 		iowrite32(scratch, pte++);
@@ -826,7 +826,7 @@ static void gen6_ggtt_clear_range(struct i915_address_space *vm,
 		 first_entry, num_entries, max_entries))
 		num_entries = max_entries;
 
-	scratch_pte = vm->scratch[0]->encode;
+	scratch_pte = i915_vm_ggtt_scratch0_encode(vm);
 	for (i = 0; i < num_entries; i++)
 		iowrite32(scratch_pte, &gtt_base[i]);
 }
@@ -1060,9 +1060,9 @@ static int init_aliasing_ppgtt(struct i915_ggtt *ggtt)
 	if (err)
 		goto err_ppgtt;
 
-	i915_gem_object_lock(ppgtt->vm.scratch[0], NULL);
+	i915_gem_object_lock(ppgtt->pd->pt.base, NULL);
 	err = i915_vm_map_pt_stash(&ppgtt->vm, &stash);
-	i915_gem_object_unlock(ppgtt->vm.scratch[0]);
+	i915_gem_object_unlock(ppgtt->pd->pt.base);
 	if (err)
 		goto err_stash;
 
@@ -1276,7 +1276,6 @@ static int ggtt_probe_common(struct i915_ggtt *ggtt, u64 size)
 {
 	struct drm_i915_private *i915 = ggtt->vm.i915;
 	phys_addr_t phys_addr;
-	u32 pte_flags;
 	int ret;
 
 	phys_addr = ggtt->vm.gt->phys_addr + gen6_gttadr_offset(i915);
@@ -1298,7 +1297,7 @@ static int ggtt_probe_common(struct i915_ggtt *ggtt, u64 size)
 	}
 
 	kref_init(&ggtt->vm.resv_ref);
-	ret = setup_scratch_page(&ggtt->vm);
+	ret = i915_vm_setup_scratch0(&ggtt->vm, false);
 	if (ret) {
 		drm_err(&i915->drm, "Scratch setup failed\n");
 		/* iounmap will also get called at remove, but meh */
@@ -1306,18 +1305,9 @@ static int ggtt_probe_common(struct i915_ggtt *ggtt, u64 size)
 		return ret;
 	}
 
-	pte_flags = 0;
-	if (i915_gem_object_is_lmem(ggtt->vm.scratch[0])) {
+	if (ggtt->vm.scratch[0] && i915_gem_object_is_lmem(ggtt->vm.scratch[0]))
 		/* we rely on scratch in SMEM to clean stale LMEM for the WA */
 		GEM_DEBUG_WARN_ON(intel_ggtt_needs_same_mem_type_within_cl_wa(i915));
-		pte_flags |= PTE_LM;
-	}
-
-	ggtt->vm.scratch[0]->encode =
-		ggtt->vm.pte_encode(px_dma(ggtt->vm.scratch[0]),
-				    i915_gem_get_pat_index(i915,
-							   I915_CACHE_NONE),
-				    pte_flags);
 
 	return 0;
 }
@@ -1342,7 +1332,7 @@ static void gen6_gmch_remove(struct i915_address_space *vm)
 	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
 
 	iounmap(ggtt->gsm);
-	free_scratch(vm);
+	i915_vm_free_scratch(vm);
 }
 
 static struct resource pci_resource(struct pci_dev *pdev, int bar)

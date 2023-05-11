@@ -340,7 +340,9 @@ struct i915_address_space {
 #define VM_CLASS_PPGTT 1
 #define VM_CLASS_DPT 2
 
-	struct drm_i915_gem_object *scratch[5];
+#define I915_MAX_PD_LVL 5
+	struct drm_i915_gem_object *scratch[I915_MAX_PD_LVL];
+	u64 scratch_encode[I915_MAX_PD_LVL];
 
 	/**
 	 * List of vma currently bound.
@@ -775,8 +777,14 @@ fill_page_dma(struct drm_i915_gem_object *p, const u64 val, unsigned int count);
 	fill_px((px), v__ << 32 | v__);					\
 } while (0)
 
-int setup_scratch_page(struct i915_address_space *vm);
-void free_scratch(struct i915_address_space *vm);
+#define INVALID_PTE	0xAAAAAAAAAAAAAAAA
+
+int i915_vm_setup_scratch0(struct i915_address_space *vm, bool read_only);
+void i915_vm_free_scratch(struct i915_address_space *vm);
+u64 i915_vm_fault_encode(struct i915_address_space *vm, int lvl, bool valid);
+u64 i915_vm_scratch_encode(struct i915_address_space *vm, int lvl);
+#define i915_vm_scratch0_encode(vm) i915_vm_scratch_encode(vm, 0)
+#define i915_vm_ggtt_scratch0_encode(vm) vm->scratch_encode[0]
 
 struct drm_i915_gem_object *alloc_pt_dma(struct i915_address_space *vm, int sz);
 struct drm_i915_gem_object *alloc_pt_lmem(struct i915_address_space *vm, int sz);
@@ -803,14 +811,13 @@ __set_pd_entry(struct i915_page_directory * const pd,
 
 void
 clear_pd_entry(struct i915_page_directory * const pd,
-	       const unsigned short idx,
-	       const struct drm_i915_gem_object * const scratch);
+	       const unsigned short idx, u64 scratch_encode);
 
 bool
 release_pd_entry(struct i915_page_directory * const pd,
 		 const unsigned short idx,
 		 struct i915_page_table * const pt,
-		 const struct drm_i915_gem_object * const scratch);
+		 u64 scratch_encode);
 void gen6_ggtt_invalidate(struct i915_ggtt *ggtt);
 
 void gen8_set_pte(void __iomem *addr, gen8_pte_t pte);
