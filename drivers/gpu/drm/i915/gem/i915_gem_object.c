@@ -57,6 +57,11 @@ static struct kmem_cache *slab_objects;
 
 static const struct drm_gem_object_funcs i915_gem_object_funcs;
 
+struct object_advise_hints {
+	struct intel_memory_region *preferred_region;
+	u32 madv_atomic;
+};
+
 void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
 				     struct i915_request *rq)
 {
@@ -508,67 +513,160 @@ static int __i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
 	return err;
 }
 
+static void object_revert_hints(struct drm_i915_gem_object *obj,
+				struct object_advise_hints *hints)
+{
+	obj->mm.madv_atomic = hints->madv_atomic;
+	obj->mm.preferred_region = hints->preferred_region;
+}
+
+static void object_store_old_hints(struct drm_i915_gem_object *obj,
+				   struct object_advise_hints *hints)
+{
+	hints->madv_atomic = obj->mm.madv_atomic;
+	hints->preferred_region = obj->mm.preferred_region;
+}
+
+static
+int object_validate_set_segment_hint(struct drm_i915_gem_object *obj,
+				     struct prelim_drm_i915_gem_vm_advise *args,
+				     struct drm_i915_gem_object **sobj,
+				     unsigned long *num_segments)
+{
+	struct drm_i915_gem_object *tmp_obj;
+	unsigned long offset, count = 0;
+	struct rb_node *node;
+	long remaining;
+
+	if (!i915_gem_object_has_segments(obj) || !args->length)
+		return -EINVAL;
+
+	/*
+	 * Returned sobj is first segment to apply hints; verify that
+	 * start is aligned to segment boundary (offset == 0).
+	 */
+	*sobj = i915_gem_object_lookup_segment(obj, args->start, &offset);
+	if (!*sobj || offset != 0)
+		return -EINVAL;
+
+	/*
+	 * Verify length is aligned to segment boundary (remaining == 0).
+	 * Can legally end at last segment or any intermediate segment.
+	 */
+	remaining = args->length;
+	for (node = &(*sobj)->segment_node; node; node = rb_next(node)) {
+		tmp_obj = rb_entry(node, typeof(*tmp_obj), segment_node);
+		remaining -= tmp_obj->base.size;
+		count++;
+		if (remaining <= 0)
+			break;
+	}
+
+	if (remaining != 0)
+		return -EINVAL;
+
+	*num_segments = count;
+	return 0;
+}
+
 /* Similar to system madvise, we convert hints to stored flags */
 int i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
 			     struct prelim_drm_i915_gem_vm_advise *args)
 {
-	struct intel_memory_region *old_preferred_region;
-	unsigned int old_madv_atomic;
+	struct object_advise_hints parent_hints, *segment_hints = NULL;
+	struct drm_i915_gem_object *start_sobj = NULL;
 	struct i915_gem_ww_ctx ww;
 	int err = 0;
+
+	/* Object chunk-granular hints specified with args->[start,length] */
+	if (args->start || args->length) {
+		unsigned long num_segments;
+
+		err = object_validate_set_segment_hint(obj, args, &start_sobj,
+						       &num_segments);
+		if (err)
+			return err;
+		/* Storage needed for storing old hints (revert to on error) */
+		segment_hints = kmalloc_array(num_segments,
+					      sizeof(*segment_hints),
+					      GFP_KERNEL);
+		if (!segment_hints)
+			return -ENOMEM;
+	} else {
+		start_sobj = i915_gem_object_first_segment(obj);
+		/* for normal BO w/o segments, start_sobj is NULL */
+	}
 
 	for_i915_gem_ww(&ww, err, true) {
 		err = i915_gem_object_lock(obj, &ww);
 		if (err)
 			continue;
 
-		/*
-		 * Revert to these values if unable to update all
-		 * segments to the requested hint
-		 */
-		old_madv_atomic = obj->mm.madv_atomic;
-		old_preferred_region = obj->mm.preferred_region;
+		/* If not chunk-granular hints, set hints in parent first. */
+		if (!segment_hints) {
+			/*
+			 * Revert to these values if unable to update all
+			 * segments to the requested hint
+			 */
+			object_store_old_hints(obj, &parent_hints);
 
-		err = __i915_gem_object_set_hint(obj, &ww, args);
+			err = __i915_gem_object_set_hint(obj, &ww, args);
+		}
 
 		/*
-		 * Propagate hints to child segments for now; next step
-		 * is to add support for chunk granular hints
+		 * Propagate hints to child segments (whole BO) or set hints
+		 * for specified subset of chunks starting with start_sobj.
 		 */
-		if (!err && i915_gem_object_has_segments(obj)) {
+		if (!err && start_sobj) {
+			struct object_advise_hints *revert_to;
 			struct drm_i915_gem_object *sobj;
+			unsigned long remaining;
+			struct rb_node *node;
+			long idx;
 
-			for_each_object_segment(sobj, obj) {
+			remaining = args->length ?: obj->base.size;
+			for (idx = 0, node = &start_sobj->segment_node;
+			     node && remaining;
+			     idx++, node = rb_next(node)) {
+				sobj = rb_entry(node, typeof(*sobj), segment_node);
 				err = i915_gem_object_lock(sobj, &ww);
 				if (!err) {
+					if (segment_hints)
+						object_store_old_hints(sobj,
+								       &segment_hints[idx]);
 					err = __i915_gem_object_set_hint(sobj, &ww, args);
 					i915_gem_ww_unlock_single(sobj);
 				}
+				remaining -= sobj->base.size;
+
+				if (!err)
+					continue;
 
 				/*
-				 * On -EDEADLK error, i915_gem_ww will unwind
-				 * and retry. For other errors, we will break
-				 * and return error to user. In both cases, we
-				 * first rollback hints to the prior value.
+				 * On EDEADLK error, i915_gem_ww will unwind and
+				 * retry. For other errors, we will break and
+				 * return error to user. In both cases, we first
+				 * rollback hints to the prior value. It is
+				 * sufficient to just hold the parent object
+				 * lock while reverting hints in segment BOs.
 				 */
-				if (err) {
-					struct rb_node *node;
-
-					for (node = rb_prev(&sobj->segment_node);
-					     node; node = rb_prev(node)) {
-						sobj = rb_entry(node, typeof(*sobj),
-								segment_node);
-						sobj->mm.madv_atomic = old_madv_atomic;
-						sobj->mm.preferred_region = old_preferred_region;
-					}
-					obj->mm.madv_atomic = old_madv_atomic;
-					obj->mm.preferred_region = old_preferred_region;
-					break;
+				for (node = rb_prev(&sobj->segment_node), idx--;
+				     node && idx >= 0;
+				     node = rb_prev(node), idx--) {
+					sobj = rb_entry(node, typeof(*sobj),
+							segment_node);
+					revert_to = segment_hints ? &segment_hints[idx] :
+								    &parent_hints;
+					object_revert_hints(sobj, revert_to);
 				}
+				if (!segment_hints)
+					object_revert_hints(obj, &parent_hints);
+				break;
 			}
 		}
 	}
 
+	kfree(segment_hints);
 	return err;
 }
 
@@ -809,11 +907,12 @@ struct drm_i915_gem_object *
 i915_gem_object_lookup_segment(struct drm_i915_gem_object *obj, unsigned long offset,
 			       unsigned long *adjusted_offset)
 {
-	struct drm_i915_gem_object *sobj;
+	struct drm_i915_gem_object *found = NULL;
 	struct rb_node *node;
-	bool found = false;
 
 	if (offset) {
+		struct drm_i915_gem_object *sobj;
+
 		node = obj->segments.rb_root.rb_node;
 		while (node) {
 			sobj = rb_entry(node, typeof(*sobj), segment_node);
@@ -823,7 +922,7 @@ i915_gem_object_lookup_segment(struct drm_i915_gem_object *obj, unsigned long of
 			} else if (offset >= sobj->segment_offset + sobj->base.size) {
 				node = node->rb_right;
 			} else {
-				found = true;
+				found = sobj;
 				break;
 			}
 		}
@@ -833,18 +932,16 @@ i915_gem_object_lookup_segment(struct drm_i915_gem_object *obj, unsigned long of
 		 * so use the optimized lookup
 		 */
 		node = rb_first_cached(&obj->segments);
-		sobj = rb_entry_safe(node, typeof(*sobj), segment_node);
-		found = sobj;
+		found = rb_entry_safe(node, typeof(*found), segment_node);
 	}
 
-	GEM_BUG_ON(!found);
-	if (adjusted_offset) {
-		GEM_BUG_ON(sobj->segment_offset > offset);
+	if (found && adjusted_offset) {
+		GEM_BUG_ON(found->segment_offset > offset);
 		/* return the (smaller) offset into this segment */
-		*adjusted_offset = offset - sobj->segment_offset;
+		*adjusted_offset = offset - found->segment_offset;
 	}
 
-	return sobj;
+	return found;
 }
 
 void i915_gem_object_add_segment(struct drm_i915_gem_object *obj,

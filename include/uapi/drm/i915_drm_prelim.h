@@ -1248,10 +1248,20 @@ struct prelim_drm_i915_gem_vm_bind {
 /**
  * struct prelim_drm_i915_gem_vm_advise
  *
- * Set attribute (hint) for an address range or whole buffer object.
+ * Set attribute (hint) for an address range, whole buffer object, or
+ * part of buffer object.
  *
  * To apply attribute to whole buffer object, specify:  handle
+ *
+ * To apply attribute to part of buffer object (chunk granularity), specify:
+ *   handle, start, and length.
+ * Start and length must be exactly aligned to chunk boundaries of object.
+ * Above requires object to have been created during GEM_CREATE with:
+ * PRELIM_I915_PARAM_SET_CHUNK_SIZE.
+ *
  * To apply attribute to address range, specify:  vm_id, start, and length.
+ *
+ * On error, any applied hints are reverted before returning.
  */
 struct prelim_drm_i915_gem_vm_advise {
 	/** vm that contains address range (specified with start, length) */
@@ -1260,7 +1270,10 @@ struct prelim_drm_i915_gem_vm_advise {
 	/** BO handle to apply hint */
 	__u32 handle;
 
-	/** VA start of address range to apply hint */
+	/**
+	 * chunk granular hints: offset from beginning of object to apply hint
+	 * address range hints: VA start of address range to apply hint
+	 */
 	__u64 start;
 
 	/** Length of range to apply attribute */

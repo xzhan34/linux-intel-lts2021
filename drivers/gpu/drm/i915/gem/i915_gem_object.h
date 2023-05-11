@@ -22,8 +22,11 @@
 
 #define obj_to_i915(obj__) to_i915((obj__)->base.dev)
 
+#define i915_gem_object_first_segment(obj__) \
+	rb_entry_safe(rb_first_cached(&(obj__)->segments), typeof(*(obj__)), segment_node)
+
 #define for_each_object_segment(sobj__, obj__) \
-	for ((sobj__) = rb_entry_safe(rb_first_cached(&(obj__)->segments), typeof(*(sobj__)), segment_node); \
+	for ((sobj__) = i915_gem_object_first_segment((obj__)); \
 	     (sobj__); \
 	     (sobj__) = rb_entry_safe(rb_next(&(sobj__)->segment_node), typeof(*(sobj__)), segment_node))
 

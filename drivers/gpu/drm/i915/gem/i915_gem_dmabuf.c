@@ -141,7 +141,7 @@ i915_gem_copy_map_dma_buf(struct dma_buf_attachment *attach,
 
 	/* if segmented BO, obj starts as the first segment's BO */
 	if (i915_gem_object_has_segments(obj))
-		obj = rb_entry(rb_first_cached(&obj->segments), typeof(*obj), segment_node);
+		obj = i915_gem_object_first_segment(obj);
 
 	while (count < nents && obj) {
 		struct scatterlist *dst_start = dst;
