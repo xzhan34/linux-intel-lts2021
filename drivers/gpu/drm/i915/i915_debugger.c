@@ -3007,10 +3007,12 @@ static int debugger_uuid_create(struct i915_debugger *debugger,
 		goto out;
 	}
 
-	if (uuid->handle != PRELIM_I915_UUID_CLASS_STRING)
+	if (uuid->handle != PRELIM_I915_UUID_CLASS_STRING) {
 		res->uuid.class_handle = class_handle;
-	else
+	} else {
+		class_handle = handle;
 		res->uuid.class_handle = handle;
+	}
 
 	queue_uuid_event(debugger, client_handle, handle, class_handle,
 			 uuid->size, seqno, PRELIM_DRM_I915_DEBUG_EVENT_CREATE);
@@ -3045,7 +3047,7 @@ static void debugger_discover_uuids(struct i915_debugger *debugger,
 		xa_lock(&client->uuids_xa);
 		i915_uuid_put(uuid);
 		if (err && err != -EEXIST)
-				break;
+			break;
 	}
 	xa_unlock(&client->uuids_xa);
 }
@@ -3209,7 +3211,7 @@ static int discover_vma_alloc_res(struct i915_debugger *debugger,
 				  u32 **vma_handles)
 {
 	u32 *handles;
-	int i, err;
+	int i, err = 0;
 
 	handles = kcalloc(count, sizeof(*handles), GFP_ATOMIC);
 	if (!handles)
@@ -3633,7 +3635,7 @@ debugger_alloc_ctx_param_eng_events(struct i915_debugger *debugger,
 
 	gem_engines = i915_gem_context_engines_get(ctx, NULL);
 	if (!gem_engines)
-		return ret;
+		return -EINVAL;
 
 	count = gem_engines->num_engines;
 
@@ -4515,10 +4517,12 @@ void i915_debugger_uuid_create(struct i915_drm_client *client,
 		goto out;
 	}
 
-	if (uuid->handle != PRELIM_I915_UUID_CLASS_STRING)
+	if (uuid->handle != PRELIM_I915_UUID_CLASS_STRING) {
 		res->uuid.class_handle = class_handle;
-	else
+	} else {
+		class_handle = handle;
 		res->uuid.class_handle = handle;
+	}
 
 	queue_uuid_event(debugger, client_handle, handle, class_handle,
 			 uuid->size, seqno, PRELIM_DRM_I915_DEBUG_EVENT_CREATE);
@@ -4781,7 +4785,7 @@ static int vma_queue_event(struct i915_debugger *debugger,
 	struct i915_drm_client *client;
 	u32 uuid_handle;
 	u64 size;
-	int err;
+	int err = 0;
 
 	if (GEM_WARN_ON(!vma))
 		return -EINVAL;
@@ -5080,7 +5084,7 @@ static int debugger_vm_vma_destroy(struct i915_debugger *debugger,
 				   u32 vm_handle)
 {
 	struct i915_vma *vma, *vn;
-	int err;
+	int err = 0;
 
 	mutex_lock(&vm->mutex);
 	/*
@@ -5093,8 +5097,7 @@ static int debugger_vm_vma_destroy(struct i915_debugger *debugger,
 		if (!drm_mm_node_allocated(&vma->node))
 			continue;
 
-		err = i915_active_acquire(&vma->active);
-		if (err)
+		if (i915_active_acquire(&vma->active))
 			continue;
 
 		err = debugger_vma_evict(debugger, client_handle, vm_handle, vma);
@@ -5110,8 +5113,7 @@ static int debugger_vm_vma_destroy(struct i915_debugger *debugger,
 		if (!drm_mm_node_allocated(&vma->node))
 			continue;
 
-		err = i915_active_acquire(&vma->active);
-		if (err)
+		if (i915_active_acquire(&vma->active))
 			continue;
 
 		err = debugger_vma_evict(debugger, client_handle, vm_handle, vma);
