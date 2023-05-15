@@ -629,6 +629,9 @@ void i915_buddy_discard_clears(struct i915_buddy_mm *mm)
 {
 	int i;
 
+	if (!mm->size)
+		return;
+
 	/* Recombine all split blocks */
 	for (i = 0; i <= mm->max_order; i++) {
 		mm->clear_list[i].defrag = true;
