@@ -1895,6 +1895,9 @@ static bool context_runalone_is_active(struct intel_engine_cs *engine)
 	u32 val, engine_status, engine_shift;
 	int id;
 
+	if (GRAPHICS_VER(engine->i915) < 12)
+		return true;
+
 	val = intel_uncore_read(engine->gt->uncore, GEN12_RCU_DEBUG_1);
 
 	if (engine->class == RENDER_CLASS)
@@ -1927,6 +1930,10 @@ static bool context_lrc_match(struct intel_engine_cs *engine,
 {
 	u32 lrc_ggtt, lrc_reg, lrc_hw;
 
+	/* We can't do better than this on older gens */
+	if (GRAPHICS_VER(engine->i915) < 11)
+		return true;
+
 	lrc_ggtt = ce->lrc.lrca & GENMASK(31, 12);
 	lrc_reg = ENGINE_READ(engine, RING_CURRENT_LRCA);
 	lrc_hw = lrc_reg & GENMASK(31, 12);
@@ -1937,37 +1944,30 @@ static bool context_lrc_match(struct intel_engine_cs *engine,
 	return false;
 }
 
-static bool context_verify_active(struct intel_engine_cs *engine,
-				  struct intel_context *ce)
-{
-	/* We can't do better than this on older gens */
-	if (GRAPHICS_VER(engine->i915) < 11)
-		return true;
-
-	if (!context_lrc_match(engine, ce))
-		return false;
-
-	if (GRAPHICS_VER(engine->i915) < 12)
-		return true;
-
-	if (!context_runalone_is_active(engine))
-		return false;
-
-	return true;
-}
-
 static struct intel_context *engine_active_context_get(struct intel_engine_cs *engine)
 {
 	struct intel_context *ce = NULL;
 	struct i915_request *rq;
+	bool runalone;
 
 	rcu_read_lock();
 	rq = intel_engine_find_active_request(engine);
-	if (rq && context_verify_active(engine, rq->context))
+	if (rq)
 		ce = intel_context_get(rq->context);
 	rcu_read_unlock();
 
-	return ce;
+	runalone = context_runalone_is_active(engine);
+	if (ce && runalone && context_lrc_match(engine, ce))
+		return ce;
+
+	if (ce)
+		intel_context_put(ce);
+
+	/* Active, but gt occupied by other engine or not in runalone mode. */
+	if (!runalone)
+		return ERR_PTR(-EACCES);
+
+	return ERR_PTR(-ENOENT);
 }
 
 static bool client_has_vm(struct i915_drm_client *client,
@@ -2131,8 +2131,8 @@ static int eu_control_interrupt_all(struct i915_debugger *debugger,
 		return -EINVAL;
 
 	active_ctx = engine_active_context_get(engine);
-	if (!active_ctx)
-		return -ENOENT;
+	if (IS_ERR(active_ctx))
+		return PTR_ERR(active_ctx);
 
 	if (!active_ctx->client) {
 		intel_context_put(active_ctx);
@@ -4259,8 +4259,8 @@ static int i915_debugger_queue_engine_attention(struct intel_engine_cs *engine)
 
 	/* Find the client seeking attention */
 	ce = engine_active_context_get(engine);
-	if (!ce)
-		return -ENOENT;
+	if (IS_ERR(ce))
+		return PTR_ERR(ce);
 
 	if (!ce->client) {
 		intel_context_put(ce);
@@ -5315,11 +5315,11 @@ void i915_debugger_context_param_engines(struct i915_gem_context *ctx)
  * Check if there are eu thread attentions in engine and if so
  * pass a message to debugger to handle them.
  *
- * Returns: number of attentions present or negative on error
+ * Returns: 0 or negative on error
  */
 int i915_debugger_handle_engine_attention(struct intel_engine_cs *engine)
 {
-	int ret, attentions;
+	int ret;
 
 	if (!intel_engine_has_eu_attention(engine))
 		return 0;
@@ -5328,16 +5328,15 @@ int i915_debugger_handle_engine_attention(struct intel_engine_cs *engine)
 	if (ret <= 0)
 		return ret;
 
-	attentions = ret;
-
 	atomic_inc(&engine->gt->reset.eu_attention_count);
 
-	/* We dont care if it fails reach this debugger at this time */
 	ret = i915_debugger_queue_engine_attention(engine);
-	if (ret == -EBUSY)
-		return attentions; /* Discovery in progress, fake it */
 
-	return ret ?: attentions;
+	/* Discovery in progress or different engine lit the attention, fake it */
+	if (ret == -EBUSY || ret == -EACCES)
+		return 0;
+
+	return ret;
 }
 
 static bool i915_debugger_active_on_client(struct i915_drm_client *client)
