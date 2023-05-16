@@ -158,6 +158,9 @@ int ____i915_gem_object_get_pages(struct drm_i915_gem_object *obj)
 	err = obj->ops->get_pages(obj);
 	GEM_BUG_ON(!err && !i915_gem_object_has_pages(obj));
 
+	if (!IS_ENABLED(CONFIG_DRM_I915_CHICKEN_ASYNC_GET_PAGES) && err == 0)
+		err = i915_gem_object_migrate_sync(obj);
+
 	return err;
 }
 
@@ -190,26 +193,6 @@ int __i915_gem_object_get_pages(struct drm_i915_gem_object *obj)
 	return 0;
 }
 
-int i915_gem_object_pin_pages_unlocked(struct drm_i915_gem_object *obj)
-{
-	struct i915_gem_ww_ctx ww;
-	int err;
-
-	i915_gem_ww_ctx_init(&ww, true);
-retry:
-	err = i915_gem_object_lock(obj, &ww);
-	if (!err)
-		err = i915_gem_object_pin_pages(obj);
-
-	if (err == -EDEADLK) {
-		err = i915_gem_ww_ctx_backoff(&ww);
-		if (!err)
-			goto retry;
-	}
-	i915_gem_ww_ctx_fini(&ww);
-	return err;
-}
-
 int i915_gem_object_pin_pages_sync(struct drm_i915_gem_object *obj)
 {
 	int err;
@@ -229,6 +212,26 @@ int i915_gem_object_pin_pages_sync(struct drm_i915_gem_object *obj)
 
 err:
 	i915_gem_object_unpin_pages(obj);
+	return err;
+}
+
+int i915_gem_object_pin_pages_unlocked(struct drm_i915_gem_object *obj)
+{
+	struct i915_gem_ww_ctx ww;
+	int err;
+
+	i915_gem_ww_ctx_init(&ww, true);
+retry:
+	err = i915_gem_object_lock(obj, &ww);
+	if (!err)
+		err = i915_gem_object_pin_pages_sync(obj);
+
+	if (err == -EDEADLK) {
+		err = i915_gem_ww_ctx_backoff(&ww);
+		if (!err)
+			goto retry;
+	}
+	i915_gem_ww_ctx_fini(&ww);
 	return err;
 }
 
@@ -525,6 +528,12 @@ void *i915_gem_object_pin_map(struct drm_i915_gem_object *obj,
 	}
 
 	if (!ptr) {
+		err = i915_gem_object_migrate_sync(obj);
+		if (err) {
+			ptr = ERR_PTR(err);
+			goto err_unpin;
+		}
+
 		if (GEM_WARN_ON(type == I915_MAP_WC && !pat_enabled()))
 			ptr = ERR_PTR(-ENODEV);
 		else if (i915_gem_object_has_struct_page(obj))
@@ -535,12 +544,6 @@ void *i915_gem_object_pin_map(struct drm_i915_gem_object *obj,
 			goto err_unpin;
 
 		obj->mm.mapping = page_pack_bits(ptr, type);
-	}
-
-	err = i915_gem_object_migrate_sync(obj);
-	if (err) {
-		ptr = ERR_PTR(err);
-		goto err_unpin;
 	}
 
 	return ptr;

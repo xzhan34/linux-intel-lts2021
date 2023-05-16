@@ -63,10 +63,10 @@ struct object_advise_hints {
 };
 
 void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
-				     struct i915_request *rq)
+				     struct dma_fence *f)
 {
 	/* Trust that the caller has always chained up correctly */
-	__i915_active_fence_set(&obj->mm.migrate, &rq->fence);
+	__i915_active_fence_set(&obj->mm.migrate, f);
 }
 
 int i915_gem_object_migrate_await(struct drm_i915_gem_object *obj,
@@ -116,10 +116,20 @@ long i915_gem_object_migrate_wait(struct drm_i915_gem_object *obj,
 	if (IS_ERR(fence))
 		return PTR_ERR(fence);
 
-	start = ktime_get_raw();
-	timeout = i915_request_wait(to_request(fence), flags, timeout);
-	local64_add(ktime_get_raw() - start,
-		    &obj->mm.region.mem->gt->stats.migration_stall);
+	if (dma_fence_is_i915(fence)) {
+		start = ktime_get_raw();
+		timeout = i915_request_wait(to_request(fence), flags, timeout);
+		local64_add(ktime_get_raw() - start,
+			    &obj->mm.region.mem->gt->stats.migration_stall);
+	} else {
+		timeout = dma_fence_wait_timeout(fence,
+						 flags & I915_WAIT_INTERRUPTIBLE,
+						 timeout);
+		if (timeout == 0)
+			timeout = -ETIME;
+		if (timeout == 1)
+			timeout = 0;
+	}
 	if (fence->error)
 		timeout = fence->error;
 

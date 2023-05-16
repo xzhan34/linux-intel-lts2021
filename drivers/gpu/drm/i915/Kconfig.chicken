@@ -1,0 +1,27 @@
+config DRM_I915_CHICKEN_ASYNC_GET_PAGES
+	bool
+	default y
+	help
+	  Acquire and clear the backing store (chunks of local memory or pages
+	  of system memory) in a background thread, returning to userspace
+	  without blocking. Access or execution of the object is deferred
+	  instead.
+
+config DRM_I915_CHICKEN_CLEAR_ON_CREATE
+	bool
+	default n
+	help
+	  Queue the clear of all objects at the point of creation (GEM_CREATE
+	  ioctl), ahead of first use.
+
+config DRM_I915_CHICKEN_CLEAR_ON_FREE
+	bool
+	default y
+	help
+	  Clear pages on release, ahead of reuse.
+
+config DRM_I915_CHICKEN_CLEAR_ON_IDLE
+	bool
+	default y
+	help
+	  Clear pages on idling, and upon boot.

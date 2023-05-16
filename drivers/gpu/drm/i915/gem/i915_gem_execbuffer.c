@@ -1556,7 +1556,7 @@ static void *reloc_lmem(struct drm_i915_gem_object *obj,
 	if (cache->vaddr) {
 		io_mapping_unmap_atomic((void __force __iomem *) unmask_page(cache->vaddr));
 	} else {
-		err = i915_gem_object_pin_pages(obj);
+		err = i915_gem_object_pin_pages_sync(obj);
 		if (err)
 			return ERR_PTR(err);
 

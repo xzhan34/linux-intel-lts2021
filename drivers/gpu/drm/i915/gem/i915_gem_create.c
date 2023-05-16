@@ -235,6 +235,24 @@ err_segments:
 	}
 
 	trace_i915_gem_object_create(obj, nsegments);
+
+	if (IS_ENABLED(CONFIG_DRM_I915_CHICKEN_CLEAR_ON_CREATE) &&
+	    !i915_gem_object_has_segments(obj)) {
+		struct i915_gem_ww_ctx ww;
+
+		for_i915_gem_ww(&ww, ret, true) {
+			ret = i915_gem_object_lock(obj, &ww);
+			if (ret)
+				continue;
+
+			ret = i915_gem_object_pin_pages(obj); /* queue only */
+			if (ret == 0)
+				i915_gem_object_unpin_pages(obj);
+		}
+
+		/* error handling is deferred to use */
+	}
+
 	return 0;
 }
 

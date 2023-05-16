@@ -840,7 +840,7 @@ bool i915_gem_object_should_migrate_lmem(struct drm_i915_gem_object *obj,
 					 bool is_atomic_fault);
 
 void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
-				     struct i915_request *rq);
+				     struct dma_fence *f);
 int i915_gem_object_migrate_await(struct drm_i915_gem_object *obj,
 				  struct i915_request *rq);
 void i915_gem_object_migrate_boost(struct drm_i915_gem_object *obj, int prio);

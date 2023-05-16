@@ -999,7 +999,7 @@ int i915_gem_object_clear_lmem(struct drm_i915_gem_object *obj)
 				INTEL_GT_CLEAR_ALLOC_CYCLES, true,
 				&rq);
 		if (rq) {
-			i915_gem_object_migrate_prepare(obj, rq);
+			i915_gem_object_migrate_prepare(obj, &rq->fence);
 			i915_sw_fence_complete(&rq->submit);
 			i915_request_put(rq);
 		}
@@ -1026,7 +1026,7 @@ static int lmem_get_pages(struct drm_i915_gem_object *obj)
 	else
 		err = lmem_clear(obj, &rq);
 	if (rq) {
-		i915_gem_object_migrate_prepare(obj, rq);
+		i915_gem_object_migrate_prepare(obj, &rq->fence);
 		i915_sw_fence_complete(&rq->submit);
 		i915_request_put(rq);
 	}
@@ -1114,7 +1114,8 @@ lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 	 *   synchronisation penalty anyway.
 	 */
 	dirty = true;
-	if (obj->flags & I915_BO_ALLOC_USER && freed(obj)) {
+	if (IS_ENABLED(CONFIG_DRM_I915_CHICKEN_CLEAR_ON_FREE) &&
+	    obj->flags & I915_BO_ALLOC_USER && freed(obj)) {
 		struct intel_gt *gt = obj->mm.region.mem->gt;
 		intel_wakeref_t wf;
 
@@ -1153,7 +1154,7 @@ i915_ww_pin_lock_interruptible(struct drm_i915_gem_object *obj)
 		if (ret)
 			continue;
 
-		ret = i915_gem_object_pin_pages(obj);
+		ret = i915_gem_object_pin_pages_sync(obj);
 		if (ret)
 			continue;
 
@@ -1426,6 +1427,9 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 	struct intel_context *ce;
 	struct list_head dirty;
 	int i;
+
+	if (!IS_ENABLED(CONFIG_DRM_I915_CHICKEN_CLEAR_ON_IDLE))
+		return false;
 
 	if (!mem->gt->migrate.clear_chunk)
 		return false;

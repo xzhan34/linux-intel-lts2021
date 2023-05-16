@@ -298,15 +298,10 @@ i915_gem_shmem_pread(struct drm_i915_gem_object *obj,
 	if (ret)
 		return ret;
 
-	ret = i915_gem_object_pin_pages(obj);
+	ret = i915_gem_object_prepare_read(obj, &needs_clflush);
 	if (ret)
 		goto err_unlock;
 
-	ret = i915_gem_object_prepare_read(obj, &needs_clflush);
-	if (ret)
-		goto err_unpin;
-
-	i915_gem_object_finish_access(obj);
 	i915_gem_object_unlock(obj);
 
 	remain = args->size;
@@ -326,11 +321,9 @@ i915_gem_shmem_pread(struct drm_i915_gem_object *obj,
 		offset = 0;
 	}
 
-	i915_gem_object_unpin_pages(obj);
+	i915_gem_object_finish_access(obj);
 	return ret;
 
-err_unpin:
-	i915_gem_object_unpin_pages(obj);
 err_unlock:
 	i915_gem_object_unlock(obj);
 	return ret;
@@ -737,15 +730,10 @@ i915_gem_shmem_pwrite(struct drm_i915_gem_object *obj,
 	if (ret)
 		return ret;
 
-	ret = i915_gem_object_pin_pages(obj);
+	ret = i915_gem_object_prepare_write(obj, &needs_clflush);
 	if (ret)
 		goto err_unlock;
 
-	ret = i915_gem_object_prepare_write(obj, &needs_clflush);
-	if (ret)
-		goto err_unpin;
-
-	i915_gem_object_finish_access(obj);
 	i915_gem_object_unlock(obj);
 
 	/* If we don't overwrite a cacheline completely we need to be
@@ -776,11 +764,9 @@ i915_gem_shmem_pwrite(struct drm_i915_gem_object *obj,
 
 	i915_gem_object_flush_frontbuffer(obj, ORIGIN_CPU);
 
-	i915_gem_object_unpin_pages(obj);
+	i915_gem_object_finish_access(obj);
 	return ret;
 
-err_unpin:
-	i915_gem_object_unpin_pages(obj);
 err_unlock:
 	i915_gem_object_unlock(obj);
 	return ret;

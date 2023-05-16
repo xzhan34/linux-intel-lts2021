@@ -307,7 +307,7 @@ static int i915_gem_begin_cpu_access(struct dma_buf *dma_buf, enum dma_data_dire
 retry:
 	err = i915_gem_object_lock(obj, &ww);
 	if (!err)
-		err = i915_gem_object_pin_pages(obj);
+		err = i915_gem_object_pin_pages_sync(obj);
 	if (!err) {
 		if (i915_gem_object_is_lmem(obj))
 			err = i915_gem_object_set_to_wc_domain(obj, write);

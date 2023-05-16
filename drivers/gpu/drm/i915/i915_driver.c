@@ -1348,6 +1348,28 @@ i915_print_iommu_status(struct drm_i915_private *i915, struct drm_printer *p)
 		   str_enabled_disabled(i915_vtd_active(i915)));
 }
 
+__maybe_unused
+static void print_chickens(struct drm_i915_private *i915)
+{
+	static const struct {
+		const char *name;
+		bool state;
+	} chickens[] = {
+#define C(x) { __stringify(DRM_I915_CHICKEN_##x), IS_ENABLED(CONFIG_DRM_I915_CHICKEN_##x) }
+		C(ASYNC_GET_PAGES),
+		C(CLEAR_ON_CREATE),
+		C(CLEAR_ON_FREE),
+		C(CLEAR_ON_IDLE),
+#undef C
+		{},
+	};
+	const typeof(*chickens) *c;
+
+	for (c = chickens; c->name; c++)
+		drm_info(&i915->drm, "  %s: %s\n",
+			 c->name, str_enabled_disabled(c->state));
+}
+
 static void i915_welcome_messages(struct drm_i915_private *dev_priv)
 {
 	if (drm_debug_enabled(DRM_UT_DRIVER)) {
@@ -1372,8 +1394,10 @@ static void i915_welcome_messages(struct drm_i915_private *dev_priv)
 		drm_printf(&p, "mode: %s\n", i915_iov_mode_to_string(IOV_MODE(dev_priv)));
 	}
 
-	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG))
+	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG)) {
 		drm_info(&dev_priv->drm, "DRM_I915_DEBUG enabled\n");
+		print_chickens(dev_priv);
+	}
 	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM))
 		drm_info(&dev_priv->drm, "DRM_I915_DEBUG_GEM enabled\n");
 	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_RUNTIME_PM))
