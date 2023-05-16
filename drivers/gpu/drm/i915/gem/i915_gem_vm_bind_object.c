@@ -576,6 +576,13 @@ static int vm_bind_get_vmas(struct i915_address_space *vm,
 		remaining = va->length;
 
 		vma_obj = i915_gem_object_lookup_segment(obj, va->offset, &offset);
+		/*
+		 * Cannot fail as va->offset already validated; but if somehow
+		 * fail here, treat as object not found.
+		 */
+		if (!vma_obj)
+			return -ENOENT;
+
 		for (node = &vma_obj->segment_node; node && remaining;
 		     node = rb_next(node)) {
 			vma_obj = rb_entry(node, typeof(*vma_obj), segment_node);

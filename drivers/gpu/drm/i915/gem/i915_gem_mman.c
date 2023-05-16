@@ -290,6 +290,10 @@ static vm_fault_t vm_fault_cpu(struct vm_fault *vmf)
 	if (i915_gem_object_has_segments(obj)) {
 		obj = i915_gem_object_lookup_segment(obj, page_offset << PAGE_SHIFT,
 						     NULL);
+		if (!obj) {
+			ret = VM_FAULT_SIGBUS;
+			goto out;
+		}
 		vm_start = area->vm_start + obj->segment_offset;
 		vm_size = obj->base.size;
 	} else {
@@ -500,6 +504,8 @@ vm_access(struct vm_area_struct *area, unsigned long addr,
 
 	if (i915_gem_object_has_segments(obj)) {
 		obj = i915_gem_object_lookup_segment(obj, addr, &offset);
+		if (!obj)
+			return -EINVAL;
 		if (len > obj->base.size - offset) {
 			/*  XXX more work to support multiple segments */
 			return -ENXIO;
