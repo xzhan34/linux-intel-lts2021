@@ -974,7 +974,9 @@ out_mmput:
 	mmput(mm);
 
 	pr_debug("CPU fault svms 0x%p address 0x%lx done\n", &p->svms, addr);
-
+	kfd_unref_process(p);
+out_mmput:
+	mmput(mm);
 	return r ? VM_FAULT_SIGBUS : 0;
 }
 

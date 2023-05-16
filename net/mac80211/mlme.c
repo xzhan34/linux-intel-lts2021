@@ -1240,7 +1240,7 @@ static void ieee80211_chswitch_post_beacon(struct ieee80211_sub_if_data *sdata)
 		return;
 	}
 
-	cfg80211_ch_switch_notify(sdata->dev, &sdata->reserved_chandef, 0);
+	cfg80211_ch_switch_notify(sdata->dev, &sdata->reserved_chandef, 0, 0);
 }
 
 void ieee80211_chswitch_done(struct ieee80211_vif *vif, bool success)
@@ -1441,8 +1441,8 @@ ieee80211_sta_process_chanswitch(struct ieee80211_sub_if_data *sdata,
 					  IEEE80211_QUEUE_STOP_REASON_CSA);
 	mutex_unlock(&local->mtx);
 
-	cfg80211_ch_switch_started_notify(sdata->dev, &csa_ie.chandef,
-					  csa_ie.count, csa_ie.mode);
+	cfg80211_ch_switch_started_notify(sdata->dev, &csa_ie.chandef, 0,
+					  csa_ie.count, csa_ie.mode, 0);
 
 	if (local->ops->channel_switch) {
 		/* use driver's channel switch callback */
@@ -2876,9 +2876,13 @@ static void ieee80211_destroy_assoc_data(struct ieee80211_sub_if_data *sdata,
 		mutex_lock(&sdata->local->mtx);
 		ieee80211_vif_release_channel(sdata);
 		mutex_unlock(&sdata->local->mtx);
+		if (abandon) {
+			struct cfg80211_assoc_failure data = {
+				.bss[0] = assoc_data->bss,
+			};
 
-		if (abandon)
-			cfg80211_abandon_assoc(sdata->dev, assoc_data->bss);
+			cfg80211_assoc_failure(sdata->dev, &data);
+		}
 	}
 
 	kfree(assoc_data);
@@ -3375,8 +3379,10 @@ static bool ieee80211_assoc_success(struct ieee80211_sub_if_data *sdata,
 			bss_ies = kmemdup(ies, sizeof(*ies) + ies->len,
 					  GFP_ATOMIC);
 		rcu_read_unlock();
-		if (!bss_ies)
-			return false;
+		if (!bss_ies) {
+			ret = false;
+			goto out;
+		}
 
 		bss_elems = ieee802_11_parse_elems(bss_ies->data, bss_ies->len,
 						   false, mgmt->bssid,
@@ -3686,7 +3692,7 @@ static void ieee80211_rx_mgmt_assoc_resp(struct ieee80211_sub_if_data *sdata,
 	struct ieee80211_mgd_assoc_data *assoc_data = ifmgd->assoc_data;
 	u16 capab_info, status_code, aid;
 	struct ieee802_11_elems *elems;
-	int ac, uapsd_queues = -1;
+	int ac;
 	u8 *pos;
 	bool reassoc;
 	struct cfg80211_bss *cbss;
@@ -3695,6 +3701,9 @@ static void ieee80211_rx_mgmt_assoc_resp(struct ieee80211_sub_if_data *sdata,
 		.u.mlme.data = ASSOC_EVENT,
 	};
 	struct ieee80211_prep_tx_info info = {};
+	struct cfg80211_rx_assoc_resp resp = {
+		.uapsd_queues = -1,
+	};
 
 	sdata_assert_lock(sdata);
 
@@ -3773,8 +3782,12 @@ static void ieee80211_rx_mgmt_assoc_resp(struct ieee80211_sub_if_data *sdata,
 	} else {
 		if (!ieee80211_assoc_success(sdata, cbss, mgmt, len, elems)) {
 			/* oops -- internal error -- send timeout for now */
+			struct cfg80211_assoc_failure data = {
+				.timeout = true,
+				.bss[0] = cbss,
+			};
 			ieee80211_destroy_assoc_data(sdata, false, false);
-			cfg80211_assoc_timeout(sdata->dev, cbss);
+			cfg80211_assoc_failure(sdata->dev, &data);
 			goto notify_driver;
 		}
 		event.u.mlme.status = MLME_SUCCESS;
@@ -3789,16 +3802,20 @@ static void ieee80211_rx_mgmt_assoc_resp(struct ieee80211_sub_if_data *sdata,
 		ieee80211_destroy_assoc_data(sdata, true, false);
 
 		/* get uapsd queues configuration */
-		uapsd_queues = 0;
+		resp.uapsd_queues = 0;
 		for (ac = 0; ac < IEEE80211_NUM_ACS; ac++)
 			if (sdata->tx_conf[ac].uapsd)
-				uapsd_queues |= ieee80211_ac_to_qos_mask[ac];
+				resp.uapsd_queues |= ieee80211_ac_to_qos_mask[ac];
 
 		info.success = 1;
 	}
 
-	cfg80211_rx_assoc_resp(sdata->dev, cbss, (u8 *)mgmt, len, uapsd_queues,
-			       ifmgd->assoc_req_ies, ifmgd->assoc_req_ies_len);
+	resp.links[0].bss = cbss;
+	resp.buf = (u8 *)mgmt;
+	resp.len = len;
+	resp.req_ies = ifmgd->assoc_req_ies;
+	resp.req_ies_len = ifmgd->assoc_req_ies_len;
+	cfg80211_rx_assoc_resp(sdata->dev, &resp);
 notify_driver:
 	drv_mgd_complete_tx(sdata->local, sdata, &info);
 	kfree(elems);
@@ -4359,13 +4376,11 @@ void ieee80211_sta_rx_queued_mgmt(struct ieee80211_sub_if_data *sdata,
 					mgmt->u.action.u.chan_switch.variable,
 					ies_len, true, mgmt->bssid, NULL);
 
-			if (!elems || elems->parse_error)
-				break;
-
-			ieee80211_sta_process_chanswitch(sdata,
-						 rx_status->mactime,
-						 rx_status->device_timestamp,
-						 elems, false);
+			if (elems && !elems->parse_error)
+				ieee80211_sta_process_chanswitch(sdata,
+								 rx_status->mactime,
+								 rx_status->device_timestamp,
+								 elems, false);
 			kfree(elems);
 		} else if (mgmt->u.action.category == WLAN_CATEGORY_PUBLIC) {
 			struct ieee802_11_elems *elems;
@@ -4385,17 +4400,17 @@ void ieee80211_sta_rx_queued_mgmt(struct ieee80211_sub_if_data *sdata,
 					mgmt->u.action.u.ext_chan_switch.variable,
 					ies_len, true, mgmt->bssid, NULL);
 
-			if (!elems || elems->parse_error)
-				break;
+			if (elems && !elems->parse_error) {
+				/* for the handling code pretend it was an IE */
+				elems->ext_chansw_ie =
+					&mgmt->u.action.u.ext_chan_switch.data;
 
-			/* for the handling code pretend this was also an IE */
-			elems->ext_chansw_ie =
-				&mgmt->u.action.u.ext_chan_switch.data;
+				ieee80211_sta_process_chanswitch(sdata,
+								 rx_status->mactime,
+								 rx_status->device_timestamp,
+								 elems, false);
+			}
 
-			ieee80211_sta_process_chanswitch(sdata,
-						 rx_status->mactime,
-						 rx_status->device_timestamp,
-						 elems, false);
 			kfree(elems);
 		}
 		break;
@@ -4633,9 +4648,13 @@ void ieee80211_sta_work(struct ieee80211_sub_if_data *sdata)
 				.u.mlme.data = ASSOC_EVENT,
 				.u.mlme.status = MLME_TIMEOUT,
 			};
+			struct cfg80211_assoc_failure data = {
+				.bss[0] = bss,
+				.timeout = true,
+			};
 
 			ieee80211_destroy_assoc_data(sdata, false, false);
-			cfg80211_assoc_timeout(sdata->dev, bss);
+			cfg80211_assoc_failure(sdata->dev, &data);
 			drv_event_callback(sdata->local, sdata, &event);
 		}
 	} else if (ifmgd->assoc_data && ifmgd->assoc_data->timeout_started)
@@ -5953,20 +5972,14 @@ int ieee80211_mgd_disassoc(struct ieee80211_sub_if_data *sdata,
 	u8 bssid[ETH_ALEN];
 	u8 frame_buf[IEEE80211_DEAUTH_FRAME_LEN];
 
-	/*
-	 * cfg80211 should catch this ... but it's racy since
-	 * we can receive a disassoc frame, process it, hand it
-	 * to cfg80211 while that's in a locked section already
-	 * trying to tell us that the user wants to disconnect.
-	 */
-	if (ifmgd->associated != req->bss)
-		return -ENOLINK;
-
+	if (!ifmgd->associated ||
+	    memcmp(ifmgd->associated->bssid, req->ap_addr, ETH_ALEN))
+		return -ENOTCONN;
 	sdata_info(sdata,
 		   "disassociating from %pM by local choice (Reason: %u=%s)\n",
-		   req->bss->bssid, req->reason_code, ieee80211_get_reason_code_string(req->reason_code));
+		   req->ap_addr, req->reason_code, ieee80211_get_reason_code_string(req->reason_code));
 
-	memcpy(bssid, req->bss->bssid, ETH_ALEN);
+	memcpy(bssid, req->ap_addr, ETH_ALEN);
 	ieee80211_set_disassoc(sdata, IEEE80211_STYPE_DISASSOC,
 			       req->reason_code, !req->local_state_change,
 			       frame_buf);
@@ -5996,8 +6009,12 @@ void ieee80211_mgd_stop(struct ieee80211_sub_if_data *sdata)
 	sdata_lock(sdata);
 	if (ifmgd->assoc_data) {
 		struct cfg80211_bss *bss = ifmgd->assoc_data->bss;
+		struct cfg80211_assoc_failure data = {
+			.bss[0] = bss,
+			.timeout = true,
+		};
 		ieee80211_destroy_assoc_data(sdata, false, false);
-		cfg80211_assoc_timeout(sdata->dev, bss);
+		cfg80211_assoc_failure(sdata->dev, &data);
 	}
 	if (ifmgd->auth_data)
 		ieee80211_destroy_auth_data(sdata, false);

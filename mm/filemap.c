@@ -2538,18 +2538,19 @@ static int filemap_get_pages(struct kiocb *iocb, struct iov_iter *iter,
 	struct page *page;
 	int err = 0;
 
+	/* "last_index" is the index of the page beyond the end of the read */
 	last_index = DIV_ROUND_UP(iocb->ki_pos + iter->count, PAGE_SIZE);
 retry:
 	if (fatal_signal_pending(current))
 		return -EINTR;
 
-	filemap_get_read_batch(mapping, index, last_index, pvec);
+	filemap_get_read_batch(mapping, index, last_index - 1, pvec);
 	if (!pagevec_count(pvec)) {
 		if (iocb->ki_flags & IOCB_NOIO)
 			return -EAGAIN;
 		page_cache_sync_readahead(mapping, ra, filp, index,
 				last_index - index);
-		filemap_get_read_batch(mapping, index, last_index, pvec);
+		filemap_get_read_batch(mapping, index, last_index - 1, pvec);
 	}
 	if (!pagevec_count(pvec)) {
 		if (iocb->ki_flags & (IOCB_NOWAIT | IOCB_WAITQ))
@@ -3057,11 +3058,14 @@ vm_fault_t filemap_fault(struct vm_fault *vmf)
 
 	if (vmf->flags & FAULT_FLAG_SPECULATIVE) {
 		page = find_get_page(mapping, offset);
-		if (unlikely(!page) || unlikely(PageReadahead(page)))
+		if (unlikely(!page))
 			return VM_FAULT_RETRY;
 
+		if (unlikely(PageReadahead(page)))
+			goto page_put;
+
 		if (!trylock_page(page))
-			return VM_FAULT_RETRY;
+			goto page_put;
 
 		if (unlikely(compound_head(page)->mapping != mapping))
 			goto page_unlock;
@@ -3093,6 +3097,8 @@ vm_fault_t filemap_fault(struct vm_fault *vmf)
 		return VM_FAULT_LOCKED;
 page_unlock:
 		unlock_page(page);
+page_put:
+		put_page(page);
 		return VM_FAULT_RETRY;
 	}
 
@@ -3799,7 +3805,7 @@ ssize_t generic_perform_write(struct file *file,
 		unsigned long offset;	/* Offset into pagecache page */
 		unsigned long bytes;	/* Bytes to write to page */
 		size_t copied;		/* Bytes copied from user */
-		void *fsdata;
+		void *fsdata = NULL;
 
 		offset = (pos & (PAGE_SIZE - 1));
 		bytes = min_t(unsigned long, PAGE_SIZE - offset,
