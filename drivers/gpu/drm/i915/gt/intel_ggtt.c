@@ -2233,7 +2233,7 @@ int i915_ggtt_balloon(struct i915_ggtt *ggtt, u64 start, u64 end,
 	return 0;
 }
 
-inline bool i915_ggtt_has_xehpsdv_pte_vfid_mask(struct i915_ggtt *ggtt)
+bool i915_ggtt_has_xehpsdv_pte_vfid_mask(struct i915_ggtt *ggtt)
 {
 	return GRAPHICS_VER_FULL(ggtt->vm.i915) < IP_VER(12, 50);
 }

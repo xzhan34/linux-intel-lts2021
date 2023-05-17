@@ -743,7 +743,7 @@ int i915_ggtt_balloon(struct i915_ggtt *ggtt, u64 start, u64 end,
 		      struct drm_mm_node *node);
 void i915_ggtt_deballoon(struct i915_ggtt *ggtt, struct drm_mm_node *node);
 
-inline bool i915_ggtt_has_xehpsdv_pte_vfid_mask(struct i915_ggtt *ggtt);
+bool i915_ggtt_has_xehpsdv_pte_vfid_mask(struct i915_ggtt *ggtt);
 
 void i915_ggtt_set_space_owner(struct i915_ggtt *ggtt, u16 vfid,
 			       const struct drm_mm_node *node);
