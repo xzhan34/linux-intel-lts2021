@@ -383,6 +383,9 @@ static inline bool intel_context_set_banned(struct intel_context *ce)
 
 bool intel_context_ban(struct intel_context *ce, struct i915_request *rq);
 
+void intel_context_rebase_hwsp(struct intel_context *ce);
+void intel_context_revert_ring_heads(struct intel_context *ce);
+
 /**
  * intel_context_suspend - suspend a context
  * @ce: The context to suspend

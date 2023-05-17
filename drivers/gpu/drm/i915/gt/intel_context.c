@@ -6,6 +6,8 @@
 #include "gem/i915_gem_context.h"
 #include "gem/i915_gem_pm.h"
 
+#include "gt/intel_lrc.h"
+
 #include "i915_drv.h"
 #include "i915_trace.h"
 #include "i915_suspend_fence.h"
@@ -13,6 +15,7 @@
 #include "intel_context.h"
 #include "intel_engine.h"
 #include "intel_engine_pm.h"
+#include "intel_lrc_reg.h"
 #include "intel_ring.h"
 
 static struct kmem_cache *slab_ce;
@@ -720,6 +723,71 @@ bool intel_context_ban(struct intel_context *ce, struct i915_request *rq)
 	}
 
 	return ret;
+}
+
+void intel_context_rebase_hwsp(struct intel_context *ce)
+{
+	if (!intel_context_is_pinned(ce))
+		return;
+	intel_timeline_rebase_hwsp(ce->timeline);
+	/*
+	 * The below is part of ce->ops->reset(ce) = lrc_reset(ce), but
+	 * without changing ring positions
+	 */
+	lrc_init_regs(ce, ce->engine, true);
+	ce->lrc.lrca = lrc_update_regs(ce, ce->engine, ce->ring->tail);
+}
+
+/**
+ * intel_context_revert_ring_heads - Set ring heads to the start of scheduled submissions.
+ * @ce: Intel Context instance struct
+ */
+void intel_context_revert_ring_heads(struct intel_context *ce)
+{
+	struct intel_timeline *tl;
+	struct i915_request *rq;
+	u32 *regs;
+
+	if (unlikely(!test_bit(CONTEXT_ALLOC_BIT, &ce->flags)))
+		return;
+
+	tl = ce->timeline;
+
+	while (!mutex_trylock(&tl->mutex))
+		udelay(1);
+
+	list_for_each_entry_rcu(rq, &tl->requests, link) {
+		u32 head, size;
+
+		if (i915_request_completed(rq))
+			continue;
+
+		head = READ_ONCE(rq->ring->head);
+		size = rq->ring->size;
+
+		/*
+		 * We need to revert the ring head to the beginning of a request.
+		 * Sounds simple, but it's a ring - it might have wrapped, either
+		 * within a request, or between requests. Assuming that a single
+		 * request is always smaller that 1/8 of the ring, we can
+		 * revert the head with high accuracy.
+		 */
+		if (((rq->tail > rq->head) && ((head > rq->head) ||
+		     ((head < size/4) && (rq->head > 3*size/4)))) ||
+		    ((rq->tail < rq->head) && ((head > rq->head) ||
+		     (head < rq->tail) || (head < size/4)))) {
+
+			WRITE_ONCE(rq->ring->head, rq->head);
+		}
+	}
+	intel_ring_set_tail(ce->ring, ce->ring->head);
+	regs = ce->lrc_reg_state;
+	if (regs) {
+		regs[CTX_RING_HEAD] = ce->ring->head;
+		regs[CTX_RING_TAIL] = ce->ring->tail;
+	}
+
+	mutex_unlock(&tl->mutex);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

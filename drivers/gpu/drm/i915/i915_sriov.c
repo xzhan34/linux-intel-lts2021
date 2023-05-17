@@ -16,6 +16,7 @@
 #include "gem/i915_gem_pm.h"
 #include "gem/i915_gem_context.h"
 
+#include "gt/intel_context.h"
 #include "gt/intel_engine_heartbeat.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
@@ -1520,14 +1521,51 @@ int i915_sriov_resume(struct drm_i915_private *i915)
 	return 0;
 }
 
-static void contexts_ring_move_back(struct drm_i915_private *i915)
+static void intel_gt_default_contexts_ring_restore(struct intel_gt *gt)
+{
+	struct intel_engine_cs *engine;
+	enum intel_engine_id eid;
+
+	for_each_engine(engine, gt, eid) {
+		struct intel_context *ce;
+
+		list_for_each_entry(ce, &engine->pinned_contexts_list,
+				    pinned_contexts_link)
+			intel_context_revert_ring_heads(ce);
+	}
+}
+
+static void default_contexts_ring_restore(struct drm_i915_private *i915)
 {
 	struct intel_gt *gt;
 	unsigned int id;
 
 	for_each_gt(gt, i915, id) {
-		guc_submission_revert_ring_heads(&gt->uc.guc);
+		intel_gt_default_contexts_ring_restore(gt);
 	}
+}
+
+static void user_contexts_ring_restore(struct drm_i915_private *i915)
+{
+	struct i915_gem_context *ctx;
+
+	spin_lock_irq(&i915->gem.contexts.lock);
+	rcu_read_lock();
+	list_for_each_entry_rcu(ctx, &i915->gem.contexts.list, link) {
+		struct i915_gem_engines_iter it;
+		struct intel_context *ce;
+
+		if (!kref_get_unless_zero(&ctx->ref))
+			continue;
+
+		for_each_gem_engine(ce, rcu_dereference(ctx->engines), it) {
+			intel_context_revert_ring_heads(ce);
+		}
+
+		i915_gem_context_put(ctx);
+	}
+	rcu_read_unlock();
+	spin_unlock_irq(&i915->gem.contexts.lock);
 }
 
 static void user_contexts_hwsp_rebase(struct drm_i915_private *i915)
@@ -1544,12 +1582,8 @@ static void user_contexts_hwsp_rebase(struct drm_i915_private *i915)
 			continue;
 		spin_unlock_irq(&i915->gem.contexts.lock);
 
-		for_each_gem_engine(ce, rcu_dereference(ctx->engines), it) {
-			if (intel_context_is_pinned(ce)) {
-				intel_timeline_rebase_hwsp(ce->timeline);
-				ce->ops->reset(ce);
-			}
-		}
+		for_each_gem_engine(ce, rcu_dereference(ctx->engines), it)
+			intel_context_rebase_hwsp(ce);
 
 		spin_lock_irq(&i915->gem.contexts.lock);
 		i915_gem_context_put(ctx);
@@ -1567,12 +1601,8 @@ static void intel_gt_default_contexts_hwsp_rebase(struct intel_gt *gt)
 		struct intel_context *ce;
 
 		list_for_each_entry(ce, &engine->pinned_contexts_list,
-				    pinned_contexts_link) {
-			if (intel_context_is_pinned(ce)) {
-				intel_timeline_rebase_hwsp(ce->timeline);
-				ce->ops->reset(ce);
-			}
-		}
+				    pinned_contexts_link)
+			intel_context_rebase_hwsp(ce);
 	}
 }
 
@@ -1589,7 +1619,8 @@ static void vf_post_migration_fixup_contexts(struct drm_i915_private *i915)
 {
 	default_contexts_hwsp_rebase(i915);
 	user_contexts_hwsp_rebase(i915);
-	contexts_ring_move_back(i915);
+	default_contexts_ring_restore(i915);
+	user_contexts_ring_restore(i915);
 }
 
 static void heartbeats_disable(struct drm_i915_private *i915)

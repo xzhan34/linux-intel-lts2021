@@ -1045,7 +1045,7 @@ int intel_guc_suspend(struct intel_guc *guc)
 		 * the error here won't be problematic.
 		 */
 		ret = intel_guc_send_mmio(guc, action, ARRAY_SIZE(action), NULL, 0);
-		if (ret)
+		if (ret && ret != -EREMOTEIO)
 			guc_err(guc, "suspend: RESET_CLIENT action failed with %pe\n",
 				ERR_PTR(ret));
 	}
