@@ -155,6 +155,7 @@ struct intel_engine_coredump {
 		int active;
 		int guilty;
 		struct i915_sched_attr sched_attr;
+		u32 hwsp_seqno;
 		bool sip_installed;
 
 		struct i915_uuid_resource_coredump *uuid_dump;
