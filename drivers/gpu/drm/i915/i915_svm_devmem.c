@@ -51,8 +51,7 @@ i915_devmem_page_alloc_locked(struct intel_memory_region *mem,
 
 	list_for_each_entry(block, blocks, link) {
 		block->pfn_first = mem->devmem->pfn_first;
-		block->pfn_first += i915_buddy_block_offset(block) /
-				    PAGE_SIZE;
+		block->pfn_first += PHYS_PFN(i915_buddy_block_offset(block) - mem->region.start);
 		bitmap_zero(block->bitmap, I915_BUDDY_MAX_PAGES);
 		DRM_DEBUG_DRIVER("%s pfn_first 0x%lx off 0x%llx size 0x%llx\n",
 				 "Allocated block", block->pfn_first,
