@@ -102,7 +102,7 @@ static int __igt_lmem_clear(struct drm_i915_private *i915, bool measure)
 		wf = intel_gt_pm_get(gt);
 		intel_rps_boost(&gt->rps);
 
-		for (size = SZ_4K; size <= min_t(u64, gt->lmem->total / 2, SZ_2G); size <<= 1) {
+		for (size = gt->lmem->min_page_size; size <= min_t(u64, gt->lmem->total / 2, SZ_2G); size <<= 1) {
 			struct i915_request *rq = NULL;
 			ktime_t cpu, gpu, sync;
 			LIST_HEAD(blocks);

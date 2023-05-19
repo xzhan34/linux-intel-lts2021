@@ -415,8 +415,8 @@ static int emit_flush(struct i915_request *rq, unsigned int flags)
 
 static int num_ccs_blocks(unsigned int size)
 {
-	return DIV_ROUND_UP(size,
-			    NUM_BYTES_PER_CCS_BYTE * NUM_CCS_BYTES_PER_BLOCK);
+	GEM_BUG_ON(!IS_ALIGNED(size, SZ_64K));
+	return size >> 16;
 }
 
 static int
@@ -1426,7 +1426,7 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 	struct i915_buddy_list *bl;
 	struct intel_context *ce;
 	struct list_head dirty;
-	int i;
+	int i, min_order;
 
 	if (!IS_ENABLED(CONFIG_DRM_I915_CHICKEN_CLEAR_ON_IDLE))
 		return false;
@@ -1439,12 +1439,13 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 		return false;
 
 	/* Gradually clear (upto half each pass) local memory */
-	for (i = mem->mm.max_order; i >= 0; i--) {
+	min_order = ilog2(mem->min_page_size) - ilog2(mem->mm.chunk_size);
+	for (i = mem->mm.max_order; i >= min_order; i--) {
 		bl = &mem->mm.dirty_list[i];
 		if (buddy_list_remove(bl, &dirty))
 			break;
 	}
-	if (i < 0)
+	if (i < min_order)
 		return false;
 
 	__intel_wakeref_defer_park(&mem->gt->wakeref);
