@@ -8,6 +8,7 @@
 #include "gem/i915_gem_vm_bind.h"
 
 #include "i915_drv.h"
+#include "i915_driver.h"
 #include "i915_trace.h"
 
 #include "gen8_ppgtt.h"
@@ -16,6 +17,7 @@
 #include "intel_gt.h"
 #include "intel_gt_debug.h"
 #include "intel_gt_mcr.h"
+#include "intel_gt_print.h"
 #include "intel_gt_regs.h"
 #include "intel_tlb.h"
 #include "intel_pagefault.h"
@@ -60,22 +62,17 @@ enum fault_type {
 
 void intel_gt_pagefault_process_cat_error_msg(struct intel_gt *gt, u32 guc_ctx_id)
 {
-	struct drm_device *drm = &gt->i915->drm;
-	struct intel_guc *guc = &gt->uc.guc;
+	char name[TASK_COMM_LEN + 8] = "[" DRIVER_NAME "]";
 	struct intel_context *ce;
-	char buf[11];
 
-	ce = xa_load(&guc->context_lookup, guc_ctx_id);
-	if (ce) {
-		snprintf(buf, sizeof(buf), "%#04x", guc_ctx_id);
+	ce = xa_load(&gt->uc.guc.context_lookup, guc_ctx_id);
+	if (ce && ce->gem_context) {
+		memcpy(name, ce->gem_context->name, sizeof(name));
 		intel_context_ban(ce, NULL);
-	} else {
-		snprintf(buf, sizeof(buf), "n/a");
 	}
 
-	trace_intel_gt_cat_error(gt, buf);
-
-	drm_err(drm, "GPU catastrophic memory error. GT: %d, GuC context: %s\n", gt->info.id, buf);
+	trace_intel_gt_cat_error(gt, name);
+	gt_err(gt, "catastrophic memory error in context %s\n", name);
 }
 
 static u64 fault_va(u32 fault_data1, u32 fault_data0)
