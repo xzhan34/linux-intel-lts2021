@@ -724,14 +724,6 @@ clear_blt(struct intel_context *ce,
 	GEM_BUG_ON(ce->vm != ce->engine->gt->vm);
 	GEM_BUG_ON(!drm_mm_node_allocated(&ce->engine->gt->flat));
 
-	/*
-	 * Don't saturate the ring if we are opportunistically clearing;
-	 * leave some space and bandwidth for clear-on-alloc if required.
-	 */
-	err = intel_context_throttle(ce, dirty ? 0 : MAX_SCHEDULE_TIMEOUT);
-	if (err)
-		return err;
-
 	mutex_lock(&ce->timeline->mutex);
 	intel_context_enter(ce);
 
@@ -1125,6 +1117,14 @@ lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 
 			ce = get_clear_free_context(gt);
 			if (unlikely(!ce))
+				continue;
+
+			/*
+			 * Don't saturate the ring if we are opportunistically
+			 * clearing; leave some space and bandwidth for
+			 * clear-on-alloc if required.
+			 */
+			if (intel_context_throttle(ce, 0))
 				continue;
 
 			dirty = clear_blt(ce, NULL,
