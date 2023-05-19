@@ -418,8 +418,7 @@ static u32 poison_scratch_page(struct drm_i915_gem_object *scratch)
 	u32 val;
 
 	val = 0;
-	if (!HAS_NULL_PAGE(to_i915(scratch->base.dev)) &&
-	     IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM)) {
+	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM)) {
 		/*
 		 * Partially randomise the scratch page.
 		 *
@@ -444,6 +443,24 @@ int i915_vm_setup_scratch0(struct i915_address_space *vm, bool read_only)
 {
 	unsigned long size;
 	u32 pte_flags;
+
+	/*
+	 * FIXME: the null page support started from pre-gen12, but
+	 * only enabled here for PVC since it is the only one which
+	 * has atomic support. For any atomic invalid access, the
+	 * existing scratch page cannot handle it since it is in
+	 * system memory.
+	 *
+	 * Null page is only for leaf page table, non-leaf scratch
+	 * page tables are still required.
+	 *
+	 * The write to NULL pte will be dropped by HW, and read
+	 * returns 0, no TLB impact.
+	 */
+	if (HAS_NULL_PAGE(vm->i915)) {
+		vm->scratch_encode[0] = PTE_NULL_PAGE | GEN8_PAGE_PRESENT;
+		return 0;
+	}
 
 	/*
 	 * In order to utilize 64K pages for an object with a size < 2M, we will
