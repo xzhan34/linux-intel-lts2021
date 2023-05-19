@@ -208,12 +208,12 @@ static void __intel_memory_region_put_block_work(struct work_struct *work)
 	struct intel_memory_region *mem =
 		container_of(work, struct intel_memory_region, pd_put.work);
 	struct llist_node *freed = llist_del_all(&mem->pd_put.blocks);
-	struct i915_buddy_block *block;
+	struct i915_buddy_block *block, *bn;
 	struct list_head blocks;
 
 	INIT_LIST_HEAD(&blocks);
 
-	llist_for_each_entry(block, freed, freed)
+	llist_for_each_entry_safe(block, bn, freed, freed)
 		list_add(&block->link, &blocks);
 
 	__intel_memory_region_put_pages_buddy(mem, &blocks, true);
