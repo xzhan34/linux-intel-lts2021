@@ -3,6 +3,8 @@
  * Copyright © 2019 Intel Corporation
  */
 
+#include <linux/dma-fence-array.h>
+
 #include <uapi/drm/i915_drm.h>
 
 #include "gt/gen8_engine_cs.h"
@@ -16,7 +18,7 @@
 #include "gt/intel_ring.h"
 #include "gt/intel_rps.h"
 
-#include "i915_drv.h"
+#include "i915_driver.h"
 #include "i915_gem_lmem.h"
 #include "i915_gem_region.h"
 #include "i915_sw_fence.h"
@@ -884,9 +886,15 @@ small_sync_clear(const struct drm_i915_gem_object *obj, unsigned int flags)
 		return obj->base.size <= SZ_32M;
 }
 
-static inline bool use_cpu_clear(struct drm_i915_gem_object *obj, unsigned int flags)
+static inline bool
+use_cpu_clear(struct drm_i915_gem_object *obj,
+	      unsigned int flags,
+	      bool busy)
 {
 	if (!(flags & I915_BO_CPU_CLEAR))
+		return false;
+
+	if (busy && (flags & I915_BO_ALLOC_USER))
 		return false;
 
 	return !object_needs_flat_ccs(obj);
@@ -907,8 +915,86 @@ static inline bool blocks_busy(const struct list_head *blocks, bool *dirty)
        return false;
 }
 
+struct await_fences {
+	struct dma_fence dma;
+	struct i915_sw_fence chain;
+	struct spinlock lock;
+	struct i915_sw_dma_fence_cb cb[];
+};
+
+static const char *get_driver_name(struct dma_fence *fence)
+{
+	return "[" DRIVER_NAME "]";
+}
+
+static const char *get_timeline_name(struct dma_fence *fence)
+{
+	return "await";
+}
+
+static const struct dma_fence_ops await_ops = {
+	.get_driver_name = get_driver_name,
+	.get_timeline_name = get_timeline_name,
+};
+
 static int
-lmem_clear(struct drm_i915_gem_object *obj, struct i915_request **out)
+await_notify(struct i915_sw_fence *fence, enum i915_sw_fence_notify state)
+{
+	struct await_fences *a = container_of(fence, typeof(*a), chain);
+
+	switch (state) {
+	case FENCE_COMPLETE:
+		/* no error propagation */
+		dma_fence_signal(&a->dma);
+		break;
+
+	case FENCE_FREE:
+		i915_sw_fence_fini(&a->chain);
+		dma_fence_put(&a->dma);
+		break;
+	}
+
+	return NOTIFY_DONE;
+}
+
+static int
+blocks_await(const struct list_head *blocks, struct await_fences **out)
+{
+	struct i915_buddy_block *block;
+	struct await_fences *a;
+	int count;
+
+	count = 0;
+	list_for_each_entry(block, blocks, link)
+		count += i915_buddy_block_is_active(block);
+	if (!count)
+		return 0;
+
+	a = kmalloc(struct_size(a, cb, count), I915_GFP_ALLOW_FAIL);
+	if (!a)
+		return -ENOMEM;
+
+	spin_lock_init(&a->lock);
+	dma_fence_init(&a->dma, &await_ops, &a->lock, 0, 0);
+	i915_sw_fence_init(&a->chain, await_notify);
+
+	count = 0;
+	list_for_each_entry(block, blocks, link) {
+		struct dma_fence *f;
+
+		f = i915_active_fence_get(&block->active);
+		if (!f)
+			continue;
+
+		__i915_sw_fence_await_dma_fence(&a->chain, f, &a->cb[count++]);
+		dma_fence_put(f);
+	}
+
+	*out = a;
+	return 0;
+}
+
+static int lmem_clear(struct drm_i915_gem_object *obj)
 {
 	struct intel_memory_region *mem = obj->mm.region.mem;
 	unsigned int flags = obj->flags;
@@ -923,7 +1009,7 @@ lmem_clear(struct drm_i915_gem_object *obj, struct i915_request **out)
 		return 0;
 
 	ce = NULL;
-	if (busy || flags & (I915_BO_ALLOC_USER | I915_BO_CPU_CLEAR)) {
+	if (flags & (I915_BO_ALLOC_USER | I915_BO_CPU_CLEAR)) {
 		if (flags & I915_BO_FAULT_CLEAR)
 			ce = get_clear_fault_context(gt);
 		else
@@ -941,15 +1027,31 @@ lmem_clear(struct drm_i915_gem_object *obj, struct i915_request **out)
 		flags |= I915_BO_CPU_CLEAR;
 
 	/* Intended for kernel internal use only */
-	if (!busy && use_cpu_clear(obj, flags))
+	if (use_cpu_clear(obj, flags, busy)) {
 		err = clear_cpu(mem, &obj->mm.blocks, 0);
-	else if (ce)
+	} else if (ce) {
+		struct i915_request *rq = NULL;
+
 		err = clear_blt(ce, NULL,
 				&mem->mm, &obj->mm.blocks,
 				INTEL_GT_CLEAR_ALLOC_CYCLES, false,
-				out);
-	else if (flags & I915_BO_CPU_CLEAR)
-		err = -EIO;
+				&rq);
+		if (rq) {
+			i915_gem_object_migrate_prepare(obj, &rq->fence);
+			i915_sw_fence_complete(&rq->submit);
+			i915_request_put(rq);
+		}
+	} else if (flags & I915_BO_CPU_CLEAR) {
+		err = -EIO; /* clear required use of the blitter */
+	} else if (busy) {
+		struct await_fences *f = NULL;
+
+		err = blocks_await(&obj->mm.blocks, &f);
+		if (f) {
+			i915_gem_object_migrate_prepare(obj, &f->dma);
+			i915_sw_fence_commit(&f->chain);
+		}
+	}
 
 	if (wf)
 		intel_gt_pm_put(gt, wf);
@@ -1004,7 +1106,6 @@ int i915_gem_object_clear_lmem(struct drm_i915_gem_object *obj)
 
 static int lmem_get_pages(struct drm_i915_gem_object *obj)
 {
-	struct i915_request *rq = NULL;
 	unsigned int page_sizes;
 	struct sg_table *pages;
 	int err;
@@ -1016,12 +1117,7 @@ static int lmem_get_pages(struct drm_i915_gem_object *obj)
 	if (obj->swapto)
 		err = lmem_swapin(obj, pages, page_sizes);
 	else
-		err = lmem_clear(obj, &rq);
-	if (rq) {
-		i915_gem_object_migrate_prepare(obj, &rq->fence);
-		i915_sw_fence_complete(&rq->submit);
-		i915_request_put(rq);
-	}
+		err = lmem_clear(obj);
 	if (err)
 		goto err;
 
