@@ -1305,7 +1305,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	dst->cpages = kmalloc(sizeof(*dst->cpages) + num_pages * sizeof(u32 *),
 			      I915_GFP_ALLOW_FAIL);
 	if (!dst->cpages)
-		return NULL;
+		return dst;
 
 	dst->cpages->num_pages = num_pages;
 	dst->cpages->page_count = 0;
@@ -1314,7 +1314,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	if (!compress_start(compress)) {
 		kfree(dst->cpages);
 		dst->cpages = NULL;
-		return NULL;
+		return dst;
 	}
 
 	offset = (vma->ggtt_view.type == I915_GGTT_VIEW_PARTIAL) ?
