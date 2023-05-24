@@ -345,11 +345,20 @@ bool i915_buddy_defrag(struct i915_buddy_mm *mm,
 		       unsigned int min_order,
 		       unsigned int max_order)
 {
-	unsigned int i = min(max_order, mm->max_order + 1);
 	struct i915_buddy_link bookmark = {};
 	struct i915_buddy_block *block;
 	bool merged = false;
+	unsigned int i;
 
+	/* Any blocks that could be split into max_order? */
+	for (i = max_order; i <= mm->max_order; i++) {
+		if (!list_empty(&mm->clear_list[i].list) ||
+		    !list_empty(&mm->dirty_list[i].list))
+			return true;
+	}
+
+	/* Any blocks that could be merged to form max_order? */
+	i = min(max_order, mm->max_order + 1);
 	while (i-- && !merged) {
 		struct i915_buddy_list *lists[] = {
 			&mm->clear_list[i],
@@ -358,7 +367,7 @@ bool i915_buddy_defrag(struct i915_buddy_mm *mm,
 		}, **it, *list;
 
 		for (it = lists; (list = *it); it++) {
-			if (!fetch_and_zero(&list->defrag))
+			if (!fetch_and_zero(&list->defrag) && i >= min_order)
 				continue;
 
 			spin_lock(&list->lock);
@@ -627,16 +636,10 @@ err_free:
 
 void i915_buddy_discard_clears(struct i915_buddy_mm *mm)
 {
-	int i;
-
 	if (!mm->size)
 		return;
 
 	/* Recombine all split blocks */
-	for (i = 0; i <= mm->max_order; i++) {
-		mm->clear_list[i].defrag = true;
-		mm->dirty_list[i].defrag = true;
-	}
 	i915_buddy_defrag(mm, UINT_MAX, UINT_MAX);
 }
 

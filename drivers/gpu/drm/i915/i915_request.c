@@ -2222,7 +2222,7 @@ long i915_request_wait(struct i915_request *rq,
 		       unsigned int flags,
 		       long timeout)
 {
-	might_sleep();
+	might_sleep_if(timeout > 0);
 	GEM_BUG_ON(timeout < 0);
 	i915_fence_check_lr_lockdep(&rq->fence);
 

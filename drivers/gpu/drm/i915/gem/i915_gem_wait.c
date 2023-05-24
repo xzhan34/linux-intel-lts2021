@@ -185,7 +185,7 @@ __i915_gem_object_wait(struct drm_i915_gem_object *obj,
 		       unsigned int flags,
 		       long timeout)
 {
-	might_sleep();
+	might_sleep_if(timeout > 0);
 	if (GEM_WARN_ON(timeout < 0))
 		return timeout;
 
