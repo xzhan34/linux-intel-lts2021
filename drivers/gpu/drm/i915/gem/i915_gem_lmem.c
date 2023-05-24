@@ -1546,6 +1546,7 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 
 	__intel_wakeref_defer_park(&mem->gt->wakeref);
 	mutex_unlock(&mem->gt->wakeref.mutex);
+	reinit_completion(&mem->parking);
 
 	if (clear_blt(ce, NULL,
 		      &mem->mm, &dirty,
@@ -1561,6 +1562,7 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 		i915_request_put(rq);
 	}
 
+	complete_all(&mem->parking);
 	mutex_lock(&mem->gt->wakeref.mutex);
 	return __intel_wakeref_resume_park(&mem->gt->wakeref);
 }
