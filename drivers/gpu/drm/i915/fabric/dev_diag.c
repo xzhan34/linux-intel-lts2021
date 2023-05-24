@@ -4,12 +4,25 @@
  */
 
 #include <linux/bitfield.h>
+#include <linux/bitops.h>
+#include <linux/bits.h>
+#include <linux/compiler.h>
+#include <linux/compiler_types.h>
 #include <linux/debugfs.h>
 #include <linux/fs.h>
+#include <linux/io.h>
+#include <linux/list.h>
 #include <linux/kernel.h>
 #include <linux/minmax.h>
+#include <linux/mutex.h>
+#include <linux/rwsem.h>
+#include <linux/semaphore.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/stringify.h>
+#include <linux/timekeeping.h>
+#include <linux/types.h>
+#include <linux/vmalloc.h>
 
 #include "debugfs.h"
 #include "dev_diag.h"
@@ -20,6 +33,69 @@
 #include "port.h"
 #include "routing_engine.h"
 #include "statedump.h"
+
+#define CAPABILITIES_FILE_NAME "capabilities"
+
+static int capabilities_open(struct inode *inode, struct file *file)
+{
+	/*
+	 * New strings are placed here along with the associated index into capabilities_index when
+	 * new capabilities are added
+	 */
+	static const char * const capabilities[] = { "serdes_margin2", "throughput" };
+	static const char *cap_fmt = "%s\n";
+	enum capabilities_index {
+		CAP_SERDES_MARGIN2,
+		CAP_THROUGHPUT,
+		CAPABILITIES_MAX,
+	};
+	struct fsubdev *sd = inode->i_private;
+	struct capabilities_info {
+		struct debugfs_blob_wrapper blob;
+		char buf[0];
+	} *info;
+	size_t buf_offset;
+	size_t buf_size;
+	char *buf;
+	u8 i;
+
+	if (!sd)
+		return -EINVAL;
+
+	for (i = 0, buf_size = 0; i < CAPABILITIES_MAX; i++)
+		buf_size += strlen(capabilities[i]);
+
+	/* Add space for newlines and terminating NULL */
+	buf_size += i + 1;
+
+	info = kzalloc(sizeof(*info) + buf_size, GFP_KERNEL);
+	if (!info)
+		return -ENOMEM;
+
+	buf = info->buf;
+	buf_offset = 0;
+
+	/* Check firmware for availability */
+	if (test_bit(MBOX_OP_CODE_SERDES_TX_DCC_MARGIN, sd->fw_version.supported_opcodes))
+		buf_offset += scnprintf(buf + buf_offset, buf_size, cap_fmt,
+					capabilities[CAP_SERDES_MARGIN2]);
+
+	buf_offset += scnprintf(buf + buf_offset, buf_size, cap_fmt, capabilities[CAP_THROUGHPUT]);
+
+	info->blob.data = info->buf;
+	info->blob.size = buf_offset;
+	file->private_data = info;
+
+	return 0;
+}
+
+static const struct file_operations capabilities_fops = {
+	.owner = THIS_MODULE,
+	.open = capabilities_open,
+	.read = blob_read,
+	.release = blob_release,
+	.llseek = default_llseek,
+};
 
 #define FW_VERSION_FILE_NAME "fw_version"
 #define FW_VERSION_BUF_SIZE 256
