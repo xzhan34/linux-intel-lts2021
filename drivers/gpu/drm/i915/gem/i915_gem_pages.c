@@ -50,6 +50,7 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 		obj->cache_dirty = false;
 	}
 
+	i915_gem_object_set_backing_store(obj);
 	obj->mm.pages = pages;
 	obj->mm.get_page.sg_pos = pages->sgl;
 	obj->mm.get_dma_page.sg_pos = pages->sgl;

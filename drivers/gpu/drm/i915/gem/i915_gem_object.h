@@ -323,6 +323,18 @@ i915_gem_object_is_segment(const struct drm_i915_gem_object *obj)
 }
 
 static inline void
+i915_gem_object_set_backing_store(struct drm_i915_gem_object *obj)
+{
+	obj->flags |= I915_BO_HAS_BACKING_STORE;
+}
+
+static inline bool
+i915_gem_object_has_backing_store(const struct drm_i915_gem_object *obj)
+{
+	return obj->flags & I915_BO_HAS_BACKING_STORE;
+}
+
+static inline void
 i915_gem_object_set_fabric(struct drm_i915_gem_object *obj)
 {
 	obj->flags |= I915_BO_FABRIC;

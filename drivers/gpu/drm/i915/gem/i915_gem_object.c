@@ -437,11 +437,10 @@ bool i915_gem_object_should_migrate_lmem(struct drm_i915_gem_object *obj,
 		return true;
 
 	/*
-	 * No backing store: we won't migrate but still want
-	 * i915_gem_object_migrate() to reassign the BO's placment to
-	 * the faulting GT's memory region (first touch policy).
+	 * first touch policy:
+	 * Migration to reassign the BO's placment to the faulting GT's memory region.
 	 */
-	if (!(i915_gem_object_has_pages(obj) || obj->base.filp))
+	if (!i915_gem_object_has_backing_store(obj))
 		return true;
 
 	return false;
