@@ -2936,6 +2936,8 @@ gen12_soc_hw_error_handler(struct intel_gt *gt,
 			      REG_GENMASK(31, 0));
 
 		intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT, "UNKNOWN SOC %s error\n", hardware_error_type_to_str(hw_err));
+
+		goto unmask_gsysevtctl;
 	}
 
 	/*
@@ -2984,6 +2986,10 @@ gen12_soc_hw_error_handler(struct intel_gt *gt,
 		}
 
 		for_each_set_bit(errbit, &slv_glb_errstat, SOC_HW_ERR_MAX_BITS) {
+			/* Skip reprocessing of SOC_IEH1_LOCAL_ERR_STATUS bit */
+			if (errbit == SOC_IEH1_LOCAL_ERR_STATUS)
+				continue;
+
 			index = SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, hw_err, errbit);
 			update_soc_hw_error_cnt(gt, index);
 			if (IS_PONTEVECCHIO(gt->i915))
@@ -3010,6 +3016,10 @@ gen12_soc_hw_error_handler(struct intel_gt *gt,
 	}
 
 	for_each_set_bit(errbit, &mst_glb_errstat, SOC_HW_ERR_MAX_BITS) {
+		/* Skip reprocessing of SOC_SLAVE_IEH and SOC_IEH0_LOCAL_ERR_STATUS */
+		if (errbit == SOC_SLAVE_IEH || errbit == SOC_IEH0_LOCAL_ERR_STATUS)
+			continue;
+
 		index = SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, hw_err, errbit);
 		update_soc_hw_error_cnt(gt, index);
 		if (IS_PONTEVECCHIO(gt->i915))
@@ -3019,6 +3029,7 @@ gen12_soc_hw_error_handler(struct intel_gt *gt,
 	raw_reg_write(regs, SOC_GLOBAL_ERR_STAT_MASTER_REG(base, hw_err),
 		      mst_glb_errstat);
 
+unmask_gsysevtctl:
 	for (i = 0; i < INTEL_GT_SOC_NUM_IEH; i++)
 		raw_reg_write(regs, SOC_GSYSEVTCTL_REG(base, slave_base, i),
 			      (HARDWARE_ERROR_MAX << 1) + 1);
@@ -3531,8 +3542,10 @@ gen12_hw_error_source_handler(struct intel_gt *gt,
 	if (errsrc & DEV_ERR_STAT_GT_ERROR)
 		gen12_gt_hw_error_handler(gt, hw_err);
 
-	if (errsrc & DEV_ERR_STAT_SGUNIT_ERROR)
+	if (errsrc & DEV_ERR_STAT_SGUNIT_ERROR) {
+		log_gt_hw_err(gt, "SGUNIT %s error\n", hardware_error_type_to_str(hw_err));
 		gt->errors.sgunit[hw_err]++;
+	}
 
 	if (errsrc & DEV_ERR_STAT_SOC_ERROR)
 		gen12_soc_hw_error_handler(gt, hw_err);
