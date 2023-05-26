@@ -4,3 +4,5 @@ DII-TAG,Commit Header,JIRA,Requester,PSB Branch Tag
 ,PSB_ONLY:Dummy Change,,Muqthyar,I915-23.6.2
 6880.0,Avoid clear_blt for synchronising too-small chunks,vlk-47452,parupall,I915-23.6.3
 6882.0,Tweak eviction retries for defrag across clear-on-idle,vlk-47813,parupall,I915-23.6.4
+6886.0,Soc error handling fixes.,VLK-47776,parupall,
+6889.0,Enhance HBM error reporting for PVC.,VLK-46694,parupall,I915-23.6.5
