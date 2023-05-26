@@ -196,7 +196,6 @@ rebuild_st:
 		obj->cache_dirty = true;
 
 	__i915_gem_object_set_pages(obj, st, sg_page_sizes);
-
 	atomic64_sub(size, &mem->avail);
 
 	return 0;

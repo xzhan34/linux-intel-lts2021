@@ -247,12 +247,13 @@ void intel_memory_region_print(struct intel_memory_region *mem,
 	drm_printf(p, "  clear-on-free: %s\n", str_enabled_disabled(test_bit(INTEL_MEMORY_CLEAR_FREE, &mem->flags)));
 	drm_printf(p, "  total:  %llu\n", mem->total);
 	drm_printf(p, "  avail:  %llu\n", atomic64_read(&mem->avail));
-	drm_printf(p, "  evict:  %llu\n", atomic64_read(&mem->evict));
+	if (atomic64_read(&mem->evict))
+		drm_printf(p, "  evict:  %llu\n", atomic64_read(&mem->evict));
 	if (target)
 		drm_printf(p, "  target: %llu\n", target);
 
 	for (o = objects; o->name; o++) {
-		resource_size_t active = 0, avail = 0;
+		resource_size_t active = 0, pinned = 0, avail = 0;
 		struct drm_i915_gem_object *obj;
 		unsigned long count = 0;
 
@@ -264,8 +265,10 @@ void intel_memory_region_print(struct intel_memory_region *mem,
 			if (!i915_gem_object_has_pages(obj))
 				continue;
 
-			if (__i915_gem_object_wait(obj, I915_WAIT_ALL, 0))
+			if (i915_gem_object_is_active(obj))
 				active += obj->base.size;
+			else if (i915_gem_object_has_pinned_pages(obj))
+				pinned += obj->base.size;
 			else
 				avail += obj->base.size;
 			count++;
@@ -275,8 +278,8 @@ void intel_memory_region_print(struct intel_memory_region *mem,
 			continue;
 
 		drm_printf(p,
-			   "  %s: { count: %lu, active: %llu, avail: %llu }\n",
-			   o->name, count, active, avail);
+			   "  %s: { count:%lu, active:%llu, pinned:%llu, avail:%llu }\n",
+			   o->name, count, active, pinned, avail);
 	}
 
 	if (mem->mm.size) {
@@ -529,7 +532,7 @@ bookmark:
 	}
 	list_splice_tail_init(&still_in_list, *phase);
 	spin_unlock(&mem->objects.lock);
-	if (err || found)
+	if (err || found >= target)
 		return err;
 
 	if (!wait && busy) {
@@ -589,7 +592,7 @@ bookmark:
 	 * no forward progress, do we conclude that it is better to report
 	 * failure.
 	 */
-	return atomic64_read(&mem->avail) >= target ? 0 : -ENXIO;
+	return 0;
 }
 
 static unsigned int
@@ -601,8 +604,8 @@ __max_order(const struct intel_memory_region *mem, unsigned long n_pages)
 	return __fls(n_pages);
 }
 
-static bool available_chunks(const struct intel_memory_region *mem,
-			     resource_size_t sz)
+static bool
+available_chunks(const struct intel_memory_region *mem, resource_size_t sz)
 {
 	/*
 	 * Only allow this client to take from the pool of freed chunks
@@ -615,9 +618,7 @@ static bool available_chunks(const struct intel_memory_region *mem,
 	 * loop and will be ordered fairly by the ww_mutex, ensuring
 	 * all clients continue to make forward progress.
 	 */
-	u64 avail = atomic64_read(&mem->avail);
-	u64 evict = atomic64_read(&mem->evict);
-	return avail >= evict + sz;
+	return atomic64_read(&mem->avail) >= sz;
 }
 
 int
@@ -663,12 +664,13 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 	order = __max_order(mem, n_pages);
 	GEM_BUG_ON(order < min_order);
 
+	/* Reserve the memory we reclaim for ourselves! */
+	if (!available_chunks(mem, atomic64_add_return(size, &mem->evict)))
+		goto evict;
+
 	do {
 		resource_size_t sz = mem->mm.chunk_size << order;
 		struct i915_buddy_block *block;
-
-		if (!available_chunks(mem, sz))
-			goto evict;
 
 		block = __i915_buddy_alloc(&mem->mm, order, flags);
 		if (!IS_ERR(block)) {
@@ -679,8 +681,10 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 			block->private = mem;
 
 			n_pages -= BIT(order);
-			if (!n_pages)
+			if (!n_pages) {
+				atomic64_sub(size, &mem->evict);
 				return 0;
+			}
 
 			while (!(n_pages >> order))
 				order--;
@@ -698,19 +702,23 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 			continue;
 
 		if (order-- == min_order) {
-evict:			/* Reserve the memory we reclaim for ourselves! */
-			sz = n_pages * mem->mm.chunk_size;
-			atomic64_add(sz, &mem->evict);
+evict:			sz = n_pages * mem->mm.chunk_size;
 			err = intel_memory_region_evict(mem, ww, sz);
-			atomic64_sub(sz, &mem->evict);
 			if (err)
 				break;
 
+			/*
+			 * Bail out if, after eviction, there is not enough
+			 * available to allocate a single chunk.
+			 */
 			if (!i915_buddy_defrag(&mem->mm, min_order, min_order)) {
 				err = -ENXIO;
 				break;
 			}
 
+			/* Make these chunks available for defrag */
+			intel_memory_region_free_pages(mem, blocks, false);
+			n_pages = size >> ilog2(mem->mm.chunk_size);
 			order = __max_order(mem, n_pages);
 		}
 
@@ -727,6 +735,7 @@ evict:			/* Reserve the memory we reclaim for ourselves! */
 	}
 
 	intel_memory_region_free_pages(mem, blocks, false);
+	atomic64_sub(size, &mem->evict);
 	return err;
 }
 

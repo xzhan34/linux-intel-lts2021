@@ -503,6 +503,7 @@ i915_gem_set_domain_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_object *obj;
 	u32 read_domains = args->read_domains;
 	u32 write_domain = args->write_domain;
+	struct i915_gem_ww_ctx ww;
 	int err;
 
 	/* Only handle setting domains to types used by the CPU. */
@@ -567,48 +568,48 @@ i915_gem_set_domain_ioctl(struct drm_device *dev, void *data,
 		goto out;
 	}
 
-	err = i915_gem_object_lock_interruptible(obj, NULL);
-	if (err)
-		goto out;
+	for_i915_gem_ww(&ww, err, true) {
+		err = i915_gem_object_lock(obj, &ww);
+		if (err)
+			continue;
 
-	/*
-	 * Flush and acquire obj->pages so that we are coherent through
-	 * direct access in memory with previous cached writes through
-	 * shmemfs and that our cache domain tracking remains valid.
-	 * For example, if the obj->filp was moved to swap without us
-	 * being notified and releasing the pages, we would mistakenly
-	 * continue to assume that the obj remained out of the CPU cached
-	 * domain.
-	 */
-	err = i915_gem_object_pin_pages_sync(obj);
-	if (err)
-		goto out_unlock;
+		/*
+		 * Flush and acquire obj->pages so that we are coherent through
+		 * direct access in memory with previous cached writes through
+		 * shmemfs and that our cache domain tracking remains valid.
+		 * For example, if the obj->filp was moved to swap without us
+		 * being notified and releasing the pages, we would mistakenly
+		 * continue to assume that the obj remained out of the CPU
+		 * cached domain.
+		 */
+		err = i915_gem_object_pin_pages_sync(obj);
+		if (err)
+			continue;
 
-	/*
-	 * Already in the desired write domain? Nothing for us to do!
-	 *
-	 * We apply a little bit of cunning here to catch a broader set of
-	 * no-ops. If obj->write_domain is set, we must be in the same
-	 * obj->read_domains, and only that domain. Therefore, if that
-	 * obj->write_domain matches the request read_domains, we are
-	 * already in the same read/write domain and can skip the operation,
-	 * without having to further check the requested write_domain.
-	 */
-	if (READ_ONCE(obj->write_domain) == read_domains)
-		goto out_unpin;
+		/*
+		 * Already in the desired write domain? Nothing for us to do!
+		 *
+		 * We apply a little bit of cunning here to catch a broader set
+		 * of no-ops. If obj->write_domain is set, we must be in the
+		 * same obj->read_domains, and only that domain. Therefore, if
+		 * that obj->write_domain matches the request read_domains, we
+		 * are already in the same read/write domain and can skip the
+		 * operation, without having to further check the requested
+		 * write_domain.
+		 */
+		if (READ_ONCE(obj->write_domain) == read_domains)
+			goto out_unpin;
 
-	if (read_domains & I915_GEM_DOMAIN_WC)
-		err = i915_gem_object_set_to_wc_domain(obj, write_domain);
-	else if (read_domains & I915_GEM_DOMAIN_GTT)
-		err = i915_gem_object_set_to_gtt_domain(obj, write_domain);
-	else
-		err = i915_gem_object_set_to_cpu_domain(obj, write_domain);
+		if (read_domains & I915_GEM_DOMAIN_WC)
+			err = i915_gem_object_set_to_wc_domain(obj, write_domain);
+		else if (read_domains & I915_GEM_DOMAIN_GTT)
+			err = i915_gem_object_set_to_gtt_domain(obj, write_domain);
+		else
+			err = i915_gem_object_set_to_cpu_domain(obj, write_domain);
 
 out_unpin:
-	i915_gem_object_unpin_pages(obj);
-
-out_unlock:
-	i915_gem_object_unlock(obj);
+		i915_gem_object_unpin_pages(obj);
+	}
 
 	if (!err && write_domain)
 		i915_gem_object_invalidate_frontbuffer(obj, ORIGIN_CPU);
