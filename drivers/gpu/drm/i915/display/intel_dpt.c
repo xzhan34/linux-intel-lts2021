@@ -237,7 +237,6 @@ intel_dpt_create(struct intel_framebuffer *fb)
 	struct i915_address_space *vm;
 	struct i915_dpt *dpt;
 	size_t size;
-	int ret;
 
 	if (intel_fb_needs_pot_stride_remap(fb))
 		size = intel_remapped_info_size(&fb->remapped_view.gtt.remapped);
@@ -256,15 +255,7 @@ intel_dpt_create(struct intel_framebuffer *fb)
 	if (IS_ERR(dpt_obj))
 		return ERR_CAST(dpt_obj);
 
-	ret = i915_gem_object_lock_interruptible(dpt_obj, NULL);
-	if (!ret) {
-		ret = i915_gem_object_set_cache_level(dpt_obj, NULL, I915_CACHE_NONE);
-		i915_gem_object_unlock(dpt_obj);
-	}
-	if (ret) {
-		i915_gem_object_put(dpt_obj);
-		return ERR_PTR(ret);
-	}
+	i915_gem_object_set_cache_coherency(dpt_obj, I915_CACHE_NONE);
 
 	dpt = kzalloc(sizeof(*dpt), GFP_KERNEL);
 	if (!dpt) {
