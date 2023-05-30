@@ -9,3 +9,9 @@ DII-TAG,Commit Header,JIRA,Requester,PSB Branch Tag
 6892.0,Support SOC NONFATAL error handling.,VLK-47899,parupall,I915-23.6.6
 6895.0,INTEL_DII: drm/i915/fabric: PVC IAF stable update,VLK-43994,parupall,I915-23.6.7
 6900.0,Prefer clear-on-idle over clear-on-free,VLK-48062,parupall,I915-23.6.8
+6902.0,Continue eviction after queuing,VLK-47813,parupall,I915-23.6.9
+,"Revert "Continue eviction after queuing"",VLK-47813,parupall,
+6891.0,Add ww to i915_gem_set_domain_ioctl,VLK-48163,parupall,
+6902.0,Continue eviction after queuing,VLK-47813,parupall,I915-23.6.10
+
+
