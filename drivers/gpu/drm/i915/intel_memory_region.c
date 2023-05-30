@@ -244,6 +244,7 @@ void intel_memory_region_print(struct intel_memory_region *mem,
 
 	drm_printf(p, "memory region: %s\n", mem->name);
 	drm_printf(p, "  parking: %s\n", str_yes_no(!completion_done(&mem->parking)));
+	drm_printf(p, "  clear-on-free: %s\n", str_enabled_disabled(test_bit(INTEL_MEMORY_CLEAR_FREE, &mem->flags)));
 	drm_printf(p, "  total:  %llu\n", mem->total);
 	drm_printf(p, "  avail:  %llu\n", atomic64_read(&mem->avail));
 	drm_printf(p, "  evict:  %llu\n", atomic64_read(&mem->evict));
