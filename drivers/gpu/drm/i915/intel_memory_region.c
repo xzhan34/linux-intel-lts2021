@@ -382,7 +382,8 @@ static bool i915_gem_object_allows_eviction(struct drm_i915_gem_object *obj)
 
 static int intel_memory_region_evict(struct intel_memory_region *mem,
 				     struct i915_gem_ww_ctx *ww,
-				     resource_size_t target)
+				     resource_size_t target,
+				     int chunk)
 {
 	struct list_head *phases[] = {
 		/*
@@ -543,15 +544,17 @@ bookmark:
 		goto next;
 	}
 
-	if (*++phase && mem->i915->params.enable_eviction) {
-		/* And try to release all stale kernel objects */
-		intel_gt_retire_requests(mem->gt);
+	/* And try to release all stale kernel objects */
+	intel_gt_retire_requests(mem->gt);
 
-		timeout = 0;
-		wait = false;
-		busy = false;
+	timeout = 0;
+	wait = false;
+	busy = false;
+	if (*++phase && mem->i915->params.enable_eviction)
 		goto next;
-	}
+
+	if (found)
+		return 0;
 
 	if (ww) {
 		struct i915_gem_ww_region *r;
@@ -577,7 +580,12 @@ bookmark:
 			if (err == 0)
 				i915_gem_object_unlock(obj);
 			i915_gem_object_put(obj);
-			return err;
+			if (err)
+				return err;
+
+			/* restart after queuing */
+			phase = phases;
+			goto next;
 		}
 		spin_unlock(&mem->objects.lock);
 	}
@@ -592,7 +600,16 @@ bookmark:
 	 * no forward progress, do we conclude that it is better to report
 	 * failure.
 	 */
-	return 0;
+	if (i915_buddy_defrag(&mem->mm, chunk, chunk))
+		return 0;
+
+	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG)) {
+		struct drm_printer p = drm_info_printer(mem->gt->i915->drm.dev);
+
+		intel_memory_region_print(mem, target, &p);
+	}
+
+	return -ENXIO;
 }
 
 static unsigned int
@@ -703,18 +720,9 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 
 		if (order-- == min_order) {
 evict:			sz = n_pages * mem->mm.chunk_size;
-			err = intel_memory_region_evict(mem, ww, sz);
+			err = intel_memory_region_evict(mem, ww, sz, min_order);
 			if (err)
 				break;
-
-			/*
-			 * Bail out if, after eviction, there is not enough
-			 * available to allocate a single chunk.
-			 */
-			if (!i915_buddy_defrag(&mem->mm, min_order, min_order)) {
-				err = -ENXIO;
-				break;
-			}
 
 			/* Make these chunks available for defrag */
 			intel_memory_region_free_pages(mem, blocks, false);
@@ -727,12 +735,6 @@ evict:			sz = n_pages * mem->mm.chunk_size;
 			break;
 		}
 	} while (1);
-
-	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG) && err == -ENXIO) {
-		struct drm_printer p = drm_info_printer(mem->gt->i915->drm.dev);
-
-		intel_memory_region_print(mem, size, &p);
-	}
 
 	intel_memory_region_free_pages(mem, blocks, false);
 	atomic64_sub(size, &mem->evict);
