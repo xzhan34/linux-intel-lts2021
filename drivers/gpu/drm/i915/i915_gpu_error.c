@@ -2962,10 +2962,11 @@ void i915_uuid_cleanup(struct i915_drm_client *client)
 	xa_destroy(&client->uuids_xa);
 }
 
+#if IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM)
 void intel_klog_error_capture(struct intel_gt *gt,
 			      intel_engine_mask_t engine_mask)
 {
-	static int g_count = 0;
+	static int g_count;
 	struct drm_i915_private *i915 = gt->i915;
 	struct i915_gpu_coredump *error;
 	intel_wakeref_t wakeref;
@@ -2977,7 +2978,8 @@ void intel_klog_error_capture(struct intel_gt *gt,
 
 	/* Can't allocate memory during a reset */
 	if (test_bit(I915_RESET_BACKOFF, &gt->reset.flags)) {
-		drm_err(&gt->i915->drm, "[Capture/%d.%d] Inside GT reset, skipping error capture :(\n", l_count, line++);
+		drm_err(&gt->i915->drm, "[Capture/%d.%d] Inside GT reset, skipping error capture :(\n",
+			l_count, line++);
 		return;
 	}
 
@@ -2988,7 +2990,8 @@ void intel_klog_error_capture(struct intel_gt *gt,
 
 	error = READ_ONCE(i915->gpu_error.first_error);
 	if (error) {
-		drm_err(&i915->drm, "[Capture/%d.%d] Clearing existing error capture first...\n", l_count, line++);
+		drm_err(&i915->drm, "[Capture/%d.%d] Clearing existing error capture first...\n",
+			l_count, line++);
 		i915_reset_error_state(i915);
 	}
 
@@ -2996,19 +2999,21 @@ void intel_klog_error_capture(struct intel_gt *gt,
 		error = i915_gpu_coredump(gt, engine_mask, CORE_DUMP_FLAG_NONE);
 
 	if (IS_ERR(error)) {
-		drm_err(&i915->drm, "[Capture/%d.%d] Failed to capture error capture: %ld!\n", l_count, line++, PTR_ERR(error));
+		drm_err(&i915->drm, "[Capture/%d.%d] Failed to capture error capture: %ld!\n",
+			l_count, line++, PTR_ERR(error));
 		return;
 	}
 
 	buf = kvmalloc(buf_size, GFP_KERNEL);
 	if (!buf) {
-		drm_err(&i915->drm, "[Capture/%d.%d] Failed to allocate buffer for error capture!\n", l_count, line++);
+		drm_err(&i915->drm, "[Capture/%d.%d] Failed to allocate buffer for error capture!\n",
+			l_count, line++);
 		i915_gpu_coredump_put(error);
 		return;
 	}
 
-	drm_info(&i915->drm, "[Capture/%d.%d] Dumping i915 error capture for %ps...\n", l_count, line++,
-		 __builtin_return_address(0));
+	drm_info(&i915->drm, "[Capture/%d.%d] Dumping i915 error capture for %ps...\n",
+		 l_count, line++, __builtin_return_address(0));
 
 	/* Largest string length safe to print via dmesg */
 #	define MAX_CHUNK	800
@@ -3016,6 +3021,7 @@ void intel_klog_error_capture(struct intel_gt *gt,
 	pos_err = 0;
 	while (1) {
 		ssize_t got = i915_gpu_coredump_copy_to_buffer(error, buf, pos_err, buf_size - 1);
+
 		if (got <= 0)
 			break;
 
@@ -3045,8 +3051,10 @@ void intel_klog_error_capture(struct intel_gt *gt,
 
 				for (pos = MAX_CHUNK; pos < count; pos += MAX_CHUNK) {
 					char chr = ptr[pos];
+
 					ptr[pos] = 0;
-					drm_info(&i915->drm, "[Capture/%d.%d] }%s{\n", l_count, line++, ptr2);
+					drm_info(&i915->drm, "[Capture/%d.%d] }%s{\n",
+						 l_count, line++, ptr2);
 					ptr[pos] = chr;
 					ptr2 = ptr + pos;
 
@@ -3059,11 +3067,15 @@ void intel_klog_error_capture(struct intel_gt *gt,
 				}
 
 				if (ptr2 < (ptr + count))
-					drm_info(&i915->drm, "[Capture/%d.%d] %c%s%c\n", l_count, line++, tag[0], ptr2, tag[1]);
+					drm_info(&i915->drm, "[Capture/%d.%d] %c%s%c\n",
+						 l_count, line++, tag[0], ptr2, tag[1]);
 				else if (tag[0] == '>')
-					drm_info(&i915->drm, "[Capture/%d.%d] ><\n", l_count, line++);
-			} else
-				drm_info(&i915->drm, "[Capture/%d.%d] %c%s%c\n", l_count, line++, tag[0], ptr, tag[1]);
+					drm_info(&i915->drm, "[Capture/%d.%d] ><\n",
+						 l_count, line++);
+			} else {
+				drm_info(&i915->drm, "[Capture/%d.%d] %c%s%c\n",
+					 l_count, line++, tag[0], ptr, tag[1]);
+			}
 
 			ptr = next;
 			got -= count;
@@ -3077,13 +3089,15 @@ void intel_klog_error_capture(struct intel_gt *gt,
 		}
 
 		if (got)
-			drm_info(&i915->drm, "[Capture/%d.%d] Got %zd bytes remaining!\n", l_count, line++, got);
+			drm_info(&i915->drm, "[Capture/%d.%d] Got %zd bytes remaining!\n",
+				 l_count, line++, got);
 	}
 
 	kvfree(buf);
 
 	drm_info(&i915->drm, "[Capture/%d.%d] Dumped %zd bytes\n", l_count, line++, pos_err);
 }
+#endif
 
 void intel_eu_attentions_read(struct intel_gt *gt,
 			      struct intel_eu_attentions *a,
