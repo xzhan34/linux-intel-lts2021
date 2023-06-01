@@ -1604,7 +1604,7 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 	if (!mem->gt->migrate.clear_chunk)
 		return false;
 
-	ce = get_clear_free_context(mem->gt);
+	ce = get_clear_alloc_context(mem->gt);
 	if (!ce)
 		return false;
 
