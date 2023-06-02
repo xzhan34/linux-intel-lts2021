@@ -211,6 +211,11 @@ menu "drm/i915 Unstable Evolution"
 	visible if EXPERT && STAGING && BROKEN
 	depends on DRM_I915
 	source "drivers/gpu/drm/i915/Kconfig.unstable"
+endmenu
+
+menu "drm/i915 Chickens"
+	visible if EXPERT && STAGING
+	depends on DRM_I915
 	source "drivers/gpu/drm/i915/Kconfig.chicken"
 endmenu
 

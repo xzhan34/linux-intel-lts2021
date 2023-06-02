@@ -864,15 +864,12 @@ struct drm_i915_private {
 		struct file *mmap_singleton;
 	} gem;
 
-	/* protects VMs' priv_obj_list from concurrent VM and BO release */
-	spinlock_t vm_priv_obj_lock;
-
-#define I915_MAX_ASID (BIT(20))
 	struct {
 		/* Xarry to hold address space entries */
 		struct xarray xa;
 		/* Support cyclic allocation of asid */
 		u32 next_id;
+#define I915_MAX_ASID BIT(20)
 	} asid_resv;
 
 	u8 pch_ssc_use;

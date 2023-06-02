@@ -946,7 +946,7 @@ TRACE_EVENT(i915_mm_fault,
 				   __entry->region = !vma->obj->mm.region.mem ?
 				   	INTEL_REGION_UNKNOWN :
 				   	vma->obj->mm.region.mem->id;
-				   __entry->pg_sz_mask = vma->page_sizes.gtt;
+				   __entry->pg_sz_mask = vma->page_sizes;
 				   __entry->is_bound = i915_vma_is_bound(vma, PIN_USER);
 			   } else {
 				   __entry->obj = NULL;

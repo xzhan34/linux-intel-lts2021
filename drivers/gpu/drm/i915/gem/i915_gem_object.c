@@ -30,7 +30,6 @@
 #include <drm/drm_print.h>
 
 #include "display/intel_frontbuffer.h"
-#include "gt/intel_flat_ppgtt_pool.h"
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_requests.h"
@@ -197,40 +196,33 @@ static struct i915_resv *i915_resv_alloc(void)
 		return NULL;
 
 	dma_resv_init(&resv->base);
-	resv->refcount = 1;
+	kref_init(&resv->refcount);
 	return resv;
 }
 
 static struct i915_resv *i915_resv_get(struct i915_resv *resv)
 {
-	dma_resv_assert_held(&resv->base);
-	resv->refcount++;
-
+	kref_get(&resv->refcount);
 	return resv;
+}
+
+static void i915_resv_free(struct kref *ref)
+{
+	struct i915_resv *resv = container_of(ref, typeof(*resv), refcount);
+
+	dma_resv_fini(&resv->base);
+	kfree_rcu(resv, rcu);
 }
 
 static void i915_resv_put(struct i915_resv *resv)
 {
-	bool last;
-
-	if (likely(READ_ONCE(resv->refcount) == 1))
-		goto free;
-
-	dma_resv_lock(&resv->base, NULL);
-	last = --resv->refcount == 0;
-	dma_resv_unlock(&resv->base);
-	if (!last)
-		return;
-
-free:
-	dma_resv_fini(&resv->base);
-	kfree_rcu(resv, rcu);
+	kref_put(&resv->refcount, i915_resv_free);
 }
 
 void i915_gem_object_share_resv(struct drm_i915_gem_object *parent,
 				struct drm_i915_gem_object *child)
 {
-	assert_object_held(parent);
+	GEM_BUG_ON(child->shares_resv == parent->shares_resv);
 	i915_resv_put(child->shares_resv);
 
 	GEM_BUG_ON(parent->base.resv != &parent->shares_resv->base);
@@ -304,7 +296,6 @@ void i915_gem_object_init(struct drm_i915_gem_object *obj,
 	mutex_init(&obj->mm.get_page.lock);
 	INIT_RADIX_TREE(&obj->mm.get_dma_page.radix, GFP_KERNEL | __GFP_NOWARN);
 	mutex_init(&obj->mm.get_dma_page.lock);
-	INIT_LIST_HEAD(&obj->priv_obj_link);
 
 	i915_drm_client_init_bo(obj);
 }
@@ -838,6 +829,21 @@ static void __i915_gem_object_free_vma(struct drm_i915_gem_object *obj)
 	spin_unlock(&obj->vma.lock);
 }
 
+static void detach_vm(struct drm_i915_gem_object *obj)
+{
+	struct i915_address_space *vm;
+
+	rcu_read_lock();
+	vm = READ_ONCE(obj->vm);
+	if (!IS_ERR_OR_NULL(vm)) {
+		spin_lock(&vm->priv_obj_lock);
+		if (READ_ONCE(obj->vm) == vm)
+			list_del(&obj->priv_obj_link);
+		spin_unlock(&vm->priv_obj_lock);
+	}
+	rcu_read_unlock();
+}
+
 void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 {
 	trace_i915_gem_object_destroy(obj);
@@ -856,6 +862,8 @@ void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 	GEM_BUG_ON(i915_gem_object_has_pages(obj));
 	GEM_BUG_ON(!list_empty(&obj->mm.link));
 	bitmap_free(obj->bit_17);
+
+	detach_vm(obj);
 
 	if (obj->base.import_attach)
 		drm_prime_gem_destroy(&obj->base, NULL);
@@ -882,11 +890,6 @@ static void __i915_gem_free_objects(struct drm_i915_private *i915,
 			obj->ops->delayed_free(obj);
 			continue;
 		}
-
-		spin_lock(&i915->vm_priv_obj_lock);
-		if (obj->vm && obj->vm != I915_BO_INVALID_PRIV_VM)
-			list_del_init(&obj->priv_obj_link);
-		spin_unlock(&i915->vm_priv_obj_lock);
 
 		__i915_gem_free_object(obj);
 
@@ -1351,7 +1354,7 @@ i915_gem_object_prepare_memcpy(struct drm_i915_gem_object *obj,
 	if (ret)
 		return ret;
 
-	ret = i915_gem_object_pin_pages(obj);
+	ret = i915_gem_object_pin_pages_sync(obj);
 	if (ret)
 		return ret;
 
@@ -1689,14 +1692,12 @@ static int i915_alloc_vm_range(struct i915_vma *vma)
 		if (err)
 			continue;
 
-		intel_flat_ppgtt_allocate_requests(vma, false);
 		vma->vm->allocate_va_range(vma->vm, &stash,
 					   i915_vma_offset(vma),
 					   vma->size);
 
 		set_bit(I915_VMA_ALLOC_BIT, __i915_vma_flags(vma));
 		/* Implicit unlock */
-		intel_flat_ppgtt_request_pool_clean(vma);
 	}
 
 	i915_vm_free_pt_stash(vma->vm, &stash);
@@ -1706,13 +1707,10 @@ static int i915_alloc_vm_range(struct i915_vma *vma)
 
 static inline void i915_insert_vma_pages(struct i915_vma *vma, bool is_lmem)
 {
-	intel_flat_ppgtt_allocate_requests(vma, false);
 	vma->vm->insert_entries(vma->vm, NULL, vma,
 				i915_gem_get_pat_index(vma->vm->i915,
 						       I915_CACHE_NONE),
 				is_lmem ? PTE_LM : 0);
-	intel_flat_ppgtt_request_pool_clean(vma);
-
 	wmb();
 }
 

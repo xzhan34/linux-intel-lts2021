@@ -682,8 +682,6 @@ static int i915_driver_early_probe(struct drm_i915_private *dev_priv,
 	intel_detect_preproduction_hw(dev_priv);
 	init_waitqueue_head(&dev_priv->user_fence_wq);
 
-	spin_lock_init(&dev_priv->vm_priv_obj_lock);
-
 	return 0;
 
 err_gem:

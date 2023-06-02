@@ -592,6 +592,28 @@ static const i915_user_extension_fn prelim_create_extensions[] = {
 	[PRELIM_I915_USER_EXT_MASK(PRELIM_I915_GEM_CREATE_EXT_PROTECTED_CONTENT)] = ext_set_protected,
 };
 
+static int attach_vm(struct drm_i915_gem_object *obj)
+{
+	struct i915_address_space *vm;
+	int ret = 0;
+
+	vm = obj->vm;
+	if (!vm)
+		return 0;
+
+	spin_lock(&vm->priv_obj_lock);
+	if (atomic_read(&vm->open))
+		list_add_tail(&obj->priv_obj_link, &vm->priv_obj_list);
+	else
+		ret = -ENOENT;
+	spin_unlock(&vm->priv_obj_lock);
+
+	i915_gem_object_share_resv(vm->root_obj, obj);
+	i915_vm_put(vm);
+
+	return ret;
+}
+
 static int check_for_pair(struct drm_file *file, struct drm_i915_gem_object *obj,
 			  struct create_ext *ext_data)
 {
@@ -707,15 +729,11 @@ i915_gem_create_ioctl(struct drm_device *dev, void *data,
 
 	ret = check_for_pair(file, obj, &ext_data);
 	if (ret)
-		goto vm_put;
+		goto obj_put;
 
-	if (obj->vm) {
-		i915_gem_object_lock(obj->vm->root_obj, NULL);
-		list_add_tail(&obj->priv_obj_link, &obj->vm->priv_obj_list);
-		i915_gem_object_share_resv(obj->vm->root_obj, obj);
-		i915_gem_object_unlock(obj->vm->root_obj);
-		i915_vm_put(obj->vm);
-	}
+	ret = attach_vm(obj);
+	if (ret)
+		goto obj_put;
 
 	/* Add any flag set by create_ext options */
 	obj->flags |= ext_data.flags;
@@ -730,6 +748,10 @@ object_free:
 		kfree(placements_ext);
 
 	i915_gem_object_free(obj);
+	return ret;
+
+obj_put:
+	i915_gem_object_put(obj);
 	return ret;
 }
 
@@ -924,13 +946,9 @@ i915_gem_create_ext_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		goto vm_put;
 
-	if (obj->vm) {
-		i915_gem_object_lock(obj->vm->root_obj, NULL);
-		list_add_tail(&obj->priv_obj_link, &obj->vm->priv_obj_list);
-		i915_gem_object_share_resv(obj->vm->root_obj, obj);
-		i915_gem_object_unlock(obj->vm->root_obj);
-		i915_vm_put(obj->vm);
-	}
+	ret = attach_vm(obj);
+	if (ret)
+		goto obj_put;
 
 	/* Add any flag set by create_ext options */
 	obj->flags |= ext_data.flags;
@@ -944,6 +962,10 @@ object_free:
 	if (obj->mm.n_placements > 1)
 		kfree(placements_ext);
 	i915_gem_object_free(obj);
+	return ret;
+
+obj_put:
+	i915_gem_object_put(obj);
 	return ret;
 }
 

@@ -119,7 +119,7 @@ i915_alloc_window_vma(struct drm_i915_private *i915,
 	vma->resv = NULL;
 	vma->size = size;
 	vma->display_alignment = I915_GTT_MIN_ALIGNMENT;
-	vma->page_sizes.sg = min_page_size;
+	vma->page_sizes = min_page_size;
 
 	i915_active_init(&vma->active, __i915_vma_active, __i915_vma_retire, 0);
 	INIT_LIST_HEAD(&vma->closed_link);
@@ -902,8 +902,7 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 		 * Note that we assume that GGTT are limited to 4GiB for the
 		 * forseeable future. See also i915_ggtt_offset().
 		 */
-		if (upper_32_bits(end - 1) &&
-		    vma->page_sizes.sg > I915_GTT_PAGE_SIZE) {
+		if (upper_32_bits(end - 1) && vma->size > I915_GTT_PAGE_SIZE) {
 			u64 page_alignment;
 
 			/*
@@ -921,12 +920,10 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 			 * GTT pages.
 			 */
 			if (HAS_64K_PAGES(vma->vm->i915) &&
-			    vma->page_sizes.sg < I915_GTT_PAGE_SIZE_2M)
+			    vma->size < I915_GTT_PAGE_SIZE_2M)
 				page_alignment = I915_GTT_PAGE_SIZE_64K;
 			else
-				page_alignment = rounddown_pow_of_two(
-						vma->page_sizes.sg |
-						I915_GTT_PAGE_SIZE_2M);
+				page_alignment = rounddown_pow_of_two(vma->size);
 
 			/*
 			 * Check we don't expand for the limited Global GTT
@@ -949,8 +946,7 @@ i915_vma_insert(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
 			 * system memory, the whole idea of adding 2M padding
 			 * is completely irrelevant.
 			 */
-			if (!HAS_64K_PAGES(vma->vm->i915) &&
-			    vma->page_sizes.sg & I915_GTT_PAGE_SIZE_64K)
+			if (!HAS_64K_PAGES(vma->vm->i915))
 				size = round_up(size, I915_GTT_PAGE_SIZE_2M);
 		}
 

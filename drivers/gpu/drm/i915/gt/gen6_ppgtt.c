@@ -145,7 +145,7 @@ static void gen6_ppgtt_insert_entries(struct i915_address_space *vm,
 		}
 	} while (1);
 
-	vma->page_sizes.gtt = I915_GTT_PAGE_SIZE;
+	vma->page_sizes = I915_GTT_PAGE_SIZE;
 }
 
 static void gen6_flush_pd(struct gen6_ppgtt *ppgtt, u64 start, u64 end)

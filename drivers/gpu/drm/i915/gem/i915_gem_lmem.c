@@ -318,11 +318,14 @@ i915_gem_object_lmem_io_map(struct drm_i915_gem_object *obj,
 			    unsigned long size)
 {
 	struct intel_memory_region *mem = obj->mm.region.mem;
+	struct scatterlist *sg;
 	resource_size_t offset;
+	unsigned int pfn;
 
-	GEM_BUG_ON(!i915_gem_object_is_contiguous(obj));
+	sg = i915_gem_object_get_sg_dma(obj, n, &pfn);
+	GEM_BUG_ON(size > sg_dma_len(sg) - (pfn << PAGE_SHIFT));
 
-	offset = i915_gem_object_get_dma_address(obj, n);
+	offset = sg_dma_address(sg) + (pfn << PAGE_SHIFT);
 	offset -= mem->region.start;
 
 	return io_mapping_map_wc(&mem->iomap, offset, size);
@@ -1225,7 +1228,7 @@ lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 	bool dirty;
 
 	if (need_swap(obj)) {
-		unsigned int sizes = obj->mm.page_sizes.phys;
+		unsigned int sizes = obj->mm.page_sizes;
 		int err;
 
 		err = lmem_swapout(obj, pages, sizes);
@@ -1276,7 +1279,7 @@ lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 	dirty = true;
 	if (IS_ENABLED(CONFIG_DRM_I915_CHICKEN_CLEAR_ON_FREE) &&
 	    mem->flags & clear &&
-	    !(obj->mm.page_sizes.phys & (mem->min_page_size - 1)) &&
+	    !(obj->mm.page_sizes & (mem->min_page_size - 1)) &&
 	    freed(obj)) {
 		struct intel_gt *gt = mem->gt;
 		intel_wakeref_t wf;

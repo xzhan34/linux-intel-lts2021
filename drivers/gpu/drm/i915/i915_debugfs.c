@@ -234,7 +234,7 @@ i915_debugfs_describe_obj(struct seq_file *m, struct drm_i915_gem_object *obj)
 			   vma->vm->gt->info.id,
 			   i915_vma_offset(vma),
 			   i915_vma_size(vma),
-			   stringify_page_sizes(vma->page_sizes.gtt, NULL, 0));
+			   stringify_page_sizes(vma->page_sizes, NULL, 0));
 		if (i915_vma_is_ggtt(vma) || i915_vma_is_dpt(vma)) {
 			switch (vma->ggtt_view.type) {
 			case I915_GGTT_VIEW_NORMAL:

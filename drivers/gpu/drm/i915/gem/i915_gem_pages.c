@@ -55,9 +55,6 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 	obj->mm.get_page.sg_pos = pages->sgl;
 	obj->mm.get_dma_page.sg_pos = pages->sgl;
 
-	GEM_BUG_ON(!sg_page_sizes);
-	obj->mm.page_sizes.phys = sg_page_sizes;
-
 	/*
 	 * Calculate the supported page-sizes which fit into the given
 	 * sg_page_sizes. This will give us the page-sizes which we may be able
@@ -66,12 +63,13 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 	 * 64K or 4K pages, although in practice this will depend on a number of
 	 * other factors.
 	 */
-	obj->mm.page_sizes.sg = 0;
+	GEM_BUG_ON(!sg_page_sizes);
+	obj->mm.page_sizes = 0;
 	for_each_set_bit(i, &supported, ilog2(I915_GTT_MAX_PAGE_SIZE) + 1) {
-		if (obj->mm.page_sizes.phys & ~0u << i)
-			obj->mm.page_sizes.sg |= BIT(i);
+		if (sg_page_sizes & ~0u << i)
+			obj->mm.page_sizes |= BIT(i);
 	}
-	GEM_BUG_ON(!HAS_PAGE_SIZES(i915, obj->mm.page_sizes.sg));
+	GEM_BUG_ON(!HAS_PAGE_SIZES(i915, obj->mm.page_sizes));
 
 	shrinkable = i915_gem_object_is_shrinkable(obj);
 
@@ -375,8 +373,7 @@ int __i915_gem_object_put_pages(struct drm_i915_gem_object *obj)
 	if (!IS_ERR_OR_NULL(pages))
 		err = obj->ops->put_pages(obj, pages);
 	if (err) {
-		__i915_gem_object_set_pages(obj, pages,
-			obj->mm.page_sizes.phys);
+		__i915_gem_object_set_pages(obj, pages, obj->mm.page_sizes);
 		return err;
 	}
 
@@ -461,7 +458,7 @@ static void *i915_gem_object_map_pfn(struct drm_i915_gem_object *obj,
 		return ERR_PTR(-ENODEV);
 
 	/* A single contiguous block of lmem? Reuse the io_mapping */
-	if (obj->flags & I915_BO_ALLOC_CONTIGUOUS)
+	if (sg_is_last(obj->mm.pages->sgl))
 		return (void __force *)i915_gem_object_lmem_io_map(obj, 0, obj->base.size);
 
 	if (n_pfn > ARRAY_SIZE(stack)) {

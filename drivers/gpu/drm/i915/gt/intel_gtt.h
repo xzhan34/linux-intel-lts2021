@@ -363,6 +363,8 @@ struct i915_address_space {
 	struct rb_root_cached va;
 	struct list_head non_priv_vm_bind_list;
 	struct drm_i915_gem_object *root_obj;
+
+	spinlock_t priv_obj_lock;
 	struct list_head priv_obj_list;
 	struct i915_active_fence user_fence;
 	atomic_t invalidations;

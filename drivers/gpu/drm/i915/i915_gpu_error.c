@@ -107,7 +107,7 @@ static bool __i915_error_grow(struct drm_i915_error_state_buf *e, size_t len)
 		}
 
 		e->cur = sgl;
-		e->end = sgl + SG_MAX_SINGLE_ALLOC - 1;
+		e->end = sgl + I915_MAX_CHAIN_ALLOC;
 	}
 
 	e->size = ALIGN(len + 1, SZ_64K);
@@ -1293,7 +1293,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	dst->next = NULL;
 	dst->gtt_offset = vma->node.start;
 	dst->gtt_size = vma->node.size;
-	dst->gtt_page_sizes = vma->page_sizes.gtt;
+	dst->gtt_page_sizes = vma->page_sizes;
 	dst->metadata = i915_vma_metadata_coredump_create(vma);
 
 	if (!pages || !compress)

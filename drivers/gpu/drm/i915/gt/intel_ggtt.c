@@ -851,7 +851,7 @@ void intel_ggtt_bind_vma(struct i915_address_space *vm,
 		pte_flags |= PTE_LM;
 
 	vm->insert_entries(vm, stash, vma, pat_index, pte_flags);
-	vma->page_sizes.gtt = I915_GTT_PAGE_SIZE;
+	vma->page_sizes = I915_GTT_PAGE_SIZE;
 }
 
 static void ggtt_bind_vma_wa(struct i915_address_space *vm,

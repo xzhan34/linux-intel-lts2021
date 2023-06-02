@@ -68,6 +68,7 @@ struct drm_i915_gem_object *alloc_pt_dma(struct i915_address_space *vm, int sz)
 	 * them all at once.
 	 */
 	if (!IS_ERR(obj)) {
+		obj->flags |= I915_BO_ALLOC_CONTIGUOUS;
 		obj->base.resv = i915_vm_resv_get(vm);
 		obj->shares_resv_from = vm;
 	}
@@ -105,15 +106,13 @@ int map_pt_dma_locked(struct i915_address_space *vm, struct drm_i915_gem_object 
 
 static void __i915_vm_close(struct i915_address_space *vm)
 {
-	struct drm_i915_gem_object *obj, *on;
+	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma, *vn;
 
-	spin_lock(&vm->i915->vm_priv_obj_lock);
-	list_for_each_entry_safe(obj, on, &vm->priv_obj_list, priv_obj_link) {
-		list_del_init(&obj->priv_obj_link);
-		obj->vm = I915_BO_INVALID_PRIV_VM;
-	}
-	spin_unlock(&vm->i915->vm_priv_obj_lock);
+	spin_lock(&vm->priv_obj_lock);
+	list_for_each_entry(obj, &vm->priv_obj_list, priv_obj_link)
+		obj->vm = ERR_PTR(-EACCES);
+	spin_unlock(&vm->priv_obj_lock);
 
 	i915_gem_vm_unbind_all(vm);
 
@@ -319,6 +318,8 @@ int i915_address_space_init(struct i915_address_space *vm, int subclass)
 	INIT_LIST_HEAD(&vm->non_priv_vm_bind_list);
 	vm->root_obj = i915_gem_object_create_internal(vm->i915, PAGE_SIZE);
 	GEM_BUG_ON(IS_ERR(vm->root_obj));
+
+	spin_lock_init(&vm->priv_obj_lock);
 	INIT_LIST_HEAD(&vm->priv_obj_list);
 	INIT_LIST_HEAD(&vm->vm_capture_list);
 	spin_lock_init(&vm->vm_capture_lock);
@@ -360,8 +361,7 @@ void clear_pages(struct i915_vma *vma)
 		kfree(vma->pages);
 	}
 	vma->pages = NULL;
-
-	memset(&vma->page_sizes, 0, sizeof(vma->page_sizes));
+	vma->page_sizes = 0;
 }
 
 void *__px_vaddr(struct drm_i915_gem_object *p, bool *needs_flush)
@@ -489,7 +489,7 @@ int i915_vm_setup_scratch0(struct i915_address_space *vm, bool read_only)
 			goto skip_obj;
 
 		/* We need a single contiguous page for our scratch */
-		if (obj->mm.page_sizes.sg < size)
+		if (!sg_is_last(obj->mm.pages->sgl))
 			goto skip_obj;
 
 		/* And it needs to be correspondingly aligned */
@@ -901,7 +901,7 @@ int svm_bind_addr_commit(struct i915_address_space *vm,
 	if (!vma)
 		return -ENOMEM;
 
-	vma->page_sizes.sg = sg_page_sizes;
+	vma->page_sizes = sg_page_sizes;
 	vma->node.start = start;
 	vma->node.size = size;
 	__set_bit(DRM_MM_NODE_ALLOCATED_BIT, &vma->node.flags);
