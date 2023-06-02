@@ -418,7 +418,7 @@ handle_i915_mm_fault(struct intel_guc *guc,
 			return NULL;
 		}
 
-		return ERR_PTR(-ENOENT);
+		return ERR_PTR(-EFAULT);
 	}
 
 	mark_engine_as_active(gt, info->engine_class, info->engine_instance);
