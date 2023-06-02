@@ -331,3 +331,9 @@ config ENERGY_MODEL
 	  The exact usage of the energy model is subsystem-dependent.
 
 	  If in doubt, say N.
+
+config PM_SILENTMODE
+	def_bool y
+	help
+	  This config is enabled when android silent mode is needed in
+	  Android Automotive system.

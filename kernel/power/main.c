@@ -886,6 +886,46 @@ power_attr(pm_freeze_timeout);
 
 #endif	/* CONFIG_FREEZER*/
 
+#ifdef CONFIG_PM_SILENTMODE
+
+static ssize_t pm_silentmode_kernel_state_show(struct kobject *kobj,
+					       struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", pm_silentmode_kernel_state_get());
+}
+
+static ssize_t pm_silentmode_kernel_state_store(struct kobject *kobj,
+						struct kobj_attribute *attr,
+						const char *buf, size_t n)
+{
+	unsigned long val;
+
+	if (kstrtoul(buf, 10, &val))
+		return -EINVAL;
+
+	pm_silentmode_kernel_state_set(val);
+	return n;
+}
+
+power_attr(pm_silentmode_kernel_state);
+
+static ssize_t pm_silentmode_hw_state_show(struct kobject *kobj,
+					   struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", pm_silentmode_hw_state_get());
+}
+
+static ssize_t pm_silentmode_hw_state_store(struct kobject *kobj,
+					   struct kobj_attribute *attr,
+					   const char *buf, size_t n)
+{
+	// Write not supported from userspace
+	return -EINVAL;
+}
+
+power_attr(pm_silentmode_hw_state);
+
+#endif /* CONFIG_PM_SILENTMODE*/
 static struct attribute * g[] = {
 	&state_attr.attr,
 #ifdef CONFIG_PM_TRACE
@@ -915,6 +955,10 @@ static struct attribute * g[] = {
 #endif
 #ifdef CONFIG_FREEZER
 	&pm_freeze_timeout_attr.attr,
+#endif
+#ifdef CONFIG_PM_SILENTMODE
+	&pm_silentmode_kernel_state_attr.attr,
+	&pm_silentmode_hw_state_attr.attr,
 #endif
 	NULL,
 };
@@ -949,6 +993,9 @@ static int __init pm_init(void)
 	hibernate_image_size_init();
 	hibernate_reserved_size_init();
 	pm_states_init();
+#ifdef CONFIG_PM_SILENTMODE
+	pm_silentmode_init();
+#endif
 	power_kobj = kobject_create_and_add("power", NULL);
 	if (!power_kobj)
 		return -ENOMEM;

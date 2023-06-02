@@ -310,3 +310,17 @@ extern int pm_wake_lock(const char *buf);
 extern int pm_wake_unlock(const char *buf);
 
 #endif /* !CONFIG_PM_WAKELOCKS */
+
+#ifdef CONFIG_PM_SILENTMODE
+enum pm_silentmode {
+	PM_SILENTMODE_NORMAL = 0, // Normal Mode
+	PM_SILENTMODE_SILENT,	   // Silent Mode
+};
+
+extern void __init pm_silentmode_init(void);
+
+extern int pm_silentmode_hw_state_get(void);
+extern void pm_silentmode_hw_state_set(int mode);
+extern void pm_silentmode_kernel_state_set(int mode);
+extern int pm_silentmode_kernel_state_get(void);
+#endif /* !CONFIG_PM_SILENTMODE */
