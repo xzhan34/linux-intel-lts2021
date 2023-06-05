@@ -1125,18 +1125,26 @@ i915_gem_madvise_ioctl(struct drm_device *dev, void *data,
 			args->retained = i915_gem_object_madvise(obj, args);
 		} else {
 			struct drm_i915_gem_object *sobj;
-			int retained = 0;
+			int retained = 1;
 
+			/*
+			 * The backing store of the user object (the parent)
+			 * is comprised of the backing store of all segments.
+			 * Apply madvise to every segment. If any segment is
+			 * not retained, then the user object (in its entirety)
+			 * is not retained and so we must inform the user if
+			 * even a single chunk of their data was discarded.
+			 */
 			for_each_object_segment(sobj, obj) {
 				err = i915_gem_object_lock(sobj, &ww);
 				if (err)
 					break;
-				retained += i915_gem_object_madvise(sobj, args);
+				retained &= i915_gem_object_madvise(sobj, args);
 			}
 			if (err)
 				continue;
 
-			args->retained = retained > 0;
+			args->retained = retained;
 		}
 	}
 
