@@ -527,10 +527,12 @@ static int prelim_set_chunk_size(struct prelim_drm_i915_gem_object_param *args,
 	if (!(IS_DGFX(i915) || GRAPHICS_VER_FULL(i915) > IP_VER(12, 0)))
 		return -EOPNOTSUPP;
 
-	if (!segment_size || !is_power_of_2(segment_size))
+	if (!segment_size)
 		return -EINVAL;
 	if (segment_size < I915_BO_MIN_CHUNK_SIZE)
 		return -ENOSPC;
+	if (!IS_ALIGNED(segment_size, I915_BO_MIN_CHUNK_SIZE))
+		return -EINVAL;
 
 	ext_data->segment_size = segment_size;
 	return 0;

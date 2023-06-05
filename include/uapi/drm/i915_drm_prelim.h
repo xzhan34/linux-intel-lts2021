@@ -337,10 +337,9 @@ struct prelim_drm_i915_gem_object_param {
  *
  * Specifies that this buffer object should support 'chunking' and chunk
  * granularity. Allows internal KMD paging/migration/eviction handling to
- * operate on a single chunk instead of the whole buffer object.
- * Size specified in bytes and must be non-zero and a power of 2.
- * KMD will return error (-ENOSPC) if CHUNK_SIZE is deemed to be too small
- * to be supported.
+ * operate on a single chunk instead of the whole buffer object. Size is
+ * specified in bytes. KMD will return error (-ENOSPC) if CHUNK_SIZE is
+ * smaller than 64 KiB or (-EINVAL) if not aligned to 64 KiB.
  */
 #define PRELIM_I915_PARAM_SET_CHUNK_SIZE ((1 << 18) | 1)
 	__u64 param;
