@@ -32,7 +32,8 @@ static int perma_pinned_swapout(struct drm_i915_gem_object *obj)
 	if (IS_ERR(dst))
 		return PTR_ERR(dst);
 
-	i915_gem_object_share_resv(obj, dst);
+	/* Temporarily borrow the lock */
+	dst->base.resv = obj->base.resv;
 
 	err = i915_gem_object_memcpy(dst, obj);
 	if (!err)
