@@ -1951,7 +1951,7 @@ set_engines__parallel_submit(struct i915_user_extension __user *base, void *data
 			n = i * num_siblings + j;
 			if (copy_from_user(&ci, &ext->engines[n], sizeof(ci))) {
 				err = -EFAULT;
-				goto out_err;
+				goto out;
 			}
 
 			siblings[n] =
@@ -1962,7 +1962,7 @@ set_engines__parallel_submit(struct i915_user_extension __user *base, void *data
 					"Invalid sibling[%d]: { class:%d, inst:%d }\n",
 					n, ci.engine_class, ci.engine_instance);
 				err = -EINVAL;
-				goto out_err;
+				goto out;
 			}
 
 			/*
@@ -1972,7 +1972,7 @@ set_engines__parallel_submit(struct i915_user_extension __user *base, void *data
 			if (siblings[n]->class == RENDER_CLASS ||
 			    siblings[n]->class == COMPUTE_CLASS) {
 				err = -EINVAL;
-				goto out_err;
+				goto out;
 			}
 
 			if (n) {
@@ -1983,7 +1983,7 @@ set_engines__parallel_submit(struct i915_user_extension __user *base, void *data
 						prev_engine.engine_class,
 						ci.engine_class);
 					err = -EINVAL;
-					goto out_err;
+					goto out;
 				}
 			}
 
@@ -1997,7 +1997,7 @@ set_engines__parallel_submit(struct i915_user_extension __user *base, void *data
 					"Non contiguous logical mask 0x%x, 0x%x\n",
 					prev_mask, current_mask);
 				err = -EINVAL;
-				goto out_err;
+				goto out;
 			}
 		}
 		prev_mask = current_mask;
@@ -2006,7 +2006,7 @@ set_engines__parallel_submit(struct i915_user_extension __user *base, void *data
 	ce = intel_engine_create_parallel(siblings, num_siblings, width);
 	if (IS_ERR(ce)) {
 		err = PTR_ERR(ce);
-		goto out_err;
+		goto out;
 	}
 
 	intel_context_set_gem(ce, set->ctx);
@@ -2016,20 +2016,17 @@ set_engines__parallel_submit(struct i915_user_extension __user *base, void *data
 	err = perma_pin_contexts(ce);
 	if (err) {
 		intel_context_put(ce);
-		goto out_err;
+		goto out;
 	}
 
 	if (cmpxchg(&set->engines->engines[slot], NULL, ce)) {
 		intel_context_put(ce);
 		err = -EEXIST;
-		goto out_err;
+		goto out;
 	}
 
-	return 0;
-
-out_err:
+out:
 	kfree(siblings);
-
 	return err;
 }
 
