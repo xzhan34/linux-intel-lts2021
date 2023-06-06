@@ -12,6 +12,13 @@
 #include "gt/intel_pagefault.h"
 
 #if defined(CONFIG_DRM_I915_SVM)
+struct i915_devmem {
+	struct intel_memory_region *mem;
+	struct dev_pagemap pagemap;
+	unsigned long pfn_first;
+	unsigned long pfn_last;
+};
+
 struct i915_svm {
 	/* i915 address space */
 	struct i915_address_space *vm;
@@ -50,7 +57,7 @@ int i915_devmem_migrate_vma(struct intel_memory_region *mem,
 				   unsigned long start,
 				   unsigned long end);
 #else
-
+struct i915_devmem { };
 struct i915_svm { };
 static inline void i915_svm_unbind_mm(struct i915_address_space *vm) { }
 static inline int i915_svm_bind_mm(struct i915_address_space *vm)

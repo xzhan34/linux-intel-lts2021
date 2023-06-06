@@ -232,8 +232,8 @@ static int i915_hmm_convert_pfn(struct drm_i915_private *dev_priv,
 			struct intel_memory_region *mem = block->private;
 
 			regions |= REGION_LMEM;
-			addr = mem->region.start + i915_buddy_block_offset(block);
-			addr += (page_to_pfn(page) - block->pfn_first) << PAGE_SHIFT;
+			addr = mem->region.start;
+			addr += PFN_PHYS(page_to_pfn(page) - mem->devmem->pfn_first);
 		} else {
 			regions |= REGION_SMEM;
 			addr = page_to_phys(page);
@@ -527,6 +527,7 @@ mmap_unlock:
 	if (!mmap_unlocked)
 		mmap_read_unlock(mm);
 	vm_put_svm(vm);
+	ppgtt_dump(vm, start, length);
 	return ret;
 }
 

@@ -27,13 +27,6 @@ struct i915_devmem_migrate {
 	struct dma_fence *fence;
 };
 
-struct i915_devmem {
-	struct intel_memory_region *mem;
-	struct dev_pagemap pagemap;
-	unsigned long pfn_first;
-	unsigned long pfn_last;
-};
-
 static int
 i915_devmem_page_alloc_locked(struct intel_memory_region *mem,
 			      unsigned long npages,
@@ -728,6 +721,8 @@ int i915_svm_devmem_add(struct intel_memory_region *mem)
 	devmem->pfn_first = res->start >> PAGE_SHIFT;
 	devmem->pfn_last = res->end >> PAGE_SHIFT;
 	mem->devmem = devmem;
+	DRM_DEBUG_DRIVER("Added memory of gt %s start %llx to devmem. Remapped start %llx, pfn_first %lx\n",
+			mem->gt->name, mem->region.start, res->start, devmem->pfn_first);
 	return 0;
 devm_err:
 	kfree(devmem);
