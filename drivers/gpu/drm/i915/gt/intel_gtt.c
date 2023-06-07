@@ -445,13 +445,7 @@ int i915_vm_setup_scratch0(struct i915_address_space *vm, bool read_only)
 	u32 pte_flags;
 
 	/*
-	 * FIXME: the null page support started from pre-gen12, but
-	 * only enabled here for PVC since it is the only one which
-	 * has atomic support. For any atomic invalid access, the
-	 * existing scratch page cannot handle it since it is in
-	 * system memory.
-	 *
-	 * Null page is only for leaf page table, non-leaf scratch
+	 * NULL PTE is only for leaf page table, non-leaf scratch
 	 * page tables are still required.
 	 *
 	 * The write to NULL pte will be dropped by HW, and read
