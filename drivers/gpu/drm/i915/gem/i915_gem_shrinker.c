@@ -191,12 +191,13 @@ i915_gem_shrink(struct i915_gem_ww_ctx *ww,
 			    !is_vmalloc_addr(obj->mm.mapping))
 				continue;
 
-			if (!(shrink & I915_SHRINK_ACTIVE) &&
-			    i915_gem_object_is_framebuffer(obj))
-				continue;
+			if (!(shrink & I915_SHRINK_ACTIVE)) {
+				if (i915_gem_object_is_framebuffer(obj))
+					continue;
 
-			if (!can_release_pages(obj))
-				continue;
+				if (!can_release_pages(obj))
+					continue;
+			}
 
 			/* Already locked this object? */
 			if (ww && ww == i915_gem_get_locking_ctx(obj))
@@ -281,7 +282,8 @@ unsigned long i915_gem_shrink_all(struct drm_i915_private *i915)
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref) {
 		freed = i915_gem_shrink(NULL, i915, -1UL, NULL,
 					I915_SHRINK_BOUND |
-					I915_SHRINK_UNBOUND);
+					I915_SHRINK_UNBOUND |
+					I915_SHRINK_ACTIVE);
 	}
 
 	return freed;

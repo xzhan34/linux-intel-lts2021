@@ -831,23 +831,15 @@ i915_gem_object_is_userptr(struct drm_i915_gem_object *obj)
 {
 	return obj->userptr.notifier.mm;
 }
-
-int i915_gem_object_userptr_submit_init(struct drm_i915_gem_object *obj);
-int i915_gem_object_userptr_submit_done(struct drm_i915_gem_object *obj);
-int i915_gem_object_userptr_validate(struct drm_i915_gem_object *obj);
 #else
 static inline bool i915_gem_object_is_userptr(struct drm_i915_gem_object *obj) { return false; }
-
-static inline int i915_gem_object_userptr_submit_init(struct drm_i915_gem_object *obj) { GEM_BUG_ON(1); return -ENODEV; }
-static inline int i915_gem_object_userptr_submit_done(struct drm_i915_gem_object *obj) { GEM_BUG_ON(1); return -ENODEV; }
-static inline int i915_gem_object_userptr_validate(struct drm_i915_gem_object *obj) { GEM_BUG_ON(1); return -ENODEV; }
-
 #endif
 
 int i915_window_blt_copy(struct drm_i915_gem_object *dst,
 			 struct drm_i915_gem_object *src, bool compressed);
 int i915_setup_blt_windows(struct drm_i915_private *i915);
 void i915_teardown_blt_windows(struct drm_i915_private *i915);
+
 bool i915_gem_object_should_migrate_smem(struct drm_i915_gem_object *obj);
 bool i915_gem_object_should_migrate_lmem(struct drm_i915_gem_object *obj,
 					 enum intel_region_id dst_region_id,
@@ -863,7 +855,7 @@ long i915_gem_object_migrate_wait(struct drm_i915_gem_object *obj,
 				  long timeout);
 int i915_gem_object_migrate_sync(struct drm_i915_gem_object *obj);
 void i915_gem_object_migrate_decouple(struct drm_i915_gem_object *obj);
-void i915_gem_object_migrate_finish(struct drm_i915_gem_object *obj);
+int i915_gem_object_migrate_finish(struct drm_i915_gem_object *obj);
 
 static inline bool
 i915_gem_object_has_migrate(const struct drm_i915_gem_object *obj)

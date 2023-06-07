@@ -367,7 +367,6 @@ struct i915_address_space {
 	spinlock_t priv_obj_lock;
 	struct list_head priv_obj_list;
 	struct i915_active_fence user_fence;
-	atomic_t invalidations;
 
 	struct {
 		struct i915_vma *vma;

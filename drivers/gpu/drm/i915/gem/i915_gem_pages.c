@@ -352,17 +352,16 @@ int __i915_gem_object_put_pages(struct drm_i915_gem_object *obj)
 	if (i915_gem_object_has_pinned_pages(obj))
 		return -EBUSY;
 
-	/* May be called by shrinker from within get_pages() (on another bo) */
-	assert_object_held_shared(obj);
-
-	i915_gem_object_release_mmap_offset(obj);
-
 	/*
 	 * ->put_pages might need to allocate memory for the bit17 swizzle
 	 * array, hence protect them from being reaped by removing them from gtt
 	 * lists early.
 	 */
 	pages = __i915_gem_object_unset_pages(obj);
+	if (IS_ERR_OR_NULL(pages))
+		return 0;
+
+	i915_gem_object_release_mmap_offset(obj);
 
 	/*
 	 * XXX Temporary hijinx to avoid updating all backends to handle

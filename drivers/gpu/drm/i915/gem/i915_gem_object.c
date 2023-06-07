@@ -166,10 +166,14 @@ void i915_gem_object_migrate_decouple(struct drm_i915_gem_object *obj)
 	rcu_read_unlock();
 }
 
-void i915_gem_object_migrate_finish(struct drm_i915_gem_object *obj)
+int i915_gem_object_migrate_finish(struct drm_i915_gem_object *obj)
 {
-	i915_gem_object_migrate_wait(obj, 0, MAX_SCHEDULE_TIMEOUT);
+	int ret;
+
+	ret = i915_gem_object_migrate_wait(obj, 0, MAX_SCHEDULE_TIMEOUT);
 	obj->mm.migrate.fence = NULL;
+
+	return ret;
 }
 
 unsigned int i915_gem_get_pat_index(struct drm_i915_private *i915,

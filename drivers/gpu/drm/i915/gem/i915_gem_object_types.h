@@ -625,26 +625,10 @@ struct drm_i915_gem_object {
 	unsigned long *bit_17;
 
 	union {
-#ifdef CONFIG_MMU_NOTIFIER
 		struct i915_gem_userptr {
 			uintptr_t ptr;
-			unsigned long notifier_seq;
-
 			struct mmu_interval_notifier notifier;
-			struct page **pvec;
-			int page_ref;
-			/**
-			 * Worker used to unbind object from faultable VM,
-			 * triggered by mmu notifier callback. We can't
-			 * unbind in the mmu notifier callback directly because
-			 * unbind takes object resv lock, and the mmu notifier
-			 * callback can be triggered by memory allocation,
-			 * direct_reclaim holding the same object resv lock, thus
-			 * it is a deadlock. Thus use a worker to unbind object.
-			 */
-			struct work_struct invalidate_work;
 		} userptr;
-#endif
 
 		struct drm_mm_node *stolen;
 

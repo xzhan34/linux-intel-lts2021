@@ -49,7 +49,6 @@
 #include "gem/i915_gem_mman.h"
 #include "gem/i915_gem_pm.h"
 #include "gem/i915_gem_region.h"
-#include "gem/i915_gem_userptr.h"
 #include "gem/i915_gem_vm_bind.h"
 #include "gt/intel_engine_user.h"
 #include "gt/intel_gt.h"
@@ -177,12 +176,8 @@ int i915_gem_object_unbind(struct drm_i915_gem_object *obj,
 	struct i915_vma *vma;
 	int ret;
 
-	spin_lock(&obj->vma.lock);
-	if (list_empty(&obj->vma.list)) {
-		spin_unlock(&obj->vma.lock);
+	if (list_empty(&obj->vma.list))
 		return 0;
-	}
-	spin_unlock(&obj->vma.lock);
 
 	/*
 	 * As some machines use ACPI to handle runtime-resume callbacks, and
@@ -1162,10 +1157,6 @@ int i915_gem_init(struct drm_i915_private *dev_priv)
 	if (intel_vgpu_active(dev_priv) && !intel_vgpu_has_huge_gtt(dev_priv))
 		mkwrite_device_info(dev_priv)->page_sizes =
 			I915_GTT_PAGE_SIZE_4K;
-
-	ret = i915_gem_init_userptr(dev_priv);
-	if (ret)
-		return ret;
 
 	for_each_gt(gt, dev_priv, i) {
 		intel_uc_fetch_firmwares(&gt->uc);

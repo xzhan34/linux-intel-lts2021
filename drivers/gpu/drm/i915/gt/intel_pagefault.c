@@ -2,9 +2,9 @@
 /*
  * Copyright © 2022 Intel Corporation
  */
+
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_mman.h"
-#include "gem/i915_gem_userptr.h"
 #include "gem/i915_gem_vm_bind.h"
 
 #include "i915_drv.h"
@@ -149,20 +149,6 @@ static void print_recoverable_fault(struct recoverable_page_fault_info *info,
 			 info->fault_level,
 			 info->engine_class,
 			 info->engine_instance);
-}
-
-static bool userptr_needs_rebind(struct drm_i915_gem_object *obj)
-{
-	struct drm_i915_private *i915 = to_i915(obj->base.dev);
-	bool ret = false;
-
-	if (!i915_gem_object_is_userptr(obj))
-		return ret;
-	i915_gem_userptr_lock_mmu_notifier(i915);
-	if (i915_gem_object_userptr_submit_done(obj))
-		ret = true;
-	i915_gem_userptr_unlock_mmu_notifier(i915);
-	return ret;
 }
 
 static int migrate_to_lmem(struct drm_i915_gem_object *obj,
@@ -435,13 +421,6 @@ handle_i915_mm_fault(struct intel_guc *guc,
 	if (i915_vma_is_bound(vma, PIN_RESIDENT))
 		goto put_vma;
 
- retry_userptr:
-	if (i915_gem_object_is_userptr(vma->obj)) {
-		err = i915_gem_object_userptr_submit_init(vma->obj);
-		if (err)
-			goto put_vma;
-	}
-
 	i915_gem_ww_ctx_init(&ww, false);
 
  retry:
@@ -467,10 +446,6 @@ handle_i915_mm_fault(struct intel_guc *guc,
 	}
 
 	err = i915_vma_bind(vma, &ww);
-	if (!err && userptr_needs_rebind(vma->obj)) {
-		i915_gem_ww_ctx_fini(&ww);
-		goto retry_userptr;
-	}
  err_ww:
 	if (err == -EDEADLK) {
 		err = i915_gem_ww_ctx_backoff(&ww);
@@ -480,12 +455,6 @@ handle_i915_mm_fault(struct intel_guc *guc,
 
 	i915_gem_ww_ctx_fini(&ww);
 put_vma:
-	if (i915_gem_object_is_userptr(vma->obj)) {
-		if (err == -EAGAIN)
-			/* Need to try again in the next page fault. */
-			err = 0;
-	}
-
 	i915_gem_object_migrate_boost(vma->obj, I915_PRIORITY_MAX);
 	fence = i915_active_fence_get_or_error(&vma->active.excl);
 

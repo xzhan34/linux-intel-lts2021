@@ -337,12 +337,8 @@ static int i915_workqueues_init(struct drm_i915_private *dev_priv)
 	 *
 	 * It is also used for periodic low-priority events, such as
 	 * idle-timers and recording error state.
-	 *
-	 * All tasks on the workqueue are expected to acquire the dev mutex
-	 * so there is no point in running more than one instance of the
-	 * workqueue at any time.  Use an ordered one.
 	 */
-	dev_priv->wq = alloc_ordered_workqueue("i915", 0);
+	dev_priv->wq = alloc_workqueue("%s", WQ_UNBOUND, 0, "i915");
 	if (dev_priv->wq == NULL)
 		goto out_err;
 
@@ -1358,6 +1354,7 @@ static void print_chickens(struct drm_i915_private *i915)
 		C(CLEAR_ON_CREATE),
 		C(CLEAR_ON_FREE),
 		C(CLEAR_ON_IDLE),
+		C(PARALLEL_USERPTR),
 #undef C
 		{},
 	};

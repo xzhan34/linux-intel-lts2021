@@ -335,14 +335,7 @@ int i915_gem_set_caching_ioctl(struct drm_device *dev, void *data,
 	 * not allowed to be changed by userspace.
 	 */
 	if (i915_gem_object_is_proxy(obj)) {
-		/*
-		 * Silently allow cached for userptr; the vulkan driver
-		 * sets all objects to cached
-		 */
-		if (!i915_gem_object_is_userptr(obj) ||
-		    args->caching != I915_CACHING_CACHED)
-			ret = -ENXIO;
-
+		ret = -ENXIO;
 		goto out;
 	}
 
@@ -541,21 +534,6 @@ i915_gem_set_domain_ioctl(struct drm_device *dev, void *data,
 				   MAX_SCHEDULE_TIMEOUT);
 	if (err)
 		goto out;
-
-	if (i915_gem_object_is_userptr(obj)) {
-		/*
-		 * Try to grab userptr pages, iris uses set_domain to check
-		 * userptr validity
-		 */
-		err = i915_gem_object_userptr_validate(obj);
-		if (!err)
-			err = i915_gem_object_wait(obj,
-						   I915_WAIT_INTERRUPTIBLE |
-						   I915_WAIT_PRIORITY |
-						   (write_domain ? I915_WAIT_ALL : 0),
-						   MAX_SCHEDULE_TIMEOUT);
-		goto out;
-	}
 
 	/*
 	 * Proxy objects do not control access to the backing storage, ergo

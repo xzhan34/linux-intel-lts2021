@@ -10,7 +10,6 @@
 
 #include "i915_drv.h"
 #include "i915_gem_gtt.h"
-#include "i915_gem_userptr.h"
 #include "i915_gem_vm_bind.h"
 #include "i915_sw_fence_work.h"
 #include "i915_user_extensions.h"
@@ -657,14 +656,6 @@ retry:
 		if (ret)
 			goto out_ww;
 
-		if (i915_gem_object_is_userptr(vma->obj)) {
-			i915_gem_userptr_lock_mmu_notifier(vm->i915);
-			ret = i915_gem_object_userptr_submit_done(vma->obj);
-			i915_gem_userptr_unlock_mmu_notifier(vm->i915);
-			if (ret)
-				goto out_ww;
-		}
-
 		ret = i915_vma_pin_ww(vma, ww, 0, 0, pin_flags);
 		if (ret)
 			goto out_ww;
@@ -719,12 +710,6 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	if (obj->vm && obj->vm != vm) {
 		ret = -EPERM;
 		goto put_obj;
-	}
-
-	if (i915_gem_object_is_userptr(obj)) {
-		ret = i915_gem_object_userptr_submit_init(obj);
-		if (ret)
-			goto put_obj;
 	}
 
 	ext.obj = obj;

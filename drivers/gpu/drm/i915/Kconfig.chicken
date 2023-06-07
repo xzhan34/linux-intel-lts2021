@@ -7,6 +7,13 @@ config DRM_I915_CHICKEN_ASYNC_GET_PAGES
 	  without blocking. Access or execution of the object is deferred
 	  instead.
 
+config DRM_I915_CHICKEN_PARALLEL_USERPTR
+       bool "Parallelised backing store fetch of get_user_pages"
+       default y
+       help
+         Allow the userptr backing store acquire to parallelise its work over
+	 multiple threads.
+
 config DRM_I915_CHICKEN_CLEAR_ON_CREATE
 	bool "Clear backing store immediately upon create"
 	default n
