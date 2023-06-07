@@ -476,14 +476,6 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 	 */
 	mmap_read_unlock(mm);
 	mmap_write_lock(mm);
-	sn = register_svm_notifier(vma, svm);
-	if (IS_ERR(sn)) {
-		mmap_write_downgrade(mm);
-		ret = PTR_ERR(sn);
-		goto mmap_unlock;
-	}
-	mmap_write_downgrade(mm);
-
 	/** Migrate only 1 page for now.
 	 *  If perform of this scheme is bad, we can introduce a
 	 *  migration granularity parameter for user to select.
@@ -494,6 +486,12 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 	DRM_DEBUG_DRIVER("%s fault address 0x%llx vma start 0x%lx migration start 0x%llx, \
 			vma end 0x%lx migration end 0x%llx\n",
 			__func__, info->page_addr, vma->vm_start, start, vma->vm_end, end);
+	sn = register_svm_notifier(vma, svm);
+	mmap_write_downgrade(mm);
+	if (IS_ERR(sn)) {
+		ret = PTR_ERR(sn);
+		goto mmap_unlock;
+	}
 
 	if (svm_should_migrate(start, gt->lmem->id, info->access_type == ACCESS_TYPE_ATOMIC))
 		/*
