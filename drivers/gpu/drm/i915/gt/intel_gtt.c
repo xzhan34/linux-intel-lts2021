@@ -439,10 +439,9 @@ static u32 poison_scratch_page(struct drm_i915_gem_object *scratch)
 	return val;
 }
 
-int i915_vm_setup_scratch0(struct i915_address_space *vm, bool read_only)
+int i915_vm_setup_scratch0(struct i915_address_space *vm)
 {
 	unsigned long size;
-	u32 pte_flags;
 
 	/*
 	 * NULL PTE is only for leaf page table, non-leaf scratch
@@ -451,10 +450,8 @@ int i915_vm_setup_scratch0(struct i915_address_space *vm, bool read_only)
 	 * The write to NULL pte will be dropped by HW, and read
 	 * returns 0, no TLB impact.
 	 */
-	if (HAS_NULL_PAGE(vm->i915)) {
-		vm->scratch_encode[0] = PTE_NULL_PAGE | GEN8_PAGE_PRESENT;
+	if (HAS_NULL_PAGE(vm->i915))
 		return 0;
-	}
 
 	/*
 	 * In order to utilize 64K pages for an object with a size < 2M, we will
@@ -504,15 +501,6 @@ int i915_vm_setup_scratch0(struct i915_address_space *vm, bool read_only)
 		vm->scratch[0] = obj;
 		vm->scratch_order = get_order(size);
 
-		pte_flags = read_only ? PTE_READ_ONLY : 0;
-		if (i915_gem_object_is_lmem(vm->scratch[0]))
-			pte_flags |= PTE_LM;
-		vm->scratch_encode[0] =
-			vm->pte_encode(px_dma(vm->scratch[0]),
-				       i915_gem_get_pat_index(vm->i915,
-							     I915_CACHE_NONE),
-				       pte_flags);
-
 		return 0;
 
 skip_obj:
@@ -537,12 +525,38 @@ skip:
 	} while (1);
 }
 
+static u64 _vm_scratch0_encode(struct i915_address_space *vm)
+{
+	if (HAS_NULL_PAGE(vm->i915))
+		return (PTE_NULL_PAGE | GEN8_PAGE_PRESENT);
+	else {
+		u32 pte_flags = 0;
+
+		if (!i915_is_ggtt(vm) && vm->has_read_only)
+			pte_flags |= PTE_READ_ONLY;
+		if (i915_gem_object_is_lmem(vm->scratch[0]))
+			pte_flags |= PTE_LM;
+		return vm->pte_encode(px_dma(vm->scratch[0]),
+				      i915_gem_get_pat_index(vm->i915,
+							     I915_CACHE_NONE),
+				      pte_flags);
+	}
+}
+
+static u64 _vm_scratch_encode(struct i915_address_space *vm, int lvl)
+{
+	if (lvl)
+		return gen8_pde_encode(px_dma(vm->scratch[lvl]), I915_CACHE_NONE);
+
+	return _vm_scratch0_encode(vm);
+}
+
 u64 i915_vm_fault_encode(struct i915_address_space *vm, int lvl, bool valid)
 {
 	if (!valid)
 		return INVALID_PTE;
 	else
-		return vm->scratch_encode[lvl];
+		return _vm_scratch_encode(vm, lvl);
 }
 
 u64 i915_vm_scratch_encode(struct i915_address_space *vm, int lvl)

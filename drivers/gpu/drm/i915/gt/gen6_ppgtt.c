@@ -222,7 +222,7 @@ static int gen6_ppgtt_init_scratch(struct gen6_ppgtt *ppgtt)
 	struct i915_address_space * const vm = &ppgtt->base.vm;
 	int ret;
 
-	ret = i915_vm_setup_scratch0(vm, true);
+	ret = i915_vm_setup_scratch0(vm);
 	if (ret)
 		return ret;
 

@@ -250,8 +250,7 @@ release_pd_entry_wa_bcs(struct i915_page_directory * const pd,
 	return free;
 }
 
-static u64 gen8_pde_encode(const dma_addr_t addr,
-			   const enum i915_cache_level level)
+u64 gen8_pde_encode(const dma_addr_t addr, const enum i915_cache_level level)
 {
 	u64 pde = addr | GEN8_PAGE_PRESENT | GEN8_PAGE_RW;
 
@@ -1801,14 +1800,16 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 		GEM_BUG_ON(!clone->has_read_only);
 
 		vm->scratch_order = clone->scratch_order;
-		for (i = 0; i <= vm->top; i++)
-			vm->scratch[i] = i915_gem_object_get(clone->scratch[i]);
+		for (i = 0; i <= vm->top; i++) {
+			if (clone->scratch[i])
+				vm->scratch[i] = i915_gem_object_get(clone->scratch[i]);
+		}
 
 		vm->poison = clone->poison;
 		return 0;
 	}
 
-	ret = i915_vm_setup_scratch0(vm, vm->has_read_only);
+	ret = i915_vm_setup_scratch0(vm);
 	if (ret)
 		return ret;
 
@@ -1833,7 +1834,6 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 			goto free_scratch;
 		}
 
-		vm->scratch_encode[i] = gen8_pde_encode(px_dma(obj), I915_CACHE_NONE);
 		vm->scratch[i] = obj;
 	}
 	if (cmd)

@@ -1297,7 +1297,7 @@ static int ggtt_probe_common(struct i915_ggtt *ggtt, u64 size)
 	}
 
 	kref_init(&ggtt->vm.resv_ref);
-	ret = i915_vm_setup_scratch0(&ggtt->vm, false);
+	ret = i915_vm_setup_scratch0(&ggtt->vm);
 	if (ret) {
 		drm_err(&i915->drm, "Scratch setup failed\n");
 		/* iounmap will also get called at remove, but meh */

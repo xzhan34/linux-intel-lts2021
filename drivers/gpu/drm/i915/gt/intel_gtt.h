@@ -342,7 +342,6 @@ struct i915_address_space {
 
 #define I915_MAX_PD_LVL 5
 	struct drm_i915_gem_object *scratch[I915_MAX_PD_LVL];
-	u64 scratch_encode[I915_MAX_PD_LVL];
 
 	/**
 	 * List of vma currently bound.
@@ -780,12 +779,13 @@ fill_page_dma(struct drm_i915_gem_object *p, const u64 val, unsigned int count);
 
 #define INVALID_PTE	0xAAAAAAAAAAAAAAAA
 
-int i915_vm_setup_scratch0(struct i915_address_space *vm, bool read_only);
+u64 gen8_pde_encode(const dma_addr_t addr, const enum i915_cache_level level);
+int i915_vm_setup_scratch0(struct i915_address_space *vm);
 void i915_vm_free_scratch(struct i915_address_space *vm);
 u64 i915_vm_fault_encode(struct i915_address_space *vm, int lvl, bool valid);
 u64 i915_vm_scratch_encode(struct i915_address_space *vm, int lvl);
 #define i915_vm_scratch0_encode(vm) i915_vm_scratch_encode(vm, 0)
-#define i915_vm_ggtt_scratch0_encode(vm) vm->scratch_encode[0]
+#define i915_vm_ggtt_scratch0_encode(vm) i915_vm_scratch0_encode(vm)
 
 struct drm_i915_gem_object *alloc_pt_dma(struct i915_address_space *vm, int sz);
 struct drm_i915_gem_object *alloc_pt_lmem(struct i915_address_space *vm, int sz);

@@ -1770,7 +1770,7 @@ static int check_scratch_page(struct i915_gem_context *ctx,
 	if (!vm)
 		return -ENODEV;
 
-	if (vm->scratch_encode[0] & PTE_NULL_PAGE) {
+	if (i915_vm_scratch0_encode(vm) & PTE_NULL_PAGE) {
 		if (out)
 			*out = 0;
 		return 0;
