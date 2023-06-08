@@ -543,10 +543,14 @@ void *i915_gem_object_pin_map(struct drm_i915_gem_object *obj,
 		obj->mm.mapping = page_pack_bits(ptr, type);
 	}
 
+	GEM_BUG_ON(i915_gem_object_has_migrate(obj));
+	GEM_BUG_ON(!i915_gem_object_mem_idle(obj));
+
 	return ptr;
 
 err_unpin:
 	atomic_dec(&obj->mm.pages_pin_count);
+	GEM_BUG_ON(!IS_ERR(ptr));
 	return ptr;
 }
 

@@ -12,7 +12,7 @@
 #include <drm/drm_device.h>
 
 #include "display/intel_frontbuffer.h"
-#include "intel_memory_region.h"
+#include "i915_buddy.h"
 #include "i915_gem_object_types.h"
 #include "i915_gem_gtt.h"
 #include "i915_vma_types.h"
@@ -867,6 +867,31 @@ static inline int
 i915_gem_object_migrate_has_error(const struct drm_i915_gem_object *obj)
 {
 	return i915_active_fence_has_error(&obj->mm.migrate);
+}
+
+static inline bool
+i915_gem_object_mem_idle(const struct drm_i915_gem_object *obj)
+{
+	struct i915_buddy_block *block;
+
+	if (!obj->mm.region.mem)
+		return true;
+
+	list_for_each_entry(block, &obj->mm.blocks, link) {
+		struct dma_fence *f;
+		bool idle;
+
+		f = i915_active_fence_get(&block->active);
+		if (!f)
+			continue;
+
+		idle = dma_fence_is_signaled(f);
+		dma_fence_put(f);
+		if (!idle)
+			return false;
+	}
+
+	return true;
 }
 
 /**
