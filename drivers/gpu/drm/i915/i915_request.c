@@ -1817,6 +1817,7 @@ __i915_request_ensure_ordering(struct i915_request *rq,
 
 	GEM_BUG_ON(is_parallel_rq(rq));
 
+	rcu_read_lock();
 	prev = to_request(__i915_active_fence_set(&timeline->last_request,
 						  &rq->fence));
 
@@ -1850,6 +1851,7 @@ __i915_request_ensure_ordering(struct i915_request *rq,
 							 &rq->dep,
 							 0);
 	}
+	rcu_read_unlock();
 
 	return prev;
 }
