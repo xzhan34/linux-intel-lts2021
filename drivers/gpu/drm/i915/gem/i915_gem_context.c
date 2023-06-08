@@ -696,6 +696,7 @@ static void context_close(struct i915_gem_context *ctx)
 	 */
 	kill_context(ctx);
 
+	wake_up_all(&ctx->i915->user_fence_wq);
 	i915_gem_context_put(ctx);
 }
 

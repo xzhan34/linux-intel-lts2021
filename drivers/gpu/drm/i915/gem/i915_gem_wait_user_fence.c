@@ -387,6 +387,11 @@ int i915_gem_wait_user_fence_ioctl(struct drm_device *dev,
 			break;
 		}
 
+		if (ctx && i915_gem_context_is_closed(ctx)) {
+			err = -ENOENT;
+			break;
+		}
+
 		if (!timeout) {
 			err = -ETIME;
 			break;
