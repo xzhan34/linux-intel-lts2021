@@ -17,6 +17,8 @@ obj-$(CONFIG_VIDEO_VIU) += fsl-viu.o
 
 obj-y	+= ti-vpe/
 
+obj-y += virtio/
+
 obj-$(CONFIG_VIDEO_MX2_EMMAPRP)		+= mx2_emmaprp.o
 obj-$(CONFIG_VIDEO_CODA)		+= coda/
 
