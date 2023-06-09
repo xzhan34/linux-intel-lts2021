@@ -256,6 +256,8 @@ struct i915_gem_context {
 		struct list_head engines;
 	} stale;
 
+	struct wait_queue_head user_fence_wq;
+
 	/* WA for VLK-20104 */
 	bool  bcs0_pm_disabled;
 };

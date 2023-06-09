@@ -696,7 +696,7 @@ static void context_close(struct i915_gem_context *ctx)
 	 */
 	kill_context(ctx);
 
-	wake_up_all(&ctx->i915->user_fence_wq);
+	wake_up_all(&ctx->user_fence_wq);
 	i915_gem_context_put(ctx);
 }
 
@@ -846,6 +846,8 @@ static struct i915_gem_context *__create_context(struct intel_gt *gt)
 
 	spin_lock_init(&ctx->stale.lock);
 	INIT_LIST_HEAD(&ctx->stale.engines);
+
+	init_waitqueue_head(&ctx->user_fence_wq);
 
 	mutex_init(&ctx->engines_mutex);
 	e = default_engines(ctx);
