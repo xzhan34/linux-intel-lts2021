@@ -48,6 +48,7 @@ static int block_wait(struct i915_buddy_block *block)
 
 	f = i915_active_fence_get(&block->active);
 	if (f) {
+		i915_request_set_priority(to_request(f), I915_PRIORITY_MAX);
 		if (i915_request_wait(to_request(f),
 				      I915_WAIT_INTERRUPTIBLE,
 				      MAX_SCHEDULE_TIMEOUT) < 0)

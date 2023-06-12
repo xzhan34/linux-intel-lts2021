@@ -1133,7 +1133,8 @@ pvc_ppgtt_insert_huge(struct i915_vma *vma,
 
 		nent = 1;
 
-		if (IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_1G) &&
+		if (stash &&
+		    IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_1G) &&
 		    rem >= I915_GTT_PAGE_SIZE_1G &&
 		    !(__gen8_pte_index(start, 0) | __gen8_pte_index(start, 1))) {
 			leaf = 2;
@@ -1142,7 +1143,8 @@ pvc_ppgtt_insert_huge(struct i915_vma *vma,
 			page_size = I915_GTT_PAGE_SIZE_1G;
 			vaddr = px_vaddr(pdp, &needs_flush);
 			daddr = px_dma(pdp);
-		} else if (IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_2M) &&
+		} else if (stash &&
+			   IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_2M) &&
 			   rem >= I915_GTT_PAGE_SIZE_2M &&
 			   !__gen8_pte_index(start, 0)) {
 			leaf = 1;
@@ -1309,7 +1311,8 @@ xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
 		max = I915_PDES;
 		nent = 1;
 
-		if (IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_1G) &&
+		if (stash &&
+		    IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_1G) &&
 		    rem >= I915_GTT_PAGE_SIZE_1G &&
 		    !(__gen8_pte_index(start, 0) | __gen8_pte_index(start, 1))) {
 			index = __gen8_pte_index(start, 2);
@@ -1317,7 +1320,8 @@ xehpsdv_ppgtt_insert_huge(struct i915_vma *vma,
 			page_size = I915_GTT_PAGE_SIZE_1G;
 			vaddr = px_vaddr(pdp, &needs_flush);
 			daddr = px_dma(pdp);
-		} else if (IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_2M) &&
+		} else if (stash &&
+			   IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_2M) &&
 			   rem >= I915_GTT_PAGE_SIZE_2M &&
 			   !__gen8_pte_index(start, 0)) {
 			index = __gen8_pte_index(start, 1);
@@ -1467,7 +1471,8 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 		bool needs_flush;
 		u16 index;
 
-		if (IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_1G) &&
+		if (stash &&
+		    IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_1G) &&
 		    rem >= I915_GTT_PAGE_SIZE_1G &&
 		    !(__gen8_pte_index(start, 0) | __gen8_pte_index(start, 1))) {
 			index = __gen8_pte_index(start, 2);
@@ -1475,7 +1480,8 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 			page_size = I915_GTT_PAGE_SIZE_1G;
 			vaddr = px_vaddr(pdp, &needs_flush);
 
-		} else if (IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_2M) &&
+		} else if (stash &&
+			   IS_ALIGNED(iter->dma, I915_GTT_PAGE_SIZE_2M) &&
 			   rem >= I915_GTT_PAGE_SIZE_2M &&
 			   !__gen8_pte_index(start, 0)) {
 			index = __gen8_pte_index(start, 1);

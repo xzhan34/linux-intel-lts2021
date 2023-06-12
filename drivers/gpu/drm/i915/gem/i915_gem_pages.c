@@ -32,10 +32,8 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 				 unsigned int sg_page_sizes)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
-	unsigned long supported = INTEL_INFO(i915)->page_sizes;
 	struct intel_memory_region *mem;
 	bool shrinkable;
-	int i;
 
 	assert_object_held_shared(obj);
 
@@ -55,21 +53,8 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 	obj->mm.get_page.sg_pos = pages->sgl;
 	obj->mm.get_dma_page.sg_pos = pages->sgl;
 
-	/*
-	 * Calculate the supported page-sizes which fit into the given
-	 * sg_page_sizes. This will give us the page-sizes which we may be able
-	 * to use opportunistically when later inserting into the GTT. For
-	 * example if phys=2G, then in theory we should be able to use 1G, 2M,
-	 * 64K or 4K pages, although in practice this will depend on a number of
-	 * other factors.
-	 */
 	GEM_BUG_ON(!sg_page_sizes);
-	obj->mm.page_sizes = 0;
-	for_each_set_bit(i, &supported, ilog2(I915_GTT_MAX_PAGE_SIZE) + 1) {
-		if (sg_page_sizes & ~0u << i)
-			obj->mm.page_sizes |= BIT(i);
-	}
-	GEM_BUG_ON(!HAS_PAGE_SIZES(i915, obj->mm.page_sizes));
+	obj->mm.page_sizes = sg_page_sizes;
 
 	shrinkable = i915_gem_object_is_shrinkable(obj);
 

@@ -141,6 +141,9 @@ i915_active_fence_get_or_error(struct i915_active_fence *active)
 {
 	struct dma_fence *fence;
 
+	if (!rcu_access_pointer(active->fence))
+		return NULL;
+
 	rcu_read_lock();
 	fence = __i915_active_fence_get(&active->fence);
 	rcu_read_unlock();
@@ -226,9 +229,7 @@ int i915_active_ref(struct i915_active *ref, u64 idx, struct dma_fence *fence);
 static inline int
 i915_active_add_request(struct i915_active *ref, struct i915_request *rq)
 {
-	return i915_active_ref(ref,
-			       i915_request_timeline(rq)->fence_context,
-			       &rq->fence);
+	return i915_active_ref(ref, rq->fence.context, &rq->fence);
 }
 
 int i915_active_add_suspend_fence(struct i915_active *ref,
