@@ -365,7 +365,7 @@ static const struct invalid_device_desc_test invalid_device_desc_tests[] = {
 static void invalid_device_desc_test_name(const struct invalid_device_desc_test *t,
 					  char *name)
 {
-	sprintf(name, "%s", t->name);
+	snprintf(name, KUNIT_PARAM_DESC_SIZE, "%s", t->name);
 }
 
 KUNIT_ARRAY_PARAM(invalid_device_desc, invalid_device_desc_tests, invalid_device_desc_test_name);
@@ -388,6 +388,3 @@ static struct kunit_suite i915_vfio_pci_data_test_suite = {
 };
 
 kunit_test_suite(i915_vfio_pci_data_test_suite);
-
-MODULE_AUTHOR("Michał Winiarski <michal.winiarski@intel.com>");
-MODULE_LICENSE("GPL");

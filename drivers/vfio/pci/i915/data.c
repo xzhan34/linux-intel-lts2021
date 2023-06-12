@@ -3,7 +3,7 @@
  * Copyright © 2023 Intel Corporation
  */
 
-#include "linux/list.h"
+#include <linux/list.h>
 
 #include "i915_vfio_pci.h"
 
@@ -17,6 +17,7 @@ struct i915_vfio_data_device_desc {
 	u64 version;
 	u16 vendor;
 	u16 device;
+	u32 rsvd;
 	/** @flags: optional flags */
 	u64 flags;
 } __packed;
@@ -29,14 +30,14 @@ enum i915_vfio_pci_migration_data_type {
 	I915_VFIO_DATA_DONE,
 };
 
-static const char *i915_vfio_data_type_str(u32 type)
+static const char *i915_vfio_data_type_str(enum i915_vfio_pci_migration_data_type type)
 {
 	switch (type) {
-	case I915_VFIO_DATA_DESC: return "desc";
-	case I915_VFIO_DATA_GGTT: return "ggtt";
-	case I915_VFIO_DATA_LMEM: return "lmem";
-	case I915_VFIO_DATA_GUC: return "guc";
-	case I915_VFIO_DATA_DONE: return "done";
+	case I915_VFIO_DATA_DESC: return "DESC";
+	case I915_VFIO_DATA_GGTT: return "GGTT";
+	case I915_VFIO_DATA_LMEM: return "LMEM";
+	case I915_VFIO_DATA_GUC: return "GUC";
+	case I915_VFIO_DATA_DONE: return "DONE";
 	default: return "";
 	}
 }
@@ -45,6 +46,7 @@ static int
 __i915_vfio_produce(struct i915_vfio_pci_migration_file *migf, unsigned int tile, u32 type)
 {
 	struct i915_vfio_pci_core_device *i915_vdev = migf->i915_vdev;
+	struct device *dev = i915_vdev_to_dev(i915_vdev);
 	const struct i915_vfio_pci_resource_ops *ops;
 	struct i915_vfio_pci_migration_data *data;
 	size_t size;
@@ -64,8 +66,7 @@ __i915_vfio_produce(struct i915_vfio_pci_migration_file *migf, unsigned int tile
 
 	size = ops->size(i915_vdev->pf, i915_vdev->vfid, tile);
 	if (!size) {
-		dev_dbg(i915_vdev_to_dev(migf->i915_vdev),
-			"Skipping %s for tile%d, ret=%ld\n",
+		dev_dbg(dev, "Skipping %s for tile%u, ret=%ld\n",
 			i915_vfio_data_type_str(type), tile, size);
 
 		return 0;
@@ -74,15 +75,15 @@ __i915_vfio_produce(struct i915_vfio_pci_migration_file *migf, unsigned int tile
 	if (!buf)
 		return -ENOMEM;
 
-	ret = ops->save(i915_vdev->pf, i915_vdev->vfid, tile, buf, size);
-	if (ret < 0)
-		goto out_free;
-
 	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data) {
 		ret = -ENOMEM;
-		goto out_free;
+		goto out_free_buf;
 	}
+
+	ret = ops->save(i915_vdev->pf, i915_vdev->vfid, tile, buf, size);
+	if (ret < 0)
+		goto out_free_data;
 
 	data->hdr.type = type;
 	data->hdr.tile = tile;
@@ -93,14 +94,16 @@ __i915_vfio_produce(struct i915_vfio_pci_migration_file *migf, unsigned int tile
 	data->pos = 0;
 	data->buf = buf;
 
-	dev_dbg(i915_vdev_to_dev(migf->i915_vdev),
-		"Producing %s for tile%d, size=%ld\n", i915_vfio_data_type_str(type), tile, size);
+	dev_dbg(dev, "Producing %s for tile%u, size=%ld\n",
+		i915_vfio_data_type_str(type), tile, size);
 
 	list_add(&data->link, &migf->save_data);
 
 	return 0;
 
-out_free:
+out_free_data:
+	kfree(data);
+out_free_buf:
 	kvfree(buf);
 
 	return ret;
@@ -240,7 +243,7 @@ __i915_vfio_produce_mappable(struct i915_vfio_pci_migration_file *migf, unsigned
 
 	if (!res->size) {
 		dev_dbg(i915_vdev_to_dev(migf->i915_vdev),
-			"Skipping %s for tile%d\n", i915_vfio_data_type_str(type), tile);
+			"Skipping %s for tile%u\n", i915_vfio_data_type_str(type), tile);
 		return 0;
 	}
 
@@ -257,7 +260,7 @@ __i915_vfio_produce_mappable(struct i915_vfio_pci_migration_file *migf, unsigned
 	data->pos = 0;
 	data->buf = res->vaddr;
 
-	dev_dbg(i915_vdev_to_dev(migf->i915_vdev), "Producing %s for tile%d, size=%ld\n",
+	dev_dbg(i915_vdev_to_dev(migf->i915_vdev), "Producing %s for tile%u, size=%ld\n",
 		i915_vfio_data_type_str(type), tile, res->size);
 
 	list_add(&data->link, &migf->save_data);

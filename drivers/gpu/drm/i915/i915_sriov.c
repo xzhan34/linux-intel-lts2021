@@ -717,18 +717,18 @@ static void pf_start_vfs_flr(struct intel_iov *iov, unsigned int num_vfs)
 		intel_iov_state_start_flr(iov, n);
 }
 
-#define I915_VF_FLR_TIMEOUT_MS 500
+#define I915_VF_FLR_TIMEOUT_MS 500UL
 
 static void pf_wait_vfs_flr(struct intel_iov *iov, unsigned int num_vfs)
 {
-	unsigned int timeout_ms = I915_VF_FLR_TIMEOUT_MS;
+	unsigned long timeout_ms = I915_VF_FLR_TIMEOUT_MS;
 	unsigned int n;
 
 	GEM_BUG_ON(!intel_iov_is_pf(iov));
 
 	for (n = 1; n <= num_vfs; n++) {
 		if (wait_for(intel_iov_state_no_flr(iov, n), timeout_ms)) {
-			IOV_ERROR(iov, "VF%u FLR didn't complete within %u ms\n",
+			IOV_ERROR(iov, "VF%u FLR didn't complete within %lu ms\n",
 				  n, timeout_ms);
 			timeout_ms /= 2;
 		}
@@ -1152,6 +1152,9 @@ int i915_sriov_pause_vf(struct pci_dev *pdev, unsigned int vfid)
 {
 	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
 
+	if (!IS_SRIOV_PF(i915))
+		return -ENODEV;
+
 	return i915_sriov_pf_pause_vf(i915, vfid);
 }
 EXPORT_SYMBOL_NS_GPL(i915_sriov_pause_vf, I915);
@@ -1169,6 +1172,9 @@ EXPORT_SYMBOL_NS_GPL(i915_sriov_pause_vf, I915);
 int i915_sriov_resume_vf(struct pci_dev *pdev, unsigned int vfid)
 {
 	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
+
+	if (!IS_SRIOV_PF(i915))
+		return -ENODEV;
 
 	return i915_sriov_pf_resume_vf(i915, vfid);
 }
@@ -1192,7 +1198,9 @@ int i915_sriov_wait_vf_flr_done(struct pci_dev *pdev, unsigned int vfid)
 	unsigned int id;
 	int ret;
 
-	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	if (!IS_SRIOV_PF(i915))
+		return -ENODEV;
+
 	for_each_gt(gt, i915, id) {
 		ret = wait_for(intel_iov_state_no_flr(&gt->iov, vfid), I915_VF_FLR_TIMEOUT_MS);
 		if (ret)
@@ -1220,7 +1228,8 @@ i915_sriov_ggtt_size(struct pci_dev *pdev, unsigned int vfid, unsigned int tile)
 	struct intel_gt *gt = i915->gt[tile];
 	ssize_t size;
 
-	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	if (!IS_SRIOV_PF(i915))
+		return 0;
 
 	if (!gt)
 		return 0;
@@ -1253,7 +1262,8 @@ ssize_t i915_sriov_ggtt_save(struct pci_dev *pdev, unsigned int vfid, unsigned i
 	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
 	struct intel_gt *gt = i915->gt[tile];
 
-	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	if (!IS_SRIOV_PF(i915))
+		return -ENODEV;
 
 	if (!gt)
 		return -ENODEV;
@@ -1283,7 +1293,8 @@ i915_sriov_ggtt_load(struct pci_dev *pdev, unsigned int vfid, unsigned int tile,
 	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
 	struct intel_gt *gt = i915->gt[tile];
 
-	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	if (!IS_SRIOV_PF(i915))
+		return -ENODEV;
 
 	if (!gt)
 		return -ENODEV;
@@ -1308,7 +1319,8 @@ i915_sriov_lmem_size(struct pci_dev *pdev, unsigned int vfid, unsigned int tile)
 	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
 	struct intel_gt *gt = i915->gt[tile];
 
-	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	if (!IS_SRIOV_PF(i915))
+		return 0;
 
 	if (!gt)
 		return 0;
@@ -1335,7 +1347,8 @@ void *i915_sriov_lmem_map(struct pci_dev *pdev, unsigned int vfid, unsigned int 
 	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
 	struct intel_gt *gt = i915->gt[tile];
 
-	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	if (!IS_SRIOV_PF(i915))
+		return NULL;
 
 	if (!gt)
 		return NULL;
@@ -1358,7 +1371,8 @@ i915_sriov_lmem_unmap(struct pci_dev *pdev, unsigned int vfid, unsigned int tile
 	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
 	struct intel_gt *gt = i915->gt[tile];
 
-	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	if (!IS_SRIOV_PF(i915))
+		return;
 
 	if (!gt)
 		return;
@@ -1383,7 +1397,8 @@ i915_sriov_fw_state_size(struct pci_dev *pdev, unsigned int vfid, unsigned int t
 	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
 	struct intel_gt *gt = i915->gt[tile];
 
-	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	if (!IS_SRIOV_PF(i915))
+		return 0;
 
 	if (!gt)
 		return 0;
@@ -1412,7 +1427,8 @@ i915_sriov_fw_state_save(struct pci_dev *pdev, unsigned int vfid, unsigned int t
 	struct intel_gt *gt = i915->gt[tile];
 	int ret;
 
-	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	if (!IS_SRIOV_PF(i915))
+		return -ENODEV;
 
 	if (!gt)
 		return -ENODEV;
@@ -1444,7 +1460,8 @@ i915_sriov_fw_state_load(struct pci_dev *pdev, unsigned int vfid, unsigned int t
 	struct drm_i915_private *i915 = pci_get_drvdata(pdev);
 	struct intel_gt *gt = i915->gt[tile];
 
-	GEM_BUG_ON(!IS_SRIOV_PF(i915));
+	if (!IS_SRIOV_PF(i915))
+		return -ENODEV;
 
 	if (!gt)
 		return -ENODEV;

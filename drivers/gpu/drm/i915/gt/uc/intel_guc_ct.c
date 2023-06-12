@@ -1171,7 +1171,6 @@ static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 		ret = intel_gt_pagefault_process_page_fault_msg(gt, hxg, hxg_len);
 		break;
 	case INTEL_GUC_ACTION_STATE_CAPTURE_NOTIFICATION:
-		printk("capture notification!?!?!?!?!\n");
 		ret = intel_guc_error_capture_process_msg(guc, payload, len);
 		if (unlikely(ret))
 			CT_ERROR(ct, "error capture notification failed %x %*ph\n",

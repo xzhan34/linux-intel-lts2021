@@ -354,6 +354,13 @@ static int i915_vfio_pci_probe(struct pci_dev *pdev, const struct pci_device_id 
 	struct i915_vfio_pci_core_device *i915_vdev;
 	int ret;
 
+	ret = pci_iov_vf_id(pdev);
+	if (WARN_ON(ret < 0))
+		return ret;
+
+	if (strcmp(pdev->physfn->dev.driver->name, "i915"))
+		return -EINVAL;
+
 	i915_vdev = devm_kzalloc(&pdev->dev, sizeof(*i915_vdev), GFP_KERNEL);
 	if (!i915_vdev)
 		return -ENOMEM;
@@ -368,13 +375,6 @@ static int i915_vfio_pci_probe(struct pci_dev *pdev, const struct pci_device_id 
 	ret = devm_add_action_or_reset(&pdev->dev, unregister_i915_vdev, i915_vdev);
 	if (ret)
 		return ret;
-
-	ret = pci_iov_vf_id(pdev);
-	if (WARN_ON(ret < 0))
-		return ret;
-
-	if (strcmp(pdev->physfn->dev.driver->name, "i915"))
-		return -EINVAL;
 
 	/* vfid starts from 1 for i915 */
 	i915_vdev->vfid = ret + 1;
@@ -405,6 +405,6 @@ static struct pci_driver i915_vfio_pci_driver = {
 module_pci_driver(i915_vfio_pci_driver);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Michał Winiarski <michal.winiarski@intel.com>");
+MODULE_AUTHOR("Intel Corporation");
 MODULE_DESCRIPTION("VFIO PCI driver with migration support for Intel Graphics");
 MODULE_IMPORT_NS(I915);
