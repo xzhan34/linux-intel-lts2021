@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2022 Intel Corporation
+ * Copyright (c) 2022-2023 Intel Corporation
  */
 
 /**
@@ -10,11 +10,12 @@
  * proxy user (I915) and ME FW by proxying messages to ME FW
  */
 
+#include <linux/component.h>
+#include <linux/mei_cl_bus.h>
 #include <linux/module.h>
+#include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/uuid.h>
-#include <linux/mei_cl_bus.h>
-#include <linux/component.h>
 #include <drm/drm_connector.h>
 #include <drm/i915_component.h>
 #include <drm/i915_gsc_proxy_mei_interface.h>
@@ -93,40 +94,40 @@ static const struct component_master_ops mei_component_master_ops = {
 /**
  * mei_gsc_proxy_component_match - compare function for matching mei.
  *
- *    The function checks if the driver is i915, the subcomponent is SW Proxy
- *    and the grand parent of proxy and the parent of i915 are the same
- *    PCH device.
+ *    The function checks if the device is pci device and
+ *    Intel VGA adapter, the subcomponent is SW Proxy
+ *    and the parent of MEI PCI and the parent of VGA are the same PCH device.
  *
  * @dev: master device
  * @subcomponent: subcomponent to match (I915_COMPONENT_SWPROXY)
- * @data: compare data (mei gsc proxy device)
+ * @data: compare data (mei pci parent)
  *
  * Return:
  * * 1 - if components match
  * * 0 - otherwise
  */
 static int mei_gsc_proxy_component_match(struct device *dev, int subcomponent,
-				       void *data)
+					 void *data)
 {
-	struct device *base = data;
+	struct pci_dev *pdev;
 
-	if (!dev || !dev->driver ||
-	    strcmp(dev->driver->name, "i915") ||
-	    subcomponent != I915_COMPONENT_GSC_PROXY)
+	if (!dev_is_pci(dev))
 		return 0;
 
-	base = base->parent;
-	if (!base) /* mei device */
+	pdev = to_pci_dev(dev);
+
+	if (pdev->class != (PCI_CLASS_DISPLAY_VGA << 8) ||
+	    pdev->vendor != PCI_VENDOR_ID_INTEL)
 		return 0;
 
-	base = base->parent; /* pci device */
+	if (subcomponent != I915_COMPONENT_GSC_PROXY)
+		return 0;
 
-	dev = dev->parent;
-	return (base && dev && dev == base);
+	return component_compare_dev(dev->parent, ((struct device *)data)->parent);
 }
 
 static int mei_gsc_proxy_probe(struct mei_cl_device *cldev,
-			     const struct mei_cl_device_id *id)
+			       const struct mei_cl_device_id *id)
 {
 	struct i915_gsc_proxy_component *comp_master;
 	struct component_match *master_match = NULL;
@@ -145,7 +146,7 @@ static int mei_gsc_proxy_probe(struct mei_cl_device *cldev,
 	}
 
 	component_match_add_typed(&cldev->dev, &master_match,
-				  mei_gsc_proxy_component_match, &cldev->dev);
+				  mei_gsc_proxy_component_match, cldev->dev.parent);
 	if (IS_ERR_OR_NULL(master_match)) {
 		ret = -ENOMEM;
 		goto err_exit;
@@ -184,11 +185,11 @@ static void mei_gsc_proxy_remove(struct mei_cl_device *cldev)
 		dev_warn(&cldev->dev, "mei_cldev_disable() failed %d\n", ret);
 }
 
-#define MEI_GUID_GSC_PROXY UUID_LE(0xf73db04, 0x97ab, 0x4125, \
+#define MEI_UUID_GSC_PROXY UUID_LE(0xf73db04, 0x97ab, 0x4125, \
 				   0xb8, 0x93, 0xe9, 0x4, 0xad, 0xd, 0x54, 0x64)
 
 static struct mei_cl_device_id mei_gsc_proxy_tbl[] = {
-	{ .uuid = MEI_GUID_GSC_PROXY, .version = MEI_CL_VERSION_ANY },
+	{ .uuid = MEI_UUID_GSC_PROXY, .version = MEI_CL_VERSION_ANY },
 	{ }
 };
 MODULE_DEVICE_TABLE(mei, mei_gsc_proxy_tbl);
