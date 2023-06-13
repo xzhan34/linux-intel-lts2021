@@ -366,6 +366,7 @@ void intel_gt_suspend_prepare(struct intel_gt *gt)
 {
 	user_forcewake(gt, true);
 	wait_for_suspend(gt);
+	intel_gt_retire_requests(gt);
 
 	intel_pxp_suspend(&gt->pxp, false);
 }
