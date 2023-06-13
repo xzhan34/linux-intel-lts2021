@@ -78,6 +78,8 @@ int i915_debugger_enable(struct drm_i915_private *i915, bool enable);
 int i915_debugger_allow(struct drm_i915_private *i915);
 int i915_debugger_disallow(struct drm_i915_private *i915);
 
+void i915_debugger_gpu_flush_engines(struct drm_i915_private *i915, u32 mask);
+
 #else /* CONFIG_DRM_I915_DEBUGGER */
 
 static inline int i915_debugger_open_ioctl(struct drm_device *dev, void *data,
@@ -167,6 +169,9 @@ i915_debugger_disallow(struct drm_i915_private *i915)
 {
 	return 0;
 }
+
+static inline void i915_debugger_gpu_flush_engines(struct drm_i915_private *i915,
+						   u32 mask) { }
 
 #endif /* CONFIG_DRM_I915_DEBUGGER */
 

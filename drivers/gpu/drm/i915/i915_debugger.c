@@ -5466,6 +5466,11 @@ int i915_debugger_disallow(struct drm_i915_private *i915)
 	return __i915_debugger_allow(i915, false);
 }
 
+void i915_debugger_gpu_flush_engines(struct drm_i915_private *i915, u32 mask)
+{
+	gpu_flush_engines(i915, mask);
+}
+
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
 #include "selftests/i915_debugger.c"
 #endif

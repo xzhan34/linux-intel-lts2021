@@ -24,6 +24,7 @@
 #include "uc/intel_guc.h"
 #include "uc/intel_guc_fwif.h"
 #include "i915_svm.h"
+#include "i915_debugger.h"
 
 /**
  * DOC: Recoverable page fault implications
@@ -542,8 +543,11 @@ static void coredump_add_request(struct i915_gpu_coredump *dump,
 		return;
 
 	vma = intel_engine_coredump_add_request(gt->engine, rq, gfp, compress);
-	if (vma)
+	if (vma) {
+		i915_debugger_gpu_flush_engines(dump->i915,
+						GEN12_RCU_ASYNC_FLUSH_AND_INVALIDATE_ALL);
 		intel_engine_coredump_add_vma(gt->engine, vma, compress);
+	}
 
 	i915_vma_capture_finish(gt, compress);
 }
