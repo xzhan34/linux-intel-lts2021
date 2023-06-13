@@ -858,9 +858,9 @@ void i915_gem_object_migrate_decouple(struct drm_i915_gem_object *obj);
 int i915_gem_object_migrate_finish(struct drm_i915_gem_object *obj);
 
 static inline bool
-i915_gem_object_has_migrate(const struct drm_i915_gem_object *obj)
+i915_gem_object_has_migrate(struct drm_i915_gem_object *obj)
 {
-	return i915_active_fence_isset(&obj->mm.migrate);
+	return !i915_active_fence_is_signaled(&obj->mm.migrate);
 }
 
 static inline int
@@ -878,16 +878,7 @@ i915_gem_object_mem_idle(const struct drm_i915_gem_object *obj)
 		return true;
 
 	list_for_each_entry(block, &obj->mm.blocks, link) {
-		struct dma_fence *f;
-		bool idle;
-
-		f = i915_active_fence_get(&block->active);
-		if (!f)
-			continue;
-
-		idle = dma_fence_is_signaled(f);
-		dma_fence_put(f);
-		if (!idle)
+		if (!i915_active_fence_is_signaled(&block->active))
 			return false;
 	}
 

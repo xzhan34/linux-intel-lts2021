@@ -183,6 +183,21 @@ i915_active_fence_isset(const struct i915_active_fence *active)
 	return !IS_ERR_OR_NULL(rcu_access_pointer(active->fence));
 }
 
+static inline bool
+i915_active_fence_is_signaled(struct i915_active_fence *active)
+{
+	bool signaled = true;
+	struct dma_fence *f;
+
+	f = i915_active_fence_get(active);
+	if (f) {
+		signaled = dma_fence_is_signaled(f);
+		dma_fence_put(f);
+	}
+
+	return signaled;
+}
+
 /*
  * GPU activity tracking
  *
