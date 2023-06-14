@@ -212,6 +212,11 @@ static inline void intel_context_unpin(struct intel_context *ce)
 void intel_context_enter_engine(struct intel_context *ce);
 void intel_context_exit_engine(struct intel_context *ce);
 
+static inline bool intel_context_is_active(const struct intel_context *ce)
+{
+	return READ_ONCE(ce->active_count);
+}
+
 static inline void intel_context_enter(struct intel_context *ce)
 {
 	lockdep_assert_held(&ce->timeline->mutex);
@@ -245,11 +250,6 @@ static inline void intel_context_exit(struct intel_context *ce)
 }
 
 int intel_context_throttle(const struct intel_context *ce, long timeout);
-
-static inline bool intel_context_is_active(const struct intel_context *ce)
-{
-	return !i915_active_is_idle(&ce->active);
-}
 
 static inline void intel_context_suspend_fence_set(struct intel_context *ce,
 						   struct dma_fence *fence)

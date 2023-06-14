@@ -22,7 +22,10 @@
 #include "i915_gem_lmem.h"
 #include "i915_gem_region.h"
 #include "i915_sw_fence.h"
+#include "i915_sw_fence_work.h"
 #include "intel_memory_region.h"
+
+#define ALLOC_PRIORITY I915_PRIORITY_BARRIER
 
 static inline bool use_flat_ccs(const struct intel_gt *gt)
 {
@@ -47,8 +50,8 @@ static int block_wait(struct i915_buddy_block *block)
 	int err = 0;
 
 	f = i915_active_fence_get(&block->active);
-	if (f) {
-		i915_request_set_priority(to_request(f), I915_PRIORITY_MAX);
+	if (unlikely(f)) {
+		i915_request_set_priority(to_request(f), ALLOC_PRIORITY);
 		if (i915_request_wait(to_request(f),
 				      I915_WAIT_INTERRUPTIBLE,
 				      MAX_SCHEDULE_TIMEOUT) < 0)
@@ -243,6 +246,12 @@ static struct intel_context *get_clear_free_context(const struct intel_gt *gt)
 static struct intel_context *get_clear_fault_context(const struct intel_gt *gt)
 {
 	return get_clear_free_context(gt);
+}
+
+static struct intel_context *get_clear_idle_context(const struct intel_gt *gt)
+{
+	/* On idle, we should see no contention and can use any engine */
+	return get_blitter_context(gt, BCS0);
 }
 
 static struct i915_request *
@@ -937,19 +946,19 @@ clear_cpu(struct intel_memory_region *mem, struct list_head *blocks, u64 value)
 }
 
 static inline bool
-small_sync_clear(const struct drm_i915_gem_object *obj, unsigned int flags)
+small_sync_clear(const struct drm_i915_gem_object *obj,
+		 unsigned int flags,
+		 const struct intel_context *ce)
 {
 	/* Assume exec + sync latency ~2ms and WC bw of ~4GiB/s */
-	if (!(flags & I915_BO_SYNC_HINT))
+	if (!(flags & I915_BO_SYNC_HINT) && intel_context_is_active(ce))
 		return obj->base.size <= SZ_64K;
 	else
 		return obj->base.size <= SZ_32M;
 }
 
 static inline bool
-use_cpu_clear(struct drm_i915_gem_object *obj,
-	      unsigned int flags,
-	      bool busy)
+use_cpu_clear(struct drm_i915_gem_object *obj, unsigned int flags)
 {
 	/*
 	 * Is this object eligible for using the CPU for its clear?
@@ -964,25 +973,6 @@ use_cpu_clear(struct drm_i915_gem_object *obj,
 		return false;
 
 	/*
-	 * Can we freely incorporate a sync point into the clear?
-	 *
-	 * Before we touch the chunk with the CPU, we must synchronize
-	 * with all previous GPU operations to that chunk. Normally, we do
-	 * not want to synchronize inside get_pages, and so if any chunk is
-	 * still busy, we prefer to continue the operations on the GPU.
-	 *
-	 * However if the caller has hinted that it will be synchronising
-	 * immediately after calling get_pages (as they need to access the
-	 * memory with the CPU), then we may as well synchronize before
-	 * doing a CPU clear if we have determined that it would be quicker
-	 * to use the CPU on this chunk than the GPU. Even though the GPU
-	 * is active at this time, adding another blit via the GPU incurs
-	 * even more latency than synchronizing against an earlier blit.
-	 */
-	if (!(flags & I915_BO_SYNC_HINT) && busy)
-		return false;
-
-	/*
 	 * If the object needs to use FLAT_CCS, we have to use the blitter
 	 * to clear out the reserved portion of lmem via indirect access.
 	 * [We could find the reserved chunks for flat-ccs and do those clears
@@ -991,20 +981,85 @@ use_cpu_clear(struct drm_i915_gem_object *obj,
 	return !object_needs_flat_ccs(obj);
 }
 
-static inline bool blocks_dirty(const struct list_head *blocks, bool *busy)
+struct clear_work {
+	struct dma_fence_work base;
+	struct drm_i915_gem_object *lmem;
+	struct i915_sw_dma_fence_cb cb[];
+};
+
+static int clear_work(struct dma_fence_work *base)
 {
-       struct i915_buddy_block *block;
-       bool dirty = false;
+	struct clear_work *wrk = container_of(base, typeof(*wrk), base);
+	struct drm_i915_gem_object *lmem = wrk->lmem;
 
-       *busy = false;
-       list_for_each_entry(block, blocks, link) {
-	       *busy |= i915_buddy_block_is_active(block);
-	       dirty |= !i915_buddy_block_is_clear(block);
-	       if (dirty && *busy)
-		       break;
-       }
+	return clear_cpu(lmem->mm.region.mem, &lmem->mm.blocks, 0);
+}
 
-       return dirty;
+static const struct dma_fence_work_ops clear_ops = {
+	.name = "clear",
+	.work = clear_work,
+	.no_error_propagation = true,
+};
+
+static int async_clear(struct drm_i915_gem_object *obj)
+{
+	struct i915_buddy_block *block;
+	struct clear_work *c;
+	int count;
+
+	count = 0;
+	list_for_each_entry(block, &obj->mm.blocks, link)
+		count++;
+
+	c = kmalloc(struct_size(c, cb, count), I915_GFP_ALLOW_FAIL);
+	if (!c)
+		return -ENOMEM;
+
+	dma_fence_work_init(&c->base, &clear_ops);
+	c->lmem = obj;
+
+	count = 0;
+	list_for_each_entry(block, &obj->mm.blocks, link) {
+		struct dma_fence *f;
+
+		f = i915_active_fence_get(&block->active);
+		if (!f)
+			continue;
+
+		i915_request_set_priority(to_request(f), ALLOC_PRIORITY);
+		__i915_sw_fence_await_dma_fence(&c->base.chain, f,
+						&c->cb[count++]);
+		dma_fence_put(f);
+	}
+
+	i915_gem_object_migrate_prepare(obj, &c->base.dma);
+	dma_fence_work_commit_imm_if(&c->base,
+				     obj->flags & I915_BO_SYNC_HINT ||
+				     obj->base.size <= SZ_64K);
+
+	return 0;
+}
+
+static int async_blt(struct drm_i915_gem_object *obj, struct intel_context *ce)
+{
+	struct intel_memory_region *mem = obj->mm.region.mem;
+	struct i915_request *rq = NULL;
+	int err;
+
+	err = clear_blt(ce, NULL,
+			&mem->mm, &obj->mm.blocks,
+			INTEL_GT_CLEAR_ALLOC_CYCLES, false,
+			&rq);
+	if (rq) {
+		i915_request_set_priority(rq, ALLOC_PRIORITY);
+		i915_gem_object_migrate_prepare(obj, &rq->fence);
+		i915_sw_fence_complete(&rq->submit);
+		i915_request_put(rq);
+	}
+
+	/* recycling dirty memory; proactively clear on release */
+	set_bit(INTEL_MEMORY_CLEAR_FREE, &mem->flags);
+	return err;
 }
 
 static int
@@ -1034,6 +1089,7 @@ blocks_await(const struct list_head *blocks,
 		if (!f)
 			continue;
 
+		i915_request_set_priority(to_request(f), ALLOC_PRIORITY);
 		__i915_sw_fence_await_dma_fence(&a->chain, f, &a->cb[count++]);
 		dma_fence_put(f);
 	}
@@ -1060,6 +1116,18 @@ static int await_blt(struct drm_i915_gem_object *obj, unsigned int flags)
 	return err;
 }
 
+static inline bool blocks_dirty(const struct list_head *blocks)
+{
+       struct i915_buddy_block *block;
+
+       list_for_each_entry(block, blocks, link) {
+	       if (!i915_buddy_block_is_clear(block))
+		       return true;
+       }
+
+       return false;
+}
+
 static int lmem_clear(struct drm_i915_gem_object *obj)
 {
 	struct intel_memory_region *mem = obj->mm.region.mem;
@@ -1068,13 +1136,12 @@ static int lmem_clear(struct drm_i915_gem_object *obj)
 	struct intel_context *ce;
 	intel_wakeref_t wf = 0;
 	int err = 0;
-	bool busy;
 
 	if (flags & I915_BO_SKIP_CLEAR)
 		return await_blt(obj, AWAIT_NO_ERROR);
 
-	if (!blocks_dirty(&obj->mm.blocks, &busy))
-		return busy ? await_blt(obj, 0) : 0;
+	if (!blocks_dirty(&obj->mm.blocks))
+		return await_blt(obj, 0);
 
 	if (!IS_ENABLED(CONFIG_DRM_I915_CHICKEN_ASYNC_GET_PAGES))
 		flags |= I915_BO_SYNC_HINT;
@@ -1085,7 +1152,11 @@ static int lmem_clear(struct drm_i915_gem_object *obj)
 			ce = get_clear_fault_context(gt);
 		else
 			ce = get_clear_alloc_context(gt);
-		if (!ce || small_sync_clear(obj, flags))
+		if (!ce ||
+		    /* Prefer to use the CPU to avoid sync latency */
+		    small_sync_clear(obj, flags, ce) ||
+		    /* Saturated? Use the CPU instead (safety valve) */
+		    intel_context_throttle(ce, 0))
 			flags |= I915_BO_CPU_CLEAR;
 	}
 
@@ -1097,28 +1168,14 @@ static int lmem_clear(struct drm_i915_gem_object *obj)
 	if (ce && obj->base.size < SZ_2M && !(wf = intel_gt_pm_get_if_awake(gt)))
 		flags |= I915_BO_CPU_CLEAR;
 
-	if (use_cpu_clear(obj, flags, busy)) {
-		err = clear_cpu(mem, &obj->mm.blocks, 0);
-	} else if (ce) {
-		struct i915_request *rq = NULL;
-
-		err = clear_blt(ce, NULL,
-				&mem->mm, &obj->mm.blocks,
-				INTEL_GT_CLEAR_ALLOC_CYCLES, false,
-				&rq);
-		if (rq) {
-			i915_gem_object_migrate_prepare(obj, &rq->fence);
-			i915_sw_fence_complete(&rq->submit);
-			i915_request_put(rq);
-		}
-
-		/* recycling dirty memory; proactively clear on release */
-		set_bit(INTEL_MEMORY_CLEAR_FREE, &mem->flags);
-	} else if (flags & I915_BO_CPU_CLEAR) {
+	if (use_cpu_clear(obj, flags))
+		err = async_clear(obj);
+	else if (ce)
+		err = async_blt(obj, ce);
+	else if (flags & I915_BO_CPU_CLEAR)
 		err = -EIO; /* clear required use of the blitter */
-	} else if (busy) {
+	else
 		err = await_blt(obj, AWAIT_NO_ERROR);
-	}
 
 	if (wf)
 		intel_gt_pm_put(gt, wf);
@@ -1608,7 +1665,7 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 	if (!mem->gt->migrate.clear_chunk)
 		return false;
 
-	ce = get_clear_alloc_context(mem->gt);
+	ce = get_clear_idle_context(mem->gt);
 	if (!ce)
 		return false;
 

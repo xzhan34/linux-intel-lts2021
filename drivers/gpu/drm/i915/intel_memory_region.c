@@ -287,9 +287,8 @@ void intel_memory_region_print(struct intel_memory_region *mem,
 		for (i = 0; i <= mem->mm.max_order; i++) {
 			struct i915_buddy_block *block;
 			resource_size_t clear, dirty;
-			long count = 0;
-
 			struct i915_buddy_list *bl;
+			long count = 0;
 
 			dirty = 0;
 			bl = &mem->mm.dirty_list[i];
