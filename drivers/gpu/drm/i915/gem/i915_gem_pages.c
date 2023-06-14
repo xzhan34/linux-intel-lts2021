@@ -509,13 +509,13 @@ void *i915_gem_object_pin_map(struct drm_i915_gem_object *obj,
 		ptr = obj->mm.mapping = NULL;
 	}
 
-	if (!ptr) {
-		err = i915_gem_object_migrate_sync(obj);
-		if (err) {
-			ptr = ERR_PTR(err);
-			goto err_unpin;
-		}
+	err = i915_gem_object_migrate_sync(obj);
+	if (err) {
+		ptr = ERR_PTR(err);
+		goto err_unpin;
+	}
 
+	if (!ptr) {
 		if (GEM_WARN_ON(type == I915_MAP_WC && !pat_enabled()))
 			ptr = ERR_PTR(-ENODEV);
 		else if (i915_gem_object_has_struct_page(obj))
@@ -530,7 +530,6 @@ void *i915_gem_object_pin_map(struct drm_i915_gem_object *obj,
 
 	GEM_BUG_ON(i915_gem_object_has_migrate(obj));
 	GEM_BUG_ON(!i915_gem_object_mem_idle(obj));
-
 	return ptr;
 
 err_unpin:
