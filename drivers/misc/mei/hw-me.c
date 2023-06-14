@@ -528,11 +528,22 @@ static void mei_gsc_pxp_check(struct mei_device *dev)
 	if (dev->dev->offline)
 		return;
 
-	if (dev->pxp_mode == MEI_DEV_PXP_DEFAULT)
+	if (!kind_is_gsc(dev) && !kind_is_gscfi(dev))
 		return;
 
 	hw->read_fws(dev, PCI_CFG_HFS_5, &fwsts5);
 	trace_mei_pci_cfg_read(dev->dev, "PCI_CFG_HFS_5", PCI_CFG_HFS_5, fwsts5);
+
+	if ((fwsts5 & GSC_CFG_HFS_5_BOOT_TYPE_MSK) == GSC_CFG_HFS_5_BOOT_TYPE_PXP) {
+		if (dev->gsc_reset_to_pxp == MEI_DEV_RESET_TO_PXP_DEFAULT)
+			dev->gsc_reset_to_pxp = MEI_DEV_RESET_TO_PXP_PERFORMED;
+	} else {
+		dev->gsc_reset_to_pxp = MEI_DEV_RESET_TO_PXP_DEFAULT;
+	}
+
+	if (dev->pxp_mode == MEI_DEV_PXP_DEFAULT)
+		return;
+
 	if ((fwsts5 & GSC_CFG_HFS_5_BOOT_TYPE_MSK) == GSC_CFG_HFS_5_BOOT_TYPE_PXP) {
 		dev_dbg(dev->dev, "pxp mode is ready 0x%08x\n", fwsts5);
 		dev->pxp_mode = MEI_DEV_PXP_READY;
@@ -578,26 +589,31 @@ static void mei_me_check_fw_reset(struct mei_device *dev)
 	int ret;
 	u32 fw_pm_event;
 
-	ret = mei_fw_status(dev, &fw_status);
-	if (ret) {
-		dev_err(dev->dev, "failed to read firmware status: %d\n", ret);
-		goto end;
-	}
-	fw_pm_event = fw_status.status[1] & PCI_CFG_HFS_2_PM_EVENT_MASK;
-	if (fw_pm_event == PCI_CFG_HFS_2_PM_CMOFF_TO_CMX_ERROR ||
-	    fw_pm_event == PCI_CFG_HFS_2_PM_CM_RESET_ERROR) {
-		if (dev->saved_fw_status_flag) {
-			char fw_sts_str[MEI_FW_STATUS_STR_SZ] = {0};
-
-			mei_fw_status2str(&dev->saved_fw_status, fw_sts_str, sizeof(fw_sts_str));
-			dev_warn(dev->dev, "unexpected reset: fw_pm_event = 0x%x, dev_state = %u fw status = %s\n",
-				 fw_pm_event, dev->saved_dev_state, fw_sts_str);
-		} else {
-			dev_warn(dev->dev, "unexpected reset: fw_pm_event = 0x%x\n", fw_pm_event);
+	if (dev->gsc_reset_to_pxp == MEI_DEV_RESET_TO_PXP_PERFORMED ||
+	    dev->forcewake_needed) {
+		ret = mei_fw_status(dev, &fw_status);
+		if (ret) {
+			dev_err(dev->dev, "failed to read firmware status: %d\n", ret);
+			goto end;
 		}
+		fw_pm_event = fw_status.status[1] & PCI_CFG_HFS_2_PM_EVENT_MASK;
+		if (fw_pm_event != PCI_CFG_HFS_2_PM_CMOFF_TO_CMX_ERROR &&
+		    fw_pm_event != PCI_CFG_HFS_2_PM_CM_RESET_ERROR)
+			goto end;
+	}
+	if (dev->saved_fw_status_flag) {
+		char fw_sts_str[MEI_FW_STATUS_STR_SZ] = {0};
+
+		mei_fw_status2str(&dev->saved_fw_status, fw_sts_str, sizeof(fw_sts_str));
+		dev_warn(dev->dev, "unexpected reset: fw_pm_event = 0x%x, dev_state = %u fw status = %s\n",
+			 fw_pm_event, dev->saved_dev_state, fw_sts_str);
+	} else {
+		dev_warn(dev->dev, "unexpected reset: fw_pm_event = 0x%x\n", fw_pm_event);
 	}
 
 end:
+	if (dev->gsc_reset_to_pxp == MEI_DEV_RESET_TO_PXP_PERFORMED)
+		dev->gsc_reset_to_pxp = MEI_DEV_RESET_TO_PXP_DONE;
 	dev->saved_fw_status_flag = false;
 }
 

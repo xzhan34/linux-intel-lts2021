@@ -416,6 +416,7 @@ void mei_device_init(struct mei_device *dev,
 	dev->open_handle_count = 0;
 
 	dev->pxp_mode = MEI_DEV_PXP_DEFAULT;
+	dev->gsc_reset_to_pxp = MEI_DEV_RESET_TO_PXP_DEFAULT;
 
 	/*
 	 * Reserving the first client ID
