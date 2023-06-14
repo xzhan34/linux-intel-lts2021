@@ -449,7 +449,7 @@ int i915_svm_handle_gpu_fault(struct i915_address_space *vm,
 	struct vm_area_struct *vma;
 	bool mmap_unlocked = false;
 	struct svm_notifier *sn;
-	u64 start, end, length;
+	u64 start = 0, end = 0, length = 0;
 	struct i915_svm *svm;
 	struct mm_struct *mm;
 	int ret = 0;
@@ -525,7 +525,8 @@ mmap_unlock:
 	if (!mmap_unlocked)
 		mmap_read_unlock(mm);
 	vm_put_svm(vm);
-	ppgtt_dump(vm, start, length);
+	if (length)
+		ppgtt_dump(vm, start, length);
 	return ret;
 }
 
