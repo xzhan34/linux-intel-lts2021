@@ -630,8 +630,6 @@ static vm_fault_t i915_devmem_migrate_to_ram(struct vm_fault *vmf)
 	dma_addr_t dma_addr = 0;
 	vm_fault_t ret;
 
-	GEM_BUG_ON(devmem->mem->id >= INTEL_REGION_UNKNOWN);
-
 	struct migrate_vma args = {
 		.vma		= vmf->vma,
 		.start		= vmf->address,
@@ -641,6 +639,8 @@ static vm_fault_t i915_devmem_migrate_to_ram(struct vm_fault *vmf)
 		.pgmap_owner	= i915->drm.dev,
 		.flags		= MIGRATE_VMA_SELECT_DEVICE_PRIVATE,
 	};
+
+	GEM_BUG_ON(devmem->mem->id >= INTEL_REGION_UNKNOWN);
 
 	/* XXX: Opportunistically migrate more pages? */
 	DRM_DEBUG_DRIVER("addr 0x%lx\n", args.start);
