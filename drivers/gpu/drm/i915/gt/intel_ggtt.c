@@ -1808,7 +1808,9 @@ static struct scatterlist *
 rotate_pages(struct drm_i915_gem_object *obj, unsigned int offset,
 	     unsigned int width, unsigned int height,
 	     unsigned int src_stride, unsigned int dst_stride,
-	     struct sg_table *st, struct scatterlist *sg)
+	     struct sg_table *st,
+	     struct scatterlist *sg,
+	     struct scatterlist **end)
 {
 	unsigned int column, row;
 	pgoff_t src_idx;
@@ -1818,7 +1820,6 @@ rotate_pages(struct drm_i915_gem_object *obj, unsigned int offset,
 
 		src_idx = src_stride * (height - 1) + column + offset;
 		for (row = 0; row < height; row++) {
-			st->nents++;
 			/*
 			 * We don't need the pages, but need to initialize
 			 * the entries so the sg list can be happily traversed.
@@ -1828,16 +1829,17 @@ rotate_pages(struct drm_i915_gem_object *obj, unsigned int offset,
 			sg_dma_address(sg) =
 				i915_gem_object_get_dma_address(obj, src_idx);
 			sg_dma_len(sg) = I915_GTT_PAGE_SIZE;
+
+			*end = sg;
 			sg = sg_next(sg);
+			st->nents++;
+
 			src_idx -= src_stride;
 		}
 
 		left = (dst_stride - height) * I915_GTT_PAGE_SIZE;
-
 		if (!left)
 			continue;
-
-		st->nents++;
 
 		/*
 		 * The DE ignores the PTEs for the padding tiles, the sg entry
@@ -1847,7 +1849,10 @@ rotate_pages(struct drm_i915_gem_object *obj, unsigned int offset,
 		sg_set_page(sg, NULL, left, 0);
 		sg_dma_address(sg) = 0;
 		sg_dma_len(sg) = left;
+
+		*end = sg;
 		sg = sg_next(sg);
+		st->nents++;
 	}
 
 	return sg;
@@ -1859,8 +1864,8 @@ intel_rotate_pages(struct intel_rotation_info *rot_info,
 {
 	unsigned int size = intel_rotation_info_size(rot_info);
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct scatterlist *sg, *end;
 	struct sg_table *st;
-	struct scatterlist *sg;
 	int ret = -ENOMEM;
 	int i;
 
@@ -1874,15 +1879,16 @@ intel_rotate_pages(struct intel_rotation_info *rot_info,
 		goto err_sg_alloc;
 
 	st->nents = 0;
-	sg = st->sgl;
+	end = sg = st->sgl;
 
 	for (i = 0 ; i < ARRAY_SIZE(rot_info->plane); i++)
 		sg = rotate_pages(obj, rot_info->plane[i].offset,
 				  rot_info->plane[i].width, rot_info->plane[i].height,
 				  rot_info->plane[i].src_stride,
 				  rot_info->plane[i].dst_stride,
-				  st, sg);
+				  st, sg, &end);
 
+	sg_mark_end(end);
 	return st;
 
 err_sg_alloc:
@@ -1898,10 +1904,10 @@ err_st_alloc:
 
 static struct scatterlist *
 add_padding_pages(unsigned int count,
-		  struct sg_table *st, struct scatterlist *sg)
+		  struct sg_table *st,
+		  struct scatterlist *sg,
+		  struct scatterlist **end)
 {
-	st->nents++;
-
 	/*
 	 * The DE ignores the PTEs for the padding tiles, the sg entry
 	 * here is just a convenience to indicate how many padding PTEs
@@ -1910,7 +1916,10 @@ add_padding_pages(unsigned int count,
 	sg_set_page(sg, NULL, count * I915_GTT_PAGE_SIZE, 0);
 	sg_dma_address(sg) = 0;
 	sg_dma_len(sg) = count * I915_GTT_PAGE_SIZE;
+
+	*end = sg;
 	sg = sg_next(sg);
+	st->nents++;
 
 	return sg;
 }
@@ -1920,7 +1929,9 @@ remap_tiled_color_plane_pages(struct drm_i915_gem_object *obj,
 			      unsigned long offset, unsigned int alignment_pad,
 			      unsigned int width, unsigned int height,
 			      unsigned int src_stride, unsigned int dst_stride,
-			      struct sg_table *st, struct scatterlist *sg,
+			      struct sg_table *st,
+			      struct scatterlist *sg,
+			      struct scatterlist **end,
 			      unsigned int *gtt_offset)
 {
 	unsigned int row;
@@ -1929,7 +1940,7 @@ remap_tiled_color_plane_pages(struct drm_i915_gem_object *obj,
 		return sg;
 
 	if (alignment_pad)
-		sg = add_padding_pages(alignment_pad, st, sg);
+		sg = add_padding_pages(alignment_pad, st, sg, end);
 
 	for (row = 0; row < height; row++) {
 		unsigned int left = width * I915_GTT_PAGE_SIZE;
@@ -1945,15 +1956,15 @@ remap_tiled_color_plane_pages(struct drm_i915_gem_object *obj,
 			 */
 
 			addr = i915_gem_object_get_dma_address_len(obj, offset, &length);
-
 			length = min(left, length);
-
-			st->nents++;
 
 			sg_set_page(sg, NULL, length, 0);
 			sg_dma_address(sg) = addr;
 			sg_dma_len(sg) = length;
+
+			*end = sg;
 			sg = sg_next(sg);
+			st->nents++;
 
 			offset += length / I915_GTT_PAGE_SIZE;
 			left -= length;
@@ -1962,11 +1973,10 @@ remap_tiled_color_plane_pages(struct drm_i915_gem_object *obj,
 		offset += src_stride - width;
 
 		left = (dst_stride - width) * I915_GTT_PAGE_SIZE;
-
 		if (!left)
 			continue;
 
-		sg = add_padding_pages(left >> PAGE_SHIFT, st, sg);
+		sg = add_padding_pages(left >> PAGE_SHIFT, st, sg, end);
 	}
 
 	*gtt_offset += alignment_pad + dst_stride * height;
@@ -1978,7 +1988,8 @@ static struct scatterlist *
 remap_contiguous_pages(struct drm_i915_gem_object *obj,
 		       pgoff_t obj_offset,
 		       pgoff_t page_count,
-		       struct sg_table *st, struct scatterlist *sg)
+		       struct sg_table *st,
+		       struct scatterlist *sg)
 {
 	struct scatterlist *iter;
 	unsigned int offset;
@@ -2031,20 +2042,23 @@ static struct scatterlist *
 remap_linear_color_plane_pages(struct drm_i915_gem_object *obj,
 			       pgoff_t obj_offset, unsigned int alignment_pad,
 			       unsigned int size,
-			       struct sg_table *st, struct scatterlist *sg,
+			       struct sg_table *st,
+			       struct scatterlist *sg,
+			       struct scatterlist **end,
 			       unsigned int *gtt_offset)
 {
 	if (!size)
 		return sg;
 
 	if (alignment_pad)
-		sg = add_padding_pages(alignment_pad, st, sg);
+		sg = add_padding_pages(alignment_pad, st, sg, end);
 
 	sg = remap_contiguous_pages(obj, obj_offset, size, st, sg);
+
+	*end = sg;
 	sg = sg_next(sg);
 
 	*gtt_offset += alignment_pad + size;
-
 	return sg;
 }
 
@@ -2052,7 +2066,9 @@ static struct scatterlist *
 remap_color_plane_pages(const struct intel_remapped_info *rem_info,
 			struct drm_i915_gem_object *obj,
 			int color_plane,
-			struct sg_table *st, struct scatterlist *sg,
+			struct sg_table *st,
+			struct scatterlist *sg,
+			struct scatterlist **end,
 			unsigned int *gtt_offset)
 {
 	unsigned int alignment_pad = 0;
@@ -2065,7 +2081,7 @@ remap_color_plane_pages(const struct intel_remapped_info *rem_info,
 						    rem_info->plane[color_plane].offset,
 						    alignment_pad,
 						    rem_info->plane[color_plane].size,
-						    st, sg,
+						    st, sg, end,
 						    gtt_offset);
 
 	else
@@ -2076,7 +2092,7 @@ remap_color_plane_pages(const struct intel_remapped_info *rem_info,
 						   rem_info->plane[color_plane].height,
 						   rem_info->plane[color_plane].src_stride,
 						   rem_info->plane[color_plane].dst_stride,
-						   st, sg,
+						   st, sg, end,
 						   gtt_offset);
 
 	return sg;
@@ -2088,9 +2104,9 @@ intel_remap_pages(struct intel_remapped_info *rem_info,
 {
 	unsigned int size = intel_remapped_info_size(rem_info);
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
-	struct sg_table *st;
-	struct scatterlist *sg;
+	struct scatterlist *sg, *end;
 	unsigned int gtt_offset = 0;
+	struct sg_table *st;
 	int ret = -ENOMEM;
 	int i;
 
@@ -2104,11 +2120,12 @@ intel_remap_pages(struct intel_remapped_info *rem_info,
 		goto err_sg_alloc;
 
 	st->nents = 0;
-	sg = st->sgl;
+	end = sg = st->sgl;
 
 	for (i = 0 ; i < ARRAY_SIZE(rem_info->plane); i++)
-		sg = remap_color_plane_pages(rem_info, obj, i, st, sg, &gtt_offset);
+		sg = remap_color_plane_pages(rem_info, obj, i, st, sg, &end, &gtt_offset);
 
+	sg_mark_end(end);
 	i915_sg_trim(st);
 
 	return st;
