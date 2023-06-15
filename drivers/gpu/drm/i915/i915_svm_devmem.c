@@ -488,6 +488,8 @@ int i915_devmem_migrate_vma(struct intel_memory_region *mem,
 	unsigned long c, i;
 	int ret = 0;
 
+	GEM_BUG_ON(mem->id >= INTEL_REGION_UNKNOWN);
+
 	/* XXX: Opportunistically migrate additional pages? */
 	DRM_DEBUG_DRIVER("start 0x%lx end 0x%lx\n", start, end);
 	args.src = kcalloc(max, sizeof(args.src), GFP_KERNEL);
@@ -627,6 +629,9 @@ static vm_fault_t i915_devmem_migrate_to_ram(struct vm_fault *vmf)
 	unsigned long src = 0, dst = 0;
 	dma_addr_t dma_addr = 0;
 	vm_fault_t ret;
+
+	GEM_BUG_ON(devmem->mem->id >= INTEL_REGION_UNKNOWN);
+
 	struct migrate_vma args = {
 		.vma		= vmf->vma,
 		.start		= vmf->address,
