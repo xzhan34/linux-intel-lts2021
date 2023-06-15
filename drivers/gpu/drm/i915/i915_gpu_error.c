@@ -1274,6 +1274,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 {
 	struct i915_ggtt *ggtt = gt->ggtt;
 	const u64 slot = ggtt->error_capture.start;
+	struct drm_i915_gem_object *obj = NULL;
 	struct i915_vma_coredump *dst;
 	unsigned long num_pages;
 	struct sgt_iter iter;
@@ -1296,8 +1297,29 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	dst->gtt_page_sizes = vma->page_sizes;
 	dst->metadata = i915_vma_metadata_coredump_create(vma);
 
-	if (!pages || !compress)
+	if (!compress)
 		return dst;
+
+	if (!pages) {
+		obj = i915_gem_object_get_rcu(vma->obj);
+
+		if (!atomic_add_unless(&obj->mm.pages_pin_count, 1, 0)) {
+			int err = -EBUSY;
+
+			if (i915_gem_object_trylock(obj)) {
+				err = i915_gem_object_pin_pages_sync(obj);
+				i915_gem_object_unlock(obj);
+			}
+
+			if (err)
+				return dst;
+		}
+
+		if (i915_gem_object_migrate_sync(obj))
+			return dst;
+
+		pages = obj->mm.pages;
+	}
 
 	num_pages = vma->size >> PAGE_SHIFT;
 	num_pages = DIV_ROUND_UP(10 * num_pages, 8); /* worstcase zlib growth */
@@ -1305,7 +1327,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	dst->cpages = kmalloc(sizeof(*dst->cpages) + num_pages * sizeof(u32 *),
 			      I915_GFP_ALLOW_FAIL);
 	if (!dst->cpages)
-		return dst;
+		goto out;
 
 	dst->cpages->num_pages = num_pages;
 	dst->cpages->page_count = 0;
@@ -1314,7 +1336,7 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	if (!compress_start(compress)) {
 		kfree(dst->cpages);
 		dst->cpages = NULL;
-		return dst;
+		goto out;
 	}
 
 	offset = (vma->ggtt_view.type == I915_GGTT_VIEW_PARTIAL) ?
@@ -1400,6 +1422,9 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	}
 	compress_finish(compress);
 
+out:
+	if (obj)
+		__i915_gem_object_unpin_pages(obj);
 	return dst;
 }
 
@@ -1789,7 +1814,6 @@ struct intel_engine_capture_vma {
 	struct i915_vma *vma;
 	struct sg_table *pages;
 	char name[16];
-	bool active;
 };
 
 static struct intel_engine_capture_vma *
@@ -1814,19 +1838,9 @@ capture_vma(struct intel_engine_capture_vma *next,
 
 	i915_gem_object_get(vma->obj);
 
-	if (!i915_active_fence_isset(&vma->obj->mm.migrate)) {
-		c->active = i915_vma_active_acquire_if_busy(vma);
-
-		if (i915_vm_page_fault_enabled(vma->vm)) {
-			if (i915_gem_object_has_pages(vma->obj)) {
-				__i915_gem_object_pin_pages(vma->obj);
-				c->pages = vma->obj->mm.pages;
-			}
-		} else {
-			if (atomic_add_unless(&vma->obj->mm.pages_pin_count, 1, 0))
-				c->pages = c->active ? vma->pages : vma->obj->mm.pages;
-		}
-	}
+	if (!i915_gem_object_has_migrate(vma->obj) &&
+	    i915_vma_active_acquire_if_busy(vma))
+		c->pages = vma->pages;
 
 	strcpy(c->name, name);
 	c->vma = vma; /* reference held while active */
@@ -1948,11 +1962,9 @@ intel_engine_coredump_add_vma(struct intel_engine_coredump *ee,
 						 vma, this->name,
 						 capture->pages,
 						 compress));
-		__i915_gem_object_unpin_pages(vma->obj);
-		if (capture->active)
+		if (capture->pages)
 			i915_vma_active_release(vma);
 		i915_gem_object_put(vma->obj);
-		/* vma_get() called from capture_vma() */
 		__i915_vma_put(vma);
 
 		capture = this->next;
