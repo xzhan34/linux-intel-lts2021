@@ -59,67 +59,6 @@ static int block_wait(struct i915_buddy_block *block)
 	return err;
 }
 
-struct await_fences {
-	struct dma_fence dma;
-	struct i915_sw_fence chain;
-	struct spinlock lock;
-	unsigned int flags;
-#define AWAIT_NO_ERROR BIT(0)
-	struct i915_sw_dma_fence_cb cb[];
-};
-
-static const char *get_driver_name(struct dma_fence *fence)
-{
-	return "[" DRIVER_NAME "]";
-}
-
-static const char *get_timeline_name(struct dma_fence *fence)
-{
-	return "await";
-}
-
-static const struct dma_fence_ops await_ops = {
-	.get_driver_name = get_driver_name,
-	.get_timeline_name = get_timeline_name,
-};
-
-static int
-await_notify(struct i915_sw_fence *fence, enum i915_sw_fence_notify state)
-{
-	struct await_fences *a = container_of(fence, typeof(*a), chain);
-
-	switch (state) {
-	case FENCE_COMPLETE:
-		if (fence->error && !(a->flags & AWAIT_NO_ERROR))
-			a->dma.error = fence->error;
-		dma_fence_signal(&a->dma);
-		break;
-
-	case FENCE_FREE:
-		i915_sw_fence_fini(&a->chain);
-		dma_fence_put(&a->dma);
-		break;
-	}
-
-	return NOTIFY_DONE;
-}
-
-static struct await_fences *await_create(int count, unsigned int flags)
-{
-	struct await_fences *a;
-
-	a = kmalloc(struct_size(a, cb, count), I915_GFP_ALLOW_FAIL);
-	if (!a)
-		return a;
-
-	spin_lock_init(&a->lock);
-	dma_fence_init(&a->dma, &await_ops, &a->lock, 0, 0);
-	i915_sw_fence_init(&a->chain, await_notify);
-	a->flags = flags;
-
-	return a;
-}
-
 static int blocks_wait(struct list_head *list)
 {
 	struct i915_buddy_block *block;
@@ -780,7 +719,7 @@ clear_blt(struct intel_context *ce,
 	const bool use_ccs_clear =
 		!use_pvc_memset && HAS_FLAT_CCS(ce->engine->i915);
 	struct i915_buddy_block *block;
-	struct i915_request *rq;
+	struct i915_request *rq = NULL;
 	int err;
 
 	GEM_BUG_ON(ce->ring->size < SZ_64K);
@@ -790,13 +729,6 @@ clear_blt(struct intel_context *ce,
 	mutex_lock(&ce->timeline->mutex);
 	intel_context_enter(ce);
 
-	/* We expect at least one block does require clearing */
-	rq = i915_request_create_locked(ce, I915_GFP_ALLOW_FAIL);
-	if (IS_ERR(rq)) {
-		err = PTR_ERR(rq);
-		goto exit;
-	}
-
 	list_for_each_entry(block, blocks, link) {
 		u64 sz = i915_buddy_block_size(mm, block);
 		u64 offset = i915_buddy_block_offset(block);
@@ -804,6 +736,15 @@ clear_blt(struct intel_context *ce,
 		if (!dirty && i915_buddy_block_is_clear(block)) {
 			struct dma_fence *f = i915_active_fence_get(&block->active);
 			if (f) {
+				if (!rq) {
+					rq = i915_request_create_locked(ce, I915_GFP_ALLOW_FAIL);
+					if (IS_ERR(rq)) {
+						err = PTR_ERR(rq);
+						dma_fence_put(f);
+						goto exit;
+					}
+				}
+
 				i915_request_await_dma_fence(rq, f);
 				dma_fence_put(f);
 			}
@@ -815,9 +756,11 @@ clear_blt(struct intel_context *ce,
 			struct i915_buddy_block *next =
 				list_next_entry(block, link);
 
-			err = i915_active_fence_set(&block->active, rq);
-			if (err < 0)
-				goto skip;
+			if (rq) {
+				err = i915_active_fence_set(&block->active, rq);
+				if (err < 0)
+					goto skip;
+			}
 
 			if (list_is_head(&next->link, blocks))
 				break;
@@ -844,7 +787,7 @@ clear_blt(struct intel_context *ce,
 				length = round_down(length, BIT(page_shift));
 			}
 
-			if (submit_request(rq, out, SZ_4K)) {
+			if (!rq || submit_request(rq, out, SZ_4K)) {
 				rq = i915_request_create_locked(ce, I915_GFP_ALLOW_FAIL);
 				if (IS_ERR(rq)) {
 					err = PTR_ERR(rq);
@@ -891,7 +834,8 @@ clear_blt(struct intel_context *ce,
 		__i915_buddy_block_set_clear(block);
 	}
 skip:
-	*out = chain_request(rq, *out);
+	if (rq)
+		*out = chain_request(rq, *out);
 exit:
 	retire_requests(ce->timeline);
 	intel_context_exit(ce);
@@ -947,66 +891,74 @@ use_cpu_clear(struct drm_i915_gem_object *obj,
 	      unsigned int flags,
 	      bool busy)
 {
-	/*
-	 * Is this object eligible for using the CPU for its clear?
-	 *
-	 * In some cases, such as before we have initialised the blitter
-	 * engine or context, we cannot use the GPU and must use the CPU.
-	 *
-	 * This may be hinted by the caller (setting the CPU_CLEAR on object
-	 * construction) and verified by ourselves.
-	 */
 	if (!(flags & I915_BO_CPU_CLEAR))
 		return false;
 
-	/*
-	 * Can we freely incorporate a sync point into the clear?
-	 *
-	 * Before we touch the chunk with the CPU, we must synchronize
-	 * with all previous GPU operations to that chunk. Normally, we do
-	 * not want to synchronize inside get_pages, and so if any chunk is
-	 * still busy, we prefer to continue the operations on the GPU.
-	 *
-	 * However if the caller has hinted that it will be synchronising
-	 * immediately after calling get_pages (as they need to access the
-	 * memory with the CPU), then we may as well synchronize before
-	 * doing a CPU clear if we have determined that it would be quicker
-	 * to use the CPU on this chunk than the GPU. Even though the GPU
-	 * is active at this time, adding another blit via the GPU incurs
-	 * even more latency than synchronizing against an earlier blit.
-	 */
-	if (!(flags & I915_BO_SYNC_HINT) && busy)
+	if (busy && (flags & I915_BO_ALLOC_USER))
 		return false;
 
-	/*
-	 * If the object needs to use FLAT_CCS, we have to use the blitter
-	 * to clear out the reserved portion of lmem via indirect access.
-	 * [We could find the reserved chunks for flat-ccs and do those clears
-	 * directly, under most circumstances, but haven't yet.]
-	 */
 	return !object_needs_flat_ccs(obj);
 }
 
-static inline bool blocks_dirty(const struct list_head *blocks, bool *busy)
+static inline bool blocks_busy(const struct list_head *blocks, bool *dirty)
 {
        struct i915_buddy_block *block;
-       bool dirty = false;
 
-       *busy = false;
+       /* If any block is busy, use the blitter to create a sync pt */
        list_for_each_entry(block, blocks, link) {
-	       *busy |= i915_buddy_block_is_active(block);
-	       dirty |= !i915_buddy_block_is_clear(block);
-	       if (dirty && *busy)
-		       break;
+               if (i915_buddy_block_is_active(block))
+                       return true;
+
+	       *dirty |= !i915_buddy_block_is_clear(block);
        }
 
-       return dirty;
+       return false;
+}
+
+struct await_fences {
+	struct dma_fence dma;
+	struct i915_sw_fence chain;
+	struct spinlock lock;
+	struct i915_sw_dma_fence_cb cb[];
+};
+
+static const char *get_driver_name(struct dma_fence *fence)
+{
+	return "[" DRIVER_NAME "]";
+}
+
+static const char *get_timeline_name(struct dma_fence *fence)
+{
+	return "await";
+}
+
+static const struct dma_fence_ops await_ops = {
+	.get_driver_name = get_driver_name,
+	.get_timeline_name = get_timeline_name,
+};
+
+static int
+await_notify(struct i915_sw_fence *fence, enum i915_sw_fence_notify state)
+{
+	struct await_fences *a = container_of(fence, typeof(*a), chain);
+
+	switch (state) {
+	case FENCE_COMPLETE:
+		/* no error propagation */
+		dma_fence_signal(&a->dma);
+		break;
+
+	case FENCE_FREE:
+		i915_sw_fence_fini(&a->chain);
+		dma_fence_put(&a->dma);
+		break;
+	}
+
+	return NOTIFY_DONE;
 }
 
 static int
-blocks_await(const struct list_head *blocks,
-	     unsigned int flags,
-	     struct await_fences **out)
+blocks_await(const struct list_head *blocks, struct await_fences **out)
 {
 	struct i915_buddy_block *block;
 	struct await_fences *a;
@@ -1018,9 +970,13 @@ blocks_await(const struct list_head *blocks,
 	if (!count)
 		return 0;
 
-	a = await_create(count, flags);
+	a = kmalloc(struct_size(a, cb, count), I915_GFP_ALLOW_FAIL);
 	if (!a)
 		return -ENOMEM;
+
+	spin_lock_init(&a->lock);
+	dma_fence_init(&a->dma, &await_ops, &a->lock, 0, 0);
+	i915_sw_fence_init(&a->chain, await_notify);
 
 	count = 0;
 	list_for_each_entry(block, blocks, link) {
@@ -1033,47 +989,24 @@ blocks_await(const struct list_head *blocks,
 		__i915_sw_fence_await_dma_fence(&a->chain, f, &a->cb[count++]);
 		dma_fence_put(f);
 	}
-	if (!count) {
-		kfree(a);
-		return 0;
-	}
 
 	*out = a;
 	return 0;
-}
-
-static int await_blt(struct drm_i915_gem_object *obj, unsigned int flags)
-{
-	struct await_fences *f = NULL;
-	int err;
-
-	err = blocks_await(&obj->mm.blocks, flags, &f);
-	if (f) {
-		i915_gem_object_migrate_prepare(obj, &f->dma);
-		i915_sw_fence_commit(&f->chain);
-	}
-
-	return err;
 }
 
 static int lmem_clear(struct drm_i915_gem_object *obj)
 {
 	struct intel_memory_region *mem = obj->mm.region.mem;
 	unsigned int flags = obj->flags;
+	bool dirty = false;
+	const bool busy = blocks_busy(&obj->mm.blocks, &dirty);
 	struct intel_gt *gt = mem->gt;
 	struct intel_context *ce;
 	intel_wakeref_t wf = 0;
 	int err = 0;
-	bool busy;
 
-	if (flags & I915_BO_SKIP_CLEAR)
-		return await_blt(obj, AWAIT_NO_ERROR);
-
-	if (!blocks_dirty(&obj->mm.blocks, &busy))
-		return busy ? await_blt(obj, 0) : 0;
-
-	if (!IS_ENABLED(CONFIG_DRM_I915_CHICKEN_ASYNC_GET_PAGES))
-		flags |= I915_BO_SYNC_HINT;
+	if (!busy && (!dirty || (flags & I915_BO_SKIP_CLEAR)))
+		return 0;
 
 	ce = NULL;
 	if (flags & (I915_BO_ALLOC_USER | I915_BO_CPU_CLEAR)) {
@@ -1093,6 +1026,7 @@ static int lmem_clear(struct drm_i915_gem_object *obj)
 	if (ce && obj->base.size < SZ_2M && !(wf = intel_gt_pm_get_if_awake(gt)))
 		flags |= I915_BO_CPU_CLEAR;
 
+	/* Intended for kernel internal use only */
 	if (use_cpu_clear(obj, flags, busy)) {
 		err = clear_cpu(mem, &obj->mm.blocks, 0);
 	} else if (ce) {
@@ -1107,13 +1041,16 @@ static int lmem_clear(struct drm_i915_gem_object *obj)
 			i915_sw_fence_complete(&rq->submit);
 			i915_request_put(rq);
 		}
-
-		/* recycling dirty memory; proactively clear on release */
-		set_bit(INTEL_MEMORY_CLEAR_FREE, &mem->flags);
 	} else if (flags & I915_BO_CPU_CLEAR) {
 		err = -EIO; /* clear required use of the blitter */
 	} else if (busy) {
-		err = await_blt(obj, AWAIT_NO_ERROR);
+		struct await_fences *f = NULL;
+
+		err = blocks_await(&obj->mm.blocks, &f);
+		if (f) {
+			i915_gem_object_migrate_prepare(obj, &f->dma);
+			i915_sw_fence_commit(&f->chain);
+		}
 	}
 
 	if (wf)
@@ -1220,8 +1157,6 @@ static bool need_swap(const struct drm_i915_gem_object *obj)
 static int
 lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 {
-	struct intel_memory_region *mem = obj->mm.region.mem;
-	unsigned int clear = BIT(INTEL_MEMORY_CLEAR_FREE);
 	bool dirty;
 
 	if (need_swap(obj)) {
@@ -1231,8 +1166,6 @@ lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 		err = lmem_swapout(obj, pages, sizes);
 		if (err)
 			return err;
-
-		clear = 0;
 	}
 
 	i915_gem_object_migrate_decouple(obj);
@@ -1267,18 +1200,11 @@ lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 	 *   we are being evicted to be reused by a clear buffer, that clear
 	 *   will need to performed on the active pages and thus require a
 	 *   synchronisation penalty anyway.
-	 *
-	 * - Only begin proactive clear-on-free once we encounter eviction
-	 *   pressure for the current workload. This optimises small workloads
-	 *   which only require clear-on-idle to avoid extraneous background
-	 *   memory bandwidth and power utilisation during their execution.
 	 */
 	dirty = true;
 	if (IS_ENABLED(CONFIG_DRM_I915_CHICKEN_CLEAR_ON_FREE) &&
-	    mem->flags & clear &&
-	    !(obj->mm.page_sizes.phys & (mem->min_page_size - 1)) &&
-	    freed(obj)) {
-		struct intel_gt *gt = mem->gt;
+	    obj->flags & I915_BO_ALLOC_USER && freed(obj)) {
+		struct intel_gt *gt = obj->mm.region.mem->gt;
 		intel_wakeref_t wf;
 
 		with_intel_gt_pm_if_awake(gt, wf) {
@@ -1298,7 +1224,7 @@ lmem_put_pages(struct drm_i915_gem_object *obj, struct sg_table *pages)
 				continue;
 
 			dirty = clear_blt(ce, NULL,
-					  &mem->mm, &obj->mm.blocks,
+					  &obj->mm.region.mem->mm, &obj->mm.blocks,
 					  INTEL_GT_CLEAR_FREE_CYCLES, true,
 					  &rq);
 
@@ -1608,8 +1534,6 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 	if (!ce)
 		return false;
 
-	i915_buddy_defrag(&mem->mm, 0, UINT_MAX);
-
 	/* Gradually clear (upto half each pass) local memory */
 	min_order = ilog2(mem->min_page_size) - ilog2(mem->mm.chunk_size);
 	for (i = mem->mm.max_order; i >= min_order; i--) {
@@ -1617,10 +1541,8 @@ bool i915_gem_lmem_park(struct intel_memory_region *mem)
 		if (buddy_list_remove(bl, &dirty))
 			break;
 	}
-	if (i < min_order) {
-		clear_bit(INTEL_MEMORY_CLEAR_FREE, &mem->flags);
+	if (i < min_order)
 		return false;
-	}
 
 	__intel_wakeref_defer_park(&mem->gt->wakeref);
 	mutex_unlock(&mem->gt->wakeref.mutex);

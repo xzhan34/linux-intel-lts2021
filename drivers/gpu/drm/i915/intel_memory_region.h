@@ -87,10 +87,6 @@ struct intel_memory_region_ops {
 			   unsigned int flags);
 };
 
-enum intel_memory_region_flags {
-	INTEL_MEMORY_CLEAR_FREE = 0,
-};
-
 struct intel_memory_region {
 	struct drm_i915_private *i915;
 
@@ -122,8 +118,6 @@ struct intel_memory_region {
 
 	/* Track actual LMEM size, including stolen memory */
 	resource_size_t actual_physical_mem;
-
-	unsigned long flags;
 
 	u16 type;
 	u16 instance;
