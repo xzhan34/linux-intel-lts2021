@@ -21,7 +21,6 @@
 #include "i915_irq.h"
 #include "i915_request.h"
 #include "i915_sysrq.h"
-#include "intel_memory_region.h"
 #include "intel_wakeref.h"
 
 static DEFINE_MUTEX(sysrq_mutex);
@@ -102,7 +101,8 @@ static void show_gpu_mem(struct drm_i915_private *i915, struct drm_printer *p)
 	enum intel_region_id id;
 
 	for_each_memory_region(mr, i915, id)
-		intel_memory_region_print(mr, 0, p);
+		drm_printf(p, "%s: total:%pa, available:%pa bytes\n",
+			   mr->name, &mr->total, &mr->avail);
 }
 
 static void show_gt(struct intel_gt *gt, struct drm_printer *p)

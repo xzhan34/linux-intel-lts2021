@@ -228,92 +228,6 @@ __intel_memory_region_put_block_buddy(struct i915_buddy_block *block)
 		schedule_work(&mem->pd_put.work);
 }
 
-void intel_memory_region_print(struct intel_memory_region *mem,
-			       resource_size_t target,
-			       struct drm_printer *p)
-{
-	const struct {
-		const char *name;
-		struct list_head *list;
-	} objects[] = {
-		{ "purgeable", &mem->objects.purgeable },
-		{ "evictable", &mem->objects.list },
-		{}
-	}, *o;
-	int i;
-
-	drm_printf(p, "memory region: %s\n", mem->name);
-	drm_printf(p, "  parking: %s\n", str_yes_no(!completion_done(&mem->parking)));
-	drm_printf(p, "  total:  %llu\n", mem->total);
-	drm_printf(p, "  avail:  %llu\n", atomic64_read(&mem->avail));
-	drm_printf(p, "  evict:  %llu\n", atomic64_read(&mem->evict));
-	if (target)
-		drm_printf(p, "  target: %llu\n", target);
-
-	for (o = objects; o->name; o++) {
-		resource_size_t active = 0, avail = 0;
-		struct drm_i915_gem_object *obj;
-		unsigned long count = 0;
-
-		spin_lock(&mem->objects.lock);
-		list_for_each_entry(obj, o->list, mm.region.link) {
-			if (!obj->mm.region.mem)
-				continue;
-
-			if (!i915_gem_object_has_pages(obj))
-				continue;
-
-			if (__i915_gem_object_wait(obj, I915_WAIT_ALL, 0))
-				active += obj->base.size;
-			else
-				avail += obj->base.size;
-			count++;
-		}
-		spin_unlock(&mem->objects.lock);
-		if (!count)
-			continue;
-
-		drm_printf(p,
-			   "  %s: { count: %lu, active: %llu, avail: %llu }\n",
-			   o->name, count, active, avail);
-	}
-
-	if (mem->mm.size) {
-		drm_printf(p, "  free:\n");
-		for (i = 0; i <= mem->mm.max_order; i++) {
-			struct i915_buddy_block *block;
-			resource_size_t clear, dirty;
-			long count = 0;
-
-			struct i915_buddy_list *bl;
-
-			dirty = 0;
-			bl = &mem->mm.dirty_list[i];
-			spin_lock(&bl->lock);
-			list_for_each_entry(block, &bl->list, link) {
-				dirty += i915_buddy_block_size(&mem->mm, block);
-				count++;
-			}
-			spin_unlock(&bl->lock);
-
-			clear = 0;
-			bl = &mem->mm.clear_list[i];
-			spin_lock(&bl->lock);
-			list_for_each_entry(block, &bl->list, link) {
-				clear += i915_buddy_block_size(&mem->mm, block);
-				count++;
-			}
-			spin_unlock(&bl->lock);
-
-			if (!count)
-				continue;
-
-			drm_printf(p, "  - [%d]: { count:%lu, clear:%llu, dirty:%llu }\n",
-				   i, count, clear, dirty);
-		}
-	}
-}
-
 int intel_memory_region_add_to_ww_evictions(struct intel_memory_region *mem,
 					    struct i915_gem_ww_ctx *ww,
 					    struct drm_i915_gem_object *obj)
@@ -499,8 +413,6 @@ next:
 			goto unlock;
 		}
 
-		GEM_TRACE("%s:{ target:%pa, found:%pa, evicting:%zu, remaining timeout:%ld }\n",
-			  mem->name, &target, &found, obj->base.size, timeout);
 		err = i915_gem_object_unbind(obj, ww, I915_GEM_OBJECT_UNBIND_ACTIVE);
 		if (err == 0)
 			err = __i915_gem_object_put_pages(obj);
@@ -588,7 +500,7 @@ bookmark:
 	 * no forward progress, do we conclude that it is better to report
 	 * failure.
 	 */
-	return atomic64_read(&mem->avail) >= target ? 0 : -ENXIO;
+	return atomic64_read(&mem->evict) <= target ? -ENXIO : 0;
 }
 
 static unsigned int
@@ -629,7 +541,6 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 	unsigned int min_order = 0;
 	unsigned long n_pages;
 	unsigned int order;
-	int err = 0;
 
 	GEM_BUG_ON(!IS_ALIGNED(size, mem->mm.chunk_size));
 
@@ -687,46 +598,27 @@ __intel_memory_region_get_pages_buddy(struct intel_memory_region *mem,
 			continue;
 		}
 
-		if (wait_for_completion_interruptible(&mem->parking)) {
-			err = -EINTR;
-			break;
-		}
-
 		if (i915_buddy_defrag(&mem->mm, min_order, order))
 			/* Merged a few blocks, try again */
 			continue;
 
 		if (order-- == min_order) {
+			int err;
+
 evict:			/* Reserve the memory we reclaim for ourselves! */
 			sz = n_pages * mem->mm.chunk_size;
 			atomic64_add(sz, &mem->evict);
 			err = intel_memory_region_evict(mem, ww, sz);
 			atomic64_sub(sz, &mem->evict);
-			if (err)
-				break;
-
-			if (!i915_buddy_defrag(&mem->mm, min_order, min_order)) {
-				err = -ENXIO;
-				break;
+			if (err) {
+				intel_memory_region_free_pages(mem, blocks, false);
+				return err;
 			}
 
 			order = __max_order(mem, n_pages);
-		}
-
-		if (signal_pending(current)) {
-			err = -EINTR;
-			break;
+			i915_buddy_defrag(&mem->mm, min_order, order);
 		}
 	} while (1);
-
-	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG) && err == -ENXIO) {
-		struct drm_printer p = drm_info_printer(mem->gt->i915->drm.dev);
-
-		intel_memory_region_print(mem, size, &p);
-	}
-
-	intel_memory_region_free_pages(mem, blocks, false);
-	return err;
 }
 
 struct i915_buddy_block *
@@ -840,9 +732,6 @@ intel_memory_region_create(struct intel_gt *gt,
 	INIT_LIST_HEAD(&mem->objects.locked);
 
 	INIT_LIST_HEAD(&mem->reserved);
-
-	init_completion(&mem->parking);
-	complete_all(&mem->parking);
 
 	spin_lock_init(&mem->acct_lock);
 
