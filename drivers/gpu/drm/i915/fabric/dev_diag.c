@@ -720,7 +720,6 @@ void create_dev_debugfs_dir(struct fsubdev *sd)
 	debugfs_create_file(RISC_NMI_FILE_NAME, 0644, debugfs_dir, sd, &risc_nmi_fops);
 	debugfs_create_file(ASIC_REV_FILE_NAME, 0400, debugfs_dir, sd, &asic_rev_fops);
 	debugfs_create_file(MAILBOX_COUNTERS_FILE_NAME, 0400, debugfs_dir, sd, &mbdb_counter_fops);
-	debugfs_create_file(CAPABILITIES_FILE_NAME, 0400, debugfs_dir, sd, &capabilities_fops);
 
 	statedump_node_init(sd);
 }
