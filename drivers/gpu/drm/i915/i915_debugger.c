@@ -3962,6 +3962,19 @@ static int discovery_thread_stop(struct task_struct *task)
 	return ret;
 }
 
+static bool check_tdctl(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	int id;
+
+	for_each_gt(gt, i915, id) {
+		if (!(intel_gt_mcr_read_any(gt, TD_CTL) & TD_CTL_BREAKPOINT_ENABLE))
+			return false;
+	}
+
+	return true;
+}
+
 static int
 i915_debugger_open(struct drm_i915_private * const i915,
 		   struct prelim_drm_i915_debugger_open_param * const param)
@@ -3990,6 +4003,12 @@ i915_debugger_open(struct drm_i915_private * const i915,
 
 	if (param->extensions)
 		return -EINVAL;
+
+	if (!check_tdctl(i915)) {
+		drm_warn(&i915->drm,
+			 "Breakpoints not enabled for i915 debugger\n");
+		return -EPERM;
+	}
 
 	debugger = kzalloc(sizeof(*debugger), GFP_KERNEL);
 	if (!debugger)
