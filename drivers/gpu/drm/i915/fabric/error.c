@@ -1169,8 +1169,11 @@ static bool is_error(struct fport *port, u64 error, const struct error_reg *resu
 			 * "set_by_8051" (bit 0) is a status bit indicating
 			 * the validity of a non-PAWR register (which itself
 			 * may contain a non-error host command status)
+			 *
+			 * "lost_8051_heart_beat" (bit 1) can false positive due
+			 * to reset flow timing.
 			 */
-			return error & ~BIT_ULL(0);
+			return error & ~(BIT_ULL(1) | BIT_ULL(0));
 		case O_LCB_ERR_STS:
 		case O_LCB_ERR_FIRST_HOST:
 			/*
@@ -1245,9 +1248,8 @@ static bool report_errors(struct fport *port, const u64 *errors,
 		if (!is_error(port, errors[i], regs + i, armed))
 			continue;
 
-		if (noisy_logging_allowed())
-			fport_info(port, "sticky hw error: %s 0x%016llx (%llu)\n",
-				   regs[i].name, errors[i], errors[i]);
+		fport_info(port, "sticky hw error: %s 0x%016llx (%llu)\n",
+			   regs[i].name, errors[i], errors[i]);
 
 		if (test_bit(port->lpn, port->sd->fport_lpns))
 			report_fabric_error(port, regs[i].offset, errors[i]);

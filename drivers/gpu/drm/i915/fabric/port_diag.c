@@ -1,18 +1,13 @@
 // SPDX-License-Identifier: MIT
 /*
- * Copyright(c) 2021 - 2023 Intel Corporation.
+ * Copyright(c) 2021 - 2022 Intel Corporation.
  */
 
 #include <linux/bitfield.h>
-#include <linux/bitops.h>
-#include <linux/debugfs.h>
-#include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/minmax.h>
-#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/stringify.h>
-#include <linux/uaccess.h>
 
 #include "debugfs.h"
 #include "ops.h"
@@ -1260,7 +1255,7 @@ static void tx_tuning_nodes_init(struct fport *port, struct dentry *debugfs_dir)
 #define DCC_INTERP_BUF_SIZE 165
 #define MAINT_MODE_BUF_SIZE 12
 #define DCC_INTERP_OVERRIDE_BUF_SIZE 12
-#define DCC_INTERP_OVERRIDE_ENABLE_BUF_SIZE 3
+#define DCC_INTERP_OVERRIDE_ENABLE_BUF_SIZE 2
 
 static ssize_t tx_dcc_margin_params_read(struct file *fp, char __user *buf, size_t count,
 					 loff_t *fpos)
@@ -1269,12 +1264,11 @@ static ssize_t tx_dcc_margin_params_read(struct file *fp, char __user *buf, size
 	struct tx_dcc_margin_param_get_rsp rsp = {};
 	char rd_buf[MARGIN_PARAMS_BUF_SIZE];
 	size_t siz;
+	int err;
 
-	if (!port)
-		return -EINVAL;
-
-	if (ops_tx_dcc_margin_param_get(port->sd, port->lpn, &rsp))
-		return -EINVAL;
+	err = ops_tx_dcc_margin_param_get(port->sd, port->lpn, &rsp);
+	if (err)
+		return err;
 
 	siz = scnprintf(rd_buf, sizeof(rd_buf), "%u\n", rsp.value);
 
@@ -1286,18 +1280,18 @@ static ssize_t tx_dcc_margin_params_write(struct file *fp, const char __user *bu
 {
 	struct fport *port = fp->private_data;
 	u16 value;
-
-	if (!port)
-		return -EINVAL;
+	int err;
 
 	if (!count)
 		return 0;
 
-	if (kstrtou16_from_user(buf, count, 0, &value))
-		return -EINVAL;
+	err = kstrtou16_from_user(buf, count, 0, &value);
+	if (err)
+		return err;
 
-	if (ops_tx_dcc_margin_param_set(port->sd, port->lpn, value, true))
-		return -EINVAL;
+	err = ops_tx_dcc_margin_param_set(port->sd, port->lpn, value, true);
+	if (err)
+		return err;
 
 	*fpos += count;
 	return count;
@@ -1305,8 +1299,8 @@ static ssize_t tx_dcc_margin_params_write(struct file *fp, const char __user *bu
 
 static int tx_dcc_interp_open(struct inode *inode, struct file *file)
 {
-	struct fport **lane = inode->i_private;
-	struct fport *port = lane ? *lane : NULL;
+	struct port_lane *ports_lane = inode->i_private;
+	struct fport *port = ports_lane->port;
 	struct dcc_interp_info {
 		struct debugfs_blob_wrapper blob;
 		struct tx_dcc_interp_get_rsp rsp;
@@ -1316,6 +1310,7 @@ static int tx_dcc_interp_open(struct inode *inode, struct file *file)
 	size_t buf_size;
 	size_t buf_offset;
 	char *buf;
+	int ret;
 
 	if (!port)
 		return -EINVAL;
@@ -1326,9 +1321,10 @@ static int tx_dcc_interp_open(struct inode *inode, struct file *file)
 
 	rsp = &info->rsp;
 
-	if (ops_tx_dcc_interp_get(port->sd, port->lpn, lane_number(lane), rsp)) {
+	ret = ops_tx_dcc_interp_get(port->sd, port->lpn, ports_lane->lane_number, rsp);
+	if (ret) {
 		kfree(info);
-		return -EINVAL;
+		return ret;
 	}
 
 	buf_size = ARRAY_SIZE(info->buf);
@@ -1353,21 +1349,21 @@ static int tx_dcc_interp_open(struct inode *inode, struct file *file)
 static ssize_t tx_dcc_index_write(struct file *fp, const char __user *buf, size_t count,
 				  loff_t *fpos)
 {
-	struct fport **lane = fp->private_data;
-	struct fport *port = lane ? *lane : NULL;
+	struct port_lane *ports_lane = fp->private_data;
+	struct fport *port = ports_lane->port;
 	u32 index;
-
-	if (!port)
-		return -EINVAL;
+	int err;
 
 	if (!count)
 		return 0;
 
-	if (kstrtou32_from_user(buf, count, 0, &index))
-		return -EINVAL;
+	err = kstrtou32_from_user(buf, count, 0, &index);
+	if (err)
+		return err;
 
-	if (ops_tx_dcc_index_set(port->sd, port->lpn, lane_number(lane), index, false))
-		return -EINVAL;
+	err = ops_tx_dcc_index_set(port->sd, port->lpn, ports_lane->lane_number, index, true);
+	if (err)
+		return err;
 
 	*fpos += count;
 	return count;
@@ -1379,12 +1375,11 @@ static ssize_t maint_mode_read(struct file *fp, char __user *buf, size_t count, 
 	struct maint_mode_get_rsp rsp = {};
 	char rd_buf[MAINT_MODE_BUF_SIZE];
 	size_t siz;
+	int err;
 
-	if (!port)
-		return -EINVAL;
-
-	if (ops_maint_mode_get(port->sd, port->lpn, &rsp))
-		return -EINVAL;
+	err = ops_maint_mode_get(port->sd, port->lpn, &rsp);
+	if (err)
+		return err;
 
 	siz = scnprintf(rd_buf, sizeof(rd_buf), "%u\n", rsp.mode);
 
@@ -1395,18 +1390,18 @@ static ssize_t maint_mode_write(struct file *fp, const char __user *buf, size_t 
 {
 	struct fport *port = fp->private_data;
 	u32 mode;
-
-	if (!port)
-		return -EINVAL;
+	int err;
 
 	if (!count)
 		return 0;
 
-	if (kstrtou32_from_user(buf, count, 0, &mode))
-		return -EINVAL;
+	err = kstrtou32_from_user(buf, count, 0, &mode);
+	if (err)
+		return err;
 
-	if (ops_maint_mode_set(port->sd, port->lpn, mode, false))
-		return -EINVAL;
+	err = ops_maint_mode_set(port->sd, port->lpn, mode, true);
+	if (err)
+		return err;
 
 	*fpos += count;
 	return count;
@@ -1415,17 +1410,16 @@ static ssize_t maint_mode_write(struct file *fp, const char __user *buf, size_t 
 static ssize_t tx_dcc_interp_override_read(struct file *fp, char __user *buf, size_t count,
 					   loff_t *fpos)
 {
-	struct fport **lane = fp->private_data;
-	struct fport *port = lane ? *lane : NULL;
+	struct port_lane *ports_lane = fp->private_data;
+	struct fport *port = ports_lane->port;
 	struct tx_dcc_interp_override_get_rsp rsp = {};
 	char rd_buf[DCC_INTERP_OVERRIDE_BUF_SIZE];
 	size_t siz;
+	int err;
 
-	if (!port)
-		return -EINVAL;
-
-	if (ops_tx_dcc_interp_override_get(port->sd, port->lpn, lane_number(lane), &rsp))
-		return -EINVAL;
+	err = ops_tx_dcc_interp_override_get(port->sd, port->lpn, ports_lane->lane_number, &rsp);
+	if (err)
+		return err;
 
 	siz = scnprintf(rd_buf, sizeof(rd_buf), "%u\n", rsp.value);
 
@@ -1435,21 +1429,22 @@ static ssize_t tx_dcc_interp_override_read(struct file *fp, char __user *buf, si
 static ssize_t tx_dcc_interp_override_write(struct file *fp, const char __user *buf, size_t count,
 					    loff_t *fpos)
 {
-	struct fport **lane = fp->private_data;
-	struct fport *port = lane ? *lane : NULL;
+	struct port_lane *ports_lane = fp->private_data;
+	struct fport *port = ports_lane->port;
 	u32 value;
-
-	if (!port)
-		return -EINVAL;
+	int err;
 
 	if (!count)
 		return 0;
 
-	if (kstrtou32_from_user(buf, count, 0, &value))
-		return -EINVAL;
+	err = kstrtou32_from_user(buf, count, 0, &value);
+	if (err)
+		return err;
 
-	if (ops_tx_dcc_interp_override_set(port->sd, port->lpn, lane_number(lane), value, true))
-		return -EINVAL;
+	err = ops_tx_dcc_interp_override_set(port->sd, port->lpn, ports_lane->lane_number, value,
+					     true);
+	if (err)
+		return err;
 
 	*fpos += count;
 	return count;
@@ -1458,17 +1453,17 @@ static ssize_t tx_dcc_interp_override_write(struct file *fp, const char __user *
 static ssize_t tx_dcc_interp_override_enable_read(struct file *fp, char __user *buf, size_t count,
 						  loff_t *fpos)
 {
-	struct fport **lane = fp->private_data;
-	struct fport *port = lane ? *lane : NULL;
+	struct port_lane *ports_lane = fp->private_data;
+	struct fport *port = ports_lane->port;
 	struct tx_dcc_interp_override_enable_get_rsp rsp = {};
 	char rd_buf[DCC_INTERP_OVERRIDE_ENABLE_BUF_SIZE];
 	size_t siz;
+	int err;
 
-	if (!port)
-		return -EINVAL;
-
-	if (ops_tx_dcc_interp_override_enable_get(port->sd, port->lpn, lane_number(lane), &rsp))
-		return -EINVAL;
+	err = ops_tx_dcc_interp_override_enable_get(port->sd, port->lpn, ports_lane->lane_number,
+						    &rsp);
+	if (err)
+		return err;
 
 	siz = scnprintf(rd_buf, sizeof(rd_buf), "%s\n", rsp.enable ? "Y" : "N");
 
@@ -1478,22 +1473,22 @@ static ssize_t tx_dcc_interp_override_enable_read(struct file *fp, char __user *
 static ssize_t tx_dcc_interp_override_enable_write(struct file *fp, const char __user *buf,
 						   size_t count, loff_t *fpos)
 {
-	struct fport **lane = fp->private_data;
-	struct fport *port = lane ? *lane : NULL;
+	struct port_lane *ports_lane = fp->private_data;
+	struct fport *port = ports_lane->port;
 	bool enable;
-
-	if (!port)
-		return -EINVAL;
+	int err;
 
 	if (!count)
 		return 0;
 
-	if (kstrtobool_from_user(buf, count, &enable))
-		return -EINVAL;
+	err = kstrtobool_from_user(buf, count, &enable);
+	if (err)
+		return err;
 
-	if (ops_tx_dcc_interp_override_enable_set(port->sd, port->lpn, lane_number(lane),
-						  enable ? 1 : 0, true))
-		return -EINVAL;
+	err = ops_tx_dcc_interp_override_enable_set(port->sd, port->lpn, ports_lane->lane_number,
+						    enable ? 1 : 0, true);
+	if (err)
+		return err;
 
 	*fpos += count;
 	return count;
@@ -1560,19 +1555,19 @@ static void tx_dcc_margin_nodes_init(struct fport *port, struct dentry *debugfs_
 		char buf[MAX_TX_DCC_FILE_NAME_BUF_SIZE];
 
 		scnprintf(buf, sizeof(buf), TX_DCC_INTERP_FILE_NAME "_lane%u", lane);
-		debugfs_create_file(buf, 0400, tx_dcc_dir, &port->lanes_port[lane],
+		debugfs_create_file(buf, 0400, tx_dcc_dir, &port->ports_lanes[lane],
 				    &tx_dcc_interp_fops);
 
 		scnprintf(buf, sizeof(buf), TX_DCC_INDEX_FILE_NAME "_lane%u", lane);
-		debugfs_create_file(buf, 0200, tx_dcc_dir, &port->lanes_port[lane],
+		debugfs_create_file(buf, 0200, tx_dcc_dir, &port->ports_lanes[lane],
 				    &tx_dcc_index_fops);
 
 		scnprintf(buf, sizeof(buf), TX_DCC_INTERP_OVVL_FILE_NAME "_lane%u", lane);
-		debugfs_create_file(buf, 0600, tx_dcc_dir, &port->lanes_port[lane],
+		debugfs_create_file(buf, 0600, tx_dcc_dir, &port->ports_lanes[lane],
 				    &tx_dcc_interp_override_fops);
 
 		scnprintf(buf, sizeof(buf), TX_DCC_INTERP_OV_ENABLE_FILE_NAME "_lane%u", lane);
-		debugfs_create_file(buf, 0600, tx_dcc_dir, &port->lanes_port[lane],
+		debugfs_create_file(buf, 0600, tx_dcc_dir, &port->ports_lanes[lane],
 				    &tx_dcc_interp_override_enable_fops);
 	}
 }

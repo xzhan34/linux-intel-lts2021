@@ -9,11 +9,8 @@
 #include <linux/crc32c.h>
 #include <linux/delay.h>
 #include <linux/firmware.h>
-#include <linux/math.h>
 #include <linux/module.h>
 #include <linux/mtd/mtd.h>
-#include <linux/overflow.h>
-#include <linux/slab.h>
 
 #include "dev_diag.h"
 #include "error.h"
@@ -271,16 +268,17 @@ MODULE_PARM_DESC(psc_file_override,
 /*
  * firmware roption override
  */
-/* must match the module param description */
-#define ROPTION_DEFAULT ( \
-	ROPTION_FORCE_FEC_HEAVY_ON | \
-	ROPTION_TRACE_LNI_DEBUG    | \
-	ROPTION_FORCE_FEC_LIGHT_ON)
+#define ROPTION_DEFAULT      0x00000201
+#define ROPTION_DEFAULT_STR  __stringify(ROPTION_DEFAULT)
 
+#if IS_ENABLED(CONFIG_IAF_DEBUG_FIRMWARE_ROPTION)
 static unsigned int firmware_roption = ROPTION_DEFAULT;
 module_param(firmware_roption, uint, 0600);
 MODULE_PARM_DESC(firmware_roption,
-		 "Set the firmware roption debug register (default: 0x40000201)");
+		 "Set the firmware roption debug register (default: " ROPTION_DEFAULT_STR ")");
+#else
+static const unsigned int firmware_roption = ROPTION_DEFAULT;
+#endif
 
 /*
  * Workqueue and timer support functions
@@ -482,11 +480,6 @@ static bool valid_bcd_time(u32 time)
 	return hour < 24 && minute < 60 && (second < 60 || leap_second(hour, minute, second));
 }
 
-/*
- * When loading the PSC as firmware via the psc_file_override parameter or with older formats that
- * did not support per-item CRCs, the entire PSC blob is loaded in memory. As of V3, when loading
- * from SPI, only required items are loaded to reduce expensive reads.
- */
 static inline bool full_pscbin_in_memory(struct fdev *dev, u32 psc_format_version)
 {
 	return dev->psc.as_fw || psc_format_version < PSCBIN_VERSION_V3;
@@ -1278,8 +1271,7 @@ static int validate_psc(struct fdev *dev)
 		presence_data = NULL;
 	}
 
-	if (full_pscbin_in_memory(dev, psc_id->psc_format_version) &&
-	    hdr_size + data_size > dev->psc.size) {
+	if (hdr_size + data_size < dev->psc.size) {
 		dev_err(fdev_dev(dev), "PSC data incomplete\n");
 		return -ENODATA;
 	}
@@ -1644,9 +1636,8 @@ static void fw_initialization_complete(struct fdev *dev)
 	complete_all(&dev->psc.abort);
 	wait_for_completion(&dev->psc.done);
 
-	if (noisy_logging_allowed())
-		dev_info(fdev_dev(dev), "Firmware Version: %s\n",
-			 dev->sd[0].fw_version.fw_version_string);
+	dev_info(fdev_dev(dev), "Firmware Version: %s\n",
+		 dev->sd[0].fw_version.fw_version_string);
 
 	/* release resources required for FW initialization */
 	release_pscdata(dev);
@@ -1738,111 +1729,6 @@ cleanup:
 	fdev_put(dev);
 }
 
-static void fetch_tx_calibration(struct fdev *dev)
-{
-	const struct psc_data *psc_blob = (const struct psc_data *)dev->psc.data;
-	u32 txcal_start = round_up(psc_blob->data_size, sizeof(u32));
-	unsigned int spi_offset = SPI_HEADER_SIZE + struct_size(psc_blob, data, txcal_start);
-	struct txcal_blob hdr_from_spi;
-	const struct txcal_blob *hdr;
-	size_t blob_size;
-	int err;
-
-	if (dev->psc.as_fw) {
-		const struct txcal_settings *psc_buf_end;
-
-		hdr = (const struct txcal_blob *)&psc_blob->data[txcal_start];
-		psc_buf_end = (const struct txcal_settings *)&dev->psc.data[dev->psc.size];
-
-		/* verify both header and data fit */
-		if (hdr->data > psc_buf_end || &hdr->data[hdr->num_settings] > psc_buf_end) {
-			dev_warn(fdev_dev(dev), "TX calibration header not in PSC image");
-			return;
-		}
-	} else {
-		/* attempt to read header from SPI */
-		hdr = &hdr_from_spi;
-		err = read_spi_data(dev, spi_offset, sizeof(hdr_from_spi), &hdr_from_spi,
-				    "TX calibration header");
-		if (err) {
-			dev_warn(fdev_dev(dev), "TX calibration header does not fit in SPI");
-			return;
-		}
-	}
-
-	/* verify txcal_blob */
-
-	blob_size = struct_size(hdr, data, hdr->num_settings);
-
-	if (hdr->magic[0] != TXCAL_BLOB_MAGIC_0 || hdr->magic[1] != TXCAL_BLOB_MAGIC_1 ||
-	    hdr->magic[2] != TXCAL_BLOB_MAGIC_2 || hdr->magic[3] != TXCAL_BLOB_MAGIC_3) {
-		dev_warn(fdev_dev(dev), "TX calibration header not found");
-		return;
-	}
-
-	if (hdr->crc32c_hdr != crc32c(0, hdr, offsetof(struct txcal_blob, crc32c_hdr))) {
-		dev_warn(fdev_dev(dev), "TX calibration header CRC mismatch\n");
-		goto error;
-	}
-
-	if (hdr->format_version < TXCAL_VERSION_MIN || hdr->format_version > TXCAL_VERSION_MAX) {
-		dev_warn(fdev_dev(dev), "TX calibration unsupported version\n");
-		goto error;
-	}
-
-	if (hdr->size < blob_size) {
-		dev_warn(fdev_dev(dev), "TX calibration data size mismatch\n");
-		goto error;
-	}
-
-	if (!valid_bcd_date(hdr->date)) {
-		dev_warn(fdev_dev(dev), "TX calibration invalid date format\n");
-		goto error;
-	}
-
-	if (!valid_bcd_time(hdr->time)) {
-		dev_warn(fdev_dev(dev), "TX calibration invalid time format\n");
-		goto error;
-	}
-
-	/* BCD-encoded date/time: upper time byte should be 0x00, but ensure all bits are shown */
-	dev_info(fdev_dev(dev), "TX calibration version %u : %04x/%02x/%02x %02x:%02x:%02x",
-		 hdr->cfg_version, hdr->date >> 16, hdr->date >> 8 & 0xff, hdr->date & 0xff,
-		 hdr->time >> 16, hdr->time >> 8 & 0xff, hdr->time & 0xff);
-
-	dev->psc.txcal = kmalloc(blob_size, GFP_KERNEL);
-	if (!dev->psc.txcal)
-		goto error;
-
-	if (dev->psc.as_fw) {
-		memcpy(dev->psc.txcal, hdr, blob_size);
-	} else {
-		memcpy(dev->psc.txcal, hdr, sizeof(*hdr));
-		err = read_spi_data(dev,
-				    spi_offset + offsetof(struct txcal_blob, data),
-				    hdr->num_settings * sizeof(struct txcal_settings),
-				    dev->psc.txcal->data,
-				    "TX calibration data");
-		if (err) {
-			dev_warn(fdev_dev(dev), "TX calibration data does not fit in SPI");
-			goto error;
-		}
-	}
-
-	if (hdr->crc32c_data !=
-	    crc32c(0, dev->psc.txcal->data, flex_array_size(hdr, data, hdr->num_settings))) {
-		dev_warn(fdev_dev(dev), "TX calibration data CRC mismatch\n");
-		goto error;
-	}
-
-	return;
-
-error:
-	kfree(dev->psc.txcal);
-	dev->psc.txcal = NULL;
-	dev_warn(fdev_dev(dev), "TX calibration data incomplete or corrupted");
-}
-
 static void fetch_platform_specific_config(struct fdev *dev)
 {
 	bool fetching_psc_from_spi;
@@ -1878,8 +1764,6 @@ static void fetch_platform_specific_config(struct fdev *dev)
 	}
 
 	dev->psc.err = validate_psc(dev);
-
-	fetch_tx_calibration(dev);
 
 end:
 

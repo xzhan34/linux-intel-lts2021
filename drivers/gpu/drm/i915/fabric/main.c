@@ -17,7 +17,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/rwsem.h>
 #include <linux/sizes.h>
-#include <linux/slab.h>
 #include <linux/xarray.h>
 #include <generated/utsrelease.h>
 
@@ -55,8 +54,6 @@ LIST_HEAD(routable_list);
  * in the intel_iaf_platform.h file.
  */
 #define PRODUCT_SHIFT 16
-
-static bool suppress_noisy_logging;
 
 static enum iaf_startup_mode param_startup_mode = STARTUP_MODE_DEFAULT;
 
@@ -697,7 +694,6 @@ static int iaf_remove(struct platform_device *pdev)
 		if (!dev->psc.ini_buf[i].do_not_free)
 			kfree(dev->psc.ini_buf[i].data);
 	kfree(dev->psc.presence_rules);
-	kfree(dev->psc.txcal);
 	kfree(dev);
 #if !IS_ENABLED(CONFIG_AUXILIARY_BUS)
 	return 0;
@@ -947,15 +943,8 @@ static void fw_abort(void)
 	xa_unlock(&intel_fdevs);
 }
 
-bool noisy_logging_allowed(void)
-{
-	return !READ_ONCE(suppress_noisy_logging);
-}
-
 static void __exit iaf_unload_module(void)
 {
-	WRITE_ONCE(suppress_noisy_logging, true);
-
 	pr_notice("Unloading %s\n", MODULEDETAILS);
 
 	mbox_term_module();

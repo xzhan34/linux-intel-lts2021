@@ -7,4 +7,3 @@ DII-TAG,Commit Header,JIRA,Requester,PSB Branch Tag
 6886.0,Soc error handling fixes.,VLK-47776,parupall,
 6889.0,Enhance HBM error reporting for PVC.,VLK-46694,parupall,I915-23.6.5
 6892.0,Support SOC NONFATAL error handling.,VLK-47899,parupall,I915-23.6.6
-6895.0,INTEL_DII: drm/i915/fabric: PVC IAF stable update,VLK-43994,parupall,I915-23.6.7

@@ -781,7 +781,7 @@ static int unicast_route_pair(struct routing_uft *uft,
 	return unicast_route_pair_via(uft, sd_src, sd_dst, ports, num_ports);
 }
 
-static int find_nth_bit(unsigned long *mask, unsigned long len, unsigned long n)
+static int find_nth_bit(int n, unsigned long *mask, int len)
 {
 	int bit = find_first_bit(mask, len);
 
@@ -832,7 +832,7 @@ static int unicast_route_local(struct routing_uft *uft, struct fsubdev *sd_src)
 		base = sd_src->routing.fid_base;
 		bridge_offset = fid_to_bridge_offset(base + fid);
 		/* find_nth_bit() result will always be in range 0..PORT_COUNT */
-		port = (u8)find_nth_bit(sd_src->bport_lpns, PORT_COUNT, bridge_offset);
+		port = (u8)find_nth_bit(bridge_offset, sd_src->bport_lpns, PORT_COUNT);
 		if (unlikely(port == PORT_COUNT))
 			continue;
 
