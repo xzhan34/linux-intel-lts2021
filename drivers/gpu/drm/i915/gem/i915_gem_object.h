@@ -755,8 +755,6 @@ int i915_gem_object_wait_priority(struct drm_i915_gem_object *obj,
 				  unsigned int flags,
 				  int prio);
 
-bool i915_gem_object_is_active(struct drm_i915_gem_object *obj);
-
 void __i915_gem_object_flush_frontbuffer(struct drm_i915_gem_object *obj,
 					 enum fb_op_origin origin);
 void __i915_gem_object_invalidate_frontbuffer(struct drm_i915_gem_object *obj,
