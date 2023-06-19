@@ -1529,12 +1529,13 @@ struct i915_vma *i915_vma_open(struct i915_vma *vma)
 
 		spin_lock_irqsave(&clock->lock, flags);
 		if (!atomic_add_unless(&vma->open_count, 1, 0)) {
-			if (i915_vma_is_purged(vma) ||
-			    !i915_vm_tryopen(vma->vm)) {
+			if (!i915_vma_tryget(vma)) {
+				vma = NULL;
+			} else if (!i915_vm_tryopen(vma->vm)) {
+				i915_vma_put(vma);
 				vma = NULL;
 			} else {
 				__i915_vma_get(vma);
-				i915_vma_get(vma);
 				if (!list_empty(&vma->closed_link)) {
 					list_del_init(&vma->closed_link);
 					__i915_vma_put(vma);
