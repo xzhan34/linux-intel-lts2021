@@ -4234,8 +4234,8 @@ static int queue_engine_attentions(struct i915_debugger *debugger,
 
 	size = struct_size(ea, bitmask, intel_gt_eu_attention_bitmap_size(engine->gt));
 
-	event = debugger_create_event(debugger,
-				      debugger_get_seqno(debugger),
+	/* seqno set holding eu->lock */
+	event = debugger_create_event(debugger, 0,
 				      PRELIM_DRM_I915_DEBUG_EVENT_EU_ATTENTION,
 				      PRELIM_DRM_I915_DEBUG_EVENT_STATE_CHANGE,
 				      size, GFP_ATOMIC);
@@ -4255,7 +4255,7 @@ static int queue_engine_attentions(struct i915_debugger *debugger,
 
 	read_lock(&debugger->eu_lock);
 	intel_gt_eu_attention_bitmap(engine->gt, &ea->bitmask[0], ea->bitmask_size);
-	event->seqno = atomic_long_inc_return(&debugger->event_seqno);
+	event->seqno = debugger_get_seqno(debugger);
 	read_unlock(&debugger->eu_lock);
 
 	intel_engine_pm_put(engine);
