@@ -5539,6 +5539,10 @@ static int emit_bb_start_parent_no_preempt_mid_batch(struct i915_request *rq,
 	if (IS_ERR(cs))
 		return PTR_ERR(cs);
 
+	/* Turn off preemption */
+	*cs++ = MI_ARB_ON_OFF | MI_ARB_DISABLE;
+	*cs++ = MI_NOOP;
+
 	/* Wait on children */
 	for (i = 0; i < ce->parallel.number_children; ++i) {
 		*cs++ = (MI_SEMAPHORE_WAIT |
@@ -5549,10 +5553,6 @@ static int emit_bb_start_parent_no_preempt_mid_batch(struct i915_request *rq,
 		*cs++ = get_children_join_addr(ce, i);
 		*cs++ = 0;
 	}
-
-	/* Turn off preemption */
-	*cs++ = MI_ARB_ON_OFF | MI_ARB_DISABLE;
-	*cs++ = MI_NOOP;
 
 	/* Tell children go */
 	cs = gen8_emit_ggtt_write(cs,

@@ -1,4 +1,7 @@
 DII-TAG,Commit Header,JIRA,Requester,PSB Branch Tag
 ,PSB_Automation: Add CSV file for automation,vlk-47017,Muqthyar,I915-23.6.0
-6936,Fix more klocwork warning,,Muqthyar,I915-23.6.12
-6947,Rebase to DII_6947,,Muqthyar,I915-23.6.13
+6936.0,Fix more klocwork warning,,Muqthyar,I915-23.6.12
+6947.0,Rebase to DII_6947,,Muqthyar,I915-23.6.13
+6948.0,mei: narrow down reset print override,,hgirotra,
+,Release object reference for coredump page capture,VLK-48745,hgirotra,
+6949.0,Prevent interruption during wait-for-go in parallel children,VLK-48662,hgirotra,I915-23.6.14
