@@ -1302,6 +1302,8 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 
 	if (!pages) {
 		obj = i915_gem_object_get_rcu(vma->obj);
+		if (!obj)
+			return dst;
 
 		if (!atomic_add_unless(&obj->mm.pages_pin_count, 1, 0)) {
 			int err = -EBUSY;
@@ -1312,11 +1314,11 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 			}
 
 			if (err)
-				return dst;
+				goto out;
 		}
 
 		if (i915_gem_object_migrate_sync(obj))
-			return dst;
+			goto out;
 
 		pages = obj->mm.pages;
 	}
