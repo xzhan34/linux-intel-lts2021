@@ -293,7 +293,6 @@ static int i915_gem_userptr_get_pages(struct drm_i915_gem_object *obj)
 	obj->cache_dirty = false;
 	__i915_gem_object_set_pages(obj, st, PAGE_SIZE); /* placeholder */
 	atomic64_sub(obj->base.size, &obj->mm.region.mem->avail);
-	WARN_ON_ONCE(!(obj->cache_coherent & I915_BO_CACHE_COHERENT_FOR_WRITE));
 
 	i915_gem_object_migrate_prepare(obj, &wrk->base.dma);
 	dma_fence_work_commit(&wrk->base);

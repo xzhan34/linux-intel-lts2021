@@ -1313,8 +1313,10 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 				i915_gem_object_unlock(obj);
 			}
 
-			if (err)
-				goto out;
+			if (err) {
+				i915_gem_object_put(obj);
+				return dst;
+			}
 		}
 
 		if (i915_gem_object_migrate_sync(obj))
@@ -1425,8 +1427,10 @@ i915_vma_coredump_create(const struct intel_gt *gt,
 	compress_finish(compress);
 
 out:
-	if (obj)
+	if (obj) {
 		__i915_gem_object_unpin_pages(obj);
+		i915_gem_object_put(obj);
+	}
 	return dst;
 }
 
