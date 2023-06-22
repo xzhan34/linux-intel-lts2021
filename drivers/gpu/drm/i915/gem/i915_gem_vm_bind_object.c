@@ -104,11 +104,11 @@ ufence_create(struct i915_address_space *vm, struct vm_bind_user_ext *arg)
 	i915_sw_fence_await(&vb->base.chain); /* signaled by vma_bind */
 
 	/* Preserve the user's write ordering of the user fence seqno */
-	rcu_read_lock();
-	prev = __i915_active_fence_set(&vm->user_fence, &vb->base.dma);
-	if (prev)
+	prev = __i915_active_fence_fetch_set(&vm->user_fence, &vb->base.dma);
+	if (prev) {
 		__i915_sw_fence_await_dma_fence(&vb->base.chain, prev, &vb->cb);
-	rcu_read_unlock();
+		dma_fence_put(prev);
+	}
 
 	dma_fence_work_commit(&vb->base);
 	return &vb->base.chain;

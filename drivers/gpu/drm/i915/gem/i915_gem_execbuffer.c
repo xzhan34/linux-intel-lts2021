@@ -3628,12 +3628,12 @@ parse_timeline_fences(struct i915_user_extension __user *ext, void *data)
 	return add_timeline_fence_array(eb, &timeline_fences);
 }
 
-static void retire_requests(struct intel_timeline *tl, struct i915_request *end)
+static void retire_requests(struct intel_timeline *tl)
 {
 	struct i915_request *rq, *rn;
 
 	list_for_each_entry_safe(rq, rn, &tl->requests, link)
-		if (rq == end || !i915_request_retire(rq))
+		if (!i915_request_retire(rq))
 			break;
 }
 
@@ -3642,7 +3642,6 @@ static int eb_request_add(struct i915_execbuffer *eb, struct i915_request *rq,
 {
 	struct intel_timeline * const tl = i915_request_timeline(rq);
 	int prio = I915_PRIORITY_NORMAL;
-	struct i915_request *prev;
 
 	lockdep_assert_held(&tl->mutex);
 
@@ -3655,7 +3654,7 @@ static int eb_request_add(struct i915_execbuffer *eb, struct i915_request *rq,
 	if (err)
 		clear_bit(I915_FENCE_FLAG_LR, &rq->fence.flags);
 
-	prev = __i915_request_commit(rq);
+	__i915_request_commit(rq);
 
 	/* Check that the context wasn't destroyed before submission */
 	if (likely(!intel_context_is_closed(eb->context))) {
@@ -3681,9 +3680,8 @@ static int eb_request_add(struct i915_execbuffer *eb, struct i915_request *rq,
 	__i915_request_queue(rq, prio);
 
 	/* Try to clean up the client's timeline after submitting the request */
-	if (prev)
-		retire_requests(tl, prev);
-
+	if (!list_is_first(&rq->link, &tl->requests))
+		retire_requests(tl);
 	mutex_unlock(&tl->mutex);
 
 	return err;

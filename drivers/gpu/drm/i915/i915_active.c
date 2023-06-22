@@ -447,13 +447,9 @@ __i915_active_set_fence(struct i915_active *ref,
 
 	GEM_BUG_ON(is_barrier(active));
 
-	rcu_read_lock();
-	prev = __i915_active_fence_set(active, fence);
-	if (prev)
-		prev = dma_fence_get_rcu(prev);
-	else
+	prev = __i915_active_fence_fetch_set(active, fence);
+	if (!prev)
 		__i915_active_acquire(ref);
-	rcu_read_unlock();
 
 	return prev;
 }
@@ -1060,14 +1056,14 @@ void __i915_active_fence_replace(struct i915_active_fence *src,
  * @active: the active tracker
  * @fence: the new fence (under construction)
  *
- * Records the new @fence as the last active fence along its timeline in
- * this active tracker, moving the tracking callbacks from the previous
- * fence onto this one. Returns the previous fence (if not already completed),
+ * Records the new @fence as the last active fence along its timeline in this
+ * active tracker, moving the tracking callbacks from the previous fence onto
+ * this one. Returns a token for the previous fence (if not already completed),
  * which the caller must ensure is executed before the new fence. To ensure
  * that the order of fences within the timeline of the i915_active_fence is
  * understood, it should be locked by the caller.
  */
-struct dma_fence *
+bool
 __i915_active_fence_set(struct i915_active_fence *active,
 			struct dma_fence *fence)
 {
@@ -1103,17 +1099,70 @@ __i915_active_fence_set(struct i915_active_fence *active,
 		goto unlock;
 	}
 
+	rcu_read_lock();
 	prev = xchg(__active_fence_slot(active), fence);
-	if (!IS_ERR_OR_NULL(prev)) {
-		GEM_BUG_ON(prev == fence);
+	if (!IS_ERR_OR_NULL(prev)) { /* previous fence not yet signaled */
+		GEM_BUG_ON(prev->lock == fence->lock);
 		spin_lock_nested(prev->lock, SINGLE_DEPTH_NESTING);
 		__list_del_entry(&active->cb.node);
 		spin_unlock(prev->lock); /* serialise with prev->cb_list */
 	} else {
 		prev = NULL;
 	}
-	list_add_tail(&active->cb.node, &fence->cb_list);
+	rcu_read_unlock();
 
+	list_add_tail(&active->cb.node, &fence->cb_list);
+unlock:
+	spin_unlock_irqrestore(fence->lock, flags);
+
+	return prev;
+}
+
+struct dma_fence *
+__i915_active_fence_fetch_set(struct i915_active_fence *active,
+			      struct dma_fence *fence)
+{
+	struct dma_fence *prev;
+	unsigned long flags;
+
+	if (fence == rcu_access_pointer(active->fence))
+		return dma_fence_get(fence);
+
+	spin_lock_irqsave(fence->lock, flags);
+	if (unlikely(test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))) {
+		prev = dma_fence_get(fence);
+		goto unlock;
+	}
+
+	rcu_read_lock();
+	prev = rcu_dereference(active->fence);
+
+	do {
+		spinlock_t *lock = NULL;
+
+		if (!IS_ERR_OR_NULL(prev)) {
+			lock = prev->lock;
+			GEM_BUG_ON(lock == fence->lock);
+			spin_lock_nested(lock, SINGLE_DEPTH_NESTING);
+		}
+
+		if (try_cmpxchg(__active_fence_slot(active), &prev, fence))
+			break;
+
+		if (lock)
+			spin_unlock(lock);
+	} while (1);
+
+	if (!IS_ERR_OR_NULL(prev)) {
+		prev = dma_fence_get(prev);
+		__list_del_entry(&active->cb.node);
+		spin_unlock(prev->lock); /* serialise with prev->cb_list */
+	} else {
+		prev = NULL;
+	}
+
+	list_add_tail(&active->cb.node, &fence->cb_list);
+	rcu_read_unlock();
 unlock:
 	spin_unlock_irqrestore(fence->lock, flags);
 
@@ -1127,11 +1176,7 @@ int i915_active_fence_set(struct i915_active_fence *active,
 	int err = 0;
 
 	/* Must maintain timeline ordering wrt previous active requests */
-	rcu_read_lock();
-	fence = __i915_active_fence_set(active, &rq->fence);
-	if (fence) /* but the previous fence may not belong to that timeline! */
-		fence = dma_fence_get_rcu(fence);
-	rcu_read_unlock();
+	fence = __i915_active_fence_fetch_set(active, &rq->fence);
 	if (fence) {
 		err = i915_request_await_dma_fence(rq, fence);
 		dma_fence_put(fence);

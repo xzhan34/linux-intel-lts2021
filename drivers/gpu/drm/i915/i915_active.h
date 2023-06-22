@@ -73,9 +73,13 @@ __i915_active_fence_init(struct i915_active_fence *active,
 
 void i915_active_fence_fini(struct i915_active_fence *active);
 
-struct dma_fence *
+bool
 __i915_active_fence_set(struct i915_active_fence *active,
 			struct dma_fence *fence);
+
+struct dma_fence *
+__i915_active_fence_fetch_set(struct i915_active_fence *active,
+			      struct dma_fence *fence);
 
 void __i915_active_fence_replace(struct i915_active_fence *src,
 				 struct i915_active_fence *dst);

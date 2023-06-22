@@ -1779,7 +1779,7 @@ i915_request_await_object(struct i915_request *to,
 	return ret;
 }
 
-static struct i915_request *
+static void
 __i915_request_ensure_parallel_ordering(struct i915_request *rq,
 					struct intel_timeline *timeline)
 {
@@ -1804,27 +1804,23 @@ __i915_request_ensure_parallel_ordering(struct i915_request *rq,
 	}
 
 	request_to_parent(rq)->parallel.last_rq = i915_request_get(rq);
-
-	return to_request(__i915_active_fence_set(&timeline->last_request,
-						  &rq->fence));
 }
 
-static struct i915_request *
+static void
 __i915_request_ensure_ordering(struct i915_request *rq,
 			       struct intel_timeline *timeline)
 {
-	struct i915_request *prev;
+	struct dma_fence *pf;
 
 	GEM_BUG_ON(is_parallel_rq(rq));
 
-	rcu_read_lock();
-	prev = to_request(__i915_active_fence_set(&timeline->last_request,
-						  &rq->fence));
+	pf = __i915_active_fence_fetch_set(&timeline->last_request, &rq->fence);
+	if (!pf)
+		return;
 
-	if (prev) {
-		bool uses_guc = intel_engine_uses_guc(rq->engine);
-		bool pow2 = is_power_of_2(READ_ONCE(prev->engine)->mask |
-					  rq->engine->mask);
+	if (likely(!test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &pf->flags))) {
+		const bool uses_guc = intel_engine_uses_guc(rq->engine);
+		struct i915_request *prev = to_request(pf);
 		bool same_context = prev->context == rq->context;
 
 		/*
@@ -1837,7 +1833,9 @@ __i915_request_ensure_ordering(struct i915_request *rq,
 			   i915_seqno_passed(i915_request_seqno(prev),
 					     i915_request_seqno(rq)));
 
-		if ((same_context && uses_guc) || (!uses_guc && pow2))
+		if ((uses_guc && same_context) ||
+		    (!uses_guc && is_power_of_2(READ_ONCE(prev->engine)->mask |
+						rq->engine->mask)))
 			i915_sw_fence_await_sw_fence(&rq->submit,
 						     &prev->submit,
 						     &rq->submitq);
@@ -1851,16 +1849,14 @@ __i915_request_ensure_ordering(struct i915_request *rq,
 							 &rq->dep,
 							 0);
 	}
-	rcu_read_unlock();
 
-	return prev;
+	dma_fence_put(pf);
 }
 
-static struct i915_request *
+static void
 __i915_request_add_to_timeline(struct i915_request *rq)
 {
 	struct intel_timeline *timeline = i915_request_timeline(rq);
-	struct i915_request *prev;
 
 	/*
 	 * Dependency tracking and request ordering along the timeline
@@ -1893,9 +1889,9 @@ __i915_request_add_to_timeline(struct i915_request *rq)
 	 * timeline and this is the first submission of an execbuf IOCTL.
 	 */
 	if (likely(!is_parallel_rq(rq)))
-		prev = __i915_request_ensure_ordering(rq, timeline);
+		__i915_request_ensure_ordering(rq, timeline);
 	else
-		prev = __i915_request_ensure_parallel_ordering(rq, timeline);
+		__i915_request_ensure_parallel_ordering(rq, timeline);
 
 	/*
 	 * Make sure that no request gazumped us - if it was allocated after
@@ -1903,8 +1899,6 @@ __i915_request_add_to_timeline(struct i915_request *rq)
 	 * us, the timeline will hold its seqno which is later than ours.
 	 */
 	GEM_BUG_ON(timeline->seqno != i915_request_seqno(rq));
-
-	return prev;
 }
 
 /*
@@ -1912,7 +1906,7 @@ __i915_request_add_to_timeline(struct i915_request *rq)
  * request is not being tracked for completion but the work itself is
  * going to happen on the hardware. This would be a Bad Thing(tm).
  */
-struct i915_request *__i915_request_commit(struct i915_request *rq)
+void __i915_request_commit(struct i915_request *rq)
 {
 	struct intel_engine_cs *engine = rq->engine;
 	struct intel_ring *ring = rq->ring;

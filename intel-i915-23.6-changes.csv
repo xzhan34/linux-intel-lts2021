@@ -5,3 +5,4 @@ DII-TAG,Commit Header,JIRA,Requester,PSB Branch Tag
 6948.0,mei: narrow down reset print override,,hgirotra,
 ,Release object reference for coredump page capture,VLK-48745,hgirotra,
 6949.0,Prevent interruption during wait-for-go in parallel children,VLK-48662,hgirotra,I915-23.6.14
+6953.0,Acquire active fence before decoupling,vlk-48708 vlk-47217,parupall,I915-23.6.15
