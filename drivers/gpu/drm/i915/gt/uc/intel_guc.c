@@ -402,6 +402,14 @@ static u32 guc_ctl_wa_flags(struct intel_guc *guc)
 		flags |= GUC_WA_RCS_REGS_IN_CCS_REGS_LIST;
 
 	/*
+	 * Wa_13010778322
+	 * FIXME: this WA seems to apply to other platforms as well, but the
+	 * state in the database is still not confirmed.
+	 */
+	if (IS_DG2(gt->i915) || IS_PONTEVECCHIO(gt->i915))
+		flags |= GUC_WA_ENABLE_TSC_CHECK_ON_RC6;
+
+	/*
 	 * Wa_1509372804: PVC, Apply WA in render force wake step by
 	 * GUC FW before any work submission to CCS engines
 	 */
