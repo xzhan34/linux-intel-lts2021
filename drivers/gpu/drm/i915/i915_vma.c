@@ -407,7 +407,7 @@ static void __vma_complete(struct dma_fence_work *work)
 	if (!vma)
 		return;
 
-	if (work->dma.error) {
+	if (work->dma.error && work->dma.error != -EAGAIN) {
 		GEM_BUG_ON(test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &work->dma.flags));
 		set_bit(I915_VMA_ERROR_BIT, __i915_vma_flags(vma));
 		if (vma->vm->scratch_range)
