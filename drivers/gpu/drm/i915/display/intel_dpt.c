@@ -236,6 +236,7 @@ intel_dpt_create(struct intel_framebuffer *fb)
 	struct i915_address_space *vm;
 	struct i915_dpt *dpt;
 	size_t size;
+	int err;
 
 	if (intel_fb_needs_pot_stride_remap(fb))
 		size = intel_remapped_info_size(&fb->remapped_view.gtt.remapped);
@@ -270,7 +271,11 @@ intel_dpt_create(struct intel_framebuffer *fb)
 	vm->total = (size / sizeof(gen8_pte_t)) * I915_GTT_PAGE_SIZE;
 	vm->is_dpt = true;
 
-	i915_address_space_init(vm, VM_CLASS_DPT);
+	err = i915_address_space_init(vm, VM_CLASS_DPT);
+	if (err) {
+		i915_gem_object_put(dpt_obj);
+		return ERR_PTR(err);
+	}
 
 	vm->insert_page = dpt_insert_page;
 	vm->clear_range = dpt_clear_range;

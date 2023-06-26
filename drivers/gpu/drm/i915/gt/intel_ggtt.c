@@ -70,11 +70,6 @@ static void i915_ggtt_color_adjust(const struct drm_mm_node *node,
 static int ggtt_init_hw(struct i915_ggtt *ggtt)
 {
 	struct drm_i915_private *i915 = ggtt->vm.i915;
-	int err;
-
-	err = i915_address_space_init(&ggtt->vm, VM_CLASS_GGTT);
-	if (err)
-		return err;
 
 	ggtt->vm.is_ggtt = true;
 
@@ -1216,9 +1211,6 @@ void i915_ggtt_driver_late_release(struct drm_i915_private *i915)
 		if (gt->type == GT_MEDIA)
 			continue;
 
-		GEM_WARN_ON(kref_read(&ggtt->vm.resv_ref) != 1);
-		dma_resv_fini(&ggtt->vm._resv);
-
 		kfree(ggtt);
 	}
 }
@@ -1278,6 +1270,10 @@ static int ggtt_probe_common(struct i915_ggtt *ggtt, u64 size)
 	phys_addr_t phys_addr;
 	int ret;
 
+	ret = i915_address_space_init(&ggtt->vm, VM_CLASS_GGTT);
+	if (ret)
+		return ret;
+
 	phys_addr = ggtt->vm.gt->phys_addr + gen6_gttadr_offset(i915);
 
 	/*
@@ -1296,7 +1292,6 @@ static int ggtt_probe_common(struct i915_ggtt *ggtt, u64 size)
 		return -ENOMEM;
 	}
 
-	kref_init(&ggtt->vm.resv_ref);
 	ret = i915_vm_setup_scratch0(&ggtt->vm);
 	if (ret) {
 		drm_err(&i915->drm, "Scratch setup failed\n");
@@ -1623,7 +1618,6 @@ static int ggtt_probe_hw(struct i915_ggtt *ggtt, struct intel_gt *gt)
 	ggtt->vm.gt = gt;
 	ggtt->vm.i915 = i915;
 	ggtt->vm.dma = i915->drm.dev;
-	dma_resv_init(&ggtt->vm._resv);
 
 	if (IS_SRIOV_VF(i915))
 		ret = gen12vf_ggtt_probe(ggtt);
@@ -1633,11 +1627,8 @@ static int ggtt_probe_hw(struct i915_ggtt *ggtt, struct intel_gt *gt)
 		ret = gen6_gmch_probe(ggtt);
 	else
 		ret = intel_ggtt_gmch_probe(ggtt);
-
-	if (ret) {
-		dma_resv_fini(&ggtt->vm._resv);
+	if (ret)
 		return ret;
-	}
 
 	if ((ggtt->vm.total - 1) >> 32) {
 		drm_err(&i915->drm,

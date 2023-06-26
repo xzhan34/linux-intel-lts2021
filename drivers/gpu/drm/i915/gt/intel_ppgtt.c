@@ -431,7 +431,6 @@ int ppgtt_init(struct i915_ppgtt *ppgtt, struct intel_gt *gt)
 	else
 		ppgtt->vm.top = 1;
 
-	dma_resv_init(&ppgtt->vm._resv);
 	err = i915_address_space_init(&ppgtt->vm, VM_CLASS_PPGTT);
 	if (err)
 		return err;

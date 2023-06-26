@@ -68,9 +68,9 @@ enum {
 #define __EXEC_OBJECT_INTERNAL_FLAGS	(~0u << 27) /* all of the above + */
 #define __EXEC_OBJECT_RESERVED (__EXEC_OBJECT_HAS_PIN | __EXEC_OBJECT_HAS_FENCE)
 
-#define __EXEC_HAS_RELOC		BIT_ULL(34)
-#define __EXEC_ENGINE_PINNED		BIT_ULL(33)
-#define __EXEC_PERSIST_HAS_PIN  	BIT_ULL(32)
+#define __EXEC_LOCK_PERSISTENT		BIT_ULL(34)
+#define __EXEC_HAS_RELOC		BIT_ULL(33)
+#define __EXEC_ENGINE_PINNED		BIT_ULL(32)
 #define __EXEC_INTERNAL_FLAGS		GENMASK_ULL(34, 32)
 #define UPDATE				PIN_OFFSET_FIXED
 
@@ -583,16 +583,16 @@ static int __eb_persistent_vmas_move_to_active(struct i915_execbuffer *eb,
 					       struct i915_request *rq)
 {
 	struct i915_address_space *vm = eb->context->vm;
-	struct i915_vma *vma;
-	int err;
 
-	assert_vm_bind_held(vm);
-	assert_vm_priv_held(vm);
+	if (eb->args->flags & __EXEC_LOCK_PERSISTENT) {
+		struct i915_vma *vma;
+		int err;
 
-	list_for_each_entry(vma, &vm->vm_bind_list, vm_bind_link) {
-		err = __i915_request_await_bind(rq, vma);
-		if (err)
-			return err;
+		list_for_each_entry(vma, &vm->vm_bind_list, vm_bind_link) {
+			err = __i915_request_await_bind(rq, vma);
+			if (err)
+				return err;
+		}
 	}
 
 	return i915_vm_move_to_active(vm, rq->context, rq);
@@ -835,30 +835,6 @@ static int eb_select_context(struct i915_execbuffer *eb)
 	return 0;
 }
 
-static struct i915_vma *
-eb_check_for_persistent_vma(struct i915_execbuffer *eb,
-			    struct drm_i915_gem_exec_object2 *entry)
-{
-	struct i915_address_space *vm = eb->context->vm;
-	struct i915_vma *vma;
-	u64 va;
-
-	assert_vm_bind_held(vm);
-
-	if (!test_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags))
-		return NULL;
-
-	va = intel_noncanonical_addr(INTEL_PPGTT_MSB(vm->i915),
-				     entry->offset & PIN_OFFSET_MASK);
-	vma = i915_gem_vm_bind_lookup_vma(vm, va);
-	if (!vma)
-		return NULL;
-
-	i915_vma_get(vma);
-
-	return vma;
-}
-
 static int __eb_add_lut(struct i915_execbuffer *eb,
 			u32 handle, struct i915_vma *vma)
 {
@@ -908,6 +884,7 @@ static int __eb_add_lut(struct i915_execbuffer *eb,
 	if (unlikely(err))
 		goto err_lut;
 
+	set_bit(I915_VMA_HAS_LUT_BIT, __i915_vma_flags(vma));
 	return 0;
 
 err_lut:
@@ -918,14 +895,38 @@ err_open:
 	return err;
 }
 
-static struct i915_vma *eb_lookup_vma(struct i915_execbuffer *eb, u32 handle)
+static struct i915_vma *
+eb_check_for_persistent_vma(struct i915_execbuffer *eb,
+			    const struct drm_i915_gem_exec_object2 *entry)
 {
 	struct i915_address_space *vm = eb->context->vm;
+	struct i915_vma *vma;
+	u64 va;
 
-	if (i915_gem_context_is_lr(eb->gem_context)) {
-		drm_dbg(&eb->i915->drm, "Long Running Ctx: Non VM_BIND vma.\n");
-		return ERR_PTR(-EINVAL);
+	if (!test_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags))
+		return NULL;
+
+	va = intel_noncanonical_addr(INTEL_PPGTT_MSB(vm->i915),
+				     entry->offset & PIN_OFFSET_MASK);
+
+	i915_gem_vm_bind_lock(vm);
+	vma = i915_gem_vm_bind_lookup_vma(vm, va);
+	if (vma) {
+		if (entry->handle)
+			__eb_add_lut(eb, entry->handle, vma);
+		vma = i915_vma_get(vma);
 	}
+	i915_gem_vm_bind_unlock(vm);
+
+	return vma;
+}
+
+static struct i915_vma *
+eb_lookup_vma(struct i915_execbuffer *eb,
+	      const struct drm_i915_gem_exec_object2 *entry)
+{
+	struct i915_address_space *vm = eb->context->vm;
+	u32 handle = entry->handle;
 
 	do {
 		struct drm_i915_gem_object *obj;
@@ -944,6 +945,10 @@ static struct i915_vma *eb_lookup_vma(struct i915_execbuffer *eb, u32 handle)
 
 		if (signal_pending(current))
 			return ERR_PTR(-ERESTARTSYS);
+
+		vma = eb_check_for_persistent_vma(eb, entry);
+		if (vma)
+			return vma;
 
 		obj = i915_gem_object_lookup(eb->file, handle);
 		if (unlikely(!obj))
@@ -1002,13 +1007,9 @@ static int eb_lookup_vmas(struct i915_execbuffer *eb)
 
 	for (i = 0; i < eb->buffer_count; i++) {
 		struct drm_i915_gem_exec_object2 *entry = &eb->exec[i];
-		u32 handle = entry->handle;
 		struct i915_vma *vma;
 
-		vma = eb_check_for_persistent_vma(eb, entry);
-		if (!vma)
-			vma = eb_lookup_vma(eb, handle);
-
+		vma = eb_lookup_vma(eb, entry);
 		if (IS_ERR(vma)) {
 			err = PTR_ERR(vma);
 			goto err;
@@ -1035,28 +1036,32 @@ err:
 static int eb_lock_persistent_vmas(struct i915_execbuffer *eb)
 {
 	struct i915_address_space *vm = eb->context->vm;
-	struct i915_vma *vma;
+	struct i915_vma *vma, *vn;
 	int err;
 
-	err = i915_gem_vm_priv_lock(eb->context->vm, &eb->ww);
+	if (!test_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags))
+		return 0;
+
+	err = i915_vm_lock_objects(vm, &eb->ww);
 	if (err)
 		return err;
 
-	if (eb->i915->params.enable_non_private_objects) {
-		list_for_each_entry(vma, &vm->non_priv_vm_bind_list,
-				    non_priv_vm_bind_link) {
-			err = i915_gem_object_lock(vma->obj, &eb->ww);
-			if (err)
-				return err;
+	if (!atomic_read(&vm->open))
+		return -ENOENT;
+
+	list_for_each_entry_safe(vma, vn, &vm->vm_bind_list, vm_bind_link) {
+		if (i915_vma_is_bound(vma, PIN_USER) &&
+		    i915_vma_is_bind_complete(vma)) {
+			list_move(&vma->vm_bind_link, &vm->vm_bound_list);
+			continue;
 		}
-	} else {
-		list_for_each_entry(vma, &vm->vm_bind_list, vm_bind_link) {
-			err = i915_gem_object_lock(vma->obj, &eb->ww);
-			if (err)
-				return err;
-		}
+
+		err = i915_gem_object_lock(vma->obj, &eb->ww);
+		if (err)
+			return err;
 	}
 
+	eb->args->flags |= __EXEC_LOCK_PERSISTENT;
 	return 0;
 }
 
@@ -1070,11 +1075,7 @@ static int eb_lock_vmas(struct i915_execbuffer *eb)
 		return err;
 
 	for (i = 0; i < eb->buffer_count; i++) {
-		struct eb_vma *ev = &eb->vma[i];
-		struct i915_vma *vma = ev->vma;
-
-		if (vma->obj->base.resv == vma->vm->root_obj->base.resv)
-			continue;
+		struct i915_vma *vma = eb->vma[i].vma;
 
 		err = i915_gem_object_lock(vma->obj, &eb->ww);
 		if (err)
@@ -1088,28 +1089,21 @@ static int eb_validate_persistent_vmas(struct i915_execbuffer *eb)
 {
 	struct i915_address_space *vm = eb->context->vm;
 	struct i915_vma *vma;
+	int err;
 
-	assert_vm_bind_held(vm);
-	assert_vm_priv_held(vm);
-
-	if (list_empty(&vm->vm_bind_list))
+	if (!(eb->args->flags & __EXEC_LOCK_PERSISTENT))
 		return 0;
 
 	list_for_each_entry(vma, &vm->vm_bind_list, vm_bind_link) {
-		u64 pin_flags = vma->start | PIN_OFFSET_FIXED | PIN_USER;
-		int err;
+		u64 pin_flags = vma->node.start | PIN_OFFSET_FIXED | PIN_USER;
 
 		err = i915_vma_pin_ww(vma, &eb->ww, 0, 0, pin_flags);
-		if (!err)
-			continue;
+		if (err)
+			return err;
 
-		list_for_each_entry_continue_reverse(vma, &vm->vm_bind_list, vm_bind_link)
-			__i915_vma_unpin(vma);
-
-		return err;
+		__i915_vma_unpin(vma);
 	}
 
-	eb->args->flags |= __EXEC_PERSIST_HAS_PIN;
 	return 0;
 }
 
@@ -1158,29 +1152,12 @@ static int eb_mem_fence_init(struct i915_execbuffer *eb)
 	return 0;
 }
 
-static void eb_scoop_persistent_unbound_vmas(struct i915_address_space *vm)
-{
-	struct i915_vma *vma, *vn;
-
-	if (list_empty(&vm->vm_rebind_list))
-		return;
-
-	spin_lock(&vm->vm_rebind_lock);
-	list_for_each_entry_safe(vma, vn, &vm->vm_rebind_list, vm_rebind_link) {
-		list_del_init(&vma->vm_rebind_link);
-		if (!list_empty(&vma->vm_bind_link))
-			list_move_tail(&vma->vm_bind_link, &vm->vm_bind_list);
-	}
-	spin_unlock(&vm->vm_rebind_lock);
-}
-
 static int eb_validate_vmas(struct i915_execbuffer *eb)
 {
 	unsigned int i;
 	int err;
 
 	INIT_LIST_HEAD(&eb->unbound);
-	eb_scoop_persistent_unbound_vmas(eb->context->vm);
 
 	err = eb_lock_vmas(eb);
 	if (err)
@@ -1261,41 +1238,6 @@ eb_get_vma(const struct i915_execbuffer *eb, unsigned long handle)
 	}
 }
 
-static void eb_release_persistent_vmas(struct i915_execbuffer *eb, bool final)
-{
-	struct i915_address_space *vm = eb->context->vm;
-	struct i915_vma *vma, *vn;
-
-	assert_vm_bind_held(vm);
-
-	if (!(eb->args->flags & __EXEC_PERSIST_HAS_PIN))
-		return;
-
-	assert_vm_priv_held(vm);
-
-	list_for_each_entry(vma, &vm->vm_bind_list, vm_bind_link)
-		__i915_vma_unpin(vma);
-
-	eb->args->flags &= ~__EXEC_PERSIST_HAS_PIN;
-	if (!final)
-		return;
-
-	/*
-	 * FIXME: On ATS-M, random GPU hang is observed when eviction
-	 * happens under high memory pressure. It is suspected a race
-	 * condition exists here that a vma is being evicted while
-	 * being moved to vm_bound_list.
-	 * As a temporary workaround keep the vma in vm_bind_list, so
-	 * that it's guaranteed to be rebound when revalidating objects.
-	 */
-	if (IS_DG2(vm->i915))
-		return;
-
-	list_for_each_entry_safe(vma, vn, &vm->vm_bind_list, vm_bind_link)
-		if (i915_vma_is_bind_complete(vma))
-			list_move_tail(&vma->vm_bind_link, &vm->vm_bound_list);
-}
-
 static void eb_release_vmas(struct i915_execbuffer *eb, bool final)
 {
 	const unsigned int count = eb->buffer_count;
@@ -1314,7 +1256,6 @@ static void eb_release_vmas(struct i915_execbuffer *eb, bool final)
 			i915_vma_put(vma);
 	}
 
-	eb_release_persistent_vmas(eb, final);
 	eb_unpin_engine(eb);
 }
 
@@ -2331,7 +2272,6 @@ repeat:
 	eb_release_vmas(eb, false);
 
 	i915_gem_ww_ctx_fini(&eb->ww);
-	i915_gem_vm_bind_unlock(eb->context->vm);
 
 	/*
 	 * We take 3 passes through the slowpatch.
@@ -2356,16 +2296,10 @@ repeat:
 		cond_resched();
 		err = 0;
 	}
-
-	/*
-	 * FIXME: Should lock interruptible, but needs to return with the
-	 * lock held.
-	 */
-	i915_gem_vm_bind_lock(eb->context->vm);
-
-	i915_gem_ww_ctx_init(&eb->ww, true);
 	if (err)
 		goto out;
+
+	i915_gem_ww_ctx_init(&eb->ww, true);
 
 	/* reacquire the objects */
 repeat_validate:
@@ -2424,6 +2358,8 @@ err:
 
 	if (err == -EAGAIN)
 		goto repeat;
+
+	i915_gem_ww_ctx_fini(&eb->ww);
 
 out:
 	for (i = 0; i < have_copy; i++) {
@@ -4111,12 +4047,10 @@ i915_gem_do_execbuffer(struct drm_device *dev,
 	if (unlikely(err))
 		goto err_sfence;
 
-	i915_gem_vm_bind_lock(eb.context->vm);
-
 	err = eb_lookup_vmas(&eb);
 	if (err) {
 		eb_release_vmas(&eb, true);
-		goto err_vm_bind_unlock;
+		goto err_exit;
 	}
 
 	i915_gem_ww_ctx_init(&eb.ww, true);
@@ -4220,8 +4154,7 @@ err_vma:
 		intel_gt_buffer_pool_put(eb.reloc_pool);
 	if (eb.reloc_context)
 		intel_context_put(eb.reloc_context);
-err_vm_bind_unlock:
-	i915_gem_vm_bind_unlock(eb.context->vm);
+err_exit:
 	eb_exit(&eb);
 err_sfence:
 	kfree(sfence);
@@ -4343,16 +4276,15 @@ end:;
 static int persistent_vmas_move_to_active_sync(struct i915_execbuffer *eb)
 {
 	struct i915_address_space *vm = eb->context->vm;
-	struct i915_vma *vma;
-	int err = 0;
+	struct i915_vma *vma, *vn;
+	int err;
 
-	assert_vm_bind_held(vm);
-	assert_vm_priv_held(vm);
-
-	list_for_each_entry(vma, &vm->vm_bind_list, vm_bind_link) {
+	list_for_each_entry_safe(vma, vn, &vm->vm_bind_list, vm_bind_link) {
 		err = i915_vma_wait_for_bind(vma);
 		if (err)
 			return err;
+
+		list_move_tail(&vma->vm_bind_link, &vm->vm_bound_list);
 	}
 
 	return i915_vm_move_to_active(vm, eb->context, NULL);
@@ -4386,9 +4318,8 @@ static int revalidate_transaction(struct i915_execbuffer *eb)
 	 */
 	tl = intel_context_timeline_lock(ce);
 	if (IS_ERR(tl)) {
-		err = PTR_ERR(tl);
 		kfree(sfence);
-		return err;
+		return PTR_ERR(tl);
 	}
 
 	/* If context is retired, abort */
@@ -4442,16 +4373,15 @@ err_unlock:
  */
 static void i915_gem_exec_revalidate(struct intel_context *ce)
 {
-	struct drm_i915_gem_execbuffer2 args = {0};
-	struct i915_execbuffer eb = {0};
+	struct drm_i915_gem_execbuffer2 args = {};
+	struct i915_execbuffer eb = {};
 	int err;
 
 	/* Only populate parts of @eb we actually use. */
 	eb.context = ce;
-	eb.i915 = eb.context->engine->i915;
+	eb.i915 = ce->engine->i915;
 	eb.args = &args;
 
-	i915_gem_vm_bind_lock(ce->vm);
 retry:
 	i915_gem_ww_ctx_init(&eb.ww, true);
 revalidate:
@@ -4461,13 +4391,10 @@ revalidate:
 		if (!err)
 			goto revalidate;
 	}
-	eb_release_persistent_vmas(&eb, true);
 	i915_gem_ww_ctx_fini(&eb.ww);
 
 	if (err == -EAGAIN || err == -EINTR || err == -ERESTARTSYS)
 		goto retry;
-
-	i915_gem_vm_bind_unlock(ce->vm);
 
 	if (err) {
 		struct i915_request *rq;

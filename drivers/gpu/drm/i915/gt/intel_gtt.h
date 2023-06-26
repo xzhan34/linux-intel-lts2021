@@ -334,8 +334,6 @@ struct i915_address_space {
 
 	struct mutex mutex; /* protects vma and our lists */
 
-	struct kref resv_ref; /* kref to keep the reservation lock alive. */
-	struct dma_resv _resv; /* reservation lock for all pd objects, and buffer pool */
 #define VM_CLASS_GGTT 0
 #define VM_CLASS_PPGTT 1
 #define VM_CLASS_DPT 2
@@ -355,12 +353,9 @@ struct i915_address_space {
 	struct list_head vm_bind_list;
 	struct list_head vm_bound_list;
 	struct list_head vm_capture_list;
-	struct list_head vm_rebind_list;
 	spinlock_t vm_capture_lock;  /* Protects vm_capture_list */
-	spinlock_t vm_rebind_lock;   /* Protects vm_rebind_list */
 	/* va tree of persistent vmas */
 	struct rb_root_cached va;
-	struct list_head non_priv_vm_bind_list;
 	struct drm_i915_gem_object *root_obj;
 
 	spinlock_t priv_obj_lock;
@@ -535,8 +530,9 @@ struct i915_ppgtt {
 
 bool intel_vm_no_concurrent_access_wa(struct drm_i915_private *i915);
 
-int __must_check
-i915_vm_lock_objects(struct i915_address_space *vm, struct i915_gem_ww_ctx *ww);
+/* lock the vm into the current ww, if we lock one, we lock all */
+int i915_vm_lock_objects(const struct i915_address_space *vm,
+			 struct i915_gem_ww_ctx *ww);
 
 static inline unsigned int
 i915_vm_lvl(const struct i915_address_space * const vm)
@@ -597,18 +593,6 @@ i915_vm_get(struct i915_address_space *vm)
 	return vm;
 }
 
-/**
- * i915_vm_resv_get - Obtain a reference on the vm's reservation lock
- * @vm: The vm whose reservation lock we want to share.
- *
- * Return: A pointer to the vm's reservation lock.
- */
-static inline struct dma_resv *i915_vm_resv_get(struct i915_address_space *vm)
-{
-	kref_get(&vm->resv_ref);
-	return &vm->_resv;
-}
-
 static inline struct i915_address_space *
 i915_vm_tryget(struct i915_address_space *vm)
 {
@@ -620,20 +604,9 @@ i915_vm_tryget(struct i915_address_space *vm)
 
 void i915_vm_release(struct kref *kref);
 
-void i915_vm_resv_release(struct kref *kref);
-
 static inline void i915_vm_put(struct i915_address_space *vm)
 {
 	kref_put(&vm->ref, i915_vm_release);
-}
-
-/**
- * i915_vm_resv_put - Release a reference on the vm's reservation lock
- * @resv: Pointer to a reservation lock obtained from i915_vm_resv_get()
- */
-static inline void i915_vm_resv_put(struct i915_address_space *vm)
-{
-	kref_put(&vm->resv_ref, i915_vm_resv_release);
 }
 
 static inline struct i915_address_space *
