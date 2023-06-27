@@ -587,19 +587,18 @@ static void mei_me_check_fw_reset(struct mei_device *dev)
 {
 	struct mei_fw_status fw_status;
 	int ret;
-	u32 fw_pm_event;
+	u32 fw_pm_event = 0;
 
-	if (dev->gsc_reset_to_pxp == MEI_DEV_RESET_TO_PXP_PERFORMED ||
-	    dev->forcewake_needed) {
+	if (dev->gsc_reset_to_pxp == MEI_DEV_RESET_TO_PXP_PERFORMED || dev->forcewake_needed) {
 		ret = mei_fw_status(dev, &fw_status);
-		if (ret) {
+		if (!ret) {
+			fw_pm_event = fw_status.status[1] & PCI_CFG_HFS_2_PM_EVENT_MASK;
+			if (fw_pm_event != PCI_CFG_HFS_2_PM_CMOFF_TO_CMX_ERROR &&
+			    fw_pm_event != PCI_CFG_HFS_2_PM_CM_RESET_ERROR)
+				goto end;
+		} else {
 			dev_err(dev->dev, "failed to read firmware status: %d\n", ret);
-			goto end;
 		}
-		fw_pm_event = fw_status.status[1] & PCI_CFG_HFS_2_PM_EVENT_MASK;
-		if (fw_pm_event != PCI_CFG_HFS_2_PM_CMOFF_TO_CMX_ERROR &&
-		    fw_pm_event != PCI_CFG_HFS_2_PM_CM_RESET_ERROR)
-			goto end;
 	}
 	if (dev->saved_fw_status_flag) {
 		char fw_sts_str[MEI_FW_STATUS_STR_SZ] = {0};
