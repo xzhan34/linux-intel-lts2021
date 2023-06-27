@@ -1690,7 +1690,7 @@ void destroy_fports(struct fsubdev *sd)
 	}
 	/* else INIT_WORK calls were not completed */
 
-	if (sd->fw_running) {
+	if (READ_ONCE(sd->fw_running)) {
 		/* ignore MBDB errors here */
 		ops_linkmgr_port_lqi_trap_ena_set(sd, false, true);
 		ops_linkmgr_port_lwd_trap_ena_set(sd, false, true);

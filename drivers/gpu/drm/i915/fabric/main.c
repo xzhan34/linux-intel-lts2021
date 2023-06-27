@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /*
- * Copyright(c) 2020 - 2022 Intel Corporation.
+ * Copyright(c) 2020 - 2023 Intel Corporation.
  */
 
 #if IS_ENABLED(CONFIG_AUXILIARY_BUS)
@@ -276,8 +276,17 @@ struct fsubdev *find_sd_id(u32 fabric_id, u8 sd_index)
 	if (!dev)
 		return ERR_PTR(-ENODEV);
 
-	if (sd_index < dev->pd->sd_cnt)
-		return &dev->sd[sd_index];
+	if (sd_index < dev->pd->sd_cnt) {
+		struct fsubdev *sd = &dev->sd[sd_index];
+
+		/* prevents aggressive netlink use from accessing sd before we are ready */
+		if (READ_ONCE(sd->fw_running))
+			return sd;
+
+		fdev_put(dev);
+
+		return ERR_PTR(-EAGAIN);
+	}
 
 	fdev_put(dev);
 
@@ -545,7 +554,7 @@ static int add_subdevice(struct fsubdev *sd, struct fdev *dev, int index)
 		return err;
 	}
 
-	sd->fw_running = false;
+	WRITE_ONCE(sd->fw_running, false);
 
 	mutex_init(&sd->pm_work_lock);
 	sd->ok_to_schedule_pm_work = false;
@@ -648,6 +657,12 @@ static int iaf_remove(struct platform_device *pdev)
 	u8 i;
 
 	dev_dbg(&pdev->dev, "Removing %s\n", dev_name(&pdev->dev));
+
+	/*
+	 * let the parent know an unregister is coming and allow it
+	 * to do some pre-cleanup if possible
+	 */
+	pd->dev_event(pd->parent, dev, IAF_DEV_REMOVE, NULL);
 
 	mappings_ref_wait(dev);
 

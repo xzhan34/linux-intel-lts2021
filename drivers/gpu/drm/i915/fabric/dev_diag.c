@@ -339,7 +339,7 @@ static ssize_t risc_reset_write(struct file *fp, const char __user *buf,
 
 	sd_info(sd, "RISC RESET requested\n");
 
-	sd->fw_running = false;
+	WRITE_ONCE(sd->fw_running, false);
 	mbdb_reinit(sd);
 
 	return count;

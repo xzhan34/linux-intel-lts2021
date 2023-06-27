@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /*
- * Copyright(c) 2020 - 2022 Intel Corporation.
+ * Copyright(c) 2020 - 2023 Intel Corporation.
  *
  */
 
@@ -1714,7 +1714,7 @@ static void load_and_init_subdev(struct fsubdev *sd)
 			goto cleanup;
 	}
 
-	sd->fw_running = true;
+	WRITE_ONCE(sd->fw_running, true);
 
 	if (!dev_is_runtime_debug(sd->fdev))
 		initialize_fports(sd);
