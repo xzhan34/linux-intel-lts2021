@@ -280,9 +280,6 @@ struct i915_vma *i915_vma_open(struct i915_vma *vma);
 void i915_vma_close(struct i915_vma *vma);
 void i915_vma_unpublish(struct i915_vma *vma);
 
-void i915_vma_park(struct intel_gt *gt);
-void i915_vma_unpark(struct intel_gt *gt);
-
 static inline struct i915_vma *__i915_vma_get(struct i915_vma *vma)
 {
 	if (kref_get_unless_zero(&vma->ref))

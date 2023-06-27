@@ -1454,9 +1454,12 @@ void i915_vma_close(struct i915_vma *vma)
 			!i915_vma_is_persistent(vma) &&
 			i915_gem_object_inuse(obj) &&
 			!i915_is_ggtt_or_dpt(vm);
+		bool first = false;
 
 		if (inuse) {
 			list_add(&vma->closed_link, &clock->age[0]);
+			first = list_is_first(&vma->closed_link,
+					      &clock->age[0]);
 			__i915_vma_get(vma);
 		}
 		spin_unlock_irqrestore(&clock->lock, flags);
@@ -1464,6 +1467,10 @@ void i915_vma_close(struct i915_vma *vma)
 
 		i915_vm_close(vm);
 		i915_gem_object_put(obj);
+
+		if (first)
+			schedule_delayed_work(&clock->work,
+					      round_jiffies_up_relative(HZ));
 	}
 }
 
@@ -1589,29 +1596,10 @@ static void i915_vma_clock(struct work_struct *w)
 	list_replace_init(&clock->age[0], &clock->age[1]);
 	spin_unlock_irq(&clock->lock);
 
-	if (!list_empty(&clock->age[1]) && !intel_gt_pm_is_awake(gt))
+	if (!list_empty(&clock->age[1]))
 		schedule_delayed_work(&clock->work,
 				      round_jiffies_up_relative(HZ));
 }
-
-void i915_vma_unpark(struct intel_gt *gt)
-{
-	struct i915_vma_clock *clock = &gt->vma_clock;
-
-	cancel_delayed_work_sync(&clock->work);
-}
-
-void i915_vma_park(struct intel_gt *gt)
-{
-	struct i915_vma_clock *clock = &gt->vma_clock;
-
-	if (list_empty(&clock->age[0]) && list_empty(&clock->age[1]))
-		return;
-
-	mod_delayed_work(system_wq,
-			 &clock->work, round_jiffies_up_relative(HZ));
-}
-
 
 void i915_vma_clock_init_early(struct i915_vma_clock *clock)
 {
