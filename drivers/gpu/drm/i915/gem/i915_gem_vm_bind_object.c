@@ -353,6 +353,7 @@ static void release(struct dma_fence_work *work)
 {
 	struct unbind_work *w = container_of(work, typeof(*w), base);
 
+	i915_debugger_vma_purge(w->vma->vm->client, w->vma);
 	__i915_vma_put(w->vma);
 }
 

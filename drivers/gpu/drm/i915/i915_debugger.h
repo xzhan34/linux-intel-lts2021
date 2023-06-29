@@ -52,6 +52,8 @@ void i915_debugger_vma_insert(struct i915_drm_client *client,
 			      struct i915_vma *vma);
 void i915_debugger_vma_evict(struct i915_drm_client *client,
 			     struct i915_vma *vma);
+void i915_debugger_vma_purge(struct i915_drm_client *client,
+			     struct i915_vma *vma);
 void i915_debugger_vma_prepare(struct i915_drm_client *client,
 			       struct i915_vma *vma,
 			       u32 flags);
@@ -114,6 +116,8 @@ static inline void i915_debugger_vm_destroy(struct i915_drm_client *client,
 
 static inline void i915_debugger_vma_insert(struct i915_drm_client *client,
 					    struct i915_vma *vma) { }
+static inline void i915_debugger_vma_purge(struct i915_drm_client *client,
+					   struct i915_vma *vma) { }
 static inline void i915_debugger_vma_evict(struct i915_drm_client *client,
 					   struct i915_vma *vma) { }
 

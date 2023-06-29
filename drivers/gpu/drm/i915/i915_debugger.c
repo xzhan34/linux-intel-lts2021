@@ -5059,6 +5059,93 @@ out:
 	i915_debugger_put(debugger);
 }
 
+/*
+ * In case of deferred VM BIND it may happen that
+ * VM_UNBIND will be called before deferred work.
+ * However pre-event and debugger resource has been already
+ * added to the Resource tracker but event was not sent.
+ * Purge the hanging resource.
+ */
+void i915_debugger_vma_purge(struct i915_drm_client *client,
+			     struct i915_vma *vma)
+{
+	struct i915_debugger_resource *res;
+	struct i915_debugger *debugger;
+	struct i915_debug_event_vm_bind *ev;
+	u32 client_handle, vm_handle, handle;
+	int err = 0;
+
+	if (!client)
+		return;
+
+	if (!vma)
+		return;
+
+	debugger = i915_debugger_get(client);
+	if (!debugger)
+		return;
+
+	if (!i915_vma_is_persistent(vma)) {
+		i915_debugger_put(debugger);
+		return;
+	}
+
+	err = debugger_resource_client_handle(debugger, client, &client_handle);
+	if (err)
+		goto out;
+
+	err = debugger_resource_vm_handle(debugger, vma->vm, &vm_handle);
+	if (err)
+		goto out;
+
+	/* Perfectly fine to have this VMA missing! Not that good if it still there! */
+	err = debugger_resource_vma_handle(debugger, vma, &handle);
+	if (err == -ENOENT) {
+		err = 0;
+		goto out;
+	}
+
+	if (err) {
+		DD_WARN_ON_CONNECTED(debugger, err,
+				     "Handle not found for vma %px. Err %d\n", vma, err);
+		goto out;
+	}
+
+	res = debugger_resource_load(debugger, handle);
+	if (IS_ERR(res)) {
+		err = PTR_ERR(res);
+		DD_WARN_ON_CONNECTED(debugger, err,
+				     "Debugger resource not found: handle %u (VMA). Err %d\n",
+				     handle, err);
+		goto out;
+	}
+
+	if (!res->vma.event) {
+		if (!is_debugger_closed(debugger))
+			DD_WARN(debugger, "Debugger resource handle %u (VMA %px) - expected event allocated!", handle, vma);
+		err = -ENOENT;
+		goto out;
+	}
+
+	ev = from_event(ev, res->vma.event);
+
+	if (ev->va_start || ev->va_length) {
+		err = -ENOENT;
+		goto out;
+	}
+
+	err = debugger_resource_find_del(debugger, vma, NULL, NULL);
+	if (err)
+		goto out;
+
+	i915_debugger_put(debugger);
+	return;
+ out:
+	if (err && err != -ENOTCONN)
+		i915_debugger_disconnect_err(debugger);
+	i915_debugger_put(debugger);
+}
+
 void i915_debugger_vm_create(struct i915_drm_client *client,
 			     struct i915_address_space *vm)
 {
