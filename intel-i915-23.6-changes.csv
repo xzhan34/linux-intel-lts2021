@@ -13,3 +13,4 @@ DII-TAG,Commit Header,JIRA,Requester,PSB Branch Tag
 6959,Remove GT active deferral of vma close, gsd-5291/vlk-48924,Naveena,
 6961,mei: initilaize fw_pm_event variable, VLK-48833,Naveena,
 6962,INTEL_DII: drm/i915/debugger: Purge deferred vm-bind on unbind v3, VLK-48842,Naveena,I915-23.6.16
+,Revert "Remove GT active deferral of vma close",,Muqthyar,I915-23.6.17
