@@ -440,8 +440,6 @@ static void recover_worker(struct kthread_work *work)
 		}
 	}
 
-	pm_runtime_put(&gpu->pdev->dev);
-
 	mutex_unlock(&gpu->lock);
 
 	msm_gpu_retire(gpu);
