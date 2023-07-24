@@ -995,11 +995,14 @@ static struct i915_vma *eb_lookup_vma(struct i915_execbuffer *eb, u32 handle)
 
 static int eb_lookup_vmas(struct i915_execbuffer *eb)
 {
+	struct i915_vma_clock *clock = &eb->context->vm->gt->vma_clock;
 	unsigned int i, current_batch = 0;
+	struct i915_vma *vma = NULL;
 	int err = 0;
 
 	INIT_LIST_HEAD(&eb->relocs);
 
+	down_read(&clock->sem);
 	for (i = 0; i < eb->buffer_count; i++) {
 		struct drm_i915_gem_exec_object2 *entry = &eb->exec[i];
 		u32 handle = entry->handle;
@@ -1008,26 +1011,26 @@ static int eb_lookup_vmas(struct i915_execbuffer *eb)
 		vma = eb_check_for_persistent_vma(eb, entry);
 		if (!vma)
 			vma = eb_lookup_vma(eb, handle);
-
 		if (IS_ERR(vma)) {
 			err = PTR_ERR(vma);
-			goto err;
+			vma = NULL;
+			break;
 		}
 
 		err = eb_validate_vma(eb, entry, vma);
-		if (unlikely(err)) {
-			i915_vma_put(vma);
-			goto err;
-		}
+		if (unlikely(err))
+			break;
 
 		err = eb_add_vma(eb, &current_batch, i, vma);
-		if (err)
-			return err;
+		if (unlikely(err))
+			break;
+
+		vma = NULL;
 	}
+	up_read(&clock->sem);
 
-	return 0;
-
-err:
+	if (vma)
+		i915_vma_put(vma);
 	eb->vma[i].vma = NULL;
 	return err;
 }
