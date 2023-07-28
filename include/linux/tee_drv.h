@@ -210,6 +210,7 @@ struct tee_shm {
 	unsigned int offset;
 	struct page **pages;
 	size_t num_pages;
+	struct dma_buf *dmabuf;
 	refcount_t refcount;
 	u32 flags;
 	int id;
@@ -346,6 +347,16 @@ struct tee_shm *tee_shm_alloc_kernel_buf(struct tee_context *ctx, size_t size);
  */
 struct tee_shm *tee_shm_register(struct tee_context *ctx, unsigned long addr,
 				 size_t length, u32 flags);
+
+/**
+ * tee_shm_register_fd() - Register shared memory from file descriptor
+ *
+ * @ctx:	Context that allocates the shared memory
+ * @fd:		shared memory file descriptor reference.
+ *
+ * @returns a pointer to 'struct tee_shm'
+ */
+struct tee_shm *tee_shm_register_fd(struct tee_context *ctx, int fd);
 
 /**
  * tee_shm_is_registered() - Check if shared memory object in registered in TEE
@@ -581,19 +592,5 @@ struct tee_client_driver {
 
 #define to_tee_client_driver(d) \
 		container_of(d, struct tee_client_driver, driver)
-
-/**
- * teedev_open() - Open a struct tee_device
- * @teedev:	Device to open
- *
- * @return a pointer to struct tee_context on success or an ERR_PTR on failure.
- */
-struct tee_context *teedev_open(struct tee_device *teedev);
-
-/**
- * teedev_close_context() - closes a struct tee_context
- * @ctx:	The struct tee_context to close
- */
-void teedev_close_context(struct tee_context *ctx);
 
 #endif /*__TEE_DRV_H*/
