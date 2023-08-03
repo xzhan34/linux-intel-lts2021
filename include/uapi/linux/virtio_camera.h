@@ -21,6 +21,8 @@ enum virtio_camera_ctrl_type {
 	VIRTIO_CAMERA_CMD_ENQUEUE_BUFFER,
 	VIRTIO_CAMERA_CMD_STREAM_ON,
 	VIRTIO_CAMERA_CMD_STREAM_OFF,
+	VIRTIO_CAMERA_CMD_FILE_OPEN,
+	VIRTIO_CAMERA_CMD_FILE_CLOSE,
 
 	VIRTIO_CAMERA_CMD_RESP_OK_NODATA = 0x100,
 
@@ -31,6 +33,8 @@ enum virtio_camera_ctrl_type {
 
 struct virtio_camera_config {
 	__u8 name[256];
+	__le32 num_virtual_cameras;
+	__le32 nr_per_virtual_camera[16];
 };
 
 struct virtio_camera_mem_entry {
@@ -69,6 +73,8 @@ struct virtio_camera_req_format {
 struct virtio_camera_req_buffer {
 	__le32 num_entries;
 	__u8 uuid[16];
+	__le32 sequence;
+	__le64 timestamp;
 };
 
 struct virtio_camera_op_ctrl_req {
