@@ -9,7 +9,6 @@
 #include "gt/gen8_engine_cs.h"
 
 #include "i915_drv.h"
-#include "i915_gem_context.h"
 #include "i915_gem_gtt.h"
 #include "i915_gem_vm_bind.h"
 #include "i915_sw_fence_work.h"
@@ -29,8 +28,8 @@ struct vm_bind_user_ext {
 	struct drm_i915_gem_object *obj;
 };
 
-#define START(x) ((x)->node.start)
-#define LAST(x) ((x)->node.start + (x)->node.size - 1)
+#define START(node) ((node)->start)
+#define LAST(node) ((node)->last)
 
 INTERVAL_TREE_DEFINE(struct i915_vma, rb, u64, __subtree_last,
 		     START, LAST, static inline, i915_vm_bind_it)
@@ -307,8 +306,12 @@ static void i915_gem_vm_bind_remove(struct i915_vma *vma)
 		list_del_init(&vma->vm_capture_link);
 	spin_unlock(&vma->vm->vm_capture_lock);
 
-	list_del_init(&vma->vm_bind_link);
+	spin_lock(&vma->vm->vm_rebind_lock);
+	list_del(&vma->vm_rebind_link);
+	spin_unlock(&vma->vm->vm_rebind_lock);
 
+	list_del_init(&vma->vm_bind_link);
+	list_del_init(&vma->non_priv_vm_bind_link);
 	i915_vm_bind_it_remove(vma, &vma->vm->va);
 }
 
@@ -317,7 +320,6 @@ void i915_gem_vm_unbind_all(struct i915_address_space *vm)
 	struct i915_vma *vma, *vn;
 
 	i915_gem_vm_bind_lock(vm);
-	i915_gem_object_lock(vm->root_obj, NULL);
 	list_for_each_entry_safe(vma, vn, &vm->vm_bind_list, vm_bind_link) {
 		i915_gem_vm_bind_remove(vma);
 		i915_gem_vm_bind_release(vma);
@@ -326,7 +328,6 @@ void i915_gem_vm_unbind_all(struct i915_address_space *vm)
 		i915_gem_vm_bind_remove(vma);
 		i915_gem_vm_bind_release(vma);
 	}
-	i915_gem_object_unlock(vm->root_obj);
 	i915_gem_vm_bind_unlock(vm);
 }
 
@@ -340,12 +341,8 @@ struct unbind_work {
 static int unbind(struct dma_fence_work *work)
 {
 	struct unbind_work *w = container_of(work, typeof(*w), base);
-	struct i915_address_space *vm = w->vma->vm;
 
-	i915_gem_object_lock(vm->root_obj, NULL);
 	i915_gem_vm_bind_unpublish(w->vma);
-	i915_gem_object_unlock(vm->root_obj);
-
 	return 0;
 }
 
@@ -354,7 +351,7 @@ static void release(struct dma_fence_work *work)
 	struct unbind_work *w = container_of(work, typeof(*w), base);
 
 	i915_debugger_vma_purge(w->vma->vm->client, w->vma);
-	__i915_vma_put(w->vma);
+	i915_gem_vm_bind_release(w->vma);
 }
 
 static const struct dma_fence_work_ops unbind_ops = {
@@ -374,7 +371,7 @@ static struct dma_fence_work *queue_unbind(struct i915_vma *vma,
 		return NULL;
 
 	dma_fence_work_init(&w->base, &unbind_ops);
-	w->vma = __i915_vma_get(vma);
+	w->vma = vma;
 	INIT_LIST_HEAD(&w->unbind_link);
 	list_add_tail(&w->unbind_link, unbind_head);
 
@@ -408,6 +405,11 @@ static int verify_adjacent_segments(struct i915_vma *vma, u64 length)
 	 * release active references on error.
 	 */
 	while (vma && (vma_size < length)) {
+		if (i915_vma_is_pinned(vma) || atomic_read(&vma->open_count)) {
+			ret = -EAGAIN;
+			goto out_del;
+		}
+
 		ret = i915_active_acquire(&vma->active);
 		if (ret) {
 			vma_end = vma;
@@ -434,56 +436,12 @@ out_del:
 	return ret;
 }
 
-static void
-lut_remove(struct drm_i915_gem_object *obj, struct i915_address_space *vm)
-{
-	struct i915_lut_handle bookmark = {};
-	struct i915_lut_handle *lut, *ln;
-	LIST_HEAD(close);
-
-	spin_lock(&obj->lut_lock);
-	list_for_each_entry_safe(lut, ln, &obj->lut_list, obj_link) {
-		struct i915_gem_context *ctx = lut->ctx;
-
-		if (ctx && ctx->client == vm->client) {
-			i915_gem_context_get(ctx);
-			list_move(&lut->obj_link, &close);
-		}
-
-		/* Break long locks, and carefully continue on from this spot */
-		if (&ln->obj_link != &obj->lut_list) {
-			list_add_tail(&bookmark.obj_link, &ln->obj_link);
-			if (cond_resched_lock(&obj->lut_lock))
-				list_safe_reset_next(&bookmark, ln, obj_link);
-			__list_del_entry(&bookmark.obj_link);
-		}
-	}
-	spin_unlock(&obj->lut_lock);
-
-	list_for_each_entry_safe(lut, ln, &close, obj_link) {
-		struct i915_gem_context *ctx = lut->ctx;
-		struct i915_vma *vma;
-
-		mutex_lock(&ctx->lut_mutex);
-		vma = radix_tree_delete(&ctx->handles_vma, lut->handle);
-		if (vma) {
-			GEM_BUG_ON(vma->obj != obj);
-			GEM_BUG_ON(!atomic_read(&vma->open_count));
-			i915_vma_close(vma);
-		}
-		mutex_unlock(&ctx->lut_mutex);
-
-		i915_gem_context_put(lut->ctx);
-		i915_lut_handle_free(lut);
-		i915_gem_object_put(obj);
-	}
-}
-
 int i915_gem_vm_unbind_obj(struct i915_address_space *vm,
 			   struct prelim_drm_i915_gem_vm_bind *va)
 {
 	struct i915_vma *vma, *vma_head, *vma_next;
 	struct unbind_work *uwn, *uw = NULL;
+	struct dma_fence_work *work = NULL;
 	LIST_HEAD(unbind_head);
 	int ret;
 
@@ -513,12 +471,14 @@ int i915_gem_vm_unbind_obj(struct i915_address_space *vm,
 			goto out_unlock;
 		}
 
-		if (test_bit(I915_VMA_HAS_LUT_BIT, __i915_vma_flags(vma)))
-			lut_remove(vma->obj, vm);
+		if (i915_vma_is_pinned(vma) || atomic_read(&vma->open_count)) {
+			ret = -EAGAIN;
+			goto out_unlock;
+		}
 
-		mutex_lock(&vm->mutex);
 		ret = i915_active_acquire(&vma->active);
-		mutex_unlock(&vm->mutex);
+		if (ret)
+			goto out_unlock;
 	} else {
 		/*
 		 * For support of segmented BOs, we make EAGAIN checks for each
@@ -526,44 +486,39 @@ int i915_gem_vm_unbind_obj(struct i915_address_space *vm,
 		 * set of VMAs. This will do active_acquire() for each segment;
 		 * but on error, these are released before returning.
 		 */
-		mutex_lock(&vm->mutex);
 		ret = verify_adjacent_segments(vma, va->length);
-		mutex_unlock(&vm->mutex);
+		if (ret)
+			goto out_unlock;
 	}
-	if (ret)
-		goto out_unlock;
 
 	/*
 	 * As this uses dma_fence_work, we use multiple workers (one per VMA)
 	 * as each worker advances the vma->active timeline.
 	 */
 	for (vma = vma_head; vma; vma = vma->adjacent_next) {
-		if (!queue_unbind(vma, &unbind_head)) {
+		work = queue_unbind(vma, &unbind_head);
+		if (!work) {
 			ret = -ENOMEM;
+			list_for_each_entry_safe(uw, uwn, &unbind_head, unbind_link)
+				dma_fence_put(&uw->base.dma);
 			break;
 		}
 	}
 
-	i915_gem_object_lock(vm->root_obj, NULL);
 	for (vma = vma_head; vma; vma = vma_next) {
 		i915_active_release(&vma->active);
 		vma_next = vma->adjacent_next;
 		if (!ret) {
 			vma->adjacent_next = NULL;
 			i915_gem_vm_bind_remove(vma);
-			i915_gem_vm_bind_release(vma);
 		}
 	}
-	i915_gem_object_unlock(vm->root_obj);
 
 out_unlock:
 	i915_gem_vm_bind_unlock(vm);
 
 	list_for_each_entry_safe(uw, uwn, &unbind_head, unbind_link) {
-		struct dma_fence_work *work = &uw->base;
-
-		i915_sw_fence_set_error_once(&work->chain, ret);
-
+		work = &uw->base;
 		dma_fence_get(&work->dma);
 		dma_fence_work_commit_imm(work);
 		if (!vm->i915->params.async_vm_unbind)
@@ -588,8 +543,8 @@ static struct i915_vma *vm_create_vma(struct i915_address_space *vm,
 	if (IS_ERR(vma))
 		return vma;
 
-	vma->node.start = start;
-	vma->node.size = size;
+	vma->start = start;
+	vma->last = start + size - 1;
 	__set_bit(I915_VMA_PERSISTENT_BIT, __i915_vma_flags(vma));
 
 	return __i915_vma_get(vma);
@@ -682,32 +637,43 @@ static int vm_bind_get_vmas(struct i915_address_space *vm,
 	return err;
 }
 
-static int vma_bind_insert(struct i915_vma *vma, u64 pin_flags)
+static int vma_bind_insert(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
+			   u64 pin_flags)
 {
 	struct i915_address_space *vm = vma->vm;
-	struct i915_gem_ww_ctx ww;
 	int ret = 0;
 
-	for_i915_gem_ww(&ww, ret, true) {
-		ret = i915_gem_object_lock(vm->root_obj, &ww);
+retry:
+	if (pin_flags) {
+		/* Always take vm_priv lock here (just like execbuff path) even
+		 * for shared BOs, this will prevent the eviction/shrinker logic
+		 * from evicint private BOs of the VM.
+		 */
+		ret = i915_gem_vm_priv_lock(vm, ww);
 		if (ret)
-			continue;
+			goto out_ww;
 
-		if (pin_flags) {
-			ret = i915_gem_object_lock(vma->obj, &ww);
-			if (ret)
-				continue;
+		ret = i915_gem_object_lock(vma->obj, ww);
+		if (ret)
+			goto out_ww;
 
-			ret = i915_vma_pin_ww(vma, &ww, 0, 0,
-					      vma->node.start | pin_flags);
-			if (ret)
-				continue;
+		ret = i915_vma_pin_ww(vma, ww, 0, 0, pin_flags);
+		if (ret)
+			goto out_ww;
 
-			__i915_vma_unpin(vma);
-		}
+		__i915_vma_unpin(vma);
+	}
 
-		list_move_tail(&vma->vm_bind_link, &vm->vm_bind_list);
-		i915_vm_bind_it_insert(vma, &vm->va);
+	list_move_tail(&vma->vm_bind_link, &vm->vm_bind_list);
+	i915_vm_bind_it_insert(vma, &vm->va);
+	if (!vma->obj->vm)
+		list_add_tail(&vma->non_priv_vm_bind_link,
+			      &vm->non_priv_vm_bind_list);
+out_ww:
+	if (ret == -EDEADLK) {
+		ret = i915_gem_ww_ctx_backoff(ww);
+		if (!ret)
+			goto retry;
 	}
 
 	return ret;
@@ -725,6 +691,7 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	struct i915_sw_fence *bind_fence = NULL;
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma, *vma_next;
+	struct i915_gem_ww_ctx ww;
 	LIST_HEAD(vma_head);
 	u64 pin_flags = 0;
 	int ret;
@@ -773,7 +740,7 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	}
 
 	if (va->flags & PRELIM_I915_GEM_VM_BIND_IMMEDIATE) {
-		pin_flags = PIN_OFFSET_FIXED | PIN_USER;
+		pin_flags = va->start | PIN_OFFSET_FIXED | PIN_USER;
 		if (va->flags & PRELIM_I915_GEM_VM_BIND_MAKE_RESIDENT)
 			pin_flags |= PIN_RESIDENT;
 
@@ -814,11 +781,12 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 	/* The metadata is in VMA so debugger can prepare the event properly */
 	i915_debugger_vma_prepare(vm->client, vma, PRELIM_DRM_I915_DEBUG_EVENT_CREATE);
 
+	i915_gem_ww_ctx_init(&ww, true);
 	list_for_each_entry_safe(vma, vma_next, &vma_head, vm_bind_link) {
 		/* Hold object reference until vm_unbind */
 		i915_gem_object_get(vma->obj);
 
-		ret = vma_bind_insert(vma, pin_flags);
+		ret = vma_bind_insert(vma, &ww, pin_flags);
 		if (ret)
 			break;
 
@@ -832,6 +800,10 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 			spin_unlock(&vm->vm_capture_lock);
 		}
 
+		/* increment va->start (embedded in pin_flags) */
+		if (pin_flags)
+			pin_flags += vma->size;
+
 		/* adjacency list is for use in unbind and capture_vma */
 		if (vma_prev)
 			vma_prev->adjacent_next = vma;
@@ -839,12 +811,10 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 			adjacency_start = vma;
 		vma_prev = vma;
 	}
-
+	i915_gem_ww_ctx_fini(&ww);
 	set_bit(I915_VM_HAS_PERSISTENT_BINDS, &vm->flags);
 
 	if (ret) {
-		i915_gem_object_lock(vm->root_obj, NULL);
-
 		/* cleanup VMAs where vma_bind_insert() succeeded */
 		for (vma = adjacency_start; vma; vma = vma_next) {
 			vma_next = vma->adjacent_next;
@@ -858,8 +828,6 @@ int i915_gem_vm_bind_obj(struct i915_address_space *vm,
 			i915_gem_vm_bind_unpublish(vma);
 			i915_gem_vm_bind_release(vma);
 		}
-
-		i915_gem_object_unlock(vm->root_obj);
 	}
 
 unlock_vm:

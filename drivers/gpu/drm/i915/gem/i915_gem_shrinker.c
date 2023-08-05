@@ -39,8 +39,8 @@ static bool can_release_pages(struct drm_i915_gem_object *obj)
 }
 
 static int drop_pages(struct drm_i915_gem_object *obj,
-		      struct i915_gem_ww_ctx *ww,
-		      unsigned long shrink, bool trylock_vm)
+		      struct i915_gem_ww_ctx *ww, unsigned long shrink,
+		      bool trylock_vm)
 {
 	unsigned long flags;
 
@@ -182,11 +182,6 @@ i915_gem_shrink(struct i915_gem_ww_ctx *ww,
 		       (obj = list_first_entry_or_null(phase->list,
 						       typeof(*obj),
 						       mm.link))) {
-			if (signal_pending(current)) {
-				err = -EINTR;
-				break;
-			}
-
 			list_move_tail(&obj->mm.link, &still_in_list);
 
 			/* only segment BOs should be in i915->mm.shrink.list */
@@ -212,36 +207,47 @@ i915_gem_shrink(struct i915_gem_ww_ctx *ww,
 				continue;
 
 			spin_unlock_irqrestore(&i915->mm.obj_lock, flags);
-
-			err = __i915_gem_object_lock_to_evict(obj, ww);
-			if (err)
-				goto skip;
-
-			err = drop_pages(obj, ww, shrink, trylock_vm);
-			if (err == 0)
-				err = __i915_gem_object_put_pages(obj);
-			if (err == 0) {
-				try_to_writeback(obj, shrink);
-				count += obj->base.size >> PAGE_SHIFT;
+			if (ww) {
+				err = i915_gem_object_lock_to_evict(obj, ww);
+				if (err && err != -EALREADY)
+					goto skip;
+			} else {
+				if (!i915_gem_object_trylock(obj))
+					goto skip;
 			}
 
-			i915_gem_object_unlock(obj);
-			scanned += obj->base.size >> PAGE_SHIFT;
+			err = drop_pages(obj, ww, shrink, trylock_vm);
+			if (!err) {
+				if (!__i915_gem_object_put_pages(obj)) {
+					try_to_writeback(obj, shrink);
+					count += obj->base.size >> PAGE_SHIFT;
+				}
+			}
 
+			/* If error is not EDEADLK or EINTR, skip object */
+			if (err != -EDEADLK && err != -EINTR)
+				err = 0;
+
+			if (!ww)
+				i915_gem_object_unlock(obj);
+
+			dma_resv_prune(obj->base.resv);
+
+			scanned += obj->base.size >> PAGE_SHIFT;
 skip:
 			i915_gem_object_put(obj);
+
 			spin_lock_irqsave(&i915->mm.obj_lock, flags);
-
-			if (err == -EDEADLK)
+			if (err)
 				break;
-
-			err = 0;
 		}
 		list_splice_tail(&still_in_list, phase->list);
 		spin_unlock_irqrestore(&i915->mm.obj_lock, flags);
 		if (err)
 			break;
 	}
+	if (ww)
+		i915_gem_ww_ctx_unlock_evictions(ww);
 
 	if (shrink & I915_SHRINK_BOUND)
 		intel_runtime_pm_put(&i915->runtime_pm, wakeref);

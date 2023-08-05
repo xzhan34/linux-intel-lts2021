@@ -353,6 +353,20 @@ move:
 	return 0;
 }
 
+static int __i915_gem_object_lock_to_evict(struct drm_i915_gem_object *obj,
+					   struct i915_gem_ww_ctx *ww)
+{
+	int err;
+
+	err = dma_resv_lock_interruptible(obj->base.resv, &ww->ctx);
+	if (err == -EDEADLK) {
+		ww->contended_evict = true;
+		ww->contended = i915_gem_object_get(obj);
+	}
+
+	return err;
+}
+
 static bool i915_gem_object_allows_eviction(struct drm_i915_gem_object *obj)
 {
 	/* Only evict user lmem only objects if overcommit is enabled */
@@ -472,9 +486,14 @@ next:
 			goto put;
 		}
 
-		err = __i915_gem_object_lock_to_evict(obj, ww);
-		if (err)
-			goto put;
+		if (ww) {
+			err = __i915_gem_object_lock_to_evict(obj, ww);
+			if (err)
+				goto put;
+		} else {
+			if (!i915_gem_object_trylock(obj))
+				goto put;
+		}
 
 		if (!i915_gem_object_has_pages(obj))
 			goto unlock;
@@ -486,15 +505,12 @@ next:
 
 		GEM_TRACE("%s:{ target:%pa, found:%pa, evicting:%zu, remaining timeout:%ld }\n",
 			  mem->name, &target, &found, obj->base.size, timeout);
-		err = i915_gem_object_unbind(obj, ww, 0);
+		err = i915_gem_object_unbind(obj, ww, I915_GEM_OBJECT_UNBIND_ACTIVE);
 		if (err == 0)
 			err = __i915_gem_object_put_pages(obj);
 		if (err == 0)
 			/* conservative estimate of reclaimed pages */
 			found += obj->base.size;
-		else
-			/* repeat this phase to resolve transient contention */
-			busy = true;
 
 unlock:
 		i915_gem_object_unlock(obj);

@@ -49,6 +49,7 @@
 #include "gem/i915_gem_mman.h"
 #include "gem/i915_gem_pm.h"
 #include "gem/i915_gem_region.h"
+#include "gem/i915_gem_vm_bind.h"
 #include "gt/intel_engine_user.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
@@ -122,6 +123,38 @@ i915_gem_get_aperture_ioctl(struct drm_device *dev, void *data,
 	return 0;
 }
 
+static int i915_vma_unbind_persistent(struct i915_vma *vma,
+				      struct i915_gem_ww_ctx *ww,
+				      unsigned long flags)
+{
+	int ret;
+
+	/* VM already locked */
+	if (ww && ww == i915_gem_get_locking_ctx(vma->vm->root_obj)) {
+		/* locked for other than unbinding? */
+		if (!(flags & I915_GEM_OBJECT_UNBIND_ACTIVE) &&
+		    (!vma->vm->root_obj->evict_locked))
+			return -EBUSY;
+
+		/* locked for unbinding */
+		goto already_locked;
+	}
+
+	if (!ww)
+		ret = i915_gem_vm_priv_trylock(vma->vm);
+	else
+		ret = i915_gem_vm_priv_lock_to_evict(vma->vm, ww);
+	if (ret)
+		return ret;
+
+already_locked:
+	ret = i915_vma_unbind(vma);
+	if (!ww)
+		i915_gem_vm_priv_unlock(vma->vm);
+
+	return ret;
+}
+
 /*
  * For segmented BOs, this routine should be called for just the individual
  * segments and not the parent BO. As only the individual segments have
@@ -136,7 +169,8 @@ int i915_gem_object_unbind(struct drm_i915_gem_object *obj,
 			   struct i915_gem_ww_ctx *ww,
 			   unsigned long flags)
 {
-	struct intel_runtime_pm *rpm = &to_i915(obj->base.dev)->runtime_pm;
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct intel_runtime_pm *rpm = &i915->runtime_pm;
 	intel_wakeref_t wakeref = 0;
 	LIST_HEAD(still_in_list);
 	struct i915_vma *vma;
@@ -145,6 +179,15 @@ int i915_gem_object_unbind(struct drm_i915_gem_object *obj,
 	if (list_empty(&obj->vma.list))
 		return 0;
 
+	/*
+	 * As some machines use ACPI to handle runtime-resume callbacks, and
+	 * ACPI is quite kmalloc happy, we cannot resume beneath the vm->mutex
+	 * as they are required by the shrinker. Ergo, we wake the device up
+	 * first just in case.
+	 */
+	if (!(flags & I915_GEM_OBJECT_UNBIND_TEST))
+		wakeref = intel_runtime_pm_get(rpm);
+
 try_again:
 	ret = 0;
 	spin_lock(&obj->vma.lock);
@@ -152,7 +195,6 @@ try_again:
 						       struct i915_vma,
 						       obj_link))) {
 		struct i915_address_space *vm = vma->vm;
-		struct drm_i915_gem_object *unlock = NULL;
 
 		list_move_tail(&vma->obj_link, &still_in_list);
 		if (!i915_vma_is_bound(vma, I915_VMA_BIND_MASK))
@@ -184,41 +226,19 @@ try_again:
 			goto put_vma;
 		}
 
-		/*
-		 * As some machines use ACPI to handle runtime-resume
-		 * callbacks, and ACPI is quite kmalloc happy, we cannot resume
-		 * beneath the vm->mutex as they are required by the shrinker.
-		 * Ergo, we wake the device up first just in case.
-		 */
-		if (!wakeref && i915_vma_is_ggtt(vma))
-			wakeref = intel_runtime_pm_get(rpm);
-
-		if (i915_vma_is_persistent(vma)) {
-			ret = __i915_gem_object_lock_to_evict(vm->root_obj, ww);
-			switch (ret) {
-			case 0:
-				unlock = vm->root_obj;
-				break;
-
-			case -EALREADY:
-				if (flags & I915_GEM_OBJECT_UNBIND_ACTIVE)
-					break;
-				fallthrough;
-			default:
-				goto put_vma;
-			}
-		}
-
-		ret = -EAGAIN;
-		if (mutex_trylock(&vm->mutex)) {
-			if (flags & I915_GEM_OBJECT_UNBIND_ACTIVE ||
-			    !i915_vma_is_active(vma))
+		if (i915_vma_is_persistent(vma) &&
+		    !i915->params.enable_non_private_objects) {
+			ret = i915_vma_unbind_persistent(vma, ww, flags);
+		} else if (flags & I915_GEM_OBJECT_UNBIND_VM_TRYLOCK) {
+			if (mutex_trylock(&vma->vm->mutex)) {
 				ret = __i915_vma_unbind(vma);
-			mutex_unlock(&vm->mutex);
+				mutex_unlock(&vma->vm->mutex);
+			} else {
+				ret = -EBUSY;
+			}
+		} else {
+			ret = i915_vma_unbind(vma);
 		}
-
-		if (unlock)
-			i915_gem_object_unlock(unlock);
 put_vma:
 		__i915_vma_put(vma);
 close_vm:

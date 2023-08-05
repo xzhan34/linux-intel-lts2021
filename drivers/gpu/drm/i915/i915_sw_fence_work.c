@@ -4,8 +4,6 @@
  * Copyright © 2019 Intel Corporation
  */
 
-#include <linux/sched/signal.h>
-
 #include "i915_sw_fence_work.h"
 
 static void fence_complete(struct dma_fence_work *f)

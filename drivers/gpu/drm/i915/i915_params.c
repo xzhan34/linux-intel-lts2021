@@ -248,6 +248,21 @@ i915_param_named_unsafe(enable_eviction, uint, 0600,
 	"0=disabled, 1=memcpy based only, 2=blt based only, "
 	"3=blt based but fallsback to memcpy based [default])");
 
+/*
+ * In execbuff path, we should iterate over all non-private (shared) objects of
+ * the VM to take the dma_resv lock. But this causes a performance degradation
+ * as execbuff latency will be O(n) where 'n' is the number of non_private
+ * objects. Hence adding this enable_non_private_objects module param (default
+ * fasle) to control this feature.
+ *
+ * Having this module param and disabling it by default is an ugly performance
+ * hack so that UMDs can continue with same performance as before, until they
+ * measure (and improve) the performance with proper handling of non-private
+ * objects is enabled.
+ */
+i915_param_named_unsafe(enable_non_private_objects, bool, 0400,
+			"Enable non-private objects handling in execbuff path");
+
 i915_param_named(max_vfs, uint, 0400,
 	"Limit number of virtual functions to allocate. "
 	"(0 = no VFs [default]; N = allow up to N VFs)");

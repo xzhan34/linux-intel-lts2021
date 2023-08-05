@@ -14,6 +14,7 @@ void i915_gem_ww_ctx_init(struct i915_gem_ww_ctx *ww, bool intr)
 {
 	ww_acquire_init(&ww->ctx, &reservation_ww_class);
 	INIT_LIST_HEAD(&ww->obj_list);
+	INIT_LIST_HEAD(&ww->eviction_list);
 
 	ww->region.mem = NULL;
 	ww->region.next = NULL;
@@ -95,11 +96,18 @@ static void put_obj_list(struct list_head *list)
 	INIT_LIST_HEAD(list);
 }
 
+void i915_gem_ww_ctx_unlock_evictions(struct i915_gem_ww_ctx *ww)
+{
+	put_obj_list(&ww->eviction_list);
+}
+
 static void i915_gem_ww_ctx_unlock_all(struct i915_gem_ww_ctx *ww)
 {
 	i915_gem_ww_ctx_remove_regions(ww);
 
 	put_obj_list(&ww->obj_list);
+
+	i915_gem_ww_ctx_unlock_evictions(ww);
 }
 
 void i915_gem_ww_unlock_single(struct drm_i915_gem_object *obj)
@@ -150,22 +158,4 @@ int __must_check i915_gem_ww_ctx_backoff(struct i915_gem_ww_ctx *ww)
 out:
 	ww->contended = NULL;
 	return ret;
-}
-
-int
-__i915_gem_object_lock_to_evict(struct drm_i915_gem_object *obj,
-				struct i915_gem_ww_ctx *ww)
-{
-	int err;
-
-	if (ww)
-		err = dma_resv_lock_interruptible(obj->base.resv, &ww->ctx);
-	else
-		err = dma_resv_trylock(obj->base.resv) ? 0 : -EBUSY;
-	if (err == -EDEADLK) {
-		ww->contended_evict = true;
-		ww->contended = i915_gem_object_get(obj);
-	}
-
-	return err;
 }

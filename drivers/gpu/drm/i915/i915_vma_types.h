@@ -278,7 +278,6 @@ struct i915_vma {
 
 #define I915_VMA_PERSISTENT_BIT	19
 #define I915_VMA_PURGED_BIT	20
-#define I915_VMA_HAS_LUT_BIT	21
 
 	struct i915_active active;
 
@@ -300,13 +299,18 @@ struct i915_vma {
 	struct list_head vm_link;
 
 	struct list_head vm_bind_link; /* Link in persistent VMA list */
+	/* Link in non-private persistent VMA list */
+	struct list_head non_priv_vm_bind_link;
 	struct list_head vm_capture_link; /* Link in captureable VMA list */
+	struct list_head vm_rebind_link; /* Link in vm_rebind_list */
 	struct i915_sw_fence *bind_fence;
 	/* (segmented BO) walk adjacent VMAs at unbind or during capture_vma */
 	struct i915_vma *adjacent_next;
 
 	/** Interval tree structures for persistent vma */
 	struct rb_node rb;
+	u64 start;
+	u64 last;
 	u64 __subtree_last;
 
 	struct list_head obj_link; /* Link in the object's VMA list */

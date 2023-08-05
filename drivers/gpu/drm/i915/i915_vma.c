@@ -267,7 +267,9 @@ skip_rb_insert:
 	spin_lock_init(&vma->metadata_lock);
 	INIT_LIST_HEAD(&vma->metadata_list);
 	INIT_LIST_HEAD(&vma->vm_bind_link);
+	INIT_LIST_HEAD(&vma->non_priv_vm_bind_link);
 	INIT_LIST_HEAD(&vma->vm_capture_link);
+	INIT_LIST_HEAD(&vma->vm_rebind_link);
 	return vma;
 
 err_unlock:
@@ -1738,11 +1740,9 @@ int _i915_vma_move_to_active(struct i915_vma *vma,
 
 void __i915_vma_evict(struct i915_vma *vma)
 {
-	struct i915_address_space *vm = vma->vm;
-
 	GEM_BUG_ON(i915_vma_is_pinned(vma));
 
-	i915_debugger_vma_evict(vm->client, vma);
+	i915_debugger_vma_evict(vma->vm->client, vma);
 
 	if (i915_vma_is_map_and_fenceable(vma)) {
 		/* Force a pagefault for domain tracking on next user access */
@@ -1774,24 +1774,16 @@ void __i915_vma_evict(struct i915_vma *vma)
 	GEM_BUG_ON(vma->fence);
 	GEM_BUG_ON(i915_vma_has_userfault(vma));
 
-	if (likely(atomic_read(&vm->open))) {
+	if (likely(atomic_read(&vma->vm->open))) {
 		trace_i915_vma_unbind(vma);
-		vma->ops->unbind_vma(vm, vma);
-
-		if (!list_empty(&vma->vm_bind_link)) {
-			GEM_BUG_ON(!i915_vma_is_persistent(vma));
-			assert_object_held(vm->root_obj);
-			list_move_tail(&vma->vm_bind_link, &vm->vm_bind_list);
-		}
+		vma->ops->unbind_vma(vma->vm, vma);
 	}
 	atomic_and(~(I915_VMA_BIND_MASK | I915_VMA_ERROR | I915_VMA_GGTT_WRITE),
 		   &vma->flags);
 
-	if (!i915_vm_page_fault_enabled(vm) ||
-	    i915_vma_is_purged(vma) ||
-	    !i915_vma_is_persistent(vma))
+	if(!i915_vm_page_fault_enabled(vma->vm) || i915_vma_is_purged(vma) ||
+	   !i915_vma_is_persistent(vma))
 		i915_vma_detach(vma);
-
 	vma_unbind_pages(vma);
 }
 
@@ -1819,11 +1811,28 @@ int __i915_vma_unbind(struct i915_vma *vma)
 	if (ret)
 		return ret;
 
+	GEM_BUG_ON(i915_vma_is_active(vma));
 	__i915_vma_evict(vma);
 
-	if (!i915_vm_page_fault_enabled(vm) || i915_vma_is_purged(vma) ||
-	    !i915_vma_is_persistent(vma))
+	if(!i915_vm_page_fault_enabled(vm) || i915_vma_is_purged(vma) ||
+	   !i915_vma_is_persistent(vma))
 		drm_mm_remove_node(&vma->node);
+
+	if (i915_vma_is_persistent(vma)) {
+		spin_lock(&vm->vm_rebind_lock);
+
+		/*
+		 * Confirm this vma is still alive after acquiring the spinlock
+		 * to serialize with i915_gem_vm_bind_remove(). Otherwise, we
+		 * may re-add the vma onto the rebind list /after/ the vma has
+		 * already been marked as freed.
+		 */
+		if (list_empty(&vma->vm_rebind_link))
+			list_add_tail(&vma->vm_rebind_link,
+				      &vm->vm_rebind_list);
+
+		spin_unlock(&vm->vm_rebind_lock);
+	}
 
 	return 0;
 }
@@ -1886,24 +1895,30 @@ int i915_vma_prefetch(struct i915_vma *vma, struct intel_memory_region *mem)
 	if (i915_gem_object_is_userptr(vma->obj))
 		return -EINVAL;
 
-	for_i915_gem_ww(&ww, err, true) {
-		err = i915_gem_object_lock(vma->vm->root_obj, &ww);
-		if (err)
-			continue;
+	i915_gem_ww_ctx_init(&ww, true);
 
-		err = i915_gem_object_lock(vma->obj, &ww);
-		if (err)
-			continue;
+retry:
+	err = i915_gem_object_lock(vma->obj, &ww);
+	if (err)
+		goto err_ww;
 
-		if (vma->obj->mm.region.mem->id != mem->id)
-			err = i915_gem_object_migrate_region(vma->obj, &ww, &mem, 1);
-		if (err)
-			continue;
+	if (vma->obj->mm.region.mem->id != mem->id)
+		err = i915_gem_object_migrate_region(vma->obj, &ww, &mem, 1);
+	if (err)
+		goto err_ww;
 
-		if (!i915_vma_is_bound(vma, PIN_RESIDENT))
-			err = i915_vma_bind(vma, &ww);
+	if (i915_vma_is_bound(vma, PIN_RESIDENT))
+		goto err_ww;
+
+	err = i915_vma_bind(vma, &ww);
+err_ww:
+	if (err == -EDEADLK) {
+		err = i915_gem_ww_ctx_backoff(&ww);
+		if (!err)
+			goto retry;
 	}
 
+	i915_gem_ww_ctx_fini(&ww);
 	return err;
 }
 

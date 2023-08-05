@@ -1659,7 +1659,7 @@ static ssize_t access_page_in_vm(struct i915_address_space *vm,
 		if (ret)
 			continue;
 
-		vma_offset = vm_offset - vma->node.start;
+		vma_offset = vm_offset - vma->start;
 
 		len = min_t(ssize_t, len, PAGE_SIZE - offset_in_page(vma_offset));
 

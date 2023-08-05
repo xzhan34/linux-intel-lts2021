@@ -46,8 +46,10 @@ struct drm_i915_gem_object *alloc_pt_lmem(struct i915_address_space *vm, int sz)
 	 * object underneath, with the idea that one object_lock() will lock
 	 * them all at once.
 	 */
-	if (!IS_ERR(obj))
-		i915_gem_object_share_resv(vm->root_obj, obj);
+	if (!IS_ERR(obj)) {
+		obj->base.resv = i915_vm_resv_get(vm);
+		obj->shares_resv_from = vm;
+	}
 
 	return obj;
 }
@@ -67,7 +69,8 @@ struct drm_i915_gem_object *alloc_pt_dma(struct i915_address_space *vm, int sz)
 	 */
 	if (!IS_ERR(obj)) {
 		obj->flags |= I915_BO_ALLOC_CONTIGUOUS;
-		i915_gem_object_share_resv(vm->root_obj, obj);
+		obj->base.resv = i915_vm_resv_get(vm);
+		obj->shares_resv_from = vm;
 	}
 
 	return obj;
@@ -125,10 +128,18 @@ static void __i915_vm_close(struct i915_address_space *vm)
 	}
 }
 
-int i915_vm_lock_objects(const struct i915_address_space *vm,
+/* lock the vm into the current ww, if we lock one, we lock all */
+int i915_vm_lock_objects(struct i915_address_space *vm,
 			 struct i915_gem_ww_ctx *ww)
 {
-	return i915_gem_object_lock(vm->root_obj, ww);
+	if (vm->scratch[0] && (vm->scratch[0]->base.resv == &vm->_resv)) {
+		return i915_gem_object_lock(vm->scratch[0], ww);
+	} else {
+		struct i915_ppgtt *ppgtt = i915_vm_to_ppgtt(vm);
+
+		/* We borrowed the scratch page from ggtt, take the top level object */
+		return i915_gem_object_lock(ppgtt->pd->pt.base, ww);
+	}
 }
 
 void i915_address_space_fini(struct i915_address_space *vm)
@@ -153,6 +164,22 @@ void i915_address_space_fini(struct i915_address_space *vm)
 	iput(vm->inode);
 }
 
+/**
+ * i915_vm_resv_release - Final struct i915_address_space destructor
+ * @kref: Pointer to the &i915_address_space.resv_ref member.
+ *
+ * This function is called when the last lock sharer no longer shares the
+ * &i915_address_space._resv lock.
+ */
+void i915_vm_resv_release(struct kref *kref)
+{
+	struct i915_address_space *vm =
+		container_of(kref, typeof(*vm), resv_ref);
+
+	dma_resv_fini(&vm->_resv);
+	kfree(vm);
+}
+
 static void __i915_vm_release(struct work_struct *work)
 {
 	struct i915_address_space *vm =
@@ -162,6 +189,8 @@ static void __i915_vm_release(struct work_struct *work)
 	i915_svm_unbind_mm(vm);
 	vm->cleanup(vm);
 	i915_address_space_fini(vm);
+
+	i915_vm_resv_put(vm);
 }
 
 void i915_vm_release(struct kref *kref)
@@ -216,6 +245,13 @@ int i915_address_space_init(struct i915_address_space *vm, int subclass)
 
 	kref_init(&vm->ref);
 
+	/*
+	 * Special case for GGTT that has already done an early
+	 * kref_init here.
+	 */
+	if (!kref_read(&vm->resv_ref))
+		kref_init(&vm->resv_ref);
+
 	INIT_RCU_WORK(&vm->rcu, __i915_vm_release);
 	atomic_set(&vm->open, 1);
 	INIT_WORK(&vm->close_work, i915_vm_close_work);
@@ -244,6 +280,7 @@ int i915_address_space_init(struct i915_address_space *vm, int subclass)
 		might_alloc(GFP_KERNEL);
 		mutex_release(&vm->mutex.dep_map, _THIS_IP_);
 	}
+	dma_resv_init(&vm->_resv);
 
 	vm->inode = alloc_anon_inode(vm->i915->drm.anon_inode->i_sb);
 	if (IS_ERR(vm->inode))
@@ -278,15 +315,16 @@ int i915_address_space_init(struct i915_address_space *vm, int subclass)
 	INIT_LIST_HEAD(&vm->vm_bind_list);
 	INIT_LIST_HEAD(&vm->vm_bound_list);
 	mutex_init(&vm->vm_bind_lock);
-
+	INIT_LIST_HEAD(&vm->non_priv_vm_bind_list);
 	vm->root_obj = i915_gem_object_create_internal(vm->i915, PAGE_SIZE);
-	if (IS_ERR_OR_NULL(vm->root_obj))
-		return -ENOMEM;
+	GEM_BUG_ON(IS_ERR(vm->root_obj));
 
 	spin_lock_init(&vm->priv_obj_lock);
 	INIT_LIST_HEAD(&vm->priv_obj_list);
 	INIT_LIST_HEAD(&vm->vm_capture_list);
 	spin_lock_init(&vm->vm_capture_lock);
+	INIT_LIST_HEAD(&vm->vm_rebind_list);
+	spin_lock_init(&vm->vm_rebind_lock);
 	INIT_ACTIVE_FENCE(&vm->user_fence);
 
 	vm->has_scratch = true;

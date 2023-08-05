@@ -878,6 +878,8 @@ void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 	if (obj->mm.n_placements > 1)
 		kfree(obj->mm.placements);
 
+	if (obj->shares_resv_from)
+		i915_vm_resv_put(obj->shares_resv_from);
 	i915_resv_put(obj->shares_resv);
 }
 

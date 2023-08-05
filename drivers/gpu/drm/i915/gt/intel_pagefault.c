@@ -694,23 +694,35 @@ const char *intel_acc_err2str(unsigned int err)
 static int acc_migrate_to_lmem(struct intel_gt *gt, struct i915_vma *vma)
 {
 	struct i915_gem_ww_ctx ww;
-	enum intel_region_id lmem_id;
 	int err = 0;
 
-	if (!i915_vma_is_bound(vma, PIN_RESIDENT))
+	i915_gem_vm_bind_lock(vma->vm);
+
+	if (!i915_vma_is_bound(vma, PIN_RESIDENT)) {
+		i915_gem_vm_bind_unlock(vma->vm);
 		return 0;
-
-	lmem_id = get_lmem_region_id(vma->obj, gt);
-	if (!lmem_id)
-		return 0;
-
-	for_i915_gem_ww(&ww, err, false) {
-		err = i915_gem_object_lock(vma->obj, &ww);
-		if (err)
-			continue;
-
-		err = migrate_to_lmem(vma->obj, gt, lmem_id, &ww);
 	}
+
+	i915_gem_ww_ctx_init(&ww, false);
+
+retry:
+	err = i915_gem_object_lock(vma->obj, &ww);
+	if (!err) {
+		enum intel_region_id lmem_id;
+
+		lmem_id = get_lmem_region_id(vma->obj, gt);
+		if (lmem_id)
+			err = migrate_to_lmem(vma->obj, gt, lmem_id, &ww);
+	}
+
+	if (err == -EDEADLK) {
+		err = i915_gem_ww_ctx_backoff(&ww);
+		if (!err)
+			goto retry;
+	}
+
+	i915_gem_ww_ctx_fini(&ww);
+	i915_gem_vm_bind_unlock(vma->vm);
 
 	return err;
 }

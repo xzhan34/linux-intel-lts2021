@@ -214,6 +214,32 @@ static inline void assert_object_held_shared(struct drm_i915_gem_object *obj)
 		assert_object_held(obj);
 }
 
+static inline int
+i915_gem_object_lock_to_evict(struct drm_i915_gem_object *obj,
+			      struct i915_gem_ww_ctx *ww)
+{
+	int ret;
+
+	if (ww->intr)
+		ret = dma_resv_lock_interruptible(obj->base.resv, &ww->ctx);
+	else
+		ret = dma_resv_lock(obj->base.resv, &ww->ctx);
+
+	if (!ret) {
+		list_add_tail(&obj->obj_link, &ww->eviction_list);
+		i915_gem_object_get(obj);
+		obj->evict_locked = true;
+	}
+
+	GEM_WARN_ON(ret == -EALREADY);
+	if (ret == -EDEADLK) {
+		ww->contended_evict = true;
+		ww->contended = i915_gem_object_get(obj);
+	}
+
+	return ret;
+}
+
 static inline int __i915_gem_object_lock(struct drm_i915_gem_object *obj,
 					 struct i915_gem_ww_ctx *ww,
 					 bool intr)
