@@ -96,7 +96,7 @@ static int map_msix_eventfd(struct uio_pci_generic_dev *gdev,
 }
 
 static int uio_msi_ioctl(struct uio_info *info, unsigned int cmd,
-		unsigned long arg)
+		unsigned long arg, unsigned long user)
 {
 	struct uio_pci_generic_dev *gdev;
 	struct uio_msix_data data;
@@ -152,7 +152,7 @@ to_uio_pci_generic_dev(struct uio_info *info)
 	return container_of(info, struct uio_pci_generic_dev, info);
 }
 
-static int release(struct uio_info *info, struct inode *inode)
+static int release(struct uio_info *info, struct inode *inode, unsigned long user)
 {
 	struct uio_pci_generic_dev *gdev = to_uio_pci_generic_dev(info);
 

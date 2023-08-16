@@ -531,7 +531,7 @@ static int uio_release(struct inode *inode, struct file *filep)
 
 	mutex_lock(&idev->info_lock);
 	if (idev->info && idev->info->release)
-		ret = idev->info->release(idev->info, inode);
+		ret = idev->info->release(idev->info, inode, (unsigned long)filep);
 	mutex_unlock(&idev->info_lock);
 
 	module_put(idev->owner);
@@ -572,7 +572,7 @@ static long uio_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 	if (!idev->info->ioctl)
 		return -ENOTTY;
 
-	return idev->info->ioctl(idev->info, cmd, arg);
+	return idev->info->ioctl(idev->info, cmd, arg, (unsigned long)filep);
 }
 #endif
 

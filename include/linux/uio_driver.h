@@ -119,11 +119,11 @@ struct uio_info {
 	irqreturn_t (*handler)(int irq, struct uio_info *dev_info);
 	int (*mmap)(struct uio_info *info, struct vm_area_struct *vma);
 	int (*open)(struct uio_info *info, struct inode *inode);
-	int (*release)(struct uio_info *info, struct inode *inode);
+	int (*release)(struct uio_info *info, struct inode *inode, unsigned long user);
 	int (*irqcontrol)(struct uio_info *info, s32 irq_on);
 #ifdef CONFIG_PCI_MSI
 	int (*ioctl)(struct uio_info *info, unsigned int cmd,
-			unsigned long arg);
+			unsigned long arg, unsigned long user);
 #endif
 	ANDROID_KABI_RESERVE(1);
 };
