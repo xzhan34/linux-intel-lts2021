@@ -1257,7 +1257,7 @@ static const struct snd_soc_dai_driver i2s_dai_template = {
 	.ops = &avs_dai_nonhda_be_ops,
 	.playback = {
 		.channels_min	= 1,
-		.channels_max	= 8,
+		.channels_max	= 16,
 		.rates		= SNDRV_PCM_RATE_8000_192000 |
 				  SNDRV_PCM_RATE_KNOT,
 		.formats	= SNDRV_PCM_FMTBIT_S16_LE |
@@ -1266,7 +1266,7 @@ static const struct snd_soc_dai_driver i2s_dai_template = {
 	},
 	.capture = {
 		.channels_min	= 1,
-		.channels_max	= 8,
+		.channels_max	= 16,
 		.rates		= SNDRV_PCM_RATE_8000_192000 |
 				  SNDRV_PCM_RATE_KNOT,
 		.formats	= SNDRV_PCM_FMTBIT_S16_LE |
@@ -1337,7 +1337,7 @@ static const struct snd_soc_dai_driver hda_cpu_dai = {
 	.ops = &avs_dai_hda_be_ops,
 	.playback = {
 		.channels_min	= 1,
-		.channels_max	= 8,
+		.channels_max	= 16,
 		.rates		= SNDRV_PCM_RATE_8000_192000,
 		.formats	= SNDRV_PCM_FMTBIT_S16_LE |
 				  SNDRV_PCM_FMTBIT_S24_LE |
@@ -1345,7 +1345,7 @@ static const struct snd_soc_dai_driver hda_cpu_dai = {
 	},
 	.capture = {
 		.channels_min	= 1,
-		.channels_max	= 8,
+		.channels_max	= 16,
 		.rates		= SNDRV_PCM_RATE_8000_192000,
 		.formats	= SNDRV_PCM_FMTBIT_S16_LE |
 				  SNDRV_PCM_FMTBIT_S24_LE |
