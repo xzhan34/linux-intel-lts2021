@@ -753,7 +753,7 @@ unsigned int snd_hdac_calc_stream_format(unsigned int rate,
 	if (!rate_bits[i].hz)
 		return 0;
 
-	if (channels == 0 || channels > 8)
+	if (channels == 0 || channels > 16)
 		return 0;
 	val |= channels - 1;
 
