@@ -57,7 +57,7 @@ EXPORT_SYMBOL_GPL(genphy_c45_pma_suspend);
  */
 int genphy_c45_pma_setup_forced(struct phy_device *phydev)
 {
-	int ctrl1, ctrl2, ret;
+	int bt1_ctrl, ctrl1, ctrl2, ret;
 
 	/* Half duplex is not supported */
 	if (phydev->duplex != DUPLEX_FULL)
