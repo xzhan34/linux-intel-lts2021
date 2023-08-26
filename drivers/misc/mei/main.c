@@ -27,6 +27,9 @@
 
 #include "mei_dev.h"
 #include "client.h"
+#ifdef BPM_ADD_MODULE_VERSION_MACRO_IN_ALL_MOD
+#include <backport/bp_module_version.h>
+#endif
 
 static struct class *mei_class;
 static dev_t mei_devt;
@@ -383,7 +386,7 @@ static ssize_t mei_write(struct file *file, const char __user *ubuf,
 		goto out;
 	}
 
-	rets = mei_cl_write(cl, cb);
+	rets = mei_cl_write(cl, cb, MAX_SCHEDULE_TIMEOUT);
 out:
 	mutex_unlock(&dev->device_lock);
 	return rets;
@@ -1115,6 +1118,7 @@ void mei_set_devstate(struct mei_device *dev, enum mei_dev_state state)
 		return;
 
 	dev->dev_state = state;
+	wake_up(&dev->wait_dev_state);
 
 	clsdev = class_find_device_by_devt(mei_class, dev->cdev.dev);
 	if (clsdev) {
@@ -1317,4 +1321,6 @@ module_exit(mei_exit);
 MODULE_AUTHOR("Intel Corporation");
 MODULE_DESCRIPTION("Intel(R) Management Engine Interface");
 MODULE_LICENSE("GPL v2");
-
+#ifdef BPM_ADD_MODULE_VERSION_MACRO_IN_ALL_MOD
+MODULE_VERSION(BACKPORT_MOD_VER);
+#endif

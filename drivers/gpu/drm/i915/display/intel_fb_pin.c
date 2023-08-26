@@ -18,7 +18,7 @@
 
 static struct i915_vma *
 intel_pin_fb_obj_dpt(struct drm_framebuffer *fb,
-		     const struct i915_gtt_view *view,
+		     const struct i915_ggtt_view *view,
 		     bool uses_fence,
 		     unsigned long *out_flags,
 		     struct i915_address_space *vm)
@@ -39,7 +39,7 @@ intel_pin_fb_obj_dpt(struct drm_framebuffer *fb,
 
 	ret = i915_gem_object_lock_interruptible(obj, NULL);
 	if (!ret) {
-		ret = i915_gem_object_set_cache_level(obj, I915_CACHE_NONE);
+		ret = i915_gem_object_set_cache_level(obj, NULL, I915_CACHE_NONE);
 		i915_gem_object_unlock(obj);
 	}
 	if (ret) {
@@ -50,14 +50,6 @@ intel_pin_fb_obj_dpt(struct drm_framebuffer *fb,
 	vma = i915_vma_instance(obj, vm, view);
 	if (IS_ERR(vma))
 		goto err;
-
-	if (i915_vma_misplaced(vma, 0, alignment, 0)) {
-		ret = i915_vma_unbind_unlocked(vma);
-		if (ret) {
-			vma = ERR_PTR(ret);
-			goto err;
-		}
-	}
 
 	ret = i915_vma_pin(vma, 0, alignment, PIN_GLOBAL);
 	if (ret) {
@@ -79,13 +71,14 @@ err:
 struct i915_vma *
 intel_pin_and_fence_fb_obj(struct drm_framebuffer *fb,
 			   bool phys_cursor,
-			   const struct i915_gtt_view *view,
+			   const struct i915_ggtt_view *view,
 			   bool uses_fence,
 			   unsigned long *out_flags)
 {
 	struct drm_device *dev = fb->dev;
 	struct drm_i915_private *dev_priv = to_i915(dev);
 	struct drm_i915_gem_object *obj = intel_fb_obj(fb);
+	struct i915_ggtt *ggtt = to_gt(dev_priv)->ggtt;
 	intel_wakeref_t wakeref;
 	struct i915_gem_ww_ctx ww;
 	struct i915_vma *vma;
@@ -139,19 +132,19 @@ retry:
 	ret = i915_gem_object_lock(obj, &ww);
 	if (!ret && phys_cursor)
 		ret = i915_gem_object_attach_phys(obj, alignment);
-	else if (!ret && HAS_LMEM(dev_priv))
-		ret = i915_gem_object_migrate(obj, &ww, INTEL_REGION_LMEM_0);
-	/* TODO: Do we need to sync when migration becomes async? */
 	if (!ret)
 		ret = i915_gem_object_pin_pages(obj);
 	if (ret)
 		goto err;
 
-	vma = i915_gem_object_pin_to_display_plane(obj, &ww, alignment,
-						   view, pinctl);
-	if (IS_ERR(vma)) {
-		ret = PTR_ERR(vma);
-		goto err_unpin;
+	if (!ret) {
+		vma = i915_gem_object_pin_to_display_plane(obj, &ww,
+							   ggtt, view,
+							   alignment, pinctl);
+		if (IS_ERR(vma)) {
+			ret = PTR_ERR(vma);
+			goto err_unpin;
+		}
 	}
 
 	if (uses_fence && i915_vma_is_map_and_fenceable(vma)) {
@@ -249,6 +242,31 @@ int intel_plane_pin_fb(struct intel_plane_state *plane_state)
 		plane_state->dpt_vma = vma;
 
 		WARN_ON(plane_state->ggtt_vma == plane_state->dpt_vma);
+	}
+
+	return 0;
+}
+
+int intel_plane_sync_fb(struct intel_plane_state *plane_state)
+{
+	int err;
+
+	if (plane_state->ggtt_vma) {
+		err = i915_vma_wait_for_bind(plane_state->ggtt_vma);
+		if (err)
+			return err;
+	}
+
+	if (plane_state->dpt_vma) {
+		err = i915_vma_wait_for_bind(plane_state->dpt_vma);
+		if (err)
+			return err;
+	}
+
+	if (plane_state->hw.fb) {
+		err = i915_gem_object_migrate_sync(intel_fb_obj(plane_state->hw.fb));
+		if (err)
+			return err;
 	}
 
 	return 0;

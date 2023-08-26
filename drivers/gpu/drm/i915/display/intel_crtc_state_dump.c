@@ -108,7 +108,7 @@ static const char * const output_format_str[] = {
 	[INTEL_OUTPUT_FORMAT_YCBCR444] = "YCBCR4:4:4",
 };
 
-static const char *output_formats(enum intel_output_format format)
+const char *intel_output_format_name(enum intel_output_format format)
 {
 	if (format >= ARRAY_SIZE(output_format_str))
 		return "invalid";
@@ -134,8 +134,8 @@ static void intel_dump_plane_state(const struct intel_plane_state *plane_state)
 		    plane->base.base.id, plane->base.name,
 		    fb->base.id, fb->width, fb->height, &fb->format->format,
 		    fb->modifier, str_yes_no(plane_state->uapi.visible));
-	drm_dbg_kms(&i915->drm, "\trotation: 0x%x, scaler: %d, scaling_filter: %d\n",
-		    plane_state->hw.rotation, plane_state->scaler_id, plane_state->hw.scaling_filter);
+	drm_dbg_kms(&i915->drm, "\trotation: 0x%x, scaler: %d\n",
+		    plane_state->hw.rotation, plane_state->scaler_id);
 	if (plane_state->uapi.visible)
 		drm_dbg_kms(&i915->drm,
 			    "\tsrc: " DRM_RECT_FP_FMT " dst: " DRM_RECT_FMT "\n",
@@ -166,7 +166,7 @@ void intel_crtc_state_dump(const struct intel_crtc_state *pipe_config,
 		    "active: %s, output_types: %s (0x%x), output format: %s\n",
 		    str_yes_no(pipe_config->hw.active),
 		    buf, pipe_config->output_types,
-		    output_formats(pipe_config->output_format));
+		    intel_output_format_name(pipe_config->output_format));
 
 	drm_dbg_kms(&i915->drm,
 		    "cpu_transcoder: %s, pipe bpp: %i, dithering: %i\n",
@@ -262,11 +262,10 @@ void intel_crtc_state_dump(const struct intel_crtc_state *pipe_config,
 
 	if (DISPLAY_VER(i915) >= 9)
 		drm_dbg_kms(&i915->drm,
-			    "num_scalers: %d, scaler_users: 0x%x, scaler_id: %d, scaling_filter: %d\n",
+			    "num_scalers: %d, scaler_users: 0x%x, scaler_id: %d\n",
 			    crtc->num_scalers,
 			    pipe_config->scaler_state.scaler_users,
-			    pipe_config->scaler_state.scaler_id,
-			    pipe_config->hw.scaling_filter);
+			    pipe_config->scaler_state.scaler_id);
 
 	if (HAS_GMCH(i915))
 		drm_dbg_kms(&i915->drm,

@@ -44,11 +44,6 @@ struct intel_gt *pxp_to_gt(const struct intel_pxp *pxp)
 	return container_of(pxp, struct intel_gt, pxp);
 }
 
-bool intel_pxp_is_enabled(const struct intel_pxp *pxp)
-{
-	return pxp->ce;
-}
-
 bool intel_pxp_is_active(const struct intel_pxp *pxp)
 {
 	return pxp->arb_is_valid;
@@ -142,9 +137,7 @@ void intel_pxp_init(struct intel_pxp *pxp)
 {
 	struct intel_gt *gt = pxp_to_gt(pxp);
 
-	/* we rely on the mei PXP module */
-	if (!IS_ENABLED(CONFIG_INTEL_MEI_PXP))
-		return;
+	/*DKMS I915 assumes CONFIG_INTEL_MEI_PXP is enabled always*/
 
 	/*
 	 * If HuC is loaded by GSC but PXP is disabled, we can skip the init of
@@ -186,18 +179,6 @@ static void pxp_queue_termination(struct intel_pxp *pxp)
 	spin_unlock_irq(gt->irq_lock);
 }
 
-static bool pxp_component_bound(struct intel_pxp *pxp)
-{
-	bool bound = false;
-
-	mutex_lock(&pxp->tee_mutex);
-	if (pxp->pxp_component)
-		bound = true;
-	mutex_unlock(&pxp->tee_mutex);
-
-	return bound;
-}
-
 /*
  * the arb session is restarted from the irq work when we receive the
  * termination completion interrupt
@@ -208,9 +189,6 @@ int intel_pxp_start(struct intel_pxp *pxp)
 
 	if (!intel_pxp_is_enabled(pxp))
 		return -ENODEV;
-
-	if (wait_for(pxp_component_bound(pxp), 250))
-		return -ENXIO;
 
 	mutex_lock(&pxp->arb_mutex);
 

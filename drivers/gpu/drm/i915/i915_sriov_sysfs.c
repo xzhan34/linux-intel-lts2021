@@ -4,12 +4,11 @@
  */
 
 #include "i915_drv.h"
+#include "i915_pci.h"
 #include "i915_sriov_sysfs.h"
 #include "i915_sriov_sysfs_types.h"
 #include "i915_sysfs.h"
-
-#include "gt/iov/intel_iov_provisioning.h"
-#include "gt/iov/intel_iov_state.h"
+#include "gt/intel_gt.h"
 
 /*
  * /sys/class/drm/card*
@@ -21,7 +20,8 @@
  *     │   └── ...
  */
 
-#define SRIOV_KOBJ_HOME_NAME "iov"
+#define SRIOV_PRELIMINARY "prelim_"
+#define SRIOV_KOBJ_HOME_NAME SRIOV_PRELIMINARY "iov"
 #define SRIOV_EXT_KOBJ_PF_NAME "pf"
 #define SRIOV_EXT_KOBJ_VFn_NAME "vf%u"
 #define SRIOV_DEVICE_LINK_NAME "device"
@@ -109,17 +109,16 @@ static ssize_t control_sriov_ext_attr_store(struct drm_i915_private *i915,
 					    unsigned int id,
 					    const char *buf, size_t count)
 {
-	struct intel_iov *iov = &to_gt(i915)->iov;
 	int err = -EPERM;
 
 	if (sysfs_streq(buf, CONTROL_STOP)) {
-		err = intel_iov_state_stop_vf(iov, id);
+		err = i915_sriov_pf_stop_vf(i915, id);
 	} else if (sysfs_streq(buf, CONTROL_PAUSE)) {
-		err = intel_iov_state_pause_vf(iov, id);
+		err = i915_sriov_pf_pause_vf(i915, id);
 	} else if (sysfs_streq(buf, CONTROL_RESUME)) {
-		err = intel_iov_state_resume_vf(iov, id);
+		err = i915_sriov_pf_resume_vf(i915, id);
 	} else if (sysfs_streq(buf, CONTROL_CLEAR)) {
-		err = intel_iov_provisioning_clear(iov, id);
+		err = i915_sriov_pf_clear_vf(i915, id);
 	} else {
 		err = -EINVAL;
 	}
@@ -194,8 +193,15 @@ static ssize_t sriov_attr_show(struct kobject *kobj, struct attribute *attr, cha
 {
 	struct drm_i915_private *i915 = sriov_kobj_to_i915(to_sriov_kobj(kobj));
 	struct i915_sriov_attr *sriov_attr = to_sriov_attr(attr);
+	int ret = -EIO;
 
-	return sriov_attr->show ? sriov_attr->show(i915, buf) : -EIO;
+	if (sriov_attr->show) {
+		pvc_wa_disallow_rc6(i915);
+		ret = sriov_attr->show(i915, buf);
+		pvc_wa_allow_rc6(i915);
+	}
+
+	return ret;
 }
 
 static ssize_t sriov_attr_store(struct kobject *kobj, struct attribute *attr,
@@ -203,8 +209,15 @@ static ssize_t sriov_attr_store(struct kobject *kobj, struct attribute *attr,
 {
 	struct drm_i915_private *i915 = sriov_kobj_to_i915(to_sriov_kobj(kobj));
 	struct i915_sriov_attr *sriov_attr = to_sriov_attr(attr);
+	int ret = -EIO;
 
-	return sriov_attr->store ? sriov_attr->store(i915, buf, count) : -EIO;
+	if (sriov_attr->store) {
+		pvc_wa_disallow_rc6(i915);
+		ret = sriov_attr->store(i915, buf, count);
+		pvc_wa_allow_rc6(i915);
+	}
+
+	return ret;
 }
 
 static const struct sysfs_ops sriov_sysfs_ops = {
@@ -232,8 +245,15 @@ static ssize_t sriov_ext_attr_show(struct kobject *kobj, struct attribute *attr,
 	struct i915_sriov_ext_attr *sriov_attr = to_sriov_ext_attr(attr);
 	struct drm_i915_private *i915 = sriov_ext_kobj_to_i915(sriov_kobj);
 	unsigned int id = sriov_kobj->id;
+	int ret = -EIO;
 
-	return sriov_attr->show ? sriov_attr->show(i915, id, buf) : -EIO;
+	if (sriov_attr->show) {
+		pvc_wa_disallow_rc6(i915);
+		ret = sriov_attr->show(i915, id, buf);
+		pvc_wa_allow_rc6(i915);
+	}
+
+	return ret;
 }
 
 static ssize_t sriov_ext_attr_store(struct kobject *kobj, struct attribute *attr,
@@ -243,8 +263,15 @@ static ssize_t sriov_ext_attr_store(struct kobject *kobj, struct attribute *attr
 	struct i915_sriov_ext_attr *sriov_attr = to_sriov_ext_attr(attr);
 	struct drm_i915_private *i915 = sriov_ext_kobj_to_i915(sriov_kobj);
 	unsigned int id = sriov_kobj->id;
+	int ret = -EIO;
 
-	return sriov_attr->store ? sriov_attr->store(i915, id, buf, count) : -EIO;
+	if (sriov_attr->store) {
+		pvc_wa_disallow_rc6(i915);
+		ret = sriov_attr->store(i915, id, buf, count);
+		pvc_wa_allow_rc6(i915);
+	}
+
+	return ret;
 }
 
 static const struct sysfs_ops sriov_ext_sysfs_ops = {
@@ -424,6 +451,26 @@ static void pf_teardown_device_link(struct drm_i915_private *i915)
 	sysfs_remove_link(&kobjs[0]->base, SRIOV_DEVICE_LINK_NAME);
 }
 
+static int pf_setup_prelim_link(struct drm_i915_private *i915)
+{
+	struct i915_sriov_pf *pf = &i915->sriov.pf;
+	struct i915_sriov_kobj *home = pf->sysfs.home;
+	int err;
+
+	err = sysfs_create_link(home->base.parent, &home->base,
+				SRIOV_KOBJ_HOME_NAME + sizeof(SRIOV_PRELIMINARY) - 1);
+	return err;
+}
+
+static void pf_teardown_prelim_link(struct drm_i915_private *i915)
+{
+	struct i915_sriov_pf *pf = &i915->sriov.pf;
+	struct i915_sriov_kobj *home = pf->sysfs.home;
+
+	sysfs_remove_link(home->base.parent,
+			  SRIOV_KOBJ_HOME_NAME + sizeof(SRIOV_PRELIMINARY) - 1);
+}
+
 static void pf_welcome(struct drm_i915_private *i915)
 {
 #if IS_ENABLED(CONFIG_DRM_I915_DEBUG)
@@ -440,6 +487,13 @@ static void pf_goodbye(struct drm_i915_private *i915)
 {
 	GEM_WARN_ON(i915->sriov.pf.sysfs.kobjs);
 	GEM_WARN_ON(i915->sriov.pf.sysfs.home);
+}
+
+static bool pf_initialized(struct drm_i915_private *i915)
+{
+	GEM_WARN_ON(i915->sriov.pf.sysfs.home && !i915->sriov.pf.sysfs.kobjs);
+	GEM_WARN_ON(!i915->sriov.pf.sysfs.home && i915->sriov.pf.sysfs.kobjs);
+	return i915->sriov.pf.sysfs.home;
 }
 
 /**
@@ -473,6 +527,7 @@ int i915_sriov_sysfs_setup(struct drm_i915_private *i915)
 	if (unlikely(err))
 		goto failed_link;
 
+	pf_setup_prelim_link(i915);
 	pf_welcome(i915);
 	return 0;
 
@@ -495,30 +550,14 @@ void i915_sriov_sysfs_teardown(struct drm_i915_private *i915)
 	if (!IS_SRIOV_PF(i915))
 		return;
 
+	if (!pf_initialized(i915))
+		return;
+
+	pf_teardown_prelim_link(i915);
 	pf_teardown_device_link(i915);
 	pf_teardown_tree(i915);
 	pf_teardown_home(i915);
 	pf_goodbye(i915);
-}
-
-/* our Gen12 SR-IOV platforms are simple */
-#define GEN12_VF_OFFSET 1
-#define GEN12_VF_STRIDE 1
-#define GEN12_VF_ROUTING_OFFSET(id) (GEN12_VF_OFFSET + ((id) - 1) * GEN12_VF_STRIDE)
-
-static struct pci_dev *pf_get_vf_pci_dev(struct drm_i915_private *i915, unsigned int id)
-{
-	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
-	u16 vf_devid = pci_dev_id(pdev) + GEN12_VF_ROUTING_OFFSET(id);
-
-	GEM_BUG_ON(!dev_is_pf(&pdev->dev));
-	GEM_BUG_ON(!id);
-
-	/* caller must use pci_dev_put() */
-	return pci_get_domain_bus_and_slot(pci_domain_nr(pdev->bus),
-					   PCI_BUS_NUM(vf_devid),
-					   PCI_DEVFN(PCI_SLOT(vf_devid),
-						     PCI_FUNC(vf_devid)));
 }
 
 static int pf_add_vfs_device_links(struct drm_i915_private *i915)
@@ -544,7 +583,7 @@ static int pf_add_vfs_device_links(struct drm_i915_private *i915)
 			goto failed_n;
 		}
 
-		vf_pdev = pf_get_vf_pci_dev(i915, n);
+		vf_pdev = i915_pci_pf_get_vf_dev(pf_pdev, n);
 		if (unlikely(!vf_pdev)) {
 			err = -ENODEV;
 			goto failed_n;
@@ -559,7 +598,7 @@ static int pf_add_vfs_device_links(struct drm_i915_private *i915)
 		if (unlikely(err))
 			goto failed_n;
 
-		/* balance pf_get_vf_pci_dev() */
+		/* balance i915_pci_pf_get_vf_dev */
 		pci_dev_put(vf_pdev);
 	}
 
@@ -597,7 +636,7 @@ static void pf_remove_vfs_device_links(struct drm_i915_private *i915)
  *
  * On PF this function will add or remove PCI device links from VFs.
  */
-void i915_sriov_sysfs_update_links(struct drm_i915_private *i915, bool add)
+void i915_sriov_sysfs_update_links(struct drm_i915_private* i915, bool add)
 {
 	if (!IS_SRIOV_PF(i915))
 		return;

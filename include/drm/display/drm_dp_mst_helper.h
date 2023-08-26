@@ -49,6 +49,20 @@ struct drm_dp_mst_topology_ref_history {
 struct drm_dp_mst_branch;
 
 /**
+ * struct drm_dp_vcpi - Virtual Channel Payload Identifier
+ * @vcpi: Virtual channel ID.
+ * @pbn: Payload Bandwidth Number for this channel
+ * @aligned_pbn: PBN aligned with slot size
+ * @num_slots: number of slots for this PBN
+ */
+struct drm_dp_vcpi {
+	int vcpi;
+	int pbn;
+	int aligned_pbn;
+	int num_slots;
+};
+
+/**
  * struct drm_dp_mst_port - MST port
  * @port_num: port number
  * @input: if this port is an input port. Protected by
@@ -131,6 +145,7 @@ struct drm_dp_mst_port {
 	struct drm_dp_aux *passthrough_aux;
 	struct drm_dp_mst_branch *parent;
 
+	struct drm_dp_vcpi vcpi;
 	struct drm_connector *connector;
 	struct drm_dp_mst_topology_mgr *mgr;
 
@@ -842,7 +857,6 @@ int drm_dp_add_payload_part2(struct drm_dp_mst_topology_mgr *mgr,
 void drm_dp_remove_payload(struct drm_dp_mst_topology_mgr *mgr,
 			   struct drm_dp_mst_topology_state *mst_state,
 			   struct drm_dp_mst_atomic_payload *payload);
-
 int drm_dp_check_act_status(struct drm_dp_mst_topology_mgr *mgr);
 
 void drm_dp_mst_dump_topology(struct seq_file *m,
@@ -866,6 +880,9 @@ void drm_dp_mst_connector_early_unregister(struct drm_connector *connector,
 struct drm_dp_mst_topology_state *
 drm_atomic_get_mst_topology_state(struct drm_atomic_state *state,
 				  struct drm_dp_mst_topology_mgr *mgr);
+struct drm_dp_mst_topology_state *
+drm_atomic_get_old_mst_topology_state(struct drm_atomic_state *state,
+				      struct drm_dp_mst_topology_mgr *mgr);
 struct drm_dp_mst_topology_state *
 drm_atomic_get_new_mst_topology_state(struct drm_atomic_state *state,
 				      struct drm_dp_mst_topology_mgr *mgr);

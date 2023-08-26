@@ -6,6 +6,7 @@
 #ifndef _INTEL_UC_H_
 #define _INTEL_UC_H_
 
+#include "intel_gsc_uc.h"
 #include "intel_guc.h"
 #include "intel_guc_rc.h"
 #include "intel_guc_submission.h"
@@ -22,11 +23,14 @@ struct intel_uc_ops {
 	int (*init)(struct intel_uc *uc);
 	void (*fini)(struct intel_uc *uc);
 	int (*init_hw)(struct intel_uc *uc);
+	int (*init_hw_late)(struct intel_uc *uc);
 	void (*fini_hw)(struct intel_uc *uc);
+	void (*resume_early)(struct intel_uc *uc);
 };
 
 struct intel_uc {
 	struct intel_uc_ops const *ops;
+	struct intel_gsc_uc gsc;
 	struct intel_guc guc;
 	struct intel_huc huc;
 
@@ -34,6 +38,7 @@ struct intel_uc {
 	struct drm_i915_gem_object *load_err_log;
 
 	bool reset_in_progress;
+	bool fw_table_invalid;
 };
 
 void intel_uc_init_early(struct intel_uc *uc);
@@ -49,6 +54,19 @@ void intel_uc_suspend(struct intel_uc *uc);
 void intel_uc_runtime_suspend(struct intel_uc *uc);
 int intel_uc_resume(struct intel_uc *uc);
 int intel_uc_runtime_resume(struct intel_uc *uc);
+
+static inline
+int intel_uc_idle_engines_start(struct intel_uc *uc, bool enable)
+{
+	return intel_guc_modify_scheduling_start(&uc->guc, enable);
+}
+
+static inline
+int intel_uc_idle_engines_wait(struct intel_uc *uc)
+{
+
+	return intel_guc_modify_scheduling_wait(&uc->guc);
+}
 
 /*
  * We need to know as early as possible if we're going to use GuC or not to
@@ -72,7 +90,7 @@ int intel_uc_runtime_resume(struct intel_uc *uc);
  */
 
 #define __uc_state_checker(x, func, state, required) \
-static inline bool intel_uc_##state##_##func(struct intel_uc *uc) \
+static inline bool intel_uc_##state##_##func(const struct intel_uc *uc) \
 { \
 	return intel_##func##_is_##required(&uc->x); \
 }
@@ -87,6 +105,7 @@ uc_state_checkers(huc, huc);
 uc_state_checkers(guc, guc_submission);
 uc_state_checkers(guc, guc_slpc);
 uc_state_checkers(guc, guc_rc);
+uc_state_checkers(gsc, gsc_uc);
 
 #undef uc_state_checkers
 #undef __uc_state_checker
@@ -109,7 +128,9 @@ intel_uc_ops_function(cleanup_firmwares, fini_fw, void, );
 intel_uc_ops_function(init, init, int, 0);
 intel_uc_ops_function(fini, fini, void, );
 intel_uc_ops_function(init_hw, init_hw, int, 0);
+intel_uc_ops_function(init_hw_late, init_hw_late, int, 0);
 intel_uc_ops_function(fini_hw, fini_hw, void, );
+intel_uc_ops_function(resume_early, resume_early, void, );
 #undef intel_uc_ops_function
 
 #endif

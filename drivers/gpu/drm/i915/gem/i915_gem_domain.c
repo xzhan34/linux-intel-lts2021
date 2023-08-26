@@ -17,32 +17,12 @@
 #include "i915_gem_object.h"
 #include "i915_vma.h"
 
+#define VTD_GUARD (168u * I915_GTT_PAGE_SIZE) /* 168 or tile-row PTE padding */
+
 static bool gpu_write_needs_clflush(struct drm_i915_gem_object *obj)
 {
-	struct drm_i915_private *i915 = to_i915(obj->base.dev);
-
-	if (IS_DGFX(i915))
-		return false;
-
-	return !(obj->cache_level == I915_CACHE_NONE ||
-		 obj->cache_level == I915_CACHE_WT);
-}
-
-bool i915_gem_cpu_write_needs_clflush(struct drm_i915_gem_object *obj)
-{
-	struct drm_i915_private *i915 = to_i915(obj->base.dev);
-
-	if (obj->cache_dirty)
-		return false;
-
-	if (IS_DGFX(i915))
-		return false;
-
-	if (!(obj->cache_coherent & I915_BO_CACHE_COHERENT_FOR_WRITE))
-		return true;
-
-	/* Currently in use by HW (display engine)? Keep flushed. */
-	return i915_gem_object_is_framebuffer(obj);
+	return !(i915_gem_object_has_cache_level(obj, I915_CACHE_NONE) ||
+		 i915_gem_object_has_cache_level(obj, I915_CACHE_WT));
 }
 
 static void
@@ -166,7 +146,6 @@ i915_gem_object_set_to_wc_domain(struct drm_i915_gem_object *obj, bool write)
 	if (write) {
 		obj->read_domains = I915_GEM_DOMAIN_WC;
 		obj->write_domain = I915_GEM_DOMAIN_WC;
-		obj->mm.dirty = true;
 	}
 
 	i915_gem_object_unpin_pages(obj);
@@ -229,7 +208,6 @@ i915_gem_object_set_to_gtt_domain(struct drm_i915_gem_object *obj, bool write)
 
 		obj->read_domains = I915_GEM_DOMAIN_GTT;
 		obj->write_domain = I915_GEM_DOMAIN_GTT;
-		obj->mm.dirty = true;
 
 		spin_lock(&obj->vma.lock);
 		for_each_ggtt_vma(vma, obj)
@@ -245,6 +223,7 @@ i915_gem_object_set_to_gtt_domain(struct drm_i915_gem_object *obj, bool write)
 /**
  * Changes the cache-level of an object across all VMA.
  * @obj: object to act on
+ * @ww: locking context
  * @cache_level: new cache level to set for the object
  *
  * After this function returns, the object will be in the new cache-level
@@ -258,11 +237,15 @@ i915_gem_object_set_to_gtt_domain(struct drm_i915_gem_object *obj, bool write)
  * that all direct access to the scanout remains coherent.
  */
 int i915_gem_object_set_cache_level(struct drm_i915_gem_object *obj,
+				    struct i915_gem_ww_ctx *ww,
 				    enum i915_cache_level cache_level)
 {
 	int ret;
 
-	if (obj->cache_level == cache_level)
+	if (i915_gem_object_has_segments(obj))
+		return -ENXIO;
+
+	if (i915_gem_object_has_cache_level(obj, cache_level))
 		return 0;
 
 	ret = i915_gem_object_wait(obj,
@@ -273,13 +256,11 @@ int i915_gem_object_set_cache_level(struct drm_i915_gem_object *obj,
 		return ret;
 
 	/* Always invalidate stale cachelines */
-	if (obj->cache_level != cache_level) {
-		i915_gem_object_set_cache_coherency(obj, cache_level);
-		obj->cache_dirty = true;
-	}
+	i915_gem_object_set_cache_coherency(obj, cache_level);
+	obj->cache_dirty = true;
 
 	/* The cache-level will be applied when each vma is rebound. */
-	return i915_gem_object_unbind(obj,
+	return i915_gem_object_unbind(obj, ww,
 				      I915_GEM_OBJECT_UNBIND_ACTIVE |
 				      I915_GEM_OBJECT_UNBIND_BARRIER);
 }
@@ -291,9 +272,6 @@ int i915_gem_get_caching_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_object *obj;
 	int err = 0;
 
-	if (IS_DGFX(to_i915(dev)))
-		return -ENODEV;
-
 	rcu_read_lock();
 	obj = i915_gem_object_lookup_rcu(file, args->handle);
 	if (!obj) {
@@ -301,20 +279,13 @@ int i915_gem_get_caching_ioctl(struct drm_device *dev, void *data,
 		goto out;
 	}
 
-	switch (obj->cache_level) {
-	case I915_CACHE_LLC:
-	case I915_CACHE_L3_LLC:
+	if (i915_gem_object_has_cache_level(obj, I915_CACHE_LLC) ||
+	    i915_gem_object_has_cache_level(obj, I915_CACHE_L3_LLC))
 		args->caching = I915_CACHING_CACHED;
-		break;
-
-	case I915_CACHE_WT:
+	else if (i915_gem_object_has_cache_level(obj, I915_CACHE_WT))
 		args->caching = I915_CACHING_DISPLAY;
-		break;
-
-	default:
+	else
 		args->caching = I915_CACHING_NONE;
-		break;
-	}
 out:
 	rcu_read_unlock();
 	return err;
@@ -329,8 +300,8 @@ int i915_gem_set_caching_ioctl(struct drm_device *dev, void *data,
 	enum i915_cache_level level;
 	int ret = 0;
 
-	if (IS_DGFX(i915))
-		return -ENODEV;
+	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 70))
+		return -EOPNOTSUPP;
 
 	switch (args->caching) {
 	case I915_CACHING_NONE:
@@ -364,14 +335,12 @@ int i915_gem_set_caching_ioctl(struct drm_device *dev, void *data,
 	 * not allowed to be changed by userspace.
 	 */
 	if (i915_gem_object_is_proxy(obj)) {
-		/*
-		 * Silently allow cached for userptr; the vulkan driver
-		 * sets all objects to cached
-		 */
-		if (!i915_gem_object_is_userptr(obj) ||
-		    args->caching != I915_CACHING_CACHED)
-			ret = -ENXIO;
+		ret = -ENXIO;
+		goto out;
+	}
 
+	if (i915_gem_object_is_lmem(obj) && level != I915_CACHE_NONE) {
+		ret = -EINVAL;
 		goto out;
 	}
 
@@ -379,7 +348,7 @@ int i915_gem_set_caching_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		goto out;
 
-	ret = i915_gem_object_set_cache_level(obj, level);
+	ret = i915_gem_object_set_cache_level(obj, NULL, level);
 	i915_gem_object_unlock(obj);
 
 out:
@@ -396,15 +365,16 @@ out:
 struct i915_vma *
 i915_gem_object_pin_to_display_plane(struct drm_i915_gem_object *obj,
 				     struct i915_gem_ww_ctx *ww,
+				     struct i915_ggtt *ggtt,
+				     const struct i915_ggtt_view *view,
 				     u32 alignment,
-				     const struct i915_gtt_view *view,
 				     unsigned int flags)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct i915_vma *vma;
 	int ret;
 
-	/* Frame buffer must be in LMEM */
+	/* Frame buffer must be in LMEM (no migration yet) */
 	if (HAS_LMEM(i915) && !i915_gem_object_is_lmem(obj))
 		return ERR_PTR(-EINVAL);
 
@@ -418,11 +388,22 @@ i915_gem_object_pin_to_display_plane(struct drm_i915_gem_object *obj,
 	 * of uncaching, which would allow us to flush all the LLC-cached data
 	 * with that bit in the PTE to main memory with just one PIPE_CONTROL.
 	 */
-	ret = i915_gem_object_set_cache_level(obj,
+	ret = i915_gem_object_set_cache_level(obj, NULL,
 					      HAS_WT(i915) ?
 					      I915_CACHE_WT : I915_CACHE_NONE);
 	if (ret)
 		return ERR_PTR(ret);
+
+	/* VT-d may overfetch before/after the vma, so pad with scratch */
+	if (intel_scanout_needs_vtd_wa(i915)) {
+		unsigned int guard = VTD_GUARD;
+
+		if (i915_gem_object_is_tiled(obj))
+			guard = max(guard,
+				    i915_gem_object_get_tile_row_size(obj));
+
+		flags |= PIN_OFFSET_GUARD | guard;
+	}
 
 	/*
 	 * As the user may map the buffer once pinned in the display plane
@@ -434,13 +415,17 @@ i915_gem_object_pin_to_display_plane(struct drm_i915_gem_object *obj,
 	 */
 	vma = ERR_PTR(-ENOSPC);
 	if ((flags & PIN_MAPPABLE) == 0 &&
-	    (!view || view->type == I915_GTT_VIEW_NORMAL))
-		vma = i915_gem_object_ggtt_pin_ww(obj, ww, view, 0, alignment,
+	    (!view || view->type == I915_GGTT_VIEW_NORMAL))
+		vma = i915_gem_object_ggtt_pin_ww(obj, ww,
+						  ggtt, view,
+						  0, alignment,
 						  flags | PIN_MAPPABLE |
 						  PIN_NONBLOCK);
 	if (IS_ERR(vma) && vma != ERR_PTR(-EDEADLK))
-		vma = i915_gem_object_ggtt_pin_ww(obj, ww, view, 0,
-						  alignment, flags);
+		vma = i915_gem_object_ggtt_pin_ww(obj, ww,
+						  ggtt, view,
+						  0, alignment,
+						  flags);
 	if (IS_ERR(vma))
 		return vma;
 
@@ -511,10 +496,8 @@ i915_gem_set_domain_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_object *obj;
 	u32 read_domains = args->read_domains;
 	u32 write_domain = args->write_domain;
+	struct i915_gem_ww_ctx ww;
 	int err;
-
-	if (IS_DGFX(to_i915(dev)))
-		return -ENODEV;
 
 	/* Only handle setting domains to types used by the CPU. */
 	if ((write_domain | read_domains) & I915_GEM_GPU_DOMAINS)
@@ -534,6 +517,11 @@ i915_gem_set_domain_ioctl(struct drm_device *dev, void *data,
 	if (!obj)
 		return -ENOENT;
 
+	if (i915_gem_object_has_segments(obj)) {
+		err = -ENXIO;
+		goto out;
+	}
+
 	/*
 	 * Try to flush the object off the GPU without holding the lock.
 	 * We will repeat the flush holding the lock in the normal manner
@@ -547,21 +535,6 @@ i915_gem_set_domain_ioctl(struct drm_device *dev, void *data,
 	if (err)
 		goto out;
 
-	if (i915_gem_object_is_userptr(obj)) {
-		/*
-		 * Try to grab userptr pages, iris uses set_domain to check
-		 * userptr validity
-		 */
-		err = i915_gem_object_userptr_validate(obj);
-		if (!err)
-			err = i915_gem_object_wait(obj,
-						   I915_WAIT_INTERRUPTIBLE |
-						   I915_WAIT_PRIORITY |
-						   (write_domain ? I915_WAIT_ALL : 0),
-						   MAX_SCHEDULE_TIMEOUT);
-		goto out;
-	}
-
 	/*
 	 * Proxy objects do not control access to the backing storage, ergo
 	 * they cannot be used as a means to manipulate the cache domain
@@ -573,48 +546,48 @@ i915_gem_set_domain_ioctl(struct drm_device *dev, void *data,
 		goto out;
 	}
 
-	err = i915_gem_object_lock_interruptible(obj, NULL);
-	if (err)
-		goto out;
+	for_i915_gem_ww(&ww, err, true) {
+		err = i915_gem_object_lock(obj, &ww);
+		if (err)
+			continue;
 
-	/*
-	 * Flush and acquire obj->pages so that we are coherent through
-	 * direct access in memory with previous cached writes through
-	 * shmemfs and that our cache domain tracking remains valid.
-	 * For example, if the obj->filp was moved to swap without us
-	 * being notified and releasing the pages, we would mistakenly
-	 * continue to assume that the obj remained out of the CPU cached
-	 * domain.
-	 */
-	err = i915_gem_object_pin_pages(obj);
-	if (err)
-		goto out_unlock;
+		/*
+		 * Flush and acquire obj->pages so that we are coherent through
+		 * direct access in memory with previous cached writes through
+		 * shmemfs and that our cache domain tracking remains valid.
+		 * For example, if the obj->filp was moved to swap without us
+		 * being notified and releasing the pages, we would mistakenly
+		 * continue to assume that the obj remained out of the CPU
+		 * cached domain.
+		 */
+		err = i915_gem_object_pin_pages_sync(obj);
+		if (err)
+			continue;
 
-	/*
-	 * Already in the desired write domain? Nothing for us to do!
-	 *
-	 * We apply a little bit of cunning here to catch a broader set of
-	 * no-ops. If obj->write_domain is set, we must be in the same
-	 * obj->read_domains, and only that domain. Therefore, if that
-	 * obj->write_domain matches the request read_domains, we are
-	 * already in the same read/write domain and can skip the operation,
-	 * without having to further check the requested write_domain.
-	 */
-	if (READ_ONCE(obj->write_domain) == read_domains)
-		goto out_unpin;
+		/*
+		 * Already in the desired write domain? Nothing for us to do!
+		 *
+		 * We apply a little bit of cunning here to catch a broader set
+		 * of no-ops. If obj->write_domain is set, we must be in the
+		 * same obj->read_domains, and only that domain. Therefore, if
+		 * that obj->write_domain matches the request read_domains, we
+		 * are already in the same read/write domain and can skip the
+		 * operation, without having to further check the requested
+		 * write_domain.
+		 */
+		if (READ_ONCE(obj->write_domain) == read_domains)
+			goto out_unpin;
 
-	if (read_domains & I915_GEM_DOMAIN_WC)
-		err = i915_gem_object_set_to_wc_domain(obj, write_domain);
-	else if (read_domains & I915_GEM_DOMAIN_GTT)
-		err = i915_gem_object_set_to_gtt_domain(obj, write_domain);
-	else
-		err = i915_gem_object_set_to_cpu_domain(obj, write_domain);
+		if (read_domains & I915_GEM_DOMAIN_WC)
+			err = i915_gem_object_set_to_wc_domain(obj, write_domain);
+		else if (read_domains & I915_GEM_DOMAIN_GTT)
+			err = i915_gem_object_set_to_gtt_domain(obj, write_domain);
+		else
+			err = i915_gem_object_set_to_cpu_domain(obj, write_domain);
 
 out_unpin:
-	i915_gem_object_unpin_pages(obj);
-
-out_unlock:
-	i915_gem_object_unlock(obj);
+		i915_gem_object_unpin_pages(obj);
+	}
 
 	if (!err && write_domain)
 		i915_gem_object_invalidate_frontbuffer(obj, ORIGIN_CPU);
@@ -646,7 +619,7 @@ int i915_gem_object_prepare_read(struct drm_i915_gem_object *obj,
 	if (ret)
 		return ret;
 
-	ret = i915_gem_object_pin_pages(obj);
+	ret = i915_gem_object_pin_pages_sync(obj);
 	if (ret)
 		return ret;
 
@@ -697,7 +670,7 @@ int i915_gem_object_prepare_write(struct drm_i915_gem_object *obj,
 	if (ret)
 		return ret;
 
-	ret = i915_gem_object_pin_pages(obj);
+	ret = i915_gem_object_pin_pages_sync(obj);
 	if (ret)
 		return ret;
 
@@ -730,7 +703,6 @@ int i915_gem_object_prepare_write(struct drm_i915_gem_object *obj,
 
 out:
 	i915_gem_object_invalidate_frontbuffer(obj, ORIGIN_CPU);
-	obj->mm.dirty = true;
 	/* return with the pages pinned */
 	return 0;
 

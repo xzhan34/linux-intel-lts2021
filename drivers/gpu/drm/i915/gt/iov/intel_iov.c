@@ -3,14 +3,16 @@
  * Copyright © 2022 Intel Corporation
  */
 
+#include "gt/intel_gt_pm.h"
+
 #include "intel_iov.h"
+#include "intel_iov_memirq.h"
 #include "intel_iov_provisioning.h"
 #include "intel_iov_query.h"
 #include "intel_iov_relay.h"
 #include "intel_iov_service.h"
 #include "intel_iov_state.h"
 #include "intel_iov_utils.h"
-#include "gt/intel_gt_pm.h"
 
 /**
  * intel_iov_init_early - Prepare IOV data.
@@ -94,15 +96,31 @@ static int vf_tweak_guc_submission(struct intel_iov *iov)
  * that can't be changed later (GuC submission contexts) to allow early PF
  * provisioning.
  *
+ * On VF this function will initialize data used by memory based interrupts.
+ *
  * Return: 0 on success or a negative error code on failure.
  */
 int intel_iov_init(struct intel_iov *iov)
 {
-	if (intel_iov_is_pf(iov))
-		intel_iov_provisioning_init(iov);
+	int err;
 
-	if (intel_iov_is_vf(iov))
+	if (intel_iov_is_pf(iov)) {
+		err = intel_lmtt_init(&iov->pf.lmtt);
+		if (unlikely(err)) {
+			pf_update_status(iov, err, "lmtt");
+			return err;
+		}
+
+		intel_iov_provisioning_init(iov);
+	}
+
+	if (intel_iov_is_vf(iov)) {
 		vf_tweak_guc_submission(iov);
+
+		err = intel_iov_memirq_init(iov);
+		if (unlikely(err))
+			return err;
+	}
 
 	return 0;
 }
@@ -115,8 +133,13 @@ int intel_iov_init(struct intel_iov *iov)
  */
 void intel_iov_fini(struct intel_iov *iov)
 {
-	if (intel_iov_is_pf(iov))
+	if (intel_iov_is_pf(iov)) {
 		intel_iov_provisioning_fini(iov);
+		intel_lmtt_fini(&iov->pf.lmtt);
+	}
+
+	if (intel_iov_is_vf(iov))
+		intel_iov_memirq_fini(iov);
 }
 
 static int vf_balloon_ggtt(struct intel_iov *iov)
@@ -164,6 +187,7 @@ static void vf_deballoon_ggtt(struct intel_iov *iov)
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+static void init_defaults_pte_io(struct intel_iov *iov);
 static int igt_vf_iov_own_ggtt(struct intel_iov *iov, bool sanitycheck);
 #endif
 
@@ -185,6 +209,7 @@ int intel_iov_init_ggtt(struct intel_iov *iov)
 		if (unlikely(err))
 			return err;
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+		init_defaults_pte_io(iov);
 		igt_vf_iov_own_ggtt(iov, true);
 #endif
 	}
@@ -218,6 +243,8 @@ static void pf_enable_ggtt_guest_update(struct intel_iov *iov)
  * PF must configure hardware to enable VF's access to GGTT.
  * PF also updates here runtime info (snapshot of registers values)
  * that will be shared with VFs.
+ * On platforms with LMEM, PF setups the initial (top-level non-present)
+ * LMTT.
  *
  * Return: 0 on success or a negative error code on failure.
  */
@@ -226,6 +253,7 @@ int intel_iov_init_hw(struct intel_iov *iov)
 	int err;
 
 	if (intel_iov_is_pf(iov)) {
+		intel_lmtt_init_hw(&iov->pf.lmtt);
 		pf_enable_ggtt_guest_update(iov);
 		intel_iov_service_update(iov);
 		intel_iov_provisioning_restart(iov);
@@ -293,36 +321,38 @@ int intel_iov_init_late(struct intel_iov *iov)
 	return 0;
 }
 
-void intel_iov_pf_get_pm_vfs(struct intel_iov *iov)
+/**
+ * intel_iov_vf_get_wakeref_wa - get global wakeref for VF.
+ * @iov: the IOV struct
+ *
+ * WA for VLK-20398.
+ * To avoid "deadlock on idling" on VF, when we use L4 WA, we want to get global
+ * GT wakeref.
+ *
+ */
+void intel_iov_vf_get_wakeref_wa(struct intel_iov *iov)
 {
-	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	struct drm_i915_private *i915 = iov_to_i915(iov);
 
-	intel_gt_pm_get_untracked(iov_to_gt(iov));
+	if (intel_iov_is_vf(iov) && i915_is_mem_wa_enabled(i915, I915_WA_USE_FLAT_PPGTT_UPDATE))
+		intel_gt_pm_get_untracked(iov_to_gt(iov));
 }
 
-void intel_iov_pf_put_pm_vfs(struct intel_iov *iov)
+/**
+ * intel_iov_vf_put_wakeref_wa - put global wakeref for VF.
+ * @iov: the IOV struct
+ *
+ * WA for VLK-20398.
+ * To avoid "deadlock on idling" on VF, when we use L4 WA, we want to get global
+ * GT wakeref.
+ *
+ */
+void intel_iov_vf_put_wakeref_wa(struct intel_iov *iov)
 {
-	GEM_BUG_ON(!intel_iov_is_pf(iov));
+	struct drm_i915_private *i915 = iov_to_i915(iov);
 
-	intel_gt_pm_put_untracked(iov_to_gt(iov));
-}
-
-void intel_iov_suspend(struct intel_iov *iov)
-{
-	if (!intel_iov_is_pf(iov))
-		return;
-
-	if (pci_num_vf(to_pci_dev(iov_to_i915(iov)->drm.dev)) != 0)
-		intel_iov_pf_put_pm_vfs(iov);
-}
-
-void intel_iov_resume(struct intel_iov *iov)
-{
-	if (!intel_iov_is_pf(iov))
-		return;
-
-	if (pci_num_vf(to_pci_dev(iov_to_i915(iov)->drm.dev)) != 0)
-		intel_iov_pf_get_pm_vfs(iov);
+	if (intel_iov_is_vf(iov) && i915_is_mem_wa_enabled(i915, I915_WA_USE_FLAT_PPGTT_UPDATE))
+		intel_gt_pm_put_untracked(iov_to_gt(iov));
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

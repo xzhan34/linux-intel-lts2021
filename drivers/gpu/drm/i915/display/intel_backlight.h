@@ -8,6 +8,8 @@
 
 #include <linux/types.h>
 
+#define DRM_LUMINANCE_RANGE_INFO_NOT_PRESENT
+
 struct drm_connector_state;
 struct intel_atomic_state;
 struct intel_connector;

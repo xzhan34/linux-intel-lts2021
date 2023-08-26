@@ -54,37 +54,35 @@
 
 static void init_intel_runtime_pm_wakeref(struct intel_runtime_pm *rpm)
 {
-	intel_wakeref_tracker_init(&rpm->debug);
-	stack_depot_init();
+	ref_tracker_dir_init(&rpm->debug, INTEL_REFTRACK_DEAD_COUNT, dev_name(rpm->kdev));
 }
 
 static intel_wakeref_t
 track_intel_runtime_pm_wakeref(struct intel_runtime_pm *rpm)
 {
-
-	if (rpm->no_wakeref_tracking)
+	if (!rpm->available)
 		return -1;
 
-	return intel_wakeref_tracker_add(&rpm->debug);
+	return intel_ref_tracker_alloc(&rpm->debug);
 }
 
 static void untrack_intel_runtime_pm_wakeref(struct intel_runtime_pm *rpm,
 					     intel_wakeref_t wakeref)
 {
-	intel_wakeref_tracker_remove(&rpm->debug, wakeref);
+	if (!rpm->available)
+		return;
+
+	intel_ref_tracker_free(&rpm->debug, wakeref);
 }
 
 static void untrack_all_intel_runtime_pm_wakerefs(struct intel_runtime_pm *rpm)
 {
-	struct drm_printer p = drm_debug_printer("i915");
-
-	intel_wakeref_tracker_reset(&rpm->debug, &p);
+	ref_tracker_dir_exit(&rpm->debug);
 }
 
 static noinline void
 __intel_wakeref_dec_and_check_tracking(struct intel_runtime_pm *rpm)
 {
-	struct intel_wakeref_tracker saved;
 	unsigned long flags;
 
 	if (!atomic_dec_and_lock_irqsave(&rpm->wakeref_count,
@@ -92,15 +90,8 @@ __intel_wakeref_dec_and_check_tracking(struct intel_runtime_pm *rpm)
 					 flags))
 		return;
 
-	saved = __intel_wakeref_tracker_reset(&rpm->debug);
+	__ref_tracker_dir_print(&rpm->debug, INTEL_REFTRACK_PRINT_LIMIT);
 	spin_unlock_irqrestore(&rpm->debug.lock, flags);
-
-	if (saved.count) {
-		struct drm_printer p = drm_debug_printer("i915");
-
-		__intel_wakeref_tracker_show(&saved, &p);
-		intel_wakeref_tracker_fini(&saved);
-	}
 }
 
 void print_intel_runtime_pm_wakeref(struct intel_runtime_pm *rpm,
@@ -387,7 +378,7 @@ void intel_runtime_pm_enable(struct intel_runtime_pm *rpm)
 	 */
 	dev_pm_set_driver_flags(kdev, DPM_FLAG_NO_DIRECT_COMPLETE);
 
-	pm_runtime_set_autosuspend_delay(kdev, 10000); /* 10s */
+	pm_runtime_set_autosuspend_delay(kdev, 5000); /* 5s */
 	pm_runtime_mark_last_busy(kdev);
 
 	/*
@@ -407,8 +398,19 @@ void intel_runtime_pm_enable(struct intel_runtime_pm *rpm)
 		pm_runtime_use_autosuspend(kdev);
 	}
 
-	/* Enable by default */
-	pm_runtime_allow(kdev);
+	/*
+	 *  FIXME: Temp hammer to keep autosupend disable on lmem supported platforms.
+	 *  As per PCIe specs 5.3.1.4.1, all iomem read write request over a PCIe
+	 *  function will be unsupported in case PCIe endpoint function is in D3.
+	 *  Let's keep i915 autosuspend control 'on' till we fix all known issue
+	 *  with lmem access in D3.
+	 */
+	if (!IS_DGFX(i915))
+		pm_runtime_allow(kdev);
+
+	/* Enable by default only for client platforms for now */
+	if (IS_XEHPSDV(i915) || IS_PONTEVECCHIO(i915))
+		pm_runtime_forbid(kdev);
 
 	/*
 	 * The core calls the driver load handler with an RPM reference held.

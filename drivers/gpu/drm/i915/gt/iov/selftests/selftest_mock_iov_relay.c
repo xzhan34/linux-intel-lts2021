@@ -29,17 +29,17 @@ static int mock_accepts_min_msg(void *arg)
 		err = intel_iov_relay_process_guc2pf(&iov->relay, msg_guc2pf, ARRAY_SIZE(msg_guc2pf));
 		if (err) {
 			IOV_SELFTEST_ERROR(iov, "GUC2PF was rejected %d (%pe)\n", err, ERR_PTR(err));
-			ret = -ENOTSOCK;
+			ret =-ENOTSOCK;
 			break;
 		}
 
 		err = intel_iov_relay_process_guc2vf(&iov->relay, msg_guc2vf, ARRAY_SIZE(msg_guc2vf));
 		if (err) {
 			IOV_SELFTEST_ERROR(iov, "GUC2VF was rejected %d (%pe)\n", err, ERR_PTR(err));
-			ret = -ENOTSOCK;
+			ret =-ENOTSOCK;
 			break;
 		}
-	} while (0);
+	} while(0);
 
 	iov->relay.selftest.disable_strict = 0;
 	iov->relay.selftest.host2guc = NULL;
@@ -65,7 +65,7 @@ static int mock_drops_msg_if_native(void *arg)
 		IOV_DEBUG(iov, "processing %s returned %d (%pe)\n", "guc2pf", err, ERR_PTR(err));
 		if (!err) {
 			IOV_SELFTEST_ERROR(iov, "GUC2PF was not rejected\n");
-			ret = -ENOTSOCK;
+			ret =-ENOTSOCK;
 			break;
 		}
 
@@ -73,10 +73,10 @@ static int mock_drops_msg_if_native(void *arg)
 		IOV_DEBUG(iov, "processing %s returned %d (%pe)\n", "guc2vf", err, ERR_PTR(err));
 		if (!err) {
 			IOV_SELFTEST_ERROR(iov, "GUC2VF was not rejected\n");
-			ret = -ENOTSOCK;
+			ret =-ENOTSOCK;
 			break;
 		}
-	} while (0);
+	} while(0);
 
 	iov->relay.selftest.host2guc = NULL;
 

@@ -9,36 +9,7 @@
 #include "i915_drv.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
-#include "intel_dsb.h"
-
-struct i915_vma;
-
-enum dsb_id {
-	INVALID_DSB = -1,
-	DSB1,
-	DSB2,
-	DSB3,
-	MAX_DSB_PER_PIPE
-};
-
-struct intel_dsb {
-	enum dsb_id id;
-	u32 *cmd_buf;
-	struct i915_vma *vma;
-
-	/*
-	 * free_pos will point the first free entry position
-	 * and help in calculating tail of command buffer.
-	 */
-	int free_pos;
-
-	/*
-	 * ins_start_offset will help to store start address of the dsb
-	 * instuction and help in identifying the batch of auto-increment
-	 * register.
-	 */
-	u32 ins_start_offset;
-};
+#include "gem/i915_gem_lmem.h"
 
 #define DSB_BUF_SIZE    (2 * PAGE_SIZE)
 
@@ -294,6 +265,7 @@ void intel_dsb_prepare(struct intel_crtc_state *crtc_state)
 {
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
 	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
+	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
 	struct intel_dsb *dsb;
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
@@ -311,13 +283,17 @@ void intel_dsb_prepare(struct intel_crtc_state *crtc_state)
 
 	wakeref = intel_runtime_pm_get(&i915->runtime_pm);
 
-	obj = i915_gem_object_create_internal(i915, DSB_BUF_SIZE);
+	if (HAS_LMEM(i915))
+		obj = i915_gem_object_create_lmem(i915, DSB_BUF_SIZE, 0);
+	else
+		obj = i915_gem_object_create_internal(i915, DSB_BUF_SIZE);
+
 	if (IS_ERR(obj)) {
 		kfree(dsb);
 		goto out;
 	}
 
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, 0);
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0, 0);
 	if (IS_ERR(vma)) {
 		i915_gem_object_put(obj);
 		kfree(dsb);

@@ -13,6 +13,7 @@
 
 #include "abi/guc_actions_abi.h"
 #include "abi/guc_actions_slpc_abi.h"
+#include "abi/guc_actions_privileged_abi.h"
 #include "abi/guc_actions_pf_abi.h"
 #include "abi/guc_actions_vf_abi.h"
 #include "abi/guc_errors_abi.h"
@@ -42,6 +43,7 @@ static inline const char *hxg_type_to_string(u32 type)
 }
 
 /* Payload length only i.e. don't include G2H header length */
+#define G2H_LEN_DW_SCHED_ENGINE_MODE_SET	2
 #define G2H_LEN_DW_SCHED_CONTEXT_MODE_SET	2
 #define G2H_LEN_DW_DEREGISTER_CONTEXT		1
 #define G2H_LEN_DW_INVALIDATE_TLB		1
@@ -70,7 +72,8 @@ static inline const char *hxg_type_to_string(u32 type)
 #define GUC_VIDEOENHANCE_CLASS		2
 #define GUC_BLITTER_CLASS		3
 #define GUC_COMPUTE_CLASS		4
-#define GUC_LAST_ENGINE_CLASS		GUC_COMPUTE_CLASS
+#define GUC_GSC_OTHER_CLASS		5
+#define GUC_LAST_ENGINE_CLASS		GUC_GSC_OTHER_CLASS
 #define GUC_MAX_ENGINE_CLASSES		16
 #define GUC_MAX_INSTANCES_PER_CLASS	32
 
@@ -128,10 +131,13 @@ static inline const char *hxg_type_to_string(u32 type)
 #define   GUC_WA_PRE_PARSER		BIT(14)
 #define   GUC_WA_HOLD_CCS_SWITCHOUT	BIT(17)
 #define   GUC_WA_POLLCS			BIT(18)
+#define   GUC_WA_RENDER_RST_RC6_EXIT	BIT(19)
 #define   GUC_WA_RCS_REGS_IN_CCS_REGS_LIST	BIT(21)
+#define   GUC_WA_ENABLE_TSC_CHECK_ON_RC6	BIT(22)
 
 #define GUC_CTL_FEATURE			2
 #define   GUC_CTL_ENABLE_SLPC		BIT(2)
+#define   GUC_CTL_ENABLE_RESET_ON_CAT	BIT(8)
 #define   GUC_CTL_DISABLE_SCHEDULER	BIT(14)
 
 #define GUC_CTL_DEBUG			3
@@ -192,6 +198,7 @@ static u8 engine_class_guc_class_map[] = {
 	[COPY_ENGINE_CLASS]       = GUC_BLITTER_CLASS,
 	[VIDEO_DECODE_CLASS]      = GUC_VIDEO_CLASS,
 	[VIDEO_ENHANCEMENT_CLASS] = GUC_VIDEOENHANCE_CLASS,
+	[OTHER_CLASS]             = GUC_GSC_OTHER_CLASS,
 	[COMPUTE_CLASS]           = GUC_COMPUTE_CLASS,
 };
 
@@ -201,12 +208,13 @@ static u8 guc_class_engine_class_map[] = {
 	[GUC_VIDEO_CLASS]        = VIDEO_DECODE_CLASS,
 	[GUC_VIDEOENHANCE_CLASS] = VIDEO_ENHANCEMENT_CLASS,
 	[GUC_COMPUTE_CLASS]      = COMPUTE_CLASS,
+	[GUC_GSC_OTHER_CLASS]    = OTHER_CLASS,
 };
 
 static inline u8 engine_class_to_guc_class(u8 class)
 {
 	BUILD_BUG_ON(ARRAY_SIZE(engine_class_guc_class_map) != MAX_ENGINE_CLASS + 1);
-	GEM_BUG_ON(class > MAX_ENGINE_CLASS || class == OTHER_CLASS);
+	GEM_BUG_ON(class > MAX_ENGINE_CLASS);
 
 	return engine_class_guc_class_map[class];
 }
@@ -218,11 +226,6 @@ static inline u8 guc_class_to_engine_class(u8 guc_class)
 
 	return guc_class_engine_class_map[guc_class];
 }
-
-/* Per context engine usage stats: */
-#define PPHWSP_GUC_CONTEXT_USAGE_STAMP_LO	(0x500 / sizeof(u32))
-#define PPHWSP_GUC_CONTEXT_USAGE_STAMP_HI	(PPHWSP_GUC_CONTEXT_USAGE_STAMP_LO + 1)
-#define PPHWSP_GUC_CONTEXT_USAGE_ENGINE_ID	(PPHWSP_GUC_CONTEXT_USAGE_STAMP_HI + 1)
 
 /* Work item for submitting workloads into work queue of GuC. */
 struct guc_wq_item {
@@ -318,6 +321,70 @@ struct guc_update_context_policy {
 	struct guc_klv_generic_dw_t klv[GUC_CONTEXT_POLICIES_KLV_NUM_IDS];
 } __packed;
 
+/* Format of the UPDATE_SCHEDULING_POLICIES H2G data packet */
+struct guc_update_scheduling_policy_header {
+	u32 action;
+} __packed;
+
+/*
+ * Can't dynmically allocate memory for the scheduling policy KLV because
+ * it will be sent from within the reset path. Need a fixed size lump on
+ * the stack instead :(.
+ *
+ * Currently, there is only one KLV defined, which has 1 word of KL + 2 words of V.
+ */
+#define MAX_SCHEDULING_POLICY_SIZE 3
+
+struct guc_update_scheduling_policy {
+	struct guc_update_scheduling_policy_header header;
+	u32 data[MAX_SCHEDULING_POLICY_SIZE];
+} __packed;
+
+/* Page fault structures */
+
+struct access_counter_desc {
+	u32 dw0;
+#define ACCESS_COUNTER_TYPE	BIT(0)
+#define ACCESS_COUNTER_SUBG_LO	GENMASK(31, 1)
+
+	u32 dw1;
+#define ACCESS_COUNTER_SUBG_HI	BIT(0)
+#define ACCESS_COUNTER_RSVD0	GENMASK(2, 1)
+#define ACCESS_COUNTER_ENG_INSTANCE	GENMASK(8, 3)
+#define ACCESS_COUNTER_ENG_CLASS	GENMASK(11, 9)
+#define ACCESS_COUNTER_ASID	GENMASK(31, 12)
+
+	u32 dw2;
+#define ACCESS_COUNTER_VFID	GENMASK(5, 0)
+#define ACCESS_COUNTER_RSVD1	GENMASK(7, 6)
+#define ACCESS_COUNTER_GRANULARITY	GENMASK(10, 8)
+#define ACCESS_COUNTER_RSVD2	GENMASK(16, 11)
+#define ACCESS_COUNTER_VIRTUAL_ADDR_RANGE_LO	GENMASK(31, 17)
+
+	u32 dw3;
+#define ACCESS_COUNTER_VIRTUAL_ADDR_RANGE_HI	GENMASK(31, 0)
+} __packed;
+
+enum guc_um_queue_type {
+	GUC_UM_HW_QUEUE_PAGE_FAULT = 0,
+	GUC_UM_HW_QUEUE_PAGE_FAULT_RESPONSE,
+	GUC_UM_HW_QUEUE_ACCESS_COUNTER,
+	GUC_UM_HW_QUEUE_MAX
+};
+
+struct guc_um_queue_params {
+	u64 base_dpa;
+	u32 base_ggtt_address;
+	u32 size_in_bytes;
+	u32 rsvd[4];
+} __packed;
+
+struct guc_um_init_params {
+	u64 page_response_timeout_in_us;
+	u32 rsvd[6];
+	struct guc_um_queue_params queue_params[GUC_UM_HW_QUEUE_MAX];
+} __packed;
+
 #define GUC_POWER_UNSPECIFIED	0
 #define GUC_POWER_D0		1
 #define GUC_POWER_D1		2
@@ -326,12 +393,36 @@ struct guc_update_context_policy {
 
 /* Scheduling policy settings */
 
+#define GLOBAL_SCHEDULE_POLICY_RC_YIELD_DURATION	100	/* in ms */
+#define GLOBAL_SCHEDULE_POLICY_RC_YIELD_RATIO		50	/* in percent */
+
 #define GLOBAL_POLICY_MAX_NUM_WI 15
 
 /* Don't reset an engine upon preemption failure */
 #define GLOBAL_POLICY_DISABLE_ENGINE_RESET				BIT(0)
 
 #define GLOBAL_POLICY_DEFAULT_DPC_PROMOTE_TIME_US 500000
+
+/*
+ * GuC converts the timeout to clock ticks internally. Different platforms have
+ * different GuC clocks. Thus, the maximum value before overflow is platform
+ * dependent. Current worst case scenario is about 110s. So, the spec says to
+ * limit to 100s to be safe.
+ */
+#define GUC_POLICY_MAX_EXEC_QUANTUM_US		(100 * 1000 * 1000UL)
+#define GUC_POLICY_MAX_PREEMPT_TIMEOUT_US	(100 * 1000 * 1000UL)
+
+static inline u32 guc_policy_max_exec_quantum_ms(void)
+{
+	BUILD_BUG_ON(GUC_POLICY_MAX_EXEC_QUANTUM_US >= UINT_MAX);
+	return GUC_POLICY_MAX_EXEC_QUANTUM_US / 1000;
+}
+
+static inline u32 guc_policy_max_preempt_timeout_ms(void)
+{
+	BUILD_BUG_ON(GUC_POLICY_MAX_PREEMPT_TIMEOUT_US >= UINT_MAX);
+	return GUC_POLICY_MAX_PREEMPT_TIMEOUT_US / 1000;
+}
 
 struct guc_policies {
 	u32 submission_queue_depth[GUC_MAX_ENGINE_CLASSES];
@@ -393,6 +484,15 @@ enum guc_capture_type {
 	GUC_CAPTURE_LIST_TYPE_MAX,
 };
 
+/* Class indecies for capture_class and capture_instance arrays */
+enum {
+	GUC_CAPTURE_LIST_CLASS_RENDER_COMPUTE = 0,
+	GUC_CAPTURE_LIST_CLASS_VIDEO = 1,
+	GUC_CAPTURE_LIST_CLASS_VIDEOENHANCE = 2,
+	GUC_CAPTURE_LIST_CLASS_BLITTER = 3,
+	GUC_CAPTURE_LIST_CLASS_GSC_OTHER = 4,
+};
+
 /* GuC Additional Data Struct */
 struct guc_ads {
 	struct guc_mmio_reg_set reg_state_list[GUC_MAX_ENGINE_CLASSES][GUC_MAX_INSTANCES_PER_CLASS];
@@ -404,7 +504,7 @@ struct guc_ads {
 	u32 golden_context_lrca[GUC_MAX_ENGINE_CLASSES];
 	u32 eng_state_size[GUC_MAX_ENGINE_CLASSES];
 	u32 private_data;
-	u32 reserved2;
+	u32 um_init_data;
 	u32 capture_instance[GUC_CAPTURE_LIST_INDEX_MAX][GUC_MAX_ENGINE_CLASSES];
 	u32 capture_class[GUC_CAPTURE_LIST_INDEX_MAX][GUC_MAX_ENGINE_CLASSES];
 	u32 capture_global[GUC_CAPTURE_LIST_INDEX_MAX];
@@ -433,7 +533,7 @@ enum guc_log_buffer_type {
 	GUC_MAX_LOG_BUFFER
 };
 
-/**
+/*
  * struct guc_log_buffer_state - GuC log buffer state
  *
  * Below state structure is used for coordination of retrieval of GuC firmware
@@ -498,6 +598,66 @@ struct guc_shared_ctx_data {
 	struct guc_ctx_report preempt_ctx_report[GUC_MAX_ENGINES_NUM];
 } __packed;
 
+enum intel_guc_fault_reply_type {
+	PAGE_FAULT_REPLY_ACCESS = 0,
+	PAGE_FAULT_REPLY_ENGINE,
+	PAGE_FAULT_REPLY_VFID,
+	PAGE_FAULT_REPLY_ALL,
+	PAGE_FAULT_REPLY_INVALID
+};
+
+enum intel_guc_response_desc_type {
+	TLB_INVALIDATION_DESC = 0,
+	FAULT_RESPONSE_DESC
+};
+
+struct intel_guc_pagefault_desc {
+	u32 dw0;
+#define PAGE_FAULT_DESC_FAULT_LEVEL	GENMASK(2, 0)
+#define PAGE_FAULT_DESC_SRC_ID		GENMASK(10, 3)
+#define PAGE_FAULT_DESC_RSVD_0		GENMASK(18, 11)
+#define PAGE_FAULT_DESC_ENG_INSTANCE	GENMASK(24, 19)
+#define PAGE_FAULT_DESC_ENG_CLASS	GENMASK(27, 25)
+#define PAGE_FAULT_DESC_PDATA_LO	GENMASK(31, 28)
+
+	u32 dw1;
+#define PAGE_FAULT_DESC_PDATA_HI	GENMASK(11, 0)
+#define PAGE_FAULT_DESC_PDATA_HI_SHIFT	4
+#define PAGE_FAULT_DESC_ASID		GENMASK(31, 12)
+
+	u32 dw2;
+#define PAGE_FAULT_DESC_ACCESS_TYPE	GENMASK(1, 0)
+#define PAGE_FAULT_DESC_FAULT_TYPE	GENMASK(3, 2)
+#define PAGE_FAULT_DESC_VFID		GENMASK(9, 4)
+#define PAGE_FAULT_DESC_RSVD_1		GENMASK(11, 10)
+#define PAGE_FAULT_DESC_VIRTUAL_ADDR_LO	GENMASK(31, 12)
+#define PAGE_FAULT_DESC_VIRTUAL_ADDR_LO_SHIFT 12
+
+	u32 dw3;
+#define PAGE_FAULT_DESC_VIRTUAL_ADDR_HI	GENMASK(31, 0)
+#define PAGE_FAULT_DESC_VIRTUAL_ADDR_HI_SHIFT 32
+} __packed;
+
+struct intel_guc_pagefault_reply {
+	u32 dw0;
+#define PAGE_FAULT_REPLY_VALID		BIT(0)
+#define PAGE_FAULT_REPLY_SUCCESS	BIT(1)
+#define PAGE_FAULT_REPLY_REPLY		GENMASK(4, 2)
+#define PAGE_FAULT_REPLY_RSVD_0		GENMASK(9, 5)
+#define PAGE_FAULT_REPLY_DESC_TYPE	GENMASK(11, 10)
+#define PAGE_FAULT_REPLY_ASID		GENMASK(31, 12)
+
+	u32 dw1;
+#define PAGE_FAULT_REPLY_VFID		GENMASK(5, 0)
+#define PAGE_FAULT_REPLY_RSVD_1		BIT(6)
+#define PAGE_FAULT_REPLY_ENG_INSTANCE	GENMASK(12, 7)
+#define PAGE_FAULT_REPLY_ENG_CLASS	GENMASK(15, 13)
+#define PAGE_FAULT_REPLY_PDATA		GENMASK(31, 16)
+
+	u32 dw2;
+#define PAGE_FAULT_REPLY_RSVD_2		GENMASK(31, 0)
+} __packed;
+
 /* This action will be programmed in C1BC - SOFT_SCRATCH_15_REG */
 enum intel_guc_recv_message {
 	INTEL_GUC_RECV_MSG_CRASH_DUMP_POSTED = BIT(1),
@@ -508,5 +668,8 @@ enum intel_guc_recv_message {
 	((intel_guc_ct_enabled(&(guc)->ct)) && \
 	 (intel_guc_submission_is_used(guc)) && \
 	 (GRAPHICS_VER(guc_to_gt((guc))->i915) >= 12))
+#define INTEL_GUC_SUPPORTS_TLB_INVALIDATION_SELECTIVE(guc) \
+	(INTEL_GUC_SUPPORTS_TLB_INVALIDATION(guc) && \
+	HAS_SELECTIVE_TLB_INVALIDATION(guc_to_gt(guc)->i915))
 
 #endif

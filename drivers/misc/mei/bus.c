@@ -35,6 +35,26 @@
 ssize_t __mei_cl_send(struct mei_cl *cl, const u8 *buf, size_t length, u8 vtag,
 		      unsigned int mode)
 {
+	return __mei_cl_send_timeout(cl, buf, length, vtag, mode, MAX_SCHEDULE_TIMEOUT);
+}
+
+/**
+ * __mei_cl_send_timeout - internal client send (write)
+ *
+ * @cl: host client
+ * @buf: buffer to send
+ * @length: buffer length
+ * @vtag: virtual tag
+ * @mode: sending mode
+ * @timeout: send timeout in milliseconds.
+ *           effective only for blocking writes: the MEI_CL_IO_TX_BLOCKING mode bit is set.
+ *           set timeout to the MAX_SCHEDULE_TIMEOUT to maixum allowed wait.
+ *
+ * Return: written size bytes or < 0 on error
+ */
+ssize_t __mei_cl_send_timeout(struct mei_cl *cl, const u8 *buf, size_t length, u8 vtag,
+			      unsigned int mode, unsigned long timeout)
+{
 	struct mei_device *bus;
 	struct mei_cl_cb *cb;
 	ssize_t rets;
@@ -108,7 +128,7 @@ ssize_t __mei_cl_send(struct mei_cl *cl, const u8 *buf, size_t length, u8 vtag,
 		cb->buf.size = 0;
 	}
 
-	rets = mei_cl_write(cl, cb);
+	rets = mei_cl_write(cl, cb, timeout);
 
 	if (mode & MEI_CL_IO_SGL && rets == 0)
 		rets = length;
@@ -662,59 +682,59 @@ static void mei_cl_bus_vtag_free(struct mei_cl_device *cldev)
 
 void *mei_cldev_dma_map(struct mei_cl_device *cldev, u8 buffer_id, size_t size)
 {
-	struct mei_device *bus;
-	struct mei_cl *cl;
-	int ret;
+        struct mei_device *bus;
+        struct mei_cl *cl;
+        int ret;
 
-	if (!cldev || !buffer_id || !size)
-		return ERR_PTR(-EINVAL);
+        if (!cldev || !buffer_id || !size)
+                return ERR_PTR(-EINVAL);
 
-	if (!IS_ALIGNED(size, MEI_FW_PAGE_SIZE)) {
-		dev_err(&cldev->dev, "Map size should be aligned to %lu\n",
-			MEI_FW_PAGE_SIZE);
-		return ERR_PTR(-EINVAL);
-	}
+        if (!IS_ALIGNED(size, MEI_FW_PAGE_SIZE)) {
+                dev_err(&cldev->dev, "Map size should be aligned to %lu\n",
+                        MEI_FW_PAGE_SIZE);
+                return ERR_PTR(-EINVAL);
+        }
 
-	cl = cldev->cl;
-	bus = cldev->bus;
+        cl = cldev->cl;
+        bus = cldev->bus;
 
-	mutex_lock(&bus->device_lock);
-	if (cl->state == MEI_FILE_UNINITIALIZED) {
-		ret = mei_cl_link(cl);
-		if (ret)
-			goto out;
-		/* update pointers */
-		cl->cldev = cldev;
-	}
+        mutex_lock(&bus->device_lock);
+        if (cl->state == MEI_FILE_UNINITIALIZED) {
+                ret = mei_cl_link(cl);
+                if (ret)
+                        goto out;
+                /* update pointers */
+                cl->cldev = cldev;
+        }
 
-	ret = mei_cl_dma_alloc_and_map(cl, NULL, buffer_id, size);
+        ret = mei_cl_dma_alloc_and_map(cl, NULL, buffer_id, size);
 out:
-	mutex_unlock(&bus->device_lock);
-	if (ret)
-		return ERR_PTR(ret);
-	return cl->dma.vaddr;
+        mutex_unlock(&bus->device_lock);
+        if (ret)
+                return ERR_PTR(ret);
+        return cl->dma.vaddr;
 }
 EXPORT_SYMBOL_GPL(mei_cldev_dma_map);
 
 int mei_cldev_dma_unmap(struct mei_cl_device *cldev)
 {
-	struct mei_device *bus;
-	struct mei_cl *cl;
-	int ret;
+        struct mei_device *bus;
+        struct mei_cl *cl;
+        int ret;
 
-	if (!cldev)
-		return -EINVAL;
+        if (!cldev)
+                return -EINVAL;
 
-	cl = cldev->cl;
-	bus = cldev->bus;
+        cl = cldev->cl;
+        bus = cldev->bus;
 
-	mutex_lock(&bus->device_lock);
-	ret = mei_cl_dma_unmap(cl, NULL);
+        mutex_lock(&bus->device_lock);
+        ret = mei_cl_dma_unmap(cl, NULL);
 
-	mei_cl_flush_queues(cl, NULL);
-	mei_cl_unlink(cl);
-	mutex_unlock(&bus->device_lock);
-	return ret;
+        mei_cl_flush_queues(cl, NULL);
+        mei_cl_unlink(cl);
+        mutex_unlock(&bus->device_lock);
+        return ret;
 }
 EXPORT_SYMBOL_GPL(mei_cldev_dma_unmap);
 
@@ -738,7 +758,7 @@ int mei_cldev_enable(struct mei_cl_device *cldev)
 	if (cl->state == MEI_FILE_UNINITIALIZED) {
 		ret = mei_cl_link(cl);
 		if (ret)
-			goto out;
+			goto notlinked;
 		/* update pointers */
 		cl->cldev = cldev;
 	}
@@ -765,6 +785,9 @@ int mei_cldev_enable(struct mei_cl_device *cldev)
 	}
 
 out:
+	if (ret)
+		mei_cl_unlink(cl);
+notlinked:
 	mutex_unlock(&bus->device_lock);
 
 	return ret;
@@ -828,11 +851,9 @@ int mei_cldev_disable(struct mei_cl_device *cldev)
 		dev_err(bus->dev, "Could not disconnect from the ME client\n");
 
 out:
-	/* Flush queues and remove any pending read unless we have mapped DMA */
-	if (!cl->dma_mapped) {
-		mei_cl_flush_queues(cl, NULL);
-		mei_cl_unlink(cl);
-	}
+	/* Flush queues and remove any pending read */
+	mei_cl_flush_queues(cl, NULL);
+	mei_cl_unlink(cl);
 
 	mutex_unlock(&bus->device_lock);
 	return err;
@@ -1086,7 +1107,11 @@ static int mei_cl_device_probe(struct device *dev)
  *
  * Return:  0 on success; < 0 otherwise
  */
+#ifdef BPM_BUS_REMOVE_FUNCTION_RETURN_TYPE_CHANGED
+static int mei_cl_device_remove(struct device *dev)
+#else
 static void mei_cl_device_remove(struct device *dev)
+#endif
 {
 	struct mei_cl_device *cldev = to_mei_cl_device(dev);
 	struct mei_cl_driver *cldrv = to_mei_cl_driver(dev->driver);
@@ -1098,6 +1123,10 @@ static void mei_cl_device_remove(struct device *dev)
 
 	mei_cl_bus_module_put(cldev);
 	module_put(THIS_MODULE);
+
+#ifdef BPM_BUS_REMOVE_FUNCTION_RETURN_TYPE_CHANGED
+	return 0;
+#endif
 }
 
 static ssize_t name_show(struct device *dev, struct device_attribute *a,
@@ -1254,10 +1283,8 @@ static void mei_cl_bus_dev_release(struct device *dev)
 	if (!cldev)
 		return;
 
-	mei_cl_flush_queues(cldev->cl, NULL);
 	mei_me_cl_put(cldev->me_cl);
 	mei_dev_bus_put(cldev->bus);
-	mei_cl_unlink(cldev->cl);
 	kfree(cldev->cl);
 	kfree(cldev);
 }
@@ -1368,6 +1395,7 @@ static int mei_cl_bus_dev_add(struct mei_cl_device *cldev)
  */
 static void mei_cl_bus_dev_stop(struct mei_cl_device *cldev)
 {
+	cldev->do_match = 0;
 	if (cldev->is_added)
 		device_release_driver(&cldev->dev);
 }

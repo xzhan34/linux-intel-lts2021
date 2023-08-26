@@ -10,15 +10,18 @@
 #include <linux/slab.h>
 #include <linux/sysrq.h>
 
+#include "gt/uc/intel_guc.h"
+
 #include "gt/intel_engine.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_timeline.h"
 
 #include "i915_drv.h"
+#include "i915_irq.h"
 #include "i915_request.h"
 #include "i915_sysrq.h"
-#include "i915_irq.h"
+#include "intel_memory_region.h"
 #include "intel_wakeref.h"
 
 static DEFINE_MUTEX(sysrq_mutex);
@@ -43,10 +46,10 @@ static void sysrq_handle_showgpu(int key)
 }
 
 static const struct sysrq_key_op sysrq_showgpu_op = {
-		.handler        = sysrq_handle_showgpu,
-		.help_msg       = "show-gpu(G)",
-		.action_msg     = "Show GPU state",
-		.enable_mask    = SYSRQ_ENABLE_DUMP,
+        .handler        = sysrq_handle_showgpu,
+        .help_msg       = "show-gpu(G)",
+        .action_msg     = "Show GPU state",
+        .enable_mask    = SYSRQ_ENABLE_DUMP,
 };
 
 static int register_sysrq(void (*fn)(void *data), void *data)
@@ -99,21 +102,27 @@ static void show_gpu_mem(struct drm_i915_private *i915, struct drm_printer *p)
 	enum intel_region_id id;
 
 	for_each_memory_region(mr, i915, id)
-		drm_printf(p, "%s: total:%pa bytes\n",
-			   mr->name, &mr->total);
+		intel_memory_region_print(mr, 0, p);
 }
 
 static void show_gt(struct intel_gt *gt, struct drm_printer *p)
 {
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
+	intel_wakeref_t wakeref;
 
-	drm_printf(p, "GT awake? %s [%d], %llums\n",
+	drm_printf(p, "GT%d awake? %s [%d], %llums, interrupts: %lu\n",
+		   gt->info.id,
 		   str_yes_no(gt->awake),
 		   atomic_read(&gt->wakeref.count),
-		   ktime_to_ms(intel_gt_get_awake_time(gt)));
+		   ktime_to_ms(intel_gt_get_awake_time(gt)),
+		   gt->irq_count);
+
 	if (gt->awake)
 		intel_wakeref_show(&gt->wakeref, p);
+
+	with_intel_gt_pm_if_awake(gt, wakeref)
+		intel_guc_print_info(&gt->uc.guc, p);
 
 	for_each_engine(engine, gt, id) {
 		if (intel_engine_is_idle(engine))
@@ -125,13 +134,22 @@ static void show_gt(struct intel_gt *gt, struct drm_printer *p)
 	intel_gt_show_timelines(gt, p, i915_request_show_with_schedule);
 }
 
+static void show_gts(struct drm_i915_private *i915, struct drm_printer *p)
+{
+	struct intel_gt *gt;
+	int i;
+
+	for_each_gt(gt, i915, i)
+		show_gt(gt, p);
+}
+
 static void show_rpm(struct drm_i915_private *i915, struct drm_printer *p)
 {
 	drm_printf(p, "Runtime power status: %s\n",
-		   str_enabled_disabled(!(i915->display.power.domains.init_wakeref)));
+		   str_enabled_disabled(!i915->power_domains.init_wakeref));
+	print_intel_runtime_pm_wakeref(&i915->runtime_pm, p);
 	drm_printf(p, "IRQs disabled: %s\n",
 		   str_yes_no(!intel_irqs_enabled(i915)));
-	print_intel_runtime_pm_wakeref(&i915->runtime_pm, p);
 }
 
 static void show_gpu(void *data)
@@ -140,7 +158,7 @@ static void show_gpu(void *data)
 	struct drm_printer p = drm_info_printer(i915->drm.dev);
 
 	show_rpm(i915, &p);
-	show_gt(to_gt(i915), &p);
+	show_gts(i915, &p);
 	show_gpu_mem(i915, &p);
 }
 

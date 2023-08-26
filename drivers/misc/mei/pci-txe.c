@@ -22,6 +22,9 @@
 
 #include "mei_dev.h"
 #include "hw-txe.h"
+#ifdef BPM_ADD_MODULE_VERSION_MACRO_IN_ALL_MOD
+#include <backport/bp_module_version.h>
+#endif
 
 static const struct pci_device_id mei_txe_pci_tbl[] = {
 	{PCI_VDEVICE(INTEL, 0x0F18)}, /* Baytrail */
@@ -69,9 +72,9 @@ static int mei_txe_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto end;
 	}
 
-	err = dma_set_mask(&pdev->dev, DMA_BIT_MASK(36));
+	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(36));
 	if (err) {
-		err = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
+		err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
 		if (err) {
 			dev_err(&pdev->dev, "No suitable DMA available.\n");
 			goto end;
@@ -404,3 +407,6 @@ module_pci_driver(mei_txe_driver);
 MODULE_AUTHOR("Intel Corporation");
 MODULE_DESCRIPTION("Intel(R) Trusted Execution Environment Interface");
 MODULE_LICENSE("GPL v2");
+#ifdef BPM_ADD_MODULE_VERSION_MACRO_IN_ALL_MOD
+MODULE_VERSION(BACKPORT_MOD_VER);
+#endif

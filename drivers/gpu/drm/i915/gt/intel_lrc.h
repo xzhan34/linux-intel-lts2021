@@ -11,10 +11,11 @@
 #include <linux/bitfield.h>
 #include <linux/types.h>
 
-#include "intel_context.h"
+#include "gt/intel_context.h"
 
 struct drm_i915_gem_object;
 struct i915_gem_ww_ctx;
+struct intel_context;
 struct intel_engine_cs;
 struct intel_ring;
 struct kref;
@@ -67,11 +68,31 @@ u32 lrc_update_regs(const struct intel_context *ce,
 void lrc_update_offsets(struct intel_context *ce,
 			struct intel_engine_cs *engine);
 
-void lrc_check_regs(const struct intel_context *ce,
-		    const struct intel_engine_cs *engine,
-		    const char *when);
-
 void lrc_update_runtime(struct intel_context *ce);
+
+static inline void lrc_runtime_start(struct intel_context *ce)
+{
+	struct intel_context_stats *stats = &ce->stats;
+
+	if (intel_context_is_barrier(ce))
+		return;
+
+	if (stats->active)
+		return;
+
+	WRITE_ONCE(stats->active, intel_context_clock());
+}
+
+static inline void lrc_runtime_stop(struct intel_context *ce)
+{
+	struct intel_context_stats *stats = &ce->stats;
+
+	if (!stats->active)
+		return;
+
+	lrc_update_runtime(ce);
+	WRITE_ONCE(stats->active, 0);
+}
 
 enum {
 	INTEL_ADVANCED_CONTEXT = 0,
@@ -98,6 +119,7 @@ enum {
 #define GEN12_CTX_PRIORITY_HIGH			FIELD_PREP(GEN12_CTX_PRIORITY_MASK, 2)
 #define GEN12_CTX_PRIORITY_NORMAL		FIELD_PREP(GEN12_CTX_PRIORITY_MASK, 1)
 #define GEN12_CTX_PRIORITY_LOW			FIELD_PREP(GEN12_CTX_PRIORITY_MASK, 0)
+#define GEN12_CTX_FAULT_HANDLING_FAULT_AND_HALT	REG_BIT(6)
 #define GEN8_CTX_ID_SHIFT			32
 #define GEN8_CTX_ID_WIDTH			21
 #define GEN11_SW_CTX_ID_SHIFT			37
@@ -112,30 +134,8 @@ enum {
 #define XEHP_SW_CTX_ID_WIDTH			16
 #define XEHP_SW_COUNTER_SHIFT			58
 #define XEHP_SW_COUNTER_WIDTH			6
-
-static inline void lrc_runtime_start(struct intel_context *ce)
-{
-	struct intel_context_stats *stats = &ce->stats;
-
-	if (intel_context_is_barrier(ce))
-		return;
-
-	if (stats->active)
-		return;
-
-	WRITE_ONCE(stats->active, intel_context_clock());
-}
-
-static inline void lrc_runtime_stop(struct intel_context *ce)
-{
-	struct intel_context_stats *stats = &ce->stats;
-
-	if (!stats->active)
-		return;
-
-	lrc_update_runtime(ce);
-	WRITE_ONCE(stats->active, 0);
-}
+#define GEN12_GUC_SW_CTX_ID_SHIFT		39
+#define GEN12_GUC_SW_CTX_ID_WIDTH		16
 
 #define DG2_PREDICATE_RESULT_WA (PAGE_SIZE - sizeof(u64))
 #define DG2_PREDICATE_RESULT_BB (2048)

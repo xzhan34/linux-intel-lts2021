@@ -62,6 +62,7 @@ enum forcewake_domain_id {
 	FW_DOMAIN_ID_MEDIA_VEBOX1,
 	FW_DOMAIN_ID_MEDIA_VEBOX2,
 	FW_DOMAIN_ID_MEDIA_VEBOX3,
+	FW_DOMAIN_ID_GSC,
 
 	FW_DOMAIN_ID_COUNT
 };
@@ -82,6 +83,7 @@ enum forcewake_domains {
 	FORCEWAKE_MEDIA_VEBOX1	= BIT(FW_DOMAIN_ID_MEDIA_VEBOX1),
 	FORCEWAKE_MEDIA_VEBOX2	= BIT(FW_DOMAIN_ID_MEDIA_VEBOX2),
 	FORCEWAKE_MEDIA_VEBOX3	= BIT(FW_DOMAIN_ID_MEDIA_VEBOX3),
+	FORCEWAKE_GSC		= BIT(FW_DOMAIN_ID_GSC),
 
 	FORCEWAKE_ALL = BIT(FW_DOMAIN_ID_COUNT) - 1,
 };
@@ -225,6 +227,7 @@ void intel_uncore_mmio_debug_init_early(struct drm_i915_private *i915);
 void intel_uncore_init_early(struct intel_uncore *uncore,
 			     struct intel_gt *gt);
 int intel_uncore_setup_mmio(struct intel_uncore *uncore, phys_addr_t phys_addr);
+int intel_uncore_wait_for_lmem(struct intel_uncore *uncore);
 int intel_uncore_init_mmio(struct intel_uncore *uncore);
 void intel_uncore_prune_engine_fw_domains(struct intel_uncore *uncore,
 					  struct intel_gt *gt);
@@ -244,8 +247,9 @@ const char *intel_uncore_forcewake_domain_to_str(const enum forcewake_domain_id 
 enum forcewake_domains
 intel_uncore_forcewake_for_reg(struct intel_uncore *uncore,
 			       i915_reg_t reg, unsigned int op);
-#define FW_REG_READ  (1)
-#define FW_REG_WRITE (2)
+#define FW_REG_READ  BIT(0)
+#define FW_REG_WRITE BIT(1)
+#define FW_REG_WRITE_MULTICAST BIT(2)
 
 void intel_uncore_forcewake_get(struct intel_uncore *uncore,
 				enum forcewake_domains domains);
@@ -431,15 +435,15 @@ intel_uncore_read64_2x32(struct intel_uncore *uncore,
 #define intel_uncore_write64_fw(...) __raw_uncore_write64(__VA_ARGS__)
 #define intel_uncore_posting_read_fw(...) ((void)intel_uncore_read_fw(__VA_ARGS__))
 
-static inline void intel_uncore_rmw(struct intel_uncore *uncore,
-				    i915_reg_t reg, u32 clear, u32 set)
+static inline u32 intel_uncore_rmw(struct intel_uncore *uncore,
+				   i915_reg_t reg, u32 clear, u32 set)
 {
 	u32 old, val;
 
 	old = intel_uncore_read(uncore, reg);
 	val = (old & ~clear) | set;
-	if (val != old)
-		intel_uncore_write(uncore, reg, val);
+	intel_uncore_write(uncore, reg, val);
+	return old;
 }
 
 static inline void intel_uncore_rmw_fw(struct intel_uncore *uncore,

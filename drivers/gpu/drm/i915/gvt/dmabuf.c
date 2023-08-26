@@ -29,7 +29,7 @@
  */
 
 #include <linux/dma-buf.h>
-#include <linux/mdev.h>
+#include <linux/vfio.h>
 
 #include <drm/drm_fourcc.h>
 #include <drm/drm_plane.h>
@@ -42,8 +42,25 @@
 
 #define GEN8_DECODE_PTE(pte) (pte & GENMASK_ULL(63, 12))
 
-static int vgpu_gem_get_pages(
-		struct drm_i915_gem_object *obj)
+static int vgpu_pin_dma_address(struct intel_vgpu *vgpu,
+				unsigned long size,
+				dma_addr_t dma_addr)
+{
+	int ret = 0;
+
+	if (intel_gvt_hypervisor_dma_pin_guest_page(vgpu, dma_addr))
+		ret = -EINVAL;
+
+	return ret;
+}
+
+static void vgpu_unpin_dma_address(struct intel_vgpu *vgpu,
+				   dma_addr_t dma_addr)
+{
+	intel_gvt_hypervisor_dma_unmap_guest_page(vgpu, dma_addr);
+}
+
+static int vgpu_gem_get_pages(struct drm_i915_gem_object *obj)
 {
 	struct drm_i915_private *dev_priv = to_i915(obj->base.dev);
 	struct intel_vgpu *vgpu;
@@ -52,7 +69,10 @@ static int vgpu_gem_get_pages(
 	int i, j, ret;
 	gen8_pte_t __iomem *gtt_entries;
 	struct intel_vgpu_fb_info *fb_info;
-	u32 page_num;
+	pgoff_t page_num;
+
+	if (!safe_conversion(&page_num, obj->base.size >> PAGE_SHIFT))
+		return -E2BIG;
 
 	fb_info = (struct intel_vgpu_fb_info *)obj->gvt_info;
 	if (drm_WARN_ON(&dev_priv->drm, !fb_info))
@@ -66,7 +86,6 @@ static int vgpu_gem_get_pages(
 	if (unlikely(!st))
 		return -ENOMEM;
 
-	page_num = obj->base.size >> PAGE_SHIFT;
 	ret = sg_alloc_table(st, page_num, GFP_KERNEL);
 	if (ret) {
 		kfree(st);
@@ -77,7 +96,7 @@ static int vgpu_gem_get_pages(
 	for_each_sg(st->sgl, sg, page_num, i) {
 		dma_addr_t dma_addr =
 			GEN8_DECODE_PTE(readq(&gtt_entries[i]));
-		if (intel_gvt_dma_pin_guest_page(vgpu, dma_addr)) {
+		if (vgpu_pin_dma_address(vgpu, PAGE_SIZE, dma_addr)) {
 			ret = -EINVAL;
 			goto out;
 		}
@@ -96,7 +115,7 @@ out:
 		for_each_sg(st->sgl, sg, i, j) {
 			dma_addr = sg_dma_address(sg);
 			if (dma_addr)
-				intel_gvt_dma_unmap_guest_page(vgpu, dma_addr);
+				vgpu_unpin_dma_address(vgpu, dma_addr);
 		}
 		sg_free_table(st);
 		kfree(st);
@@ -106,7 +125,7 @@ out:
 
 }
 
-static void vgpu_gem_put_pages(struct drm_i915_gem_object *obj,
+static int vgpu_gem_put_pages(struct drm_i915_gem_object *obj,
 		struct sg_table *pages)
 {
 	struct scatterlist *sg;
@@ -118,12 +137,13 @@ static void vgpu_gem_put_pages(struct drm_i915_gem_object *obj,
 		int i;
 
 		for_each_sg(pages->sgl, sg, fb_info->size, i)
-			intel_gvt_dma_unmap_guest_page(vgpu,
+			vgpu_unpin_dma_address(vgpu,
 					       sg_dma_address(sg));
 	}
 
 	sg_free_table(pages);
 	kfree(pages);
+	return 0;
 }
 
 static void dmabuf_gem_object_free(struct kref *kref)
@@ -136,9 +156,11 @@ static void dmabuf_gem_object_free(struct kref *kref)
 
 	if (vgpu && vgpu->active && !list_empty(&vgpu->dmabuf_obj_list_head)) {
 		list_for_each(pos, &vgpu->dmabuf_obj_list_head) {
-			dmabuf_obj = list_entry(pos, struct intel_vgpu_dmabuf_obj, list);
+			dmabuf_obj = container_of(pos,
+					struct intel_vgpu_dmabuf_obj, list);
 			if (dmabuf_obj == obj) {
 				list_del(pos);
+				intel_gvt_hypervisor_put_vfio_device(vgpu);
 				idr_remove(&vgpu->object_idr,
 					   dmabuf_obj->dmabuf_id);
 				kfree(dmabuf_obj->info);
@@ -343,8 +365,10 @@ pick_dmabuf_by_info(struct intel_vgpu *vgpu,
 	struct intel_vgpu_dmabuf_obj *ret = NULL;
 
 	list_for_each(pos, &vgpu->dmabuf_obj_list_head) {
-		dmabuf_obj = list_entry(pos, struct intel_vgpu_dmabuf_obj, list);
-		if (!dmabuf_obj->info)
+		dmabuf_obj = container_of(pos, struct intel_vgpu_dmabuf_obj,
+						list);
+		if ((dmabuf_obj == NULL) ||
+		    (dmabuf_obj->info == NULL))
 			continue;
 
 		fb_info = (struct intel_vgpu_fb_info *)dmabuf_obj->info;
@@ -371,7 +395,11 @@ pick_dmabuf_by_num(struct intel_vgpu *vgpu, u32 id)
 	struct intel_vgpu_dmabuf_obj *ret = NULL;
 
 	list_for_each(pos, &vgpu->dmabuf_obj_list_head) {
-		dmabuf_obj = list_entry(pos, struct intel_vgpu_dmabuf_obj, list);
+		dmabuf_obj = container_of(pos, struct intel_vgpu_dmabuf_obj,
+						list);
+		if (!dmabuf_obj)
+			continue;
+
 		if (dmabuf_obj->dmabuf_id == id) {
 			ret = dmabuf_obj;
 			break;
@@ -471,6 +499,14 @@ int intel_vgpu_query_plane(struct intel_vgpu *vgpu, void *args)
 	dmabuf_obj->initref = true;
 
 	kref_init(&dmabuf_obj->kref);
+
+	mutex_lock(&vgpu->dmabuf_lock);
+	if (intel_gvt_hypervisor_get_vfio_device(vgpu)) {
+		gvt_vgpu_err("get vfio device failed\n");
+		mutex_unlock(&vgpu->dmabuf_lock);
+		goto out_free_info;
+	}
+	mutex_unlock(&vgpu->dmabuf_lock);
 
 	update_fb_info(gfx_plane_info, &fb_info);
 
@@ -572,10 +608,12 @@ void intel_vgpu_dmabuf_cleanup(struct intel_vgpu *vgpu)
 
 	mutex_lock(&vgpu->dmabuf_lock);
 	list_for_each_safe(pos, n, &vgpu->dmabuf_obj_list_head) {
-		dmabuf_obj = list_entry(pos, struct intel_vgpu_dmabuf_obj, list);
+		dmabuf_obj = container_of(pos, struct intel_vgpu_dmabuf_obj,
+						list);
 		dmabuf_obj->vgpu = NULL;
 
 		idr_remove(&vgpu->object_idr, dmabuf_obj->dmabuf_id);
+		intel_gvt_hypervisor_put_vfio_device(vgpu);
 		list_del(pos);
 
 		/* dmabuf_obj might be freed in dmabuf_obj_put */

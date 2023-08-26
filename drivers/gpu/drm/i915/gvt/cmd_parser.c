@@ -1011,7 +1011,7 @@ static int cmd_reg_handler(struct parser_exec_state *s,
 	if (GRAPHICS_VER(s->engine->i915) == 9 &&
 	    intel_gvt_mmio_is_sr_in_ctx(gvt, offset) &&
 	    !strncmp(cmd, "lri", 3)) {
-		intel_gvt_read_gpa(s->vgpu,
+		intel_gvt_hypervisor_read_gpa(s->vgpu,
 			s->workload->ring_context_gpa + 12, &ctx_sr_ctl, 4);
 		/* check inhibit context */
 		if (ctx_sr_ctl & 1) {
@@ -1146,7 +1146,7 @@ struct cmd_interrupt_event {
 	int mi_user_interrupt;
 };
 
-static const struct cmd_interrupt_event cmd_interrupt_events[] = {
+static struct cmd_interrupt_event cmd_interrupt_events[] = {
 	[RCS0] = {
 		.pipe_control_notify = RCS_PIPE_CONTROL,
 		.mi_flush_dw = INTEL_GVT_EVENT_RESERVED,
@@ -1775,7 +1775,7 @@ static int copy_gma_to_hva(struct intel_vgpu *vgpu, struct intel_vgpu_mm *mm,
 		copy_len = (end_gma - gma) >= (I915_GTT_PAGE_SIZE - offset) ?
 			I915_GTT_PAGE_SIZE - offset : end_gma - gma;
 
-		intel_gvt_read_gpa(vgpu, gpa, va + len, copy_len);
+		intel_gvt_hypervisor_read_gpa(vgpu, gpa, va + len, copy_len);
 
 		len += copy_len;
 		gma += copy_len;
@@ -3017,23 +3017,16 @@ static int shadow_indirect_ctx(struct intel_shadow_wa_ctx *wa_ctx)
 		goto put_obj;
 	}
 
-	i915_gem_object_lock(obj, NULL);
-	ret = i915_gem_object_set_to_cpu_domain(obj, false);
-	i915_gem_object_unlock(obj);
-	if (ret) {
-		gvt_vgpu_err("failed to set shadow indirect ctx to CPU\n");
-		goto unmap_src;
-	}
-
 	ret = copy_gma_to_hva(workload->vgpu,
-				workload->vgpu->gtt.ggtt_mm,
-				guest_gma, guest_gma + ctx_size,
-				map);
+			      workload->vgpu->gtt.ggtt_mm,
+			      guest_gma, guest_gma + ctx_size,
+			      map);
 	if (ret < 0) {
 		gvt_vgpu_err("fail to copy guest indirect ctx\n");
 		goto unmap_src;
 	}
 
+	i915_gem_object_flush_map(obj);
 	wa_ctx->indirect_ctx.obj = obj;
 	wa_ctx->indirect_ctx.shadow_va = map;
 	return 0;

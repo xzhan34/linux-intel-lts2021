@@ -29,6 +29,13 @@
 #include "igt_gem_utils.h"
 
 #define DW_PER_PAGE (PAGE_SIZE / sizeof(u32))
+#define HANG_POISON 0xc5c5c5c5
+
+static inline struct i915_address_space *ctx_vm(struct i915_gem_context *ctx)
+{
+	/* single threaded, private ctx */
+	return rcu_dereference_protected(ctx->vm, true);
+}
 
 static int live_nop_switch(void *arg)
 {
@@ -146,7 +153,7 @@ static int live_nop_switch(void *arg)
 				i915_request_add(this);
 			}
 			GEM_BUG_ON(!rq);
-			if (i915_request_wait(rq, 0, HZ / 5) < 0) {
+			if (i915_request_wait(rq, 0, HZ) < 0) {
 				pr_err("Switching between %ld contexts timed out\n",
 				       prime);
 				intel_gt_set_wedged(to_gt(i915));
@@ -179,108 +186,97 @@ out_file:
 }
 
 struct parallel_switch {
-	struct kthread_worker *worker;
-	struct kthread_work work;
+	struct task_struct *tsk;
 	struct intel_context *ce[2];
-	int result;
 };
 
-static void __live_parallel_switch1(struct kthread_work *work)
+static int __live_parallel_switch1(void *data)
 {
-	struct parallel_switch *arg =
-		container_of(work, typeof(*arg), work);
+	struct parallel_switch *arg = data;
 	IGT_TIMEOUT(end_time);
 	unsigned long count;
 
 	count = 0;
-	arg->result = 0;
 	do {
 		struct i915_request *rq = NULL;
-		int n;
+		int err, n;
 
-		for (n = 0; !arg->result && n < ARRAY_SIZE(arg->ce); n++) {
+		err = 0;
+		for (n = 0; !err && n < ARRAY_SIZE(arg->ce); n++) {
 			struct i915_request *prev = rq;
 
 			rq = i915_request_create(arg->ce[n]);
 			if (IS_ERR(rq)) {
 				i915_request_put(prev);
-				arg->result = PTR_ERR(rq);
-				break;
+				return PTR_ERR(rq);
 			}
 
 			i915_request_get(rq);
 			if (prev) {
-				arg->result =
-					i915_request_await_dma_fence(rq,
-								     &prev->fence);
+				err = i915_request_await_dma_fence(rq, &prev->fence);
 				i915_request_put(prev);
 			}
 
 			i915_request_add(rq);
 		}
-
-		if (IS_ERR_OR_NULL(rq))
-			break;
-
 		if (i915_request_wait(rq, 0, HZ) < 0)
-			arg->result = -ETIME;
-
+			err = -ETIME;
 		i915_request_put(rq);
+		if (err)
+			return err;
 
 		count++;
-	} while (!arg->result && !__igt_timeout(end_time, NULL));
+	} while (!__igt_timeout(end_time, NULL));
 
-	pr_info("%s: %lu switches (sync) <%d>\n",
-		arg->ce[0]->engine->name, count, arg->result);
+	pr_info("%s: %lu switches (sync)\n", arg->ce[0]->engine->name, count);
+	return 0;
 }
 
-static void __live_parallel_switchN(struct kthread_work *work)
+static int __live_parallel_switchN(void *data)
 {
-	struct parallel_switch *arg =
-		container_of(work, typeof(*arg), work);
+	struct parallel_switch *arg = data;
 	struct i915_request *rq = NULL;
 	IGT_TIMEOUT(end_time);
 	unsigned long count;
 	int n;
 
 	count = 0;
-	arg->result = 0;
 	do {
-		for (n = 0; !arg->result && n < ARRAY_SIZE(arg->ce); n++) {
+		for (n = 0; n < ARRAY_SIZE(arg->ce); n++) {
 			struct i915_request *prev = rq;
+			int err = 0;
 
 			rq = i915_request_create(arg->ce[n]);
 			if (IS_ERR(rq)) {
 				i915_request_put(prev);
-				arg->result = PTR_ERR(rq);
-				break;
+				return PTR_ERR(rq);
 			}
 
 			i915_request_get(rq);
 			if (prev) {
-				arg->result =
-					i915_request_await_dma_fence(rq,
-								     &prev->fence);
+				err = i915_request_await_dma_fence(rq, &prev->fence);
 				i915_request_put(prev);
 			}
 
 			i915_request_add(rq);
+			if (err) {
+				i915_request_put(rq);
+				return err;
+			}
 		}
 
 		count++;
-	} while (!arg->result && !__igt_timeout(end_time, NULL));
+	} while (!__igt_timeout(end_time, NULL));
+	i915_request_put(rq);
 
-	if (!IS_ERR_OR_NULL(rq))
-		i915_request_put(rq);
-
-	pr_info("%s: %lu switches (many) <%d>\n",
-		arg->ce[0]->engine->name, count, arg->result);
+	pr_info("%s: %lu switches (many)\n", arg->ce[0]->engine->name, count);
+	return 0;
 }
 
 static int live_parallel_switch(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
-	static void (* const func[])(struct kthread_work *) = {
+	static int (* const func[])(void *arg) = {
 		__live_parallel_switch1,
 		__live_parallel_switchN,
 		NULL,
@@ -288,7 +284,7 @@ static int live_parallel_switch(void *arg)
 	struct parallel_switch *data = NULL;
 	struct i915_gem_engines *engines;
 	struct i915_gem_engines_iter it;
-	void (* const *fn)(struct kthread_work *);
+	int (* const *fn)(void *arg);
 	struct i915_gem_context *ctx;
 	struct intel_context *ce;
 	struct file *file;
@@ -346,10 +342,8 @@ static int live_parallel_switch(void *arg)
 				continue;
 
 			ce = intel_context_create(data[m].ce[0]->engine);
-			if (IS_ERR(ce)) {
-				err = PTR_ERR(ce);
+			if (IS_ERR(ce))
 				goto out;
-			}
 
 			err = intel_context_pin(ce);
 			if (err) {
@@ -361,24 +355,9 @@ static int live_parallel_switch(void *arg)
 		}
 	}
 
-	for (n = 0; n < count; n++) {
-		struct kthread_worker *worker;
-
-		if (!data[n].ce[0])
-			continue;
-
-		worker = kthread_create_worker(0, "igt/parallel:%s",
-					       data[n].ce[0]->engine->name);
-		if (IS_ERR(worker)) {
-			err = PTR_ERR(worker);
-			goto out;
-		}
-
-		data[n].worker = worker;
-	}
-
 	for (fn = func; !err && *fn; fn++) {
 		struct igt_live_test t;
+		int n;
 
 		err = igt_live_test_begin(&t, i915, __func__, "");
 		if (err)
@@ -388,23 +367,34 @@ static int live_parallel_switch(void *arg)
 			if (!data[n].ce[0])
 				continue;
 
-			data[n].result = 0;
-			kthread_init_work(&data[n].work, *fn);
-			kthread_queue_work(data[n].worker, &data[n].work);
+			data[n].tsk = kthread_run(*fn, &data[n],
+						  "igt/parallel:%s",
+						  data[n].ce[0]->engine->name);
+			if (IS_ERR(data[n].tsk)) {
+				err = PTR_ERR(data[n].tsk);
+				break;
+			}
+			get_task_struct(data[n].tsk);
 		}
+
+		yield(); /* start all threads before we kthread_stop() */
 
 		for (n = 0; n < count; n++) {
-			if (data[n].ce[0]) {
-				kthread_flush_work(&data[n].work);
-				if (data[n].result && !err)
-					err = data[n].result;
-			}
+			int status;
+
+			if (IS_ERR_OR_NULL(data[n].tsk))
+				continue;
+
+			status = kthread_stop(data[n].tsk);
+			if (status && !err)
+				err = status;
+
+			put_task_struct(data[n].tsk);
+			data[n].tsk = NULL;
 		}
 
-		if (igt_live_test_end(&t)) {
-			err = err ?: -EIO;
-			break;
-		}
+		if (igt_live_test_end(&t))
+			err = -EIO;
 	}
 
 out:
@@ -416,9 +406,6 @@ out:
 			intel_context_unpin(data[n].ce[m]);
 			intel_context_put(data[n].ce[m]);
 		}
-
-		if (data[n].worker)
-			kthread_destroy_worker(data[n].worker);
 	}
 	kfree(data);
 out_file:
@@ -441,6 +428,7 @@ static int gpu_fill(struct intel_context *ce,
 		    unsigned int dw)
 {
 	struct i915_vma *vma;
+	unsigned int flags;
 	int err;
 
 	GEM_BUG_ON(obj->base.size > ce->vm->total);
@@ -450,7 +438,11 @@ static int gpu_fill(struct intel_context *ce,
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 
-	err = i915_vma_pin(vma, 0, 0, PIN_HIGH | PIN_USER);
+	flags = PIN_USER | PIN_HIGH;
+	if ((ce->vm->total - 1) >> ce->engine->ppgtt_size)
+		flags |= PIN_ZONE_48;
+
+	err = i915_vma_pin(vma, 0, 0, flags);
 	if (err)
 		return err;
 
@@ -475,7 +467,8 @@ static int gpu_fill(struct intel_context *ce,
 static int cpu_fill(struct drm_i915_gem_object *obj, u32 value)
 {
 	const bool has_llc = HAS_LLC(to_i915(obj->base.dev));
-	unsigned int n, m, need_flush;
+	unsigned int need_flush;
+	unsigned long n, m;
 	int err;
 
 	i915_gem_object_lock(obj, NULL);
@@ -505,7 +498,8 @@ out:
 static noinline int cpu_check(struct drm_i915_gem_object *obj,
 			      unsigned int idx, unsigned int max)
 {
-	unsigned int n, m, needs_flush;
+	unsigned int needs_flush;
+	unsigned long n;
 	int err;
 
 	i915_gem_object_lock(obj, NULL);
@@ -514,7 +508,7 @@ static noinline int cpu_check(struct drm_i915_gem_object *obj,
 		goto out_unlock;
 
 	for (n = 0; n < real_page_count(obj); n++) {
-		u32 *map;
+		u32 *map, m;
 
 		map = kmap_atomic(i915_gem_object_get_page(obj, n));
 		if (needs_flush & CLFLUSH_BEFORE)
@@ -522,7 +516,7 @@ static noinline int cpu_check(struct drm_i915_gem_object *obj,
 
 		for (m = 0; m < max; m++) {
 			if (map[m] != m) {
-				pr_err("%pS: Invalid value at object %d page %d/%ld, offset %d/%d: found %x expected %x\n",
+				pr_err("%pS: Invalid value at object %d page %ld/%ld, offset %d/%d: found %x expected %x\n",
 				       __builtin_return_address(0), idx,
 				       n, real_page_count(obj), m, max,
 				       map[m], m);
@@ -533,7 +527,7 @@ static noinline int cpu_check(struct drm_i915_gem_object *obj,
 
 		for (; m < DW_PER_PAGE; m++) {
 			if (map[m] != STACK_MAGIC) {
-				pr_err("%pS: Invalid value at object %d page %d, offset %d: found %x expected %x (uninitialised)\n",
+				pr_err("%pS: Invalid value at object %d page %ld, offset %d: found %x expected %x (uninitialised)\n",
 				       __builtin_return_address(0), idx, n, m,
 				       map[m], STACK_MAGIC);
 				err = -EINVAL;
@@ -697,7 +691,7 @@ static int igt_ctx_exec(void *arg)
 			struct i915_gem_context *ctx;
 			struct intel_context *ce;
 
-			ctx = kernel_context(i915, NULL);
+			ctx = kernel_context(i915);
 			if (IS_ERR(ctx)) {
 				err = PTR_ERR(ctx);
 				goto out_file;
@@ -721,7 +715,7 @@ static int igt_ctx_exec(void *arg)
 				pr_err("Failed to fill dword %lu [%lu/%lu] with gpu (%s) [full-ppgtt? %s], err=%d\n",
 				       ndwords, dw, max_dwords(obj),
 				       engine->name,
-				       str_yes_no(i915_gem_context_has_full_ppgtt(ctx)),
+				       str_yes_no(!!rcu_access_pointer(ctx->vm)),
 				       err);
 				intel_context_put(ce);
 				kernel_context_close(ctx);
@@ -830,17 +824,21 @@ static int igt_shared_ctx_exec(void *arg)
 			struct i915_gem_context *ctx;
 			struct intel_context *ce;
 
-			ctx = kernel_context(i915, parent->vm);
+			ctx = kernel_context(i915);
 			if (IS_ERR(ctx)) {
 				err = PTR_ERR(ctx);
 				goto out_test;
 			}
 
+			mutex_lock(&ctx->mutex);
+			__assign_ppgtt(ctx, ctx_vm(parent));
+			mutex_unlock(&ctx->mutex);
+
 			ce = i915_gem_context_get_engine(ctx, engine->legacy_idx);
 			GEM_BUG_ON(IS_ERR(ce));
 
 			if (!obj) {
-				obj = create_test_object(parent->vm,
+				obj = create_test_object(ctx_vm(parent),
 							 file, &objects);
 				if (IS_ERR(obj)) {
 					err = PTR_ERR(obj);
@@ -855,7 +853,7 @@ static int igt_shared_ctx_exec(void *arg)
 				pr_err("Failed to fill dword %lu [%lu/%lu] with gpu (%s) [full-ppgtt? %s], err=%d\n",
 				       ndwords, dw, max_dwords(obj),
 				       engine->name,
-				       str_yes_no(i915_gem_context_has_full_ppgtt(ctx)),
+				       str_yes_no(!!rcu_access_pointer(ctx->vm)),
 				       err);
 				intel_context_put(ce);
 				kernel_context_close(ctx);
@@ -920,8 +918,8 @@ static int rpcs_query_batch(struct drm_i915_gem_object *rpcs,
 
 	*cmd++ = MI_STORE_REGISTER_MEM_GEN8;
 	*cmd++ = i915_mmio_reg_offset(GEN8_R_PWR_CLK_STATE(engine->mmio_base));
-	*cmd++ = lower_32_bits(vma->node.start);
-	*cmd++ = upper_32_bits(vma->node.start);
+	*cmd++ = lower_32_bits(i915_vma_offset(vma));
+	*cmd++ = upper_32_bits(i915_vma_offset(vma));
 	*cmd = MI_BATCH_BUFFER_END;
 
 	__i915_gem_object_flush_map(rpcs, 0, 64);
@@ -976,7 +974,7 @@ retry:
 	if (err)
 		goto err_put;
 
-	err = i915_vma_pin_ww(batch, &ww, 0, 0, PIN_USER);
+	err = i915_vma_pin_ww(batch, &ww, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err_vma;
 
@@ -1009,7 +1007,8 @@ retry:
 	}
 
 	err = rq->engine->emit_bb_start(rq,
-					batch->node.start, batch->node.size,
+					i915_vma_offset(batch),
+					i915_vma_size(batch),
 					0);
 	if (err)
 		goto skip_request;
@@ -1399,7 +1398,7 @@ static int igt_ctx_readonly(void *arg)
 		goto out_file;
 	}
 
-	vm = ctx->vm ?: &to_gt(i915)->ggtt->alias->vm;
+	vm = ctx_vm(ctx) ?: &to_gt(i915)->ggtt->alias->vm;
 	if (!vm || !vm->has_read_only) {
 		err = 0;
 		goto out_file;
@@ -1436,7 +1435,7 @@ static int igt_ctx_readonly(void *arg)
 				pr_err("Failed to fill dword %lu [%lu/%lu] with gpu (%s) [full-ppgtt? %s], err=%d\n",
 				       ndwords, dw, max_dwords(obj),
 				       ce->engine->name,
-				       str_yes_no(i915_gem_context_has_full_ppgtt(ctx)),
+				       str_yes_no(!!ctx_vm(ctx)),
 				       err);
 				i915_gem_context_unlock_engines(ctx);
 				goto out_file;
@@ -1506,25 +1505,31 @@ static int check_scratch(struct i915_address_space *vm, u64 offset)
 
 static int write_to_scratch(struct i915_gem_context *ctx,
 			    struct intel_engine_cs *engine,
-			    struct drm_i915_gem_object *obj,
-			    u64 offset, u32 value)
+			    u64 batch, u64 offset, u32 value)
 {
 	struct drm_i915_private *i915 = ctx->i915;
+	struct drm_i915_gem_object *obj;
 	struct i915_address_space *vm;
 	struct i915_request *rq;
 	struct i915_vma *vma;
 	u32 *cmd;
 	int err;
 
-	GEM_BUG_ON(offset < I915_GTT_PAGE_SIZE);
+	GEM_BUG_ON(offset < batch + I915_GTT_PAGE_SIZE && offset >= batch);
 
-	err = check_scratch(ctx->vm, offset);
+	err = check_scratch(ctx_vm(ctx), offset);
 	if (err)
 		return err;
 
+	obj = i915_gem_object_create_internal(i915, PAGE_SIZE);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
 	cmd = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WB);
-	if (IS_ERR(cmd))
-		return PTR_ERR(cmd);
+	if (IS_ERR(cmd)) {
+		err = PTR_ERR(cmd);
+		goto out;
+	}
 
 	*cmd++ = MI_STORE_DWORD_IMM_GEN4;
 	if (GRAPHICS_VER(i915) >= 8) {
@@ -1548,7 +1553,7 @@ static int write_to_scratch(struct i915_gem_context *ctx,
 		goto out_vm;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_OFFSET_FIXED);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_OFFSET_FIXED | batch);
 	if (err)
 		goto out_vm;
 
@@ -1572,7 +1577,10 @@ static int write_to_scratch(struct i915_gem_context *ctx,
 			goto skip_request;
 	}
 
-	err = engine->emit_bb_start(rq, vma->node.start, vma->node.size, 0);
+	err = engine->emit_bb_start(rq,
+				    i915_vma_offset(vma),
+				    i915_vma_size(vma),
+				    0);
 	if (err)
 		goto skip_request;
 
@@ -1588,19 +1596,17 @@ err_unpin:
 	i915_vma_unpin(vma);
 out_vm:
 	i915_vm_put(vm);
-
-	if (!err)
-		err = i915_gem_object_wait(obj, 0, MAX_SCHEDULE_TIMEOUT);
-
+out:
+	i915_gem_object_put(obj);
 	return err;
 }
 
 static int read_from_scratch(struct i915_gem_context *ctx,
 			     struct intel_engine_cs *engine,
-			     struct drm_i915_gem_object *obj,
-			     u64 offset, u32 *value)
+			     u64 batch, u64 offset, u32 *value)
 {
 	struct drm_i915_private *i915 = ctx->i915;
+	struct drm_i915_gem_object *obj;
 	struct i915_address_space *vm;
 	const u32 result = 0x100;
 	struct i915_request *rq;
@@ -1609,11 +1615,15 @@ static int read_from_scratch(struct i915_gem_context *ctx,
 	u32 *cmd;
 	int err;
 
-	GEM_BUG_ON(offset < I915_GTT_PAGE_SIZE);
+	GEM_BUG_ON(offset < batch + I915_GTT_PAGE_SIZE && offset >= batch);
 
-	err = check_scratch(ctx->vm, offset);
+	err = check_scratch(ctx_vm(ctx), offset);
 	if (err)
 		return err;
+
+	obj = i915_gem_object_create_internal(i915, PAGE_SIZE);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
 
 	if (GRAPHICS_VER(i915) >= 8) {
 		const u32 GPR0 = engine->mmio_base + 0x600;
@@ -1625,14 +1635,15 @@ static int read_from_scratch(struct i915_gem_context *ctx,
 			goto out_vm;
 		}
 
-		err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_OFFSET_FIXED);
+		err = i915_vma_pin(vma, 0, 0, PIN_USER |
+				   PIN_OFFSET_FIXED | batch);
 		if (err)
 			goto out_vm;
 
 		cmd = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WB);
 		if (IS_ERR(cmd)) {
 			err = PTR_ERR(cmd);
-			goto err_unpin;
+			goto out;
 		}
 
 		memset(cmd, POISON_INUSE, PAGE_SIZE);
@@ -1642,8 +1653,8 @@ static int read_from_scratch(struct i915_gem_context *ctx,
 		*cmd++ = upper_32_bits(offset);
 		*cmd++ = MI_STORE_REGISTER_MEM_GEN8;
 		*cmd++ = GPR0;
-		*cmd++ = result;
-		*cmd++ = 0;
+		*cmd++ = lower_32_bits(i915_vma_offset(vma) + result);
+		*cmd++ = upper_32_bits(i915_vma_offset(vma));
 		*cmd = MI_BATCH_BUFFER_END;
 
 		i915_gem_object_flush_map(obj);
@@ -1668,7 +1679,7 @@ static int read_from_scratch(struct i915_gem_context *ctx,
 		cmd = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WB);
 		if (IS_ERR(cmd)) {
 			err = PTR_ERR(cmd);
-			goto err_unpin;
+			goto out;
 		}
 
 		memset(cmd, POISON_INUSE, PAGE_SIZE);
@@ -1677,7 +1688,7 @@ static int read_from_scratch(struct i915_gem_context *ctx,
 		*cmd++ = offset;
 		*cmd++ = MI_STORE_REGISTER_MEM | MI_USE_GGTT;
 		*cmd++ = reg;
-		*cmd++ = vma->node.start + result;
+		*cmd++ = i915_vma_offset(vma) + result;
 		*cmd = MI_BATCH_BUFFER_END;
 
 		i915_gem_object_flush_map(obj);
@@ -1708,7 +1719,10 @@ static int read_from_scratch(struct i915_gem_context *ctx,
 			goto skip_request;
 	}
 
-	err = engine->emit_bb_start(rq, vma->node.start, vma->node.size, flags);
+	err = engine->emit_bb_start(rq,
+				    i915_vma_offset(vma),
+				    i915_vma_size(vma),
+				    flags);
 	if (err)
 		goto skip_request;
 
@@ -1739,44 +1753,52 @@ err_unpin:
 	i915_vma_unpin(vma);
 out_vm:
 	i915_vm_put(vm);
-
-	if (!err)
-		err = i915_gem_object_wait(obj, 0, MAX_SCHEDULE_TIMEOUT);
-
+out:
+	i915_gem_object_put(obj);
 	return err;
 }
 
-static int check_scratch_page(struct i915_gem_context *ctx, u32 *out)
+static int check_scratch_page(struct i915_gem_context *ctx,
+			      struct rnd_state *prng,
+			      u32 *out)
 {
 	struct i915_address_space *vm;
 	u32 *vaddr;
 	int err = 0;
 
-	vm = ctx->vm;
+	vm = ctx_vm(ctx);
 	if (!vm)
 		return -ENODEV;
+
+	if (i915_vm_scratch0_encode(vm) & PTE_NULL_PAGE) {
+		if (out)
+			*out = 0;
+		return 0;
+	}
 
 	if (!vm->scratch[0]) {
 		pr_err("No scratch page!\n");
 		return -EINVAL;
 	}
 
-	vaddr = __px_vaddr(vm->scratch[0]);
+	vaddr = __px_vaddr(vm->scratch[0], NULL);
 
-	memcpy(out, vaddr, sizeof(*out));
-	if (memchr_inv(vaddr, *out, PAGE_SIZE)) {
-		pr_err("Inconsistent initial state of scratch page!\n");
+	if (vaddr[0] != vm->poison ||
+	    vaddr[i915_prandom_u32_max_state(PAGE_SIZE / sizeof(u32), prng)] != vm->poison) {
+		pr_err("Inconsistent initial state of scratch page, expected poison:%08x!\n",
+		       vm->poison);
+		igt_hexdump(vaddr, PAGE_SIZE);
 		err = -EINVAL;
 	}
 
+	*out = vm->poison;
 	return err;
 }
 
 static int igt_vm_isolation(void *arg)
 {
-	struct drm_i915_private *i915 = arg;
 	struct i915_gem_context *ctx_a, *ctx_b;
-	struct drm_i915_gem_object *obj_a, *obj_b;
+	struct drm_i915_private *i915 = arg;
 	unsigned long num_engines, count;
 	struct intel_engine_cs *engine;
 	struct igt_live_test t;
@@ -1815,36 +1837,26 @@ static int igt_vm_isolation(void *arg)
 	}
 
 	/* We can only test vm isolation, if the vm are distinct */
-	if (ctx_a->vm == ctx_b->vm)
+	if (ctx_vm(ctx_a) == ctx_vm(ctx_b))
 		goto out_file;
 
 	/* Read the initial state of the scratch page */
-	err = check_scratch_page(ctx_a, &expected);
+	err = check_scratch_page(ctx_a, &prng, &expected);
 	if (err)
 		goto out_file;
 
-	err = check_scratch_page(ctx_b, &expected);
+	err = check_scratch_page(ctx_b, &prng, &expected);
 	if (err)
 		goto out_file;
 
-	vm_total = ctx_a->vm->total;
-	GEM_BUG_ON(ctx_b->vm->total != vm_total);
-
-	obj_a = i915_gem_object_create_internal(i915, PAGE_SIZE);
-	if (IS_ERR(obj_a)) {
-		err = PTR_ERR(obj_a);
-		goto out_file;
-	}
-
-	obj_b = i915_gem_object_create_internal(i915, PAGE_SIZE);
-	if (IS_ERR(obj_b)) {
-		err = PTR_ERR(obj_b);
-		goto put_a;
-	}
+	vm_total = ctx_vm(ctx_a)->total;
+	GEM_BUG_ON(ctx_vm(ctx_b)->total != vm_total);
+	vm_total = min(vm_total, BIT_ULL(48)); /* restrict batches to 48b */
 
 	count = 0;
 	num_engines = 0;
 	for_each_uabi_engine(engine, i915) {
+		unsigned long start, end;
 		IGT_TIMEOUT(end_time);
 		unsigned long this = 0;
 
@@ -1855,31 +1867,44 @@ static int igt_vm_isolation(void *arg)
 		if (GRAPHICS_VER(i915) < 8 && engine->class != RENDER_CLASS)
 			continue;
 
+		/* Wa_1409502670:xehpsdv */
+		if (IS_XEHPSDV(i915))
+			start = I915_GTT_PAGE_SIZE_64K;
+		else
+			start = 0;
+		end = vm_total;
+
 		while (!__igt_timeout(end_time, NULL)) {
-			u32 value = 0xc5c5c5c5;
-			u64 offset;
+			u64 target, batch;
+			u32 value;
 
-			/* Leave enough space at offset 0 for the batch */
-			offset = igt_random_offset(&prng,
-						   I915_GTT_PAGE_SIZE, vm_total,
-						   sizeof(u32), alignof_dword);
+			value = HANG_POISON;
+			batch = igt_random_offset(&prng, start, end,
+						  I915_GTT_PAGE_SIZE,
+						  I915_GTT_PAGE_SIZE);
+			do {
+				target = igt_random_offset(&prng, start, end,
+							   I915_GTT_PAGE_SIZE,
+							   I915_GTT_PAGE_SIZE);
+			} while (target < batch + I915_GTT_PAGE_SIZE &&
+				 target >= batch);
 
-			err = write_to_scratch(ctx_a, engine, obj_a,
-					       offset, 0xdeadbeef);
+			err = write_to_scratch(ctx_a, engine, batch,
+					       target, 0xdeadbeef);
 			if (err == 0)
-				err = read_from_scratch(ctx_b, engine, obj_b,
-							offset, &value);
+				err = read_from_scratch(ctx_b, engine, batch,
+							target, &value);
 			if (err)
-				goto put_b;
+				goto out_file;
 
 			if (value != expected) {
 				pr_err("%s: Read %08x from scratch (offset 0x%08x_%08x), after %lu reads!\n",
 				       engine->name, value,
-				       upper_32_bits(offset),
-				       lower_32_bits(offset),
+				       upper_32_bits(target),
+				       lower_32_bits(target),
 				       this);
 				err = -EINVAL;
-				goto put_b;
+				goto out_file;
 			}
 
 			this++;
@@ -1890,14 +1915,27 @@ static int igt_vm_isolation(void *arg)
 	pr_info("Checked %lu scratch offsets across %lu engines\n",
 		count, num_engines);
 
-put_b:
-	i915_gem_object_put(obj_b);
-put_a:
-	i915_gem_object_put(obj_a);
 out_file:
 	if (igt_live_test_end(&t))
 		err = -EIO;
 	fput(file);
+	return err;
+}
+
+int i915_gem_context_mock_selftests(void)
+{
+	static const struct i915_subtest tests[] = {
+	};
+	struct drm_i915_private *i915;
+	int err;
+
+	i915 = mock_gem_device();
+	if (!i915)
+		return -ENOMEM;
+
+	err = i915_subtests(tests, i915);
+
+	mock_destroy_device(i915);
 	return err;
 }
 

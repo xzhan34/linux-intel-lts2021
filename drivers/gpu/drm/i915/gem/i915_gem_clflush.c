@@ -26,14 +26,16 @@ static void __do_clflush(struct drm_i915_gem_object *obj)
 	i915_gem_object_flush_frontbuffer(obj, ORIGIN_CPU);
 }
 
-static void clflush_work(struct dma_fence_work *base)
+static int clflush_work(struct dma_fence_work *base)
 {
 	struct clflush *clflush = container_of(base, typeof(*clflush), base);
 
 	__do_clflush(clflush->obj);
+
+	return 0;
 }
 
-static void clflush_release(struct dma_fence_work *base)
+static void clflush_complete(struct dma_fence_work *base)
 {
 	struct clflush *clflush = container_of(base, typeof(*clflush), base);
 
@@ -44,7 +46,7 @@ static void clflush_release(struct dma_fence_work *base)
 static const struct dma_fence_work_ops clflush_ops = {
 	.name = "clflush",
 	.work = clflush_work,
-	.release = clflush_release,
+	.complete = clflush_complete,
 };
 
 static struct clflush *clflush_work_create(struct drm_i915_gem_object *obj)
@@ -71,15 +73,9 @@ static struct clflush *clflush_work_create(struct drm_i915_gem_object *obj)
 bool i915_gem_clflush_object(struct drm_i915_gem_object *obj,
 			     unsigned int flags)
 {
-	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct clflush *clflush;
 
 	assert_object_held(obj);
-
-	if (IS_DGFX(i915)) {
-		WARN_ON_ONCE(obj->cache_dirty);
-		return false;
-	}
 
 	/*
 	 * Stolen memory is always coherent with the GPU as it is explicitly
@@ -114,10 +110,10 @@ bool i915_gem_clflush_object(struct drm_i915_gem_object *obj,
 	if (clflush) {
 		i915_sw_fence_await_reservation(&clflush->base.chain,
 						obj->base.resv, NULL, true,
-						i915_fence_timeout(i915),
+						i915_fence_timeout(to_i915(obj->base.dev)),
 						I915_FENCE_GFP);
 		dma_resv_add_fence(obj->base.resv, &clflush->base.dma,
-				   DMA_RESV_USAGE_KERNEL);
+				   DMA_RESV_USAGE_WRITE);
 		dma_fence_work_commit(&clflush->base);
 		/*
 		 * We must have successfully populated the pages(since we are

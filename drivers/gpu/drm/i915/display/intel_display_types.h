@@ -31,11 +31,11 @@
 #include <linux/pwm.h>
 #include <linux/sched/clock.h>
 
+#include <drm/drm_atomic.h>
+#include <drm/drm_crtc.h>
 #include <drm/display/drm_dp_dual_mode_helper.h>
 #include <drm/display/drm_dp_mst_helper.h>
 #include <drm/display/drm_dsc.h>
-#include <drm/drm_atomic.h>
-#include <drm/drm_crtc.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
@@ -43,7 +43,7 @@
 #include <drm/drm_rect.h>
 #include <drm/drm_vblank.h>
 #include <drm/drm_vblank_work.h>
-#include <drm/i915_mei_hdcp_interface.h>
+#include <drm/i915_cp_fw_hdcp_interface.h>
 #include <media/cec-notifier.h>
 
 #include "i915_vma.h"
@@ -53,6 +53,11 @@
 #include "intel_display_power.h"
 #include "intel_dpll_mgr.h"
 #include "intel_pm_types.h"
+
+#define MSO_PIXEL_OVERLAP_DISPLAY_NOT_PRESENT
+#define DRM_LUMINANCE_RANGE_INFO_NOT_PRESENT
+#define EDID_HDMI_RGB444_DC_MODES_PRESENT
+#define BPM_DGLUT_24BIT_MTL_NOT_SUPPORTED
 
 struct drm_printer;
 struct __intel_global_objs_state;
@@ -105,7 +110,7 @@ struct intel_fb_view {
 	 * In the normal view the FB object's backing store sg list is used
 	 * directly and hence the remap information here is not used.
 	 */
-	struct i915_gtt_view gtt;
+	struct i915_ggtt_view gtt;
 
 	/*
 	 * The GTT view (gtt.type) specific information for each FB color
@@ -969,6 +974,32 @@ struct intel_mpllb_state {
 	u32 mpllb_sscstep;
 };
 
+struct intel_c10pll_state {
+	u32 clock; /* in KHz */
+	u8 tx;
+	u8 cmn;
+	u8 pll[20];
+};
+
+struct intel_c20pll_state {
+	u32 link_bit_rate;
+	u32 clock; /* in kHz */
+	u16 tx[3];
+	u16 cmn[4];
+	union {
+		u16 mplla[10];
+		u16 mpllb[11];
+	};
+};
+
+struct intel_cx0pll_state {
+	union {
+		struct intel_c10pll_state c10;
+		struct intel_c20pll_state c20;
+	};
+	bool ssc_enabled;
+};
+
 struct intel_crtc_state {
 	/*
 	 * uapi (drm) state. This is the software state shown to userspace.
@@ -1108,6 +1139,7 @@ struct intel_crtc_state {
 	union {
 		struct intel_dpll_hw_state dpll_hw_state;
 		struct intel_mpllb_state mpllb_state;
+		struct intel_cx0pll_state cx0pll_state;
 	};
 
 	/*
@@ -1130,7 +1162,6 @@ struct intel_crtc_state {
 	/* m2_n2 for eDP downclock */
 	struct intel_link_m_n dp_m2_n2;
 	bool has_drrs;
-	bool seamless_m_n;
 
 	/* PSR is supported but might not be enabled due the lack of enabled planes */
 	bool has_psr;
@@ -1416,6 +1447,8 @@ struct intel_crtc {
 
 #ifdef CONFIG_DEBUG_FS
 	struct intel_pipe_crc pipe_crc;
+	u32 cpu_fifo_underrun_count;
+	u32 pch_fifo_underrun_count;
 #endif
 };
 
@@ -1715,6 +1748,7 @@ struct intel_dp {
 
 	/* Display stream compression testing */
 	bool force_dsc_en;
+	int force_dsc_output_format;
 	int force_dsc_bpc;
 
 	bool hobl_failed;
@@ -2042,15 +2076,16 @@ static inline bool
 intel_crtc_has_type(const struct intel_crtc_state *crtc_state,
 		    enum intel_output_type type)
 {
-	return crtc_state->output_types & (1 << type);
+	return crtc_state->output_types & BIT(type);
 }
+
 static inline bool
 intel_crtc_has_dp_encoder(const struct intel_crtc_state *crtc_state)
 {
 	return crtc_state->output_types &
-		((1 << INTEL_OUTPUT_DP) |
-		 (1 << INTEL_OUTPUT_DP_MST) |
-		 (1 << INTEL_OUTPUT_EDP));
+		(BIT(INTEL_OUTPUT_DP) |
+		 BIT(INTEL_OUTPUT_DP_MST) |
+		 BIT(INTEL_OUTPUT_EDP));
 }
 
 static inline bool

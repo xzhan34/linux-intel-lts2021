@@ -26,7 +26,6 @@
 #include "intel_de.h"
 #include "intel_display_types.h"
 #include "intel_dpll.h"
-#include "intel_dsb.h"
 #include "vlv_dsi_pll.h"
 
 struct intel_color_funcs {
@@ -105,6 +104,10 @@ struct intel_color_funcs {
 #define ILK_CSC_COEFF_1_0 0x7800
 
 #define ILK_CSC_POSTOFF_LIMITED_RANGE (16 * (1 << 12) / 255)
+
+#ifndef BPM_DGLUT_24BIT_MTL_NOT_SUPPORTED
+#define DEGAMMA_MODE_24BIT			BIT(0) /* MTL/D14+ */
+#endif
 
 /* Nop pre/post offsets */
 static const u16 ilk_csc_off_zero[3] = {};
@@ -902,7 +905,7 @@ static void glk_load_degamma_lut_linear(const struct intel_crtc_state *crtc_stat
 	}
 
 	/* Clamp values > 1.0. */
-	while (i++ < 35)
+	while (i++ < glk_degamma_lut_size(dev_priv))
 		intel_de_write_fw(dev_priv, PRE_CSC_GAMC_DATA(pipe), 1 << 16);
 
 	intel_de_write_fw(dev_priv, PRE_CSC_GAMC_INDEX(pipe), 0);
@@ -939,6 +942,81 @@ static void glk_load_luts(const struct intel_crtc_state *crtc_state)
 		break;
 	}
 }
+
+#ifndef BPM_DGLUT_24BIT_MTL_NOT_SUPPORTED
+static void mtl_load_legacy_lut(const struct intel_crtc_state *crtc_state)
+{
+	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
+	const struct drm_property_blob *degamma_lut_blob = crtc_state->hw.degamma_lut;
+	struct drm_color_lut *degamma_lut = degamma_lut_blob->data;
+	enum pipe pipe = crtc->pipe;
+	int i, lut_size = drm_color_lut_size(degamma_lut_blob);
+
+	/*
+	 * When setting the auto-increment bit, the hardware seems to
+	 * ignore the index bits, so we need to reset it to index 0
+	 * separately.
+	 */
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe), 0);
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe),
+			  PRE_CSC_GAMC_AUTO_INCREMENT);
+
+	for (i = 0; i < lut_size; i++) {
+		u64 word = mul_u32_u32(degamma_lut[i].green, (1 << 24)) / (1 << 16);
+		u32 lut_val = (word & 0xffffff);
+
+		intel_de_write_fw(i915, PRE_CSC_GAMC_DATA(pipe),
+				  lut_val);
+	}
+	/* Clamp values > 1.0. */
+	while (i++ < glk_degamma_lut_size(i915))
+		intel_de_write_fw(i915, PRE_CSC_GAMC_DATA(pipe), 1 << 24);
+
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe), 0);
+}
+
+static void mtl_load_degamma_lut(const struct intel_crtc_state *crtc_state)
+{
+	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
+	struct drm_color_lut_ext *degamma_lut = crtc_state->hw.degamma_lut->data;
+	u32 i, lut_size = INTEL_INFO(i915)->display.color.degamma_lut_size;
+	enum pipe pipe = crtc->pipe;
+
+	if (crtc_state->uapi.degamma_mode_type == 0) {
+		if (!crtc_state->uapi.advance_degamma_mode_active)
+			mtl_load_legacy_lut(crtc_state);
+		return;
+	}
+
+	/*
+	 * When setting the auto-increment bit, the hardware seems to
+	 * ignore the index bits, so we need to reset it to index 0
+	 * separately.
+	 */
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe), 0);
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe),
+			  PRE_CSC_GAMC_AUTO_INCREMENT);
+
+	for (i = 0; i < lut_size; i++) {
+		u64 word = drm_color_lut_extract_ext(degamma_lut[i].green, 24);
+		u32 lut_val = (word & 0xffffff);
+
+		intel_de_write_fw(i915, PRE_CSC_GAMC_DATA(pipe),
+				  lut_val);
+	}
+
+	/*
+	 * Clamp values > 1.0.
+	 * TODO: Extend to max 7.0.
+	 */
+	while (i++ < glk_degamma_lut_size(i915))
+		intel_de_write_fw(i915, PRE_CSC_GAMC_DATA(pipe), 1 << 24);
+
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe), 0);
+}
+#endif
 
 /* ilk+ "12.4" interpolated format (high 10 bits) */
 static u32 ilk_lut_12p4_udw(const struct drm_color_lut *color)
@@ -1168,22 +1246,22 @@ void intel_color_load_luts(const struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc_state->uapi.crtc->dev);
 
-	dev_priv->display.funcs.color->load_luts(crtc_state);
+	dev_priv->color_funcs->load_luts(crtc_state);
 }
 
 void intel_color_commit_noarm(const struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc_state->uapi.crtc->dev);
 
-	if (dev_priv->display.funcs.color->color_commit_noarm)
-		dev_priv->display.funcs.color->color_commit_noarm(crtc_state);
+	if (dev_priv->color_funcs->color_commit_noarm)
+		dev_priv->color_funcs->color_commit_noarm(crtc_state);
 }
 
 void intel_color_commit_arm(const struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc_state->uapi.crtc->dev);
 
-	dev_priv->display.funcs.color->color_commit_arm(crtc_state);
+	dev_priv->color_funcs->color_commit_arm(crtc_state);
 }
 
 static bool intel_can_preload_luts(const struct intel_crtc_state *new_crtc_state)
@@ -1239,15 +1317,15 @@ int intel_color_check(struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc_state->uapi.crtc->dev);
 
-	return dev_priv->display.funcs.color->color_check(crtc_state);
+	return dev_priv->color_funcs->color_check(crtc_state);
 }
 
 void intel_color_get_config(struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc_state->uapi.crtc->dev);
 
-	if (dev_priv->display.funcs.color->read_luts)
-		dev_priv->display.funcs.color->read_luts(crtc_state);
+	if (dev_priv->color_funcs->read_luts)
+		dev_priv->color_funcs->read_luts(crtc_state);
 }
 
 static bool need_plane_update(struct intel_plane *plane,
@@ -1300,6 +1378,25 @@ intel_color_add_affected_planes(struct intel_crtc_state *new_crtc_state)
 	return 0;
 }
 
+#ifndef BPM_DGLUT_24BIT_MTL_NOT_SUPPORTED 
+static int check_lut_ext_size(const struct drm_property_blob *lut, int expected)
+{
+	int len;
+
+	if (!lut)
+		return 0;
+
+	len = drm_color_lut_ext_size(lut);
+	if (len != expected) {
+		DRM_DEBUG_KMS("Invalid LUT size; got %d, expected %d\n",
+			      len, expected);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+#endif
+
 static int check_lut_size(const struct drm_property_blob *lut, int expected)
 {
 	int len;
@@ -1337,10 +1434,12 @@ static int check_luts(const struct intel_crtc_state *crtc_state)
 	}
 
 	degamma_length = INTEL_INFO(dev_priv)->display.color.degamma_lut_size;
+	
 	gamma_length = INTEL_INFO(dev_priv)->display.color.gamma_lut_size;
 	degamma_tests = INTEL_INFO(dev_priv)->display.color.degamma_lut_tests;
 	gamma_tests = INTEL_INFO(dev_priv)->display.color.gamma_lut_tests;
 
+#ifdef BPM_DGLUT_24BIT_MTL_NOT_SUPPORTED
 	if (check_lut_size(degamma_lut, degamma_length) ||
 	    check_lut_size(gamma_lut, gamma_length))
 		return -EINVAL;
@@ -1348,9 +1447,46 @@ static int check_luts(const struct intel_crtc_state *crtc_state)
 	if (drm_color_lut_check(degamma_lut, degamma_tests) ||
 	    drm_color_lut_check(gamma_lut, gamma_tests))
 		return -EINVAL;
+#else
+	if (check_lut_size(gamma_lut, gamma_length) ||
+	    drm_color_lut_check(gamma_lut, gamma_tests))
+		return -EINVAL;
 
+	/* If extended degamma property set*/
+	if (crtc_state->uapi.advance_degamma_mode_active) {
+		if (check_lut_ext_size(degamma_lut, degamma_length) ||
+		    drm_color_lut_ext_check(degamma_lut, degamma_tests))
+			return -EINVAL;
+	} else {
+		if (check_lut_size(degamma_lut, degamma_length) ||
+		    drm_color_lut_check(degamma_lut, degamma_tests))
+			return -EINVAL;
+	}
+#endif
 	return 0;
 }
+
+#ifndef BPM_DGLUT_24BIT_MTL_NOT_SUPPORTED
+static int mtl_check_degamma_lut(const struct intel_crtc_state *crtc_state)
+{
+	const struct drm_property_blob *degamma_lut_blob = crtc_state->hw.gamma_lut;
+
+	if (!degamma_lut_blob)
+		return 0;
+
+	if (crtc_state->uapi.degamma_mode_type == DEGAMMA_MODE_24BIT &&
+	    crtc_state->uapi.advance_degamma_mode_active)
+		return 0;
+
+	/* 16 bit LUT value usecase */
+	if (crtc_state->uapi.degamma_mode_type == 0)
+		return 0;
+
+	DRM_ERROR("%s check failed\n", __func__);
+
+	return -EINVAL;
+}
+#endif
 
 static u32 i9xx_gamma_mode(struct intel_crtc_state *crtc_state)
 {
@@ -1628,7 +1764,7 @@ static u32 icl_gamma_mode(const struct intel_crtc_state *crtc_state)
 	/*
 	 * Enable 10bit gamma for D13
 	 * ToDo: Extend to Logarithmic Gamma once the new UAPI
-	 * is accepted and implemented by a userspace consumer
+	 * is acccepted and implemented by a userspace consumer
 	 */
 	else if (DISPLAY_VER(i915) >= 13)
 		gamma_mode |= GAMMA_MODE_MODE_10BIT;
@@ -1652,15 +1788,60 @@ static u32 icl_csc_mode(const struct intel_crtc_state *crtc_state)
 	return csc_mode;
 }
 
+static u32 dither_after_cc1_12bpc(const struct intel_crtc_state *crtc_state)
+{
+	u32 gamma_mode = crtc_state->gamma_mode;
+	struct drm_i915_private *i915 = to_i915(crtc_state->uapi.crtc->dev);
+
+	if (DISPLAY_VER(i915) >= 13) {
+		if (!crtc_state->dither_force_disable &&
+		    (crtc_state->pipe_bpp == 36))
+			gamma_mode |= GAMMA_MODE_DITHER_AFTER_CC1;
+	}
+
+	return gamma_mode;
+}
+
 static int icl_color_check(struct intel_crtc_state *crtc_state)
 {
+#ifndef BPM_DGLUT_24BIT_MTL_NOT_SUPPORTED
+	struct drm_property *gamma_mode_property = crtc_state->uapi.crtc->gamma_mode_property;
+	struct drm_property *degamma_mode_property = crtc_state->uapi.crtc->degamma_mode_property;
+#endif
 	int ret;
 
 	ret = check_luts(crtc_state);
 	if (ret)
 		return ret;
 
+#ifndef BPM_DGLUT_24BIT_MTL_NOT_SUPPORTED
+	if (DISPLAY_VER(dev_priv) >= 14) {
+		list_for_each_entry(prop_enum, &degamma_mode_property->enum_list, head) {
+			if (prop_enum->value == crtc_state->uapi.degamma_mode) {
+				if (!strcmp(prop_enum->name,
+					    "extended degamma")) {
+					crtc_state->uapi.degamma_mode_type =
+						DEGAMMA_MODE_24BIT;
+					drm_dbg_kms(dev,
+						    "extended degamma enabled\n");
+				} else {
+					crtc_state->uapi.degamma_mode_type = 0;
+					drm_dbg_kms(dev,
+						    "extended degamma disabled\n");
+				}
+				break;
+			}
+		}
+
+		ret = mtl_check_degamma_lut(crtc_state);
+		if (ret)
+			return ret;
+	}
+#endif
+	
 	crtc_state->gamma_mode = icl_gamma_mode(crtc_state);
+
+	crtc_state->gamma_mode = dither_after_cc1_12bpc(crtc_state);
 
 	crtc_state->csc_mode = icl_csc_mode(crtc_state);
 
@@ -2217,6 +2398,23 @@ static const struct intel_color_funcs ilk_color_funcs = {
 	.read_luts = ilk_read_luts,
 };
 
+#ifndef BPM_DGLUT_24BIT_MTL_NOT_SUPPORTED
+static const struct drm_color_lut_range mtl_24bit_degamma[] = {
+	/* segment 0 */
+	{
+		.flags = (DRM_MODE_LUT_DEGAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_REUSE_LAST |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 128,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = 0, .end = (1 << 24) - 1,
+		.min = 0, .max = (1 << 24) - 1,
+	}
+};
+#endif 
+
 void intel_color_init(struct intel_crtc *crtc)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
@@ -2226,28 +2424,43 @@ void intel_color_init(struct intel_crtc *crtc)
 
 	if (HAS_GMCH(dev_priv)) {
 		if (IS_CHERRYVIEW(dev_priv)) {
-			dev_priv->display.funcs.color = &chv_color_funcs;
+			dev_priv->color_funcs = &chv_color_funcs;
 		} else if (DISPLAY_VER(dev_priv) >= 4) {
-			dev_priv->display.funcs.color = &i965_color_funcs;
+			dev_priv->color_funcs = &i965_color_funcs;
 		} else {
-			dev_priv->display.funcs.color = &i9xx_color_funcs;
+			dev_priv->color_funcs = &i9xx_color_funcs;
 		}
 	} else {
+#ifndef BPM_DGLUT_24BIT_MTL_NOT_SUPPORTED
+		if (DISPLAY_VER(dev_priv) >= 14) {
+			drm_color_create_degamma_mode_property(&crtc->base, 2);
+			drm_color_add_gamma_degamma_mode_range(&crtc->base,
+							       "no degamma", NULL, 0,
+								LUT_TYPE_DEGAMMA);
+			drm_color_add_gamma_degamma_mode_range(&crtc->base,
+							       "extended degamma",
+							       mtl_24bit_degamma,
+							       sizeof(mtl_24bit_degamma),
+							       LUT_TYPE_DEGAMMA);
+			drm_crtc_attach_gamma_degamma_mode_property(&crtc->base,
+								    LUT_TYPE_DEGAMMA);
+			}
+#endif
 		if (DISPLAY_VER(dev_priv) >= 11)
-			dev_priv->display.funcs.color = &icl_color_funcs;
+			dev_priv->color_funcs = &icl_color_funcs;
 		else if (DISPLAY_VER(dev_priv) == 10)
-			dev_priv->display.funcs.color = &glk_color_funcs;
+			dev_priv->color_funcs = &glk_color_funcs;
 		else if (DISPLAY_VER(dev_priv) == 9)
-			dev_priv->display.funcs.color = &skl_color_funcs;
+			dev_priv->color_funcs = &skl_color_funcs;
 		else if (DISPLAY_VER(dev_priv) == 8)
-			dev_priv->display.funcs.color = &bdw_color_funcs;
+			dev_priv->color_funcs = &bdw_color_funcs;
 		else if (DISPLAY_VER(dev_priv) == 7) {
 			if (IS_HASWELL(dev_priv))
-				dev_priv->display.funcs.color = &hsw_color_funcs;
+				dev_priv->color_funcs = &hsw_color_funcs;
 			else
-				dev_priv->display.funcs.color = &ivb_color_funcs;
-		} else
-			dev_priv->display.funcs.color = &ilk_color_funcs;
+				dev_priv->color_funcs = &ivb_color_funcs;
+		} else 
+			dev_priv->color_funcs = &ilk_color_funcs;
 	}
 
 	drm_crtc_enable_color_mgmt(&crtc->base,

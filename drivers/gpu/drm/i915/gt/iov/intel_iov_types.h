@@ -9,6 +9,7 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <drm/drm_mm.h>
+#include "intel_lmtt.h"
 #include "i915_reg.h"
 #include "i915_selftest.h"
 #include "intel_wakeref.h"
@@ -35,7 +36,7 @@ IOV_THRESHOLDS(__to_intel_iov_threshold_enum)
 #undef __to_intel_iov_threshold_enum
 };
 
-#define __count_iov_thresholds(...) + 1
+#define __count_iov_thresholds(...) +1
 #define IOV_THRESHOLD_MAX (0 IOV_THRESHOLDS(__count_iov_thresholds))
 
 /**
@@ -50,6 +51,7 @@ IOV_THRESHOLDS(__to_intel_iov_threshold_enum)
  */
 struct intel_iov_config {
 	struct drm_mm_node ggtt_region;
+	struct drm_i915_gem_object *lmem_obj;
 	u16 num_ctxs;
 	u16 begin_ctx;
 	u16 num_dbs;
@@ -57,6 +59,20 @@ struct intel_iov_config {
 	u32 exec_quantum;
 	u32 preempt_timeout;
 	u32 thresholds[IOV_THRESHOLD_MAX];
+};
+
+/**
+ * struct intel_iov_spare_config - PF spare configuration data.
+ * @ggtt_size: GGTT size.
+ * @lmem_size: LMEM size.
+ * @num_ctxs: number of GuC submission contexts.
+ * @num_dbs: number of GuC doorbells.
+ */
+struct intel_iov_spare_config {
+	u64 ggtt_size;
+	u64 lmem_size;
+	u16 num_ctxs;
+	u16 num_dbs;
 };
 
 /**
@@ -91,10 +107,11 @@ struct intel_iov_provisioning {
 	unsigned int num_pushed;
 	struct work_struct worker;
 	struct intel_iov_policies policies;
+	struct intel_iov_spare_config spare;
 	struct intel_iov_config *configs;
 	struct mutex lock;
 
-	I915_SELFTEST_DECLARE(bool self_done);
+	bool self_done;
 };
 
 #define VFID(n)		(n)
@@ -103,6 +120,7 @@ struct intel_iov_provisioning {
 /**
  * struct intel_iov_data - Data related to one VF.
  * @state: VF state bits
+ * @guc_state: pointer to VF state from GuC
  */
 struct intel_iov_data {
 	unsigned long state;
@@ -111,7 +129,9 @@ struct intel_iov_data {
 #define IOV_VF_FLR_DONE_RECEIVED	2
 #define IOV_VF_NEEDS_FLR_FINISH		3
 #define IOV_VF_FLR_FAILED		(BITS_PER_LONG - 1)
+	bool paused;
 	unsigned int adverse_events[IOV_THRESHOLD_MAX];
+	void *guc_state;
 };
 
 /**
@@ -157,6 +177,18 @@ struct intel_iov_vf_runtime {
 };
 
 /**
+ * struct intel_iov_memirq - IOV interrupts data.
+ * @obj: GEM object with memory interrupt data.
+ * @vma: VMA of the object.
+ * @vaddr: pointer to memory interrupt data.
+ */
+struct intel_iov_memirq {
+	struct drm_i915_gem_object *obj;
+	struct i915_vma *vma;
+	void *vaddr;
+};
+
+/**
  * struct intel_iov_relay - IOV Relay Communication data.
  * @lock: protects #pending_relays and #last_fence.
  * @pending_relays: list of relay requests that await a response.
@@ -181,15 +213,39 @@ struct intel_iov_relay {
  * struct intel_iov_vf_config - VF configuration data.
  * @ggtt_base: base of GGTT region.
  * @ggtt_size: size of GGTT region.
+ * @lmem_size: LMEM size.
  * @num_ctxs: number of GuC submission contexts.
  * @num_dbs: number of GuC doorbells.
+ * @tile_mask: assigned tiles (as bitmask with tile0 = BIT(0)).
  */
 struct intel_iov_vf_config {
+	struct {
+		u8 branch;
+		u8 major;
+		u8 minor;
+		u8 patch;
+	} guc_abi;
 	u64 ggtt_base;
 	u64 ggtt_size;
+	u64 lmem_size;
 	u16 num_ctxs;
 	u16 num_dbs;
+	u32 tile_mask;
 };
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+struct intel_iov;
+/**
+ * struct intel_iov_selftest - I/O Virtualization selftest related data
+ * @mmio_set_pte: pointer to the function that writes the PTE to the MMIO
+ * @mmio_get_pte: pointer to the function that reads the PTE from the MMIO
+ */
+struct intel_iov_selftest
+{
+	void (*mmio_set_pte)(struct intel_iov *iov, void __iomem *pte_addr, u64 pte);
+	u64 (*mmio_get_pte)(struct intel_iov *iov, void __iomem *pte_addr);
+};
+#endif
 
 /**
  * struct intel_iov - I/O Virtualization related data.
@@ -197,8 +253,10 @@ struct intel_iov_vf_config {
  * @pf.provisioning: provisioning data.
  * @pf.service: placeholder for service data.
  * @pf.state: placeholder for VFs data.
+ * @pf.lmtt: local memory translation tables for VFs.
  * @vf.config: configuration of the resources assigned to VF.
  * @vf.runtime: retrieved runtime info.
+ * @vf.irq: Memory based interrupts data.
  * @relay: data related to VF/PF communication based on GuC Relay messages.
  */
 struct intel_iov {
@@ -208,16 +266,19 @@ struct intel_iov {
 			struct intel_iov_provisioning provisioning;
 			struct intel_iov_service service;
 			struct intel_iov_state state;
+			struct intel_lmtt lmtt;
 		} pf;
 
 		struct {
 			struct intel_iov_vf_config config;
 			struct intel_iov_vf_runtime runtime;
 			struct drm_mm_node ggtt_balloon[2];
+			struct intel_iov_memirq irq;
 		} vf;
 	};
 
 	struct intel_iov_relay relay;
+	I915_SELFTEST_DECLARE(struct intel_iov_selftest selftest);
 };
 
 #endif /* __INTEL_IOV_TYPES_H__ */

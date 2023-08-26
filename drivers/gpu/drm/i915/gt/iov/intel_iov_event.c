@@ -65,11 +65,20 @@ static void pf_emit_threshold_uevent(struct intel_iov *iov, u32 vfid, u32 thresh
 	kfree(envp[2]);
 }
 
+static void pf_emit_log_message(struct intel_iov *iov, u32 vfid, int e)
+{
+	dev_info_ratelimited(iov_to_dev(iov), "VF%u has exceeded '%s' threshold\n",
+			     vfid, intel_iov_threshold_to_string(e));
+}
+
 static int pf_handle_vf_threshold_event(struct intel_iov *iov, u32 vfid, u32 threshold)
 {
 	int e = threshold_key_to_enum(threshold);
 
-	if (unlikely(!vfid || vfid > pf_get_totalvfs(iov)))
+	if (unlikely(!vfid && !IS_ENABLED(CONFIG_DRM_I915_SELFTEST)))
+		return -EINVAL;
+
+	if (unlikely(vfid > pf_get_totalvfs(iov)))
 		return -EINVAL;
 
 	if (unlikely(GEM_WARN_ON(e < 0)))
@@ -82,6 +91,7 @@ static int pf_handle_vf_threshold_event(struct intel_iov *iov, u32 vfid, u32 thr
 	if (IS_ENABLED(CONFIG_DRM_I915_SELFTEST))
 		pf_emit_threshold_uevent(iov, vfid, threshold);
 
+	pf_emit_log_message(iov, vfid, e);
 
 	return 0;
 }
@@ -153,7 +163,7 @@ int intel_iov_event_print_events(struct intel_iov *iov, struct drm_printer *p)
 			continue;
 
 #define __format_iov_threshold(...) "%s:%u "
-#define __value_iov_threshold(K, N, ...), #N, data->adverse_events[IOV_THRESHOLD_##K]
+#define __value_iov_threshold(K, N, ...) , #N, data->adverse_events[IOV_THRESHOLD_##K]
 
 		drm_printf(p, "VF%u:\t" IOV_THRESHOLDS(__format_iov_threshold) "\n",
 			   n IOV_THRESHOLDS(__value_iov_threshold));
@@ -165,3 +175,7 @@ int intel_iov_event_print_events(struct intel_iov *iov, struct drm_printer *p)
 
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#include "selftests/selftest_live_iov_events.c"
+#endif

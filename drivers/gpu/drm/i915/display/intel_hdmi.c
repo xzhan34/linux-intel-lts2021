@@ -32,18 +32,19 @@
 #include <linux/slab.h>
 #include <linux/string_helpers.h>
 
-#include <drm/display/drm_hdcp_helper.h>
-#include <drm/display/drm_hdmi_helper.h>
-#include <drm/display/drm_scdc_helper.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_edid.h>
+#include <drm/display/drm_hdcp.h>
+#include <drm/display/drm_hdmi_helper.h>
+#include <drm/display/drm_scdc_helper.h>
 #include <drm/intel_lpe_audio.h>
 
 #include "i915_debugfs.h"
 #include "i915_drv.h"
 #include "intel_atomic.h"
 #include "intel_connector.h"
+#include "intel_cx0_phy.h"
 #include "intel_ddi.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
@@ -56,7 +57,7 @@
 #include "intel_panel.h"
 #include "intel_snps_phy.h"
 
-static struct drm_i915_private *intel_hdmi_to_i915(struct intel_hdmi *intel_hdmi)
+inline struct drm_i915_private *intel_hdmi_to_i915(struct intel_hdmi *intel_hdmi)
 {
 	return to_i915(hdmi_to_dig_port(intel_hdmi)->base.base.dev);
 }
@@ -536,7 +537,8 @@ void hsw_write_infoframe(struct intel_encoder *encoder,
 			       0);
 
 	/* Wa_14013475917 */
-	if (DISPLAY_VER(dev_priv) == 13 && crtc_state->has_psr &&
+	if ((DISPLAY_VER(dev_priv) == 13 ||
+	     IS_MTL_DISPLAY_STEP(dev_priv, STEP_A0, STEP_B0)) && crtc_state->has_psr &&
 	    type == DP_SDP_VSC)
 		return;
 
@@ -1875,7 +1877,9 @@ hdmi_port_clock_valid(struct intel_hdmi *hdmi,
 	 * FIXME: We will hopefully get an algorithmic way of programming
 	 * the MPLLB for HDMI in the future.
 	 */
-	if (IS_DG2(dev_priv))
+	if (DISPLAY_VER(dev_priv) >= 14)
+		return intel_cx0_phy_check_hdmi_link_rate(hdmi, clock);
+	else if (IS_DG2(dev_priv))
 		return intel_snps_phy_check_hdmi_link_rate(clock);
 
 	return MODE_OK;
@@ -1892,7 +1896,7 @@ int intel_hdmi_tmds_clock(int clock, int bpc, bool ycbcr420_output)
 	 *  1.5x for 12bpc
 	 *  1.25x for 10bpc
 	 */
-	return DIV_ROUND_CLOSEST(clock * bpc, 8);
+	return clock * bpc / 8;
 }
 
 static bool intel_hdmi_source_bpc_possible(struct drm_i915_private *i915, int bpc)
@@ -1924,7 +1928,11 @@ static bool intel_hdmi_sink_bpc_possible(struct drm_connector *connector,
 		if (ycbcr420_output)
 			return hdmi->y420_dc_modes & DRM_EDID_YCBCR420_DC_36;
 		else
+#ifdef EDID_HDMI_RGB444_DC_MODES_PRESENT
 			return info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_36;
+#else
+			return info->edid_hdmi_dc_modes & DRM_EDID_HDMI_DC_36;
+#endif
 	case 10:
 		if (!has_hdmi_sink)
 			return false;
@@ -1932,7 +1940,11 @@ static bool intel_hdmi_sink_bpc_possible(struct drm_connector *connector,
 		if (ycbcr420_output)
 			return hdmi->y420_dc_modes & DRM_EDID_YCBCR420_DC_30;
 		else
+#ifdef EDID_HDMI_RGB444_DC_MODES_PRESENT
 			return info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_30;
+#else
+			return info->edid_hdmi_dc_modes & DRM_EDID_HDMI_DC_30;
+#endif
 	case 8:
 		return true;
 	default:
@@ -2956,9 +2968,8 @@ void intel_hdmi_init_connector(struct intel_digital_port *dig_port,
 				    ddc);
 	drm_connector_helper_add(connector, &intel_hdmi_connector_helper_funcs);
 
-	connector->interlace_allowed = 1;
-	connector->doublescan_allowed = 0;
-	connector->stereo_allowed = 1;
+	connector->interlace_allowed = true;
+	connector->stereo_allowed = true;
 
 	if (DISPLAY_VER(dev_priv) >= 10)
 		connector->ycbcr_420_allowed = true;
@@ -3030,7 +3041,8 @@ int intel_hdmi_dsc_get_slice_height(int vactive)
  * intel_hdmi_dsc_get_num_slices - get no. of dsc slices based on dsc encoder
  * and dsc decoder capabilities
  *
- * @crtc_state: intel crtc_state
+ * @mode: drm_display_mode for which num of slices are needed
+ * @output_format : pipe output format
  * @src_max_slices: maximum slices supported by the DSC encoder
  * @src_max_slice_width: maximum slice width supported by DSC encoder
  * @hdmi_max_slices: maximum slices supported by sink DSC decoder
@@ -3040,7 +3052,8 @@ int intel_hdmi_dsc_get_slice_height(int vactive)
  * and decoder.
  */
 int
-intel_hdmi_dsc_get_num_slices(const struct intel_crtc_state *crtc_state,
+intel_hdmi_dsc_get_num_slices(const struct drm_display_mode *mode,
+			      enum intel_output_format output_format,
 			      int src_max_slices, int src_max_slice_width,
 			      int hdmi_max_slices, int hdmi_throughput)
 {
@@ -3062,7 +3075,7 @@ intel_hdmi_dsc_get_num_slices(const struct intel_crtc_state *crtc_state,
 	int max_throughput; /* max clock freq. in khz per slice */
 	int max_slice_width;
 	int slice_width;
-	int pixel_clock = crtc_state->hw.adjusted_mode.crtc_clock;
+	int pixel_clock = mode->crtc_clock;
 
 	if (!hdmi_throughput)
 		return 0;
@@ -3073,8 +3086,8 @@ intel_hdmi_dsc_get_num_slices(const struct intel_crtc_state *crtc_state,
 	 * for 4:4:4 is 1.0. Multiplying these factors by 10 and later
 	 * dividing adjusted clock value by 10.
 	 */
-	if (crtc_state->output_format == INTEL_OUTPUT_FORMAT_YCBCR444 ||
-	    crtc_state->output_format == INTEL_OUTPUT_FORMAT_RGB)
+	if (output_format == INTEL_OUTPUT_FORMAT_YCBCR444 ||
+	    output_format == INTEL_OUTPUT_FORMAT_RGB)
 		kslice_adjust = 10;
 	else
 		kslice_adjust = 5;
@@ -3129,7 +3142,7 @@ intel_hdmi_dsc_get_num_slices(const struct intel_crtc_state *crtc_state,
 		else
 			return 0;
 
-		slice_width = DIV_ROUND_UP(crtc_state->hw.adjusted_mode.hdisplay, target_slices);
+		slice_width = DIV_ROUND_UP(mode->hdisplay, target_slices);
 		if (slice_width >= max_slice_width)
 			min_slices = target_slices + 1;
 	} while (slice_width >= max_slice_width);
@@ -3145,6 +3158,7 @@ intel_hdmi_dsc_get_num_slices(const struct intel_crtc_state *crtc_state,
  * @slice_width: dsc slice width supported by the source and sink
  * @num_slices: num of slices supported by the source and sink
  * @output_format: video output format
+ * @bpc: bits per color
  * @hdmi_all_bpp: sink supports decoding of 1/16th bpp setting
  * @hdmi_max_chunk_bytes: max bytes in a line of chunks supported by sink
  *
@@ -3152,8 +3166,8 @@ intel_hdmi_dsc_get_num_slices(const struct intel_crtc_state *crtc_state,
  */
 int
 intel_hdmi_dsc_get_bpp(int src_fractional_bpp, int slice_width, int num_slices,
-		       int output_format, bool hdmi_all_bpp,
-		       int hdmi_max_chunk_bytes)
+		       enum intel_output_format output_format, u8 bpc,
+		       bool hdmi_all_bpp, int hdmi_max_chunk_bytes)
 {
 	int max_dsc_bpp, min_dsc_bpp;
 	int target_bytes;
@@ -3170,18 +3184,17 @@ intel_hdmi_dsc_get_bpp(int src_fractional_bpp, int slice_width, int num_slices,
 	 * for each bpp we check if no of bytes can be supported by HDMI sink
 	 */
 
-	/* Assuming: bpc as 8*/
 	if (output_format == INTEL_OUTPUT_FORMAT_YCBCR420) {
 		min_dsc_bpp = 6;
-		max_dsc_bpp = 3 * 4; /* 3*bpc/2 */
+		max_dsc_bpp = 3 * bpc / 2;
 	} else if (output_format == INTEL_OUTPUT_FORMAT_YCBCR444 ||
 		   output_format == INTEL_OUTPUT_FORMAT_RGB) {
 		min_dsc_bpp = 8;
-		max_dsc_bpp = 3 * 8; /* 3*bpc */
+		max_dsc_bpp = 3 * bpc;
 	} else {
 		/* Assuming 4:2:2 encoding */
 		min_dsc_bpp = 7;
-		max_dsc_bpp = 2 * 8; /* 2*bpc */
+		max_dsc_bpp = 2 * bpc;
 	}
 
 	/*

@@ -46,7 +46,7 @@ gsc_ext_om_alloc(struct intel_gsc *gsc, struct intel_gsc_intf *intf, size_t size
 
 	obj = i915_gem_object_create_lmem(gt->i915, size,
 					  I915_BO_ALLOC_CONTIGUOUS |
-					  I915_BO_ALLOC_CPU_CLEAR);
+					  I915_BO_CPU_CLEAR);
 	if (IS_ERR(obj)) {
 		drm_err(&gt->i915->drm, "Failed to allocate gsc memory\n");
 		return PTR_ERR(obj);
@@ -80,6 +80,34 @@ static void gsc_ext_om_destroy(struct intel_gsc_intf *intf)
 	i915_gem_object_put(obj);
 }
 
+static void intel_gsc_forcewake_get(void *gsc)
+{
+	struct intel_uncore *uncore = gsc_to_gt(gsc)->uncore;
+	intel_wakeref_t wakeref;
+
+	with_intel_runtime_pm(uncore->rpm, wakeref)
+		intel_uncore_forcewake_get(uncore, FORCEWAKE_GT);
+}
+
+static void intel_gsc_forcewake_put(void *gsc)
+{
+	struct intel_uncore *uncore = gsc_to_gt(gsc)->uncore;
+	intel_wakeref_t wakeref;
+
+	with_intel_runtime_pm(uncore->rpm, wakeref)
+		intel_uncore_forcewake_put(uncore, FORCEWAKE_GT);
+}
+
+/**
+ * struct gsc_def - GSC definitions per generation
+ *
+ * @name: device name
+ * @bar: base offset for HECI bar
+ * @bar_size: size of HECI bar
+ * @use_polling: use register polling instead of interrupts
+ * @slow_firmware: the firmware is slow and requires longer timeouts
+ * @lmem_size: size of extended operation memory for GSC, if required
+ */
 struct gsc_def {
 	const char *name;
 	unsigned long bar;
@@ -128,6 +156,18 @@ static const struct gsc_def gsc_def_dg2[] = {
 	}
 };
 
+static const struct gsc_def gsc_def_pvc[] = {
+	{
+		/* HECI1 not enabled on the device. */
+	},
+	{
+		.name = "mei-gscfi",
+		.bar = PVC_GSC_HECI2_BASE,
+		.bar_size = GSC_BAR_LENGTH,
+		.slow_firmware = true,
+	}
+};
+
 static void gsc_release_dev(struct device *dev)
 {
 	struct auxiliary_device *aux_dev = to_auxiliary_dev(dev);
@@ -142,14 +182,8 @@ static void gsc_destroy_one(struct drm_i915_private *i915,
 	struct intel_gsc_intf *intf = &gsc->intf[intf_id];
 
 	if (intf->adev) {
-		struct auxiliary_device *aux_dev = &intf->adev->aux_dev;
-
-		if (intf_id == 0)
-			intel_huc_unregister_gsc_notifier(&gsc_to_gt(gsc)->uc.huc,
-							  aux_dev->dev.bus);
-
-		auxiliary_device_delete(aux_dev);
-		auxiliary_device_uninit(aux_dev);
+		auxiliary_device_delete(&intf->adev->aux_dev);
+		auxiliary_device_uninit(&intf->adev->aux_dev);
 		intf->adev = NULL;
 	}
 
@@ -168,10 +202,20 @@ static void gsc_init_one(struct drm_i915_private *i915, struct intel_gsc *gsc,
 	struct auxiliary_device *aux_dev;
 	const struct gsc_def *def;
 	struct intel_gsc_intf *intf = &gsc->intf[intf_id];
+	bool use_polling = false;
+	bool forcewake_needed = false;
 	int ret;
 
 	intf->irq = -1;
 	intf->id = intf_id;
+
+	/*
+	 * On the multi-tile setups the GSC is functional on the first tile only
+	 */
+	if (gsc_to_gt(gsc)->info.id != 0) {
+		drm_dbg(&i915->drm, "Not initializing gsc for remote tiles\n");
+		return;
+	}
 
 	if (intf_id == 0 && !HAS_HECI_PXP(i915))
 		return;
@@ -182,6 +226,13 @@ static void gsc_init_one(struct drm_i915_private *i915, struct intel_gsc *gsc,
 		def = &gsc_def_xehpsdv[intf_id];
 	} else if (IS_DG2(i915)) {
 		def = &gsc_def_dg2[intf_id];
+	} else if (IS_PONTEVECCHIO(i915)) {
+		def = &gsc_def_pvc[intf_id];
+		/* Use polling on PVC A-step HW bug Wa */
+		if (IS_PVC_BD_STEP(i915, STEP_A0, STEP_B0))
+			use_polling = true;
+		if (pvc_needs_rc6_wa(i915))
+			forcewake_needed = true;
 	} else {
 		drm_warn_once(&i915->drm, "Unknown platform\n");
 		return;
@@ -193,7 +244,7 @@ static void gsc_init_one(struct drm_i915_private *i915, struct intel_gsc *gsc,
 	}
 
 	/* skip irq initialization */
-	if (def->use_polling)
+	if (def->use_polling || use_polling)
 		goto add_device;
 
 	intf->irq = irq_alloc_desc(0);
@@ -233,6 +284,10 @@ add_device:
 	adev->bar.flags = IORESOURCE_MEM;
 	adev->bar.desc = IORES_DESC_NONE;
 	adev->slow_firmware = def->slow_firmware;
+	adev->forcewake_needed = forcewake_needed;
+	adev->gsc = gsc;
+	adev->forcewake_get = intel_gsc_forcewake_get;
+	adev->forcewake_put = intel_gsc_forcewake_put;
 
 	aux_dev = &adev->aux_dev;
 	aux_dev->name = def->name;
@@ -248,24 +303,14 @@ add_device:
 		goto fail;
 	}
 
-	intf->adev = adev; /* needed by the notifier */
-
-	if (intf_id == 0)
-		intel_huc_register_gsc_notifier(&gsc_to_gt(gsc)->uc.huc,
-						aux_dev->dev.bus);
-
 	ret = auxiliary_device_add(aux_dev);
 	if (ret < 0) {
 		drm_err(&i915->drm, "gsc aux add failed %d\n", ret);
-		if (intf_id == 0)
-			intel_huc_unregister_gsc_notifier(&gsc_to_gt(gsc)->uc.huc,
-							  aux_dev->dev.bus);
-		intf->adev = NULL;
-
 		/* adev will be freed with the put_device() and .release sequence */
 		auxiliary_device_uninit(aux_dev);
 		goto fail;
 	}
+	intf->adev = adev;
 
 	return;
 fail:
@@ -306,7 +351,7 @@ void intel_gsc_init(struct intel_gsc *gsc, struct drm_i915_private *i915)
 {
 	unsigned int i;
 
-	if (!HAS_HECI_GSC(i915))
+	if (!HAS_HECI_GSC(i915) || IS_SRIOV_VF(i915))
 		return;
 
 	for (i = 0; i < INTEL_GSC_NUM_INTERFACES; i++)
@@ -318,7 +363,7 @@ void intel_gsc_fini(struct intel_gsc *gsc)
 	struct intel_gt *gt = gsc_to_gt(gsc);
 	unsigned int i;
 
-	if (!HAS_HECI_GSC(gt->i915))
+	if (!HAS_HECI_GSC(gt->i915) || IS_SRIOV_VF(gt->i915))
 		return;
 
 	for (i = 0; i < INTEL_GSC_NUM_INTERFACES; i++)

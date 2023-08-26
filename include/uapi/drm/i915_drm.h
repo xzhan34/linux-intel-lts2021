@@ -154,17 +154,53 @@ enum i915_mocs_table_index {
 	I915_MOCS_CACHED,
 };
 
-/*
+/**
+ * enum drm_i915_gem_engine_class - uapi engine type enumeration
+ *
  * Different engines serve different roles, and there may be more than one
- * engine serving each role. enum drm_i915_gem_engine_class provides a
- * classification of the role of the engine, which may be used when requesting
- * operations to be performed on a certain subset of engines, or for providing
- * information about that group.
+ * engine serving each role.  This enum provides a classification of the role
+ * of the engine, which may be used when requesting operations to be performed
+ * on a certain subset of engines, or for providing information about that
+ * group.
  */
 enum drm_i915_gem_engine_class {
+	/**
+	 * @I915_ENGINE_CLASS_RENDER:
+	 *
+	 * Render engines support instructions used for 3D, Compute (GPGPU),
+	 * and programmable media workloads.  These instructions fetch data and
+	 * dispatch individual work items to threads that operate in parallel.
+	 * The threads run small programs (called "kernels" or "shaders") on
+	 * the GPU's execution units (EUs).
+	 */
 	I915_ENGINE_CLASS_RENDER	= 0,
+
+	/**
+	 * @I915_ENGINE_CLASS_COPY:
+	 *
+	 * Copy engines (also referred to as "blitters") support instructions
+	 * that move blocks of data from one location in memory to another,
+	 * or that fill a specified location of memory with fixed data.
+	 * Copy engines can perform pre-defined logical or bitwise operations
+	 * on the source, destination, or pattern data.
+	 */
 	I915_ENGINE_CLASS_COPY		= 1,
+
+	/**
+	 * @I915_ENGINE_CLASS_VIDEO:
+	 *
+	 * Video engines (also referred to as "bit stream decode" (BSD) or
+	 * "vdbox") support instructions that perform fixed-function media
+	 * decode and encode.
+	 */
 	I915_ENGINE_CLASS_VIDEO		= 2,
+
+	/**
+	 * @I915_ENGINE_CLASS_VIDEO_ENHANCE:
+	 *
+	 * Video enhancement engines (also referred to as "vebox") support
+	 * instructions related to image enhancement.
+	 */
 	I915_ENGINE_CLASS_VIDEO_ENHANCE	= 3,
 
 	/**
@@ -178,6 +214,11 @@ enum drm_i915_gem_engine_class {
 
 	/* Values in this enum should be kept compact. */
 
+	/**
+	 * @I915_ENGINE_CLASS_INVALID:
+	 *
+	 * Placeholder value to represent an invalid engine class assignment.
+	 */
 	I915_ENGINE_CLASS_INVALID	= -1
 };
 
@@ -239,13 +280,11 @@ enum drm_i915_pmu_engine_sample {
 #define I915_PMU_ENGINE_SEMA(class, instance) \
 	__I915_PMU_ENGINE(class, instance, I915_SAMPLE_SEMA)
 
-#define __I915_PMU_OTHER(x) (__I915_PMU_ENGINE(0xff, 0xff, 0xf) + 1 + (x))
-
-#define I915_PMU_ACTUAL_FREQUENCY	__I915_PMU_OTHER(0)
-#define I915_PMU_REQUESTED_FREQUENCY	__I915_PMU_OTHER(1)
-#define I915_PMU_INTERRUPTS		__I915_PMU_OTHER(2)
-#define I915_PMU_RC6_RESIDENCY		__I915_PMU_OTHER(3)
-#define I915_PMU_SOFTWARE_GT_AWAKE_TIME	__I915_PMU_OTHER(4)
+#define I915_PMU_ACTUAL_FREQUENCY		__PRELIM_I915_PMU_ACTUAL_FREQUENCY(0)
+#define I915_PMU_REQUESTED_FREQUENCY		__PRELIM_I915_PMU_REQUESTED_FREQUENCY(0)
+#define I915_PMU_INTERRUPTS			__PRELIM_I915_PMU_INTERRUPTS(0)
+#define I915_PMU_RC6_RESIDENCY			__PRELIM_I915_PMU_RC6_RESIDENCY(0)
+#define I915_PMU_SOFTWARE_GT_AWAKE_TIME		__PRELIM_I915_PMU_SOFTWARE_GT_AWAKE_TIME(0)
 
 #define I915_PMU_LAST /* Deprecated - do not use */ I915_PMU_RC6_RESIDENCY
 
@@ -724,6 +763,12 @@ typedef struct drm_i915_irq_wait {
 /* Query if the kernel supports the I915_USERPTR_PROBE flag. */
 #define I915_PARAM_HAS_USERPTR_PROBE 56
 
+/*
+ * Frequency of the timestamps in OA reports. This used to be the same as the CS
+ * timestamp frequency, but differs on some platforms.
+ */
+#define I915_PARAM_OA_TIMESTAMP_FREQUENCY 57
+
 /* Must be kept compact -- no holes and well documented */
 
 typedef struct drm_i915_getparam {
@@ -910,19 +955,19 @@ struct drm_i915_gem_mmap_gtt {
  * as setting the &extensions to 0, and &flags to `I915_MMAP_OFFSET_GTT`.
  */
 struct drm_i915_gem_mmap_offset {
-	/** @handle: Handle for the object being mapped. */
+	/** Handle for the object being mapped. */
 	__u32 handle;
 	/** @pad: Must be zero */
 	__u32 pad;
 	/**
-	 * @offset: The fake offset to use for subsequent mmap call
+	 * Fake offset to use for subsequent mmap call
 	 *
 	 * This is a fixed-size type for 32/64 compatibility.
 	 */
 	__u64 offset;
 
 	/**
-	 * @flags: Flags for extended behaviour.
+	 * Flags for extended behaviour.
 	 *
 	 * It is mandatory that one of the `MMAP_OFFSET` types
 	 * should be included:
@@ -1156,10 +1201,16 @@ struct drm_i915_gem_exec_object2 {
 	/**
 	 * When the EXEC_OBJECT_PINNED flag is specified this is populated by
 	 * the user with the GTT offset at which this object will be pinned.
+	 *
 	 * When the I915_EXEC_NO_RELOC flag is specified this must contain the
 	 * presumed_offset of the object.
+	 *
 	 * During execbuffer2 the kernel populates it with the value of the
 	 * current GTT offset of the object, for future presumed_offset writes.
+	 *
+	 * See struct drm_i915_gem_create_ext for the rules when dealing with
+	 * alignment restrictions with I915_MEMORY_CLASS_DEVICE, on devices with
+	 * minimum page sizes, like DG2.
 	 */
 	__u64 offset;
 
@@ -1278,7 +1329,8 @@ struct drm_i915_gem_execbuffer2 {
 	 * single struct i915_user_extension and num_cliprects is 0.
 	 */
 	__u64 cliprects_ptr;
-#define I915_EXEC_RING_MASK              (0x3f)
+
+#define I915_EXEC_RING_MASK              (0x3f) /* legacy for small systems */
 #define I915_EXEC_DEFAULT                (0<<0)
 #define I915_EXEC_RENDER                 (1<<0)
 #define I915_EXEC_BSD                    (2<<0)
@@ -1560,6 +1612,12 @@ struct drm_i915_gem_caching {
 #define I915_TILING_NONE	0
 #define I915_TILING_X		1
 #define I915_TILING_Y		2
+/*
+ * Do not add new tiling types here.  The I915_TILING_* values are for
+ * de-tiling fence registers that no longer exist on modern platforms.  Although
+ * the hardware may support new types of tiling in general (e.g., Tile4), we
+ * do not need to add them to the uapi that is specific to now-defunct ioctls.
+ */
 #define I915_TILING_LAST	I915_TILING_Y
 
 #define I915_BIT_6_SWIZZLE_NONE		0
@@ -2360,10 +2418,8 @@ struct drm_i915_gem_context_destroy {
  * The id of new VM (bound to the fd) for use with I915_CONTEXT_PARAM_VM is
  * returned in the outparam @id.
  *
- * No flags are defined, with all bits reserved and must be zero.
- *
  * An extension chain maybe provided, starting with @extensions, and terminated
- * by the @next_extension being 0. Currently, no extensions are defined.
+ * by the @next_extension being 0. Currently, mem region extension is defined.
  *
  * DRM_I915_GEM_VM_DESTROY -
  *
@@ -2497,6 +2553,10 @@ enum drm_i915_oa_format {
 	I915_OA_FORMAT_A12,
 	I915_OA_FORMAT_A12_B8_C8,
 	I915_OA_FORMAT_A32u40_A4u32_B8_C8,
+
+	/* DG2 */
+	I915_OAR_FORMAT_A32u40_A4u32_B8_C8,
+	I915_OA_FORMAT_A24u40_A14u32_B8_C8,
 
 	I915_OA_FORMAT_MAX	    /* non-ABI */
 };
@@ -3170,6 +3230,36 @@ struct drm_i915_gem_memory_class_instance {
  * struct drm_i915_memory_region_info - Describes one region as known to the
  * driver.
  *
+ * Note that we reserve some stuff here for potential future work. As an example
+ * we might want expose the capabilities for a given region, which could include
+ * things like if the region is CPU mappable/accessible, what are the supported
+ * mapping types etc.
+ *
+ * Note that to extend struct drm_i915_memory_region_info and struct
+ * drm_i915_query_memory_regions in the future the plan is to do the following:
+ *
+ * .. code-block:: C
+ *
+ *	struct drm_i915_memory_region_info {
+ *		struct drm_i915_gem_memory_class_instance region;
+ *		union {
+ *			__u32 rsvd0;
+ *			__u32 new_thing1;
+ *		};
+ *		...
+ *		union {
+ *			__u64 rsvd1[8];
+ *			struct {
+ *				__u64 new_thing2;
+ *				__u64 new_thing3;
+ *				...
+ *			};
+ *		};
+ *	};
+ *
+ * With this things should remain source compatible between versions for
+ * userspace, even as we add new fields.
+ *
  * Note this is using both struct drm_i915_query_item and struct drm_i915_query.
  * For this new query we are adding the new query id DRM_I915_QUERY_MEMORY_REGIONS
  * at &drm_i915_query_item.query_id.
@@ -3178,109 +3268,17 @@ struct drm_i915_memory_region_info {
 	/** @region: The class:instance pair encoding */
 	struct drm_i915_gem_memory_class_instance region;
 
-	union {
-		/** @rsvd0: MBZ */
-		__u32 rsvd0;
-		/**
-		 * @gtt_alignment:
-		 *
-		 * The minimum required GTT alignment for this type of memory.
-		 * When allocating a GTT address it must be aligned to this
-		 * value or larger. On some platforms the kernel might opt to
-		 * using 64K pages for I915_MEMORY_CLASS_DEVICE, where 64K GTT
-		 * pages can then be used if we also use 64K GTT alignment.
-		 *
-		 * NOTE: If this is zero then this must be an older
-		 * kernel which lacks support for this field.
-		 *
-		 * Side note: For larger objects (especially for
-		 * I915_MEMORY_CLASS_DEVICE), like 2M+ in size, userspace should
-		 * consider potentially bumping the GTT alignment to say 2M,
-		 * which could potentially increase the likelihood of the kernel
-		 * being able to utilise 2M GTT pages underneath, if the layout
-		 * of the physical pages allows it.  On some configurations we
-		 * can then also use a more efficient page-table layout, if we
-		 * can't use the more desirable 2M GTT page, so long as we know
-		 * that the entire page-table will be used by this object.
-		 */
-		__u32 gtt_alignment;
-	};
+	/** @rsvd0: MBZ */
+	__u32 rsvd0;
 
-	/**
-	 * @probed_size: Memory probed by the driver
-	 *
-	 * Note that it should not be possible to ever encounter a zero value
-	 * here, also note that no current region type will ever return -1 here.
-	 * Although for future region types, this might be a possibility. The
-	 * same applies to the other size fields.
-	 */
+	/** @probed_size: Memory probed by the driver (-1 = unknown) */
 	__u64 probed_size;
 
-	/**
-	 * @unallocated_size: Estimate of memory remaining
-	 *
-	 * Requires CAP_PERFMON or CAP_SYS_ADMIN to get reliable accounting.
-	 * Without this (or if this is an older kernel) the value here will
-	 * always equal the @probed_size. Note this is only currently tracked
-	 * for I915_MEMORY_CLASS_DEVICE regions (for other types the value here
-	 * will always equal the @probed_size).
-	 */
+	/** @unallocated_size: Estimate of memory remaining (-1 = unknown) */
 	__u64 unallocated_size;
 
-	union {
-		/** @rsvd1: MBZ */
-		__u64 rsvd1[8];
-		struct {
-			/**
-			 * @probed_cpu_visible_size: Memory probed by the driver
-			 * that is CPU accessible.
-			 *
-			 * This will be always be <= @probed_size, and the
-			 * remainder (if there is any) will not be CPU
-			 * accessible.
-			 *
-			 * On systems without small BAR, the @probed_size will
-			 * always equal the @probed_cpu_visible_size, since all
-			 * of it will be CPU accessible.
-			 *
-			 * Note this is only tracked for
-			 * I915_MEMORY_CLASS_DEVICE regions (for other types the
-			 * value here will always equal the @probed_size).
-			 *
-			 * Note that if the value returned here is zero, then
-			 * this must be an old kernel which lacks the relevant
-			 * small-bar uAPI support (including
-			 * I915_GEM_CREATE_EXT_FLAG_NEEDS_CPU_ACCESS), but on
-			 * such systems we should never actually end up with a
-			 * small BAR configuration, assuming we are able to load
-			 * the kernel module. Hence it should be safe to treat
-			 * this the same as when @probed_cpu_visible_size ==
-			 * @probed_size.
-			 */
-			__u64 probed_cpu_visible_size;
-
-			/**
-			 * @unallocated_cpu_visible_size: Estimate of CPU
-			 * visible memory remaining.
-			 *
-			 * Note this is only tracked for
-			 * I915_MEMORY_CLASS_DEVICE regions (for other types the
-			 * value here will always equal the
-			 * @probed_cpu_visible_size).
-			 *
-			 * Requires CAP_PERFMON or CAP_SYS_ADMIN to get reliable
-			 * accounting.  Without this the value here will always
-			 * equal the @probed_cpu_visible_size. Note this is only
-			 * currently tracked for I915_MEMORY_CLASS_DEVICE
-			 * regions (for other types the value here will also
-			 * always equal the @probed_cpu_visible_size).
-			 *
-			 * If this is an older kernel the value here will be
-			 * zero, see also @probed_cpu_visible_size.
-			 */
-			__u64 unallocated_cpu_visible_size;
-		};
-	};
+	/** @rsvd1: MBZ */
+	__u64 rsvd1[8];
 };
 
 /**
@@ -3339,6 +3337,7 @@ struct drm_i915_query_memory_regions {
 	/** @regions: Info about each supported region */
 	struct drm_i915_memory_region_info regions[];
 };
+#include "i915_drm_prelim.h"
 
 /**
  * DOC: GuC HWCONFIG blob uAPI
@@ -3354,11 +3353,11 @@ struct drm_i915_query_memory_regions {
  * struct drm_i915_gem_create_ext - Existing gem_create behaviour, with added
  * extension support using struct i915_user_extension.
  *
- * Note that new buffer flags should be added here, at least for the stuff that
- * is immutable. Previously we would have two ioctls, one to create the object
- * with gem_create, and another to apply various parameters, however this
- * creates some ambiguity for the params which are considered immutable. Also in
- * general we're phasing out the various SET/GET ioctls.
+ * Note that in the future we want to have our buffer flags here, at least for
+ * the stuff that is immutable. Previously we would have two ioctls, one to
+ * create the object with gem_create, and another to apply various parameters,
+ * however this creates some ambiguity for the params which are considered
+ * immutable. Also in general we're phasing out the various SET/GET ioctls.
  */
 struct drm_i915_gem_create_ext {
 	/**
@@ -3366,13 +3365,26 @@ struct drm_i915_gem_create_ext {
 	 *
 	 * The (page-aligned) allocated size for the object will be returned.
 	 *
-	 * On platforms like DG2/ATS the kernel will always use 64K or larger
-	 * pages for I915_MEMORY_CLASS_DEVICE. The kernel also requires a
-	 * minimum of 64K GTT alignment for such objects.
 	 *
-	 * NOTE: Previously the ABI here required a minimum GTT alignment of 2M
-	 * on DG2/ATS, due to how the hardware implemented 64K GTT page support,
-	 * where we had the following complications:
+	 * DG2 64K min page size implications:
+	 *
+	 * On discrete platforms, starting from DG2, we have to contend with GTT
+	 * page size restrictions when dealing with I915_MEMORY_CLASS_DEVICE
+	 * objects.  Specifically the hardware only supports 64K or larger GTT
+	 * page sizes for such memory. The kernel will already ensure that all
+	 * I915_MEMORY_CLASS_DEVICE memory is allocated using 64K or larger page
+	 * sizes underneath.
+	 *
+	 * Note that the returned size here will always reflect any required
+	 * rounding up done by the kernel, i.e 4K will now become 64K on devices
+	 * such as DG2.
+	 *
+	 * Special DG2 GTT address alignment requirement:
+	 *
+	 * The GTT alignment will also need to be at least 2M for such objects.
+	 *
+	 * Note that due to how the hardware implements 64K GTT page support, we
+	 * have some further complications:
 	 *
 	 *   1) The entire PDE (which covers a 2MB virtual address range), must
 	 *   contain only 64K PTEs, i.e mixing 4K and 64K PTEs in the same
@@ -3381,10 +3393,12 @@ struct drm_i915_gem_create_ext {
 	 *   2) We still need to support 4K PTEs for I915_MEMORY_CLASS_SYSTEM
 	 *   objects.
 	 *
-	 * However on actual production HW this was completely changed to now
-	 * allow setting a TLB hint at the PTE level (see PS64), which is a lot
-	 * more flexible than the above. With this the 2M restriction was
-	 * dropped where we now only require 64K.
+	 * To keep things simple for userland, we mandate that any GTT mappings
+	 * must be aligned to and rounded up to 2MB. The kernel will internally
+	 * pad them out to the next 2MB boundary. As this only wastes virtual
+	 * address space and avoids userland having to copy any needlessly
+	 * complicated PDE sharing scheme (coloring) and only affects DG2, this
+	 * is deemed to be a good compromise.
 	 */
 	__u64 size;
 
@@ -3497,6 +3511,22 @@ struct drm_i915_gem_create_ext {
  * At which point we get the object handle in &drm_i915_gem_create_ext.handle,
  * along with the final object size in &drm_i915_gem_create_ext.size, which
  * should account for any rounding up, if required.
+ *
+ * Note that userspace has no means of knowing the current backing region
+ * for objects where @num_regions is larger than one. The kernel will only
+ * ensure that the priority order of the @regions array is honoured, either
+ * when initially placing the object, or when moving memory around due to
+ * memory pressure
+ *
+ * On Flat-CCS capable HW, compression is supported for the objects residing
+ * in I915_MEMORY_CLASS_DEVICE. When such objects (compressed) have other
+ * memory class in @regions and migrated (by i915, due to memory
+ * constraints) to the non I915_MEMORY_CLASS_DEVICE region, then i915 needs to
+ * decompress the content. But i915 doesn't have the required information to
+ * decompress the userspace compressed objects.
+ *
+ * So i915 supports Flat-CCS, on the objects which can reside only on
+ * I915_MEMORY_CLASS_DEVICE regions.
  */
 struct drm_i915_gem_create_ext_memory_regions {
 	/** @base: Extension link. See struct i915_user_extension. */

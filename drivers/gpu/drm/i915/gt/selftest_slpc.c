@@ -8,11 +8,6 @@
 #define delay_for_h2g() usleep_range(H2G_DELAY, H2G_DELAY + 10000)
 #define FREQUENCY_REQ_UNIT	DIV_ROUND_CLOSEST(GT_FREQUENCY_MULTIPLIER, \
 						  GEN9_FREQ_SCALER)
-enum test_type {
-	VARY_MIN,
-	VARY_MAX,
-	MAX_GRANTED
-};
 
 static int slpc_set_min_freq(struct intel_guc_slpc *slpc, u32 freq)
 {
@@ -41,268 +36,342 @@ static int slpc_set_max_freq(struct intel_guc_slpc *slpc, u32 freq)
 	return ret;
 }
 
-static int vary_max_freq(struct intel_guc_slpc *slpc, struct intel_rps *rps,
-			 u32 *max_act_freq)
+static int live_slpc_clamp_min(void *arg)
 {
-	u32 step, max_freq, req_freq;
-	u32 act_freq;
-	int err = 0;
-
-	/* Go from max to min in 5 steps */
-	step = (slpc->rp0_freq - slpc->min_freq) / NUM_STEPS;
-	*max_act_freq = slpc->min_freq;
-	for (max_freq = slpc->rp0_freq; max_freq > slpc->min_freq;
-				max_freq -= step) {
-		err = slpc_set_max_freq(slpc, max_freq);
-		if (err)
-			break;
-
-		req_freq = intel_rps_read_punit_req_frequency(rps);
-
-		/* GuC requests freq in multiples of 50/3 MHz */
-		if (req_freq > (max_freq + FREQUENCY_REQ_UNIT)) {
-			pr_err("SWReq is %d, should be at most %d\n", req_freq,
-			       max_freq + FREQUENCY_REQ_UNIT);
-			err = -EINVAL;
-		}
-
-		act_freq =  intel_rps_read_actual_frequency(rps);
-		if (act_freq > *max_act_freq)
-			*max_act_freq = act_freq;
-
-		if (err)
-			break;
-	}
-
-	return err;
-}
-
-static int vary_min_freq(struct intel_guc_slpc *slpc, struct intel_rps *rps,
-			 u32 *max_act_freq)
-{
-	u32 step, min_freq, req_freq;
-	u32 act_freq;
-	int err = 0;
-
-	/* Go from min to max in 5 steps */
-	step = (slpc->rp0_freq - slpc->min_freq) / NUM_STEPS;
-	*max_act_freq = slpc->min_freq;
-	for (min_freq = slpc->min_freq; min_freq < slpc->rp0_freq;
-				min_freq += step) {
-		err = slpc_set_min_freq(slpc, min_freq);
-		if (err)
-			break;
-
-		req_freq = intel_rps_read_punit_req_frequency(rps);
-
-		/* GuC requests freq in multiples of 50/3 MHz */
-		if (req_freq < (min_freq - FREQUENCY_REQ_UNIT)) {
-			pr_err("SWReq is %d, should be at least %d\n", req_freq,
-			       min_freq - FREQUENCY_REQ_UNIT);
-			err = -EINVAL;
-		}
-
-		act_freq =  intel_rps_read_actual_frequency(rps);
-		if (act_freq > *max_act_freq)
-			*max_act_freq = act_freq;
-
-		if (err)
-			break;
-	}
-
-	return err;
-}
-
-static int max_granted_freq(struct intel_guc_slpc *slpc, struct intel_rps *rps, u32 *max_act_freq)
-{
-	struct intel_gt *gt = rps_to_gt(rps);
-	u32 perf_limit_reasons;
-	int err = 0;
-
-	err = slpc_set_min_freq(slpc, slpc->rp0_freq);
-	if (err)
-		return err;
-
-	*max_act_freq =  intel_rps_read_actual_frequency(rps);
-	if (*max_act_freq != slpc->rp0_freq) {
-		/* Check if there was some throttling by pcode */
-		perf_limit_reasons = intel_uncore_read(gt->uncore, GT0_PERF_LIMIT_REASONS);
-
-		/* If not, this is an error */
-		if (!(perf_limit_reasons & GT0_PERF_LIMIT_REASONS_MASK)) {
-			pr_err("Pcode did not grant max freq\n");
-			err = -EINVAL;
-		} else {
-			pr_info("Pcode throttled frequency 0x%x\n", perf_limit_reasons);
-		}
-	}
-
-	return err;
-}
-
-static int run_test(struct intel_gt *gt, int test_type)
-{
-	struct intel_guc_slpc *slpc = &gt->uc.guc.slpc;
-	struct intel_rps *rps = &gt->rps;
+	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt;
+	struct intel_guc_slpc *slpc;
+	struct intel_rps *rps;
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
 	struct igt_spinner spin;
-	u32 slpc_min_freq, slpc_max_freq;
-	int err = 0;
 	intel_wakeref_t wakeref;
+	u32 slpc_min_freq, slpc_max_freq, saved_min_freq;
+	int err = 0;
+	unsigned int i;
 
-	if (!intel_uc_uses_guc_slpc(&gt->uc))
-		return 0;
+	for_each_gt(gt, i915, i) {
 
-	if (igt_spinner_init(&spin, gt))
-		return -ENOMEM;
+		pr_info("Running on GT: %d", gt->info.id);
 
-	if (intel_guc_slpc_get_max_freq(slpc, &slpc_max_freq)) {
-		pr_err("Could not get SLPC max freq\n");
-		return -EIO;
-	}
+		slpc = &gt->uc.guc.slpc;
+		rps = &gt->rps;
 
-	if (intel_guc_slpc_get_min_freq(slpc, &slpc_min_freq)) {
-		pr_err("Could not get SLPC min freq\n");
-		return -EIO;
-	}
+		if (!intel_uc_uses_guc_slpc(&gt->uc))
+			return 0;
 
-	/*
-	 * FIXME: With efficient frequency enabled, GuC can request
-	 * frequencies higher than the SLPC max. While this is fixed
-	 * in GuC, we level set these tests with RPn as min.
-	 */
-	err = slpc_set_min_freq(slpc, slpc->min_freq);
-	if (err)
-		return err;
+		if (igt_spinner_init(&spin, gt))
+			return -ENOMEM;
 
-	if (slpc->min_freq == slpc->rp0_freq) {
-		pr_err("Min/Max are fused to the same value\n");
-		return -EINVAL;
-	}
-
-	intel_gt_pm_wait_for_idle(gt);
-	wakeref = intel_gt_pm_get(gt);
-	for_each_engine(engine, gt, id) {
-		struct i915_request *rq;
-		u32 max_act_freq;
-
-		if (!intel_engine_can_store_dword(engine))
-			continue;
-
-		st_engine_heartbeat_disable(engine);
-
-		rq = igt_spinner_create_request(&spin,
-						engine->kernel_context,
-						MI_NOOP);
-		if (IS_ERR(rq)) {
-			err = PTR_ERR(rq);
-			st_engine_heartbeat_enable(engine);
-			break;
+		if (intel_guc_slpc_get_max_freq(slpc, &slpc_max_freq)) {
+			pr_err("Could not get SLPC max freq\n");
+			return -EIO;
 		}
 
-		i915_request_add(rq);
-
-		if (!igt_wait_for_spinner(&spin, rq)) {
-			pr_err("%s: Spinner did not start\n",
-			       engine->name);
-			igt_spinner_end(&spin);
-			st_engine_heartbeat_enable(engine);
-			intel_gt_set_wedged(engine->gt);
-			err = -EIO;
-			break;
+		if (intel_guc_slpc_get_min_freq(slpc, &slpc_min_freq)) {
+			pr_err("Could not get SLPC min freq\n");
+			return -EIO;
 		}
 
-		switch (test_type) {
-		case VARY_MIN:
-			err = vary_min_freq(slpc, rps, &max_act_freq);
-			break;
+		if (slpc_min_freq == slpc_max_freq) {
+			/* Servers will have min/max clamped to RP0 */
+			if (slpc->min_is_rpmax) {
+				err = slpc_set_min_freq(slpc, slpc->min_freq);
+				if (err) {
+					pr_err("Unable to update min freq on server part");
+					return err;
+				}
 
-		case VARY_MAX:
-			err = vary_max_freq(slpc, rps, &max_act_freq);
-			break;
+				saved_min_freq = slpc_min_freq;
 
-		case MAX_GRANTED:
-			/* Media engines have a different RP0 */
-			if (engine->class == VIDEO_DECODE_CLASS ||
-			    engine->class == VIDEO_ENHANCEMENT_CLASS) {
-				igt_spinner_end(&spin);
-				st_engine_heartbeat_enable(engine);
-				err = 0;
+				/* New temp min freq = RPn */
+				slpc_min_freq = slpc->min_freq;
+			} else {
+				pr_err("Min/Max are fused to the same value");
+				return -EINVAL;
+			}
+		}
+
+		intel_gt_pm_wait_for_idle(gt);
+		wakeref = intel_gt_pm_get(gt);
+		for_each_engine(engine, gt, id) {
+			struct i915_request *rq;
+			u32 step, min_freq, req_freq;
+			u32 act_freq, max_act_freq;
+
+			if (!intel_engine_can_store_dword(engine))
 				continue;
+
+			st_engine_heartbeat_disable(engine);
+
+			rq = igt_spinner_create_request(&spin,
+							engine->kernel_context,
+							MI_NOOP);
+			if (IS_ERR(rq)) {
+				st_engine_heartbeat_enable(engine);
+				err = PTR_ERR(rq);
+				break;
 			}
 
-			err = max_granted_freq(slpc, rps, &max_act_freq);
-			break;
+			i915_request_add(rq);
+
+			if (!igt_wait_for_spinner(&spin, rq)) {
+				pr_err("%s: SLPC spinner did not start\n",
+				       engine->name);
+				igt_spinner_end(&spin);
+				st_engine_heartbeat_enable(engine);
+				intel_gt_set_wedged(engine->gt);
+				err = -EIO;
+				break;
+			}
+
+			/* Go from min to max in 5 steps */
+			step = (slpc_max_freq - slpc_min_freq) / NUM_STEPS;
+			max_act_freq = slpc_min_freq;
+			for (min_freq = slpc_min_freq; min_freq < slpc_max_freq;
+						min_freq += step) {
+				err = slpc_set_min_freq(slpc, min_freq);
+				if (err)
+					break;
+
+				/* Wait for GuC to detect business and raise
+				* requested frequency if necessary.
+				*/
+				delay_for_h2g();
+
+				req_freq = intel_rps_read_punit_req_frequency(rps);
+
+				/* GuC requests freq in multiples of 50/3 MHz */
+				if (req_freq < (min_freq - FREQUENCY_REQ_UNIT)) {
+					pr_err("SWReq is %d, should be at least %d\n", req_freq,
+					       min_freq - FREQUENCY_REQ_UNIT);
+					err = -EINVAL;
+				}
+
+				act_freq =  intel_rps_read_actual_frequency(rps);
+				if (act_freq > max_act_freq)
+					max_act_freq = act_freq;
+
+				if (err)
+					break;
+			}
+
+			pr_info("Max actual frequency for %s was %d\n",
+				engine->name, max_act_freq);
+
+			/* Actual frequency should rise above min */
+			if (max_act_freq == slpc_min_freq) {
+				pr_err("Actual freq did not rise above min, Perf Limit Reasons: %x\n",
+					intel_uncore_read(gt->uncore, GT0_PERF_LIMIT_REASONS));
+				err = -EINVAL;
+			}
+
+			igt_spinner_end(&spin);
+			st_engine_heartbeat_enable(engine);
+
+			if (err)
+				break;
 		}
 
-		pr_info("Max actual frequency for %s was %d\n",
-			engine->name, max_act_freq);
+		/* Restore min/max frequencies */
+		slpc_set_max_freq(slpc, slpc_max_freq);
+		slpc_set_min_freq(slpc, slpc_min_freq);
 
-		/* Actual frequency should rise above min */
-		if (max_act_freq <= slpc_min_freq) {
-			pr_err("Actual freq did not rise above min\n");
-			pr_err("Perf Limit Reasons: 0x%x\n",
-			       intel_uncore_read(gt->uncore, GT0_PERF_LIMIT_REASONS));
-			err = -EINVAL;
-		}
+		if (igt_flush_test(gt->i915))
+			err = -EIO;
 
-		igt_spinner_end(&spin);
-		st_engine_heartbeat_enable(engine);
+		intel_gt_pm_put(gt, wakeref);
+		igt_spinner_fini(&spin);
+		intel_gt_pm_wait_for_idle(gt);
 
+		/* Don't continue with next tile if err is set */
 		if (err)
 			break;
+
+		if (slpc->min_is_rpmax)
+			slpc_set_min_freq(slpc, saved_min_freq);
 	}
-
-	/* Restore min/max frequencies */
-	slpc_set_max_freq(slpc, slpc_max_freq);
-	slpc_set_min_freq(slpc, slpc_min_freq);
-
-	if (igt_flush_test(gt->i915))
-		err = -EIO;
-
-	intel_gt_pm_put(gt, wakeref);
-	igt_spinner_fini(&spin);
-	intel_gt_pm_wait_for_idle(gt);
 
 	return err;
 }
 
-static int live_slpc_vary_min(void *arg)
+static int live_slpc_clamp_max(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
-	struct intel_gt *gt = to_gt(i915);
+	struct intel_gt *gt;
+	struct intel_guc_slpc *slpc;
+	struct intel_rps *rps;
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+	struct igt_spinner spin;
+	intel_wakeref_t wakeref;
+	int err = 0;
+	u32 slpc_min_freq, slpc_max_freq, saved_min_freq;
+	unsigned int i;
 
-	return run_test(gt, VARY_MIN);
-}
+	for_each_gt(gt, i915, i) {
 
-static int live_slpc_vary_max(void *arg)
-{
-	struct drm_i915_private *i915 = arg;
-	struct intel_gt *gt = to_gt(i915);
+		pr_info("Running on GT: %d", gt->info.id);
 
-	return run_test(gt, VARY_MAX);
-}
+		slpc = &gt->uc.guc.slpc;
+		rps = &gt->rps;
 
-/* check if pcode can grant RP0 */
-static int live_slpc_max_granted(void *arg)
-{
-	struct drm_i915_private *i915 = arg;
-	struct intel_gt *gt = to_gt(i915);
+		if (!intel_uc_uses_guc_slpc(&gt->uc))
+			return 0;
 
-	return run_test(gt, MAX_GRANTED);
+		if (igt_spinner_init(&spin, gt))
+			return -ENOMEM;
+
+		if (intel_guc_slpc_get_max_freq(slpc, &slpc_max_freq)) {
+			pr_err("Could not get SLPC max freq\n");
+			return -EIO;
+		}
+
+		if (intel_guc_slpc_get_min_freq(slpc, &slpc_min_freq)) {
+			pr_err("Could not get SLPC min freq\n");
+			return -EIO;
+		}
+
+		if (slpc_min_freq == slpc_max_freq) {
+			/* Servers will have min/max clamped to RP0 */
+			if (slpc->min_is_rpmax) {
+				err = slpc_set_min_freq(slpc, slpc->min_freq);
+				if (err) {
+					pr_err("Unable to update min freq on server part");
+					return err;
+				}
+
+				saved_min_freq = slpc_min_freq;
+
+				/* New temp min freq = RPn */
+				slpc_min_freq = slpc->min_freq;
+			} else {
+				pr_err("Min/Max are fused to the same value");
+				return -EINVAL;
+			}
+		}
+
+		intel_gt_pm_wait_for_idle(gt);
+		wakeref = intel_gt_pm_get(gt);
+		for_each_engine(engine, gt, id) {
+			struct i915_request *rq;
+			u32 max_freq, req_freq;
+			u32 act_freq, max_act_freq;
+			u32 step;
+
+			if (!intel_engine_can_store_dword(engine))
+				continue;
+
+			st_engine_heartbeat_disable(engine);
+
+			rq = igt_spinner_create_request(&spin,
+							engine->kernel_context,
+							MI_NOOP);
+			if (IS_ERR(rq)) {
+				st_engine_heartbeat_enable(engine);
+				err = PTR_ERR(rq);
+				break;
+			}
+
+			i915_request_add(rq);
+
+			if (!igt_wait_for_spinner(&spin, rq)) {
+				pr_err("%s: SLPC spinner did not start\n",
+				       engine->name);
+				igt_spinner_end(&spin);
+				st_engine_heartbeat_enable(engine);
+				intel_gt_set_wedged(engine->gt);
+				err = -EIO;
+				break;
+			}
+
+			/* Go from max to min in 5 steps */
+			step = (slpc_max_freq - slpc_min_freq) / NUM_STEPS;
+			max_act_freq = slpc_min_freq;
+			for (max_freq = slpc_max_freq; max_freq > slpc_min_freq;
+						max_freq -= step) {
+				err = slpc_set_max_freq(slpc, max_freq);
+				if (err)
+					break;
+
+				/* Wait for GuC to detect business and raise
+				 * requested frequency if necessary.
+				*/
+				delay_for_h2g();
+
+				/* Verify that SWREQ indeed was set to specific value */
+				req_freq = intel_rps_read_punit_req_frequency(rps);
+
+				/* GuC requests freq in multiples of 50/3 MHz */
+				if (req_freq > (max_freq + FREQUENCY_REQ_UNIT)) {
+					pr_err("SWReq is %d, should be at most %d\n", req_freq,
+					       max_freq + FREQUENCY_REQ_UNIT);
+					err = -EINVAL;
+				}
+
+				act_freq =  intel_rps_read_actual_frequency(rps);
+				if (act_freq > max_act_freq)
+					max_act_freq = act_freq;
+
+				if (err)
+					break;
+			}
+
+			pr_info("Max actual frequency for %s was %d\n",
+				engine->name, max_act_freq);
+
+			/* Actual frequency should rise above min */
+			if (max_act_freq == slpc_min_freq) {
+				pr_err("Actual freq did not rise above min, Perf Limit Reasons: %x\n",
+					intel_uncore_read(gt->uncore, GT0_PERF_LIMIT_REASONS));
+				err = -EINVAL;
+			}
+
+			igt_spinner_end(&spin);
+			st_engine_heartbeat_enable(engine);
+
+			if (igt_flush_test(gt->i915)) {
+				err = -EIO;
+				break;
+			}
+
+			if (err)
+				break;
+		}
+
+		/* Restore min/max freq */
+		slpc_set_max_freq(slpc, slpc_max_freq);
+		slpc_set_min_freq(slpc, slpc_min_freq);
+
+		intel_gt_pm_put(gt, wakeref);
+		igt_spinner_fini(&spin);
+		intel_gt_pm_wait_for_idle(gt);
+
+		/* Don't continue with next tile if err is set */
+		if (err)
+			break;
+
+		if (slpc->min_is_rpmax)
+			slpc_set_min_freq(slpc, saved_min_freq);
+	}
+
+	return err;
 }
 
 int intel_slpc_live_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
-		SUBTEST(live_slpc_vary_max),
-		SUBTEST(live_slpc_vary_min),
-		SUBTEST(live_slpc_max_granted),
+		SUBTEST(live_slpc_clamp_max),
+		SUBTEST(live_slpc_clamp_min),
 	};
 
-	if (intel_gt_is_wedged(to_gt(i915)))
-		return 0;
+	struct intel_gt *gt;
+	unsigned int i;
+
+	for_each_gt(gt, i915, i) {
+		if (intel_gt_is_wedged(to_gt(i915)))
+			return 0;
+	}
 
 	return i915_live_subtests(tests, i915);
 }

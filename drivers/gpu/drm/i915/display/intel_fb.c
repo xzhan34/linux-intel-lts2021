@@ -7,6 +7,7 @@
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_modeset_helper.h>
 
+#include "gem/i915_gem_lmem.h"
 #include "i915_drv.h"
 #include "intel_display.h"
 #include "intel_display_types.h"
@@ -157,6 +158,32 @@ struct intel_modifier_desc {
 
 static const struct intel_modifier_desc intel_modifiers[] = {
 	{
+		.modifier = PRELIM_I915_FORMAT_MOD_4_TILED_MTL_MC_CCS,
+		.display_ver = { 14, 14 },
+		.plane_caps = INTEL_PLANE_CAP_TILING_4 | INTEL_PLANE_CAP_CCS_MC,
+
+		.ccs.packed_aux_planes = BIT(1),
+		.ccs.planar_aux_planes = BIT(2) | BIT(3),
+
+		FORMAT_OVERRIDE(gen12_ccs_formats),
+	}, {
+		.modifier = PRELIM_I915_FORMAT_MOD_4_TILED_MTL_RC_CCS,
+		.display_ver = { 14, 14 },
+		.plane_caps = INTEL_PLANE_CAP_TILING_4 | INTEL_PLANE_CAP_CCS_RC,
+
+		.ccs.packed_aux_planes = BIT(1),
+
+		FORMAT_OVERRIDE(gen12_ccs_formats),
+	}, {
+		.modifier = PRELIM_I915_FORMAT_MOD_4_TILED_MTL_RC_CCS_CC,
+		.display_ver = { 14, 14 },
+		.plane_caps = INTEL_PLANE_CAP_TILING_4 | INTEL_PLANE_CAP_CCS_RC_CC,
+
+		.ccs.cc_planes = BIT(2),
+		.ccs.packed_aux_planes = BIT(1),
+
+		FORMAT_OVERRIDE(gen12_ccs_cc_formats),
+	}, {
 		.modifier = I915_FORMAT_MOD_4_TILED_DG2_MC_CCS,
 		.display_ver = { 13, 13 },
 		.plane_caps = INTEL_PLANE_CAP_TILING_4 | INTEL_PLANE_CAP_CCS_MC,
@@ -174,8 +201,24 @@ static const struct intel_modifier_desc intel_modifiers[] = {
 		.plane_caps = INTEL_PLANE_CAP_TILING_4 | INTEL_PLANE_CAP_CCS_RC,
 	}, {
 		.modifier = I915_FORMAT_MOD_4_TILED,
-		.display_ver = { 13, 13 },
+		.display_ver = { 13, -1 },
 		.plane_caps = INTEL_PLANE_CAP_TILING_4,
+	}, {
+		.modifier = PRELIM_I915_FORMAT_MOD_4_TILED_DG2_MC_CCS,
+		.display_ver = { 13, 13 },
+		.plane_caps = INTEL_PLANE_CAP_TILING_4 | INTEL_PLANE_CAP_CCS_MC,
+	}, {
+		.modifier = PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS,
+		.display_ver = { 13, 13 },
+		.plane_caps = INTEL_PLANE_CAP_TILING_4 | INTEL_PLANE_CAP_CCS_RC,
+	}, {
+		.modifier = PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC,
+		.display_ver = { 13, 13 },
+		.plane_caps = INTEL_PLANE_CAP_TILING_4 | INTEL_PLANE_CAP_CCS_RC_CC,
+
+		.ccs.cc_planes = BIT(1),
+
+		FORMAT_OVERRIDE(gen12_flat_ccs_cc_formats),
 	}, {
 		.modifier = I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS,
 		.display_ver = { 12, 13 },
@@ -301,19 +344,6 @@ static bool plane_caps_contain_all(u8 caps, u8 mask)
 }
 
 /**
- * intel_fb_is_tiled_modifier: Check if a modifier is a tiled modifier type
- * @modifier: Modifier to check
- *
- * Returns:
- * Returns %true if @modifier is a tiled modifier.
- */
-bool intel_fb_is_tiled_modifier(u64 modifier)
-{
-	return plane_caps_contain_any(lookup_modifier(modifier)->plane_caps,
-				      INTEL_PLANE_CAP_TILING_MASK);
-}
-
-/**
  * intel_fb_is_ccs_modifier: Check if a modifier is a CCS modifier type
  * @modifier: Modifier to check
  *
@@ -368,6 +398,14 @@ static bool plane_has_modifier(struct drm_i915_private *i915,
 		return false;
 
 	if (!plane_caps_contain_all(plane_caps, md->plane_caps))
+		return false;
+
+	/*
+	 * Separate AuxCCS and Flat CCS modifiers to be run only on platforms
+	 * where supported.
+	 */
+	if (intel_fb_is_ccs_modifier(md->modifier) &&
+	   HAS_FLAT_CCS(i915) != !md->ccs.packed_aux_planes)
 		return false;
 
 	return true;
@@ -489,7 +527,7 @@ static bool intel_fb_is_gen12_ccs_aux_plane(const struct drm_framebuffer *fb, in
 {
 	const struct intel_modifier_desc *md = lookup_modifier(fb->modifier);
 
-	return check_modifier_display_ver_range(md, 12, 13) &&
+	return check_modifier_display_ver_range(md, 12, 14) &&
 	       ccs_aux_plane_mask(md, fb->format) & BIT(color_plane);
 }
 
@@ -596,6 +634,9 @@ intel_tile_width_bytes(const struct drm_framebuffer *fb, int color_plane)
 	case I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC:
 	case I915_FORMAT_MOD_4_TILED_DG2_MC_CCS:
 	case I915_FORMAT_MOD_4_TILED:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_MC_CCS:
 		/*
 		 * Each 4K tile consists of 64B(8*8) subtiles, with
 		 * same shape as Y Tile(i.e 4*16B OWords)
@@ -605,6 +646,9 @@ intel_tile_width_bytes(const struct drm_framebuffer *fb, int color_plane)
 		if (intel_fb_is_ccs_aux_plane(fb, color_plane))
 			return 128;
 		fallthrough;
+	case PRELIM_I915_FORMAT_MOD_4_TILED_MTL_RC_CCS:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_MTL_RC_CCS_CC:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_MTL_MC_CCS:
 	case I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS:
 	case I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS_CC:
 	case I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS:
@@ -790,6 +834,9 @@ unsigned int intel_surf_alignment(const struct drm_framebuffer *fb,
 	case I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS:
 	case I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS:
 	case I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS_CC:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_MTL_MC_CCS:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_MTL_RC_CCS:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_MTL_RC_CCS_CC:
 		return 16 * 1024;
 	case I915_FORMAT_MOD_Y_TILED_CCS:
 	case I915_FORMAT_MOD_Yf_TILED_CCS:
@@ -800,6 +847,9 @@ unsigned int intel_surf_alignment(const struct drm_framebuffer *fb,
 	case I915_FORMAT_MOD_4_TILED_DG2_RC_CCS:
 	case I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC:
 	case I915_FORMAT_MOD_4_TILED_DG2_MC_CCS:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_RC_CCS_CC:
+	case PRELIM_I915_FORMAT_MOD_4_TILED_DG2_MC_CCS:
 		return 16 * 1024;
 	default:
 		MISSING_CASE(fb->modifier);
@@ -1189,7 +1239,8 @@ bool intel_fb_needs_pot_stride_remap(const struct intel_framebuffer *fb)
 {
 	struct drm_i915_private *i915 = to_i915(fb->base.dev);
 
-	return IS_ALDERLAKE_P(i915) && fb->base.modifier != DRM_FORMAT_MOD_LINEAR;
+	return (IS_ALDERLAKE_P(i915) || DISPLAY_VER(i915) >= 14) &&
+	       fb->base.modifier != DRM_FORMAT_MOD_LINEAR;
 }
 
 static int intel_fb_pitch(const struct intel_framebuffer *fb, int color_plane, unsigned int rotation)
@@ -1325,9 +1376,10 @@ plane_view_scanout_stride(const struct intel_framebuffer *fb, int color_plane,
 			  unsigned int tile_width,
 			  unsigned int src_stride_tiles, unsigned int dst_stride_tiles)
 {
+	struct drm_i915_private *i915 = to_i915(fb->base.dev);
 	unsigned int stride_tiles;
 
-	if (IS_ALDERLAKE_P(to_i915(fb->base.dev)))
+	if (IS_ALDERLAKE_P(i915) || DISPLAY_VER(i915) >= 14)
 		stride_tiles = src_stride_tiles;
 	else
 		stride_tiles = dst_stride_tiles;
@@ -1408,7 +1460,7 @@ static u32 calc_plane_remap_info(const struct intel_framebuffer *fb, int color_p
 			       plane_view_height_tiles(fb, color_plane, dims, y));
 	}
 
-	if (view->gtt.type == I915_GTT_VIEW_ROTATED) {
+	if (view->gtt.type == I915_GGTT_VIEW_ROTATED) {
 		drm_WARN_ON(&i915->drm, remap_info->linear);
 		check_array_bounds(i915, view->gtt.rotated.plane, color_plane);
 
@@ -1433,7 +1485,7 @@ static u32 calc_plane_remap_info(const struct intel_framebuffer *fb, int color_p
 		/* rotate the tile dimensions to match the GTT view */
 		swap(tile_width, tile_height);
 	} else {
-		drm_WARN_ON(&i915->drm, view->gtt.type != I915_GTT_VIEW_REMAPPED);
+		drm_WARN_ON(&i915->drm, view->gtt.type != I915_GGTT_VIEW_REMAPPED);
 
 		check_array_bounds(i915, view->gtt.remapped.plane, color_plane);
 
@@ -1516,12 +1568,13 @@ calc_plane_normal_size(const struct intel_framebuffer *fb, int color_plane,
 }
 
 static void intel_fb_view_init(struct drm_i915_private *i915, struct intel_fb_view *view,
-			       enum i915_gtt_view_type view_type)
+			       enum i915_ggtt_view_type view_type)
 {
 	memset(view, 0, sizeof(*view));
 	view->gtt.type = view_type;
 
-	if (view_type == I915_GTT_VIEW_REMAPPED && IS_ALDERLAKE_P(i915))
+	if (view_type == I915_GGTT_VIEW_REMAPPED &&
+	    (IS_ALDERLAKE_P(i915) || DISPLAY_VER(i915) >= 14))
 		view->gtt.remapped.plane_alignment = SZ_2M / PAGE_SIZE;
 }
 
@@ -1543,16 +1596,16 @@ int intel_fill_fb_info(struct drm_i915_private *i915, struct intel_framebuffer *
 	int i, num_planes = fb->base.format->num_planes;
 	unsigned int tile_size = intel_tile_size(i915);
 
-	intel_fb_view_init(i915, &fb->normal_view, I915_GTT_VIEW_NORMAL);
+	intel_fb_view_init(i915, &fb->normal_view, I915_GGTT_VIEW_NORMAL);
 
 	drm_WARN_ON(&i915->drm,
 		    intel_fb_supports_90_270_rotation(fb) &&
 		    intel_fb_needs_pot_stride_remap(fb));
 
 	if (intel_fb_supports_90_270_rotation(fb))
-		intel_fb_view_init(i915, &fb->rotated_view, I915_GTT_VIEW_ROTATED);
+		intel_fb_view_init(i915, &fb->rotated_view, I915_GGTT_VIEW_ROTATED);
 	if (intel_fb_needs_pot_stride_remap(fb))
-		intel_fb_view_init(i915, &fb->remapped_view, I915_GTT_VIEW_REMAPPED);
+		intel_fb_view_init(i915, &fb->remapped_view, I915_GGTT_VIEW_REMAPPED);
 
 	for (i = 0; i < num_planes; i++) {
 		struct fb_plane_view_dims view_dims;
@@ -1633,8 +1686,8 @@ static void intel_plane_remap_gtt(struct intel_plane_state *plane_state)
 	u32 gtt_offset = 0;
 
 	intel_fb_view_init(i915, &plane_state->view,
-			   drm_rotation_90_or_270(rotation) ? I915_GTT_VIEW_ROTATED :
-							      I915_GTT_VIEW_REMAPPED);
+			   drm_rotation_90_or_270(rotation) ? I915_GGTT_VIEW_ROTATED :
+							      I915_GGTT_VIEW_REMAPPED);
 
 	src_x = plane_state->uapi.src.x1 >> 16;
 	src_y = plane_state->uapi.src.y1 >> 16;
@@ -2043,7 +2096,7 @@ intel_user_framebuffer_create(struct drm_device *dev,
 
 	/* object is backed with LMEM for discrete */
 	i915 = to_i915(obj->base.dev);
-	if (HAS_LMEM(i915) && !i915_gem_object_can_migrate(obj, INTEL_REGION_LMEM_0)) {
+	if (HAS_LMEM(i915) && !i915_gem_object_is_lmem(obj)) {
 		/* object is "remote", not in local memory */
 		i915_gem_object_put(obj);
 		return ERR_PTR(-EREMOTE);

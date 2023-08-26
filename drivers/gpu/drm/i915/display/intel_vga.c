@@ -125,9 +125,15 @@ intel_vga_set_state(struct drm_i915_private *i915, bool enable_decode)
 }
 
 static unsigned int
+#ifdef VGA_SET_DECODE_ARG_PCI_DEV_NOT_PRESENT
+intel_vga_set_decode(void *cookie, bool enable_decode)
+{
+	struct drm_i915_private *i915 = cookie;
+#else
 intel_vga_set_decode(struct pci_dev *pdev, bool enable_decode)
 {
 	struct drm_i915_private *i915 = pdev_to_i915(pdev);
+#endif
 
 	intel_vga_set_state(i915, enable_decode);
 
@@ -152,7 +158,12 @@ int intel_vga_register(struct drm_i915_private *i915)
 	 * then we do not take part in VGA arbitration and the
 	 * vga_client_register() fails with -ENODEV.
 	 */
+#ifdef VGA_SET_DECODE_ARG_PCI_DEV_NOT_PRESENT
+	ret = vga_client_register(pdev, i915, NULL, intel_vga_set_decode);
+#else
 	ret = vga_client_register(pdev, intel_vga_set_decode);
+#endif
+
 	if (ret && ret != -ENODEV)
 		return ret;
 
@@ -162,6 +173,9 @@ int intel_vga_register(struct drm_i915_private *i915)
 void intel_vga_unregister(struct drm_i915_private *i915)
 {
 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
-
+#ifdef VGA_CLIENT_UNREGISTER_NOT_PRESENT
+	vga_client_register(pdev, NULL, NULL, NULL);
+#else
 	vga_client_unregister(pdev);
+#endif
 }

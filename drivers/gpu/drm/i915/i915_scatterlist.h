@@ -13,6 +13,8 @@
 
 #include "i915_gem.h"
 
+#define I915_MAX_CHAIN_ALLOC (SG_MAX_SINGLE_ALLOC - 1)
+
 struct drm_mm_node;
 struct ttm_resource;
 
@@ -105,6 +107,15 @@ static inline struct scatterlist *__sg_next(struct scatterlist *sg)
 	     (__iter) = __sgt_iter(__sg_next((__iter).sgp), false), 0 : 0)
 
 /**
+ * __for_each_daddr - iterates over the device addresses with pre-initialized
+ * iterator.
+ */
+#define __for_each_daddr(__dp, __iter, __step)			\
+	for (; ((__dp) = (__iter).dma + (__iter).curr), (__iter).sgp;	\
+	     (((__iter).curr += (__step)) >= (__iter).max) ?		\
+	     (__iter) = __sgt_iter(__sg_next((__iter).sgp), true), 0 : 0)
+
+/**
  * i915_sg_dma_sizes - Record the dma segment sizes of a scatterlist
  * @sg: The scatterlist
  *
@@ -142,82 +153,25 @@ static inline unsigned int i915_sg_segment_size(void)
 	return size;
 }
 
-bool i915_sg_trim(struct sg_table *orig_st);
+void i915_sg_trim(struct sg_table *sgt);
+unsigned long i915_sg_compact(struct sg_table *st, unsigned long max);
 
-/**
- * struct i915_refct_sgt_ops - Operations structure for struct i915_refct_sgt
- */
-struct i915_refct_sgt_ops {
-	/**
-	 * release() - Free the memory of the struct i915_refct_sgt
-	 * @ref: struct kref that is embedded in the struct i915_refct_sgt
-	 */
-	void (*release)(struct kref *ref);
-};
+/* Wrap scatterlist.h to sanity check for integer truncation */
+typedef unsigned int __sg_size_t; /* see linux/scatterlist.h */
+#define sg_alloc_table(sgt, nents, gfp) \
+	overflows_type(nents, __sg_size_t) ? -E2BIG : (sg_alloc_table)(sgt, (__sg_size_t)(nents), gfp)
 
-/**
- * struct i915_refct_sgt - A refcounted scatter-gather table
- * @kref: struct kref for refcounting
- * @table: struct sg_table holding the scatter-gather table itself. Note that
- * @table->sgl = NULL can be used to determine whether a scatter-gather table
- * is present or not.
- * @size: The size in bytes of the underlying memory buffer
- * @ops: The operations structure.
- */
-struct i915_refct_sgt {
-	struct kref kref;
-	struct sg_table table;
-	size_t size;
-	const struct i915_refct_sgt_ops *ops;
-};
+#define __sg_alloc_table_from_pages(sgt, pages, npages, offset, size, max_segment, prv, left, gfp) \
+	overflows_type(npages, __sg_size_t) ? ERR_PTR(-E2BIG) : (__sg_alloc_table_from_pages)(sgt, pages, (__sg_size_t)(npages), offset, size, max_segment, prv, left, gfp)
 
-/**
- * i915_refct_sgt_put - Put a refcounted sg-table
- * @rsgt the struct i915_refct_sgt to put.
- */
-static inline void i915_refct_sgt_put(struct i915_refct_sgt *rsgt)
-{
-	if (rsgt)
-		kref_put(&rsgt->kref, rsgt->ops->release);
-}
+#define sg_alloc_table_from_pages(sgt, pages, npages, offset, size, gfp) \
+	overflows_type(npages, __sg_size_t) ? -E2BIG : (sg_alloc_table_from_pages)(sgt, pages, (__sg_size_t)(npages), offset, size, gfp)
 
-/**
- * i915_refct_sgt_get - Get a refcounted sg-table
- * @rsgt the struct i915_refct_sgt to get.
- */
-static inline struct i915_refct_sgt *
-i915_refct_sgt_get(struct i915_refct_sgt *rsgt)
-{
-	kref_get(&rsgt->kref);
-	return rsgt;
-}
 
-/**
- * __i915_refct_sgt_init - Initialize a refcounted sg-list with a custom
- * operations structure
- * @rsgt The struct i915_refct_sgt to initialize.
- * @size: Size in bytes of the underlying memory buffer.
- * @ops: A customized operations structure in case the refcounted sg-list
- * is embedded into another structure.
- */
-static inline void __i915_refct_sgt_init(struct i915_refct_sgt *rsgt,
-					 size_t size,
-					 const struct i915_refct_sgt_ops *ops)
-{
-	kref_init(&rsgt->kref);
-	rsgt->table.sgl = NULL;
-	rsgt->size = size;
-	rsgt->ops = ops;
-}
+struct sg_table *i915_sg_from_mm_node(const struct drm_mm_node *node,
+				      u64 region_start);
 
-void i915_refct_sgt_init(struct i915_refct_sgt *rsgt, size_t size);
-
-struct i915_refct_sgt *i915_rsgt_from_mm_node(const struct drm_mm_node *node,
-					      u64 region_start,
-					      u32 page_alignment);
-
-struct i915_refct_sgt *i915_rsgt_from_buddy_resource(struct ttm_resource *res,
-						     u64 region_start,
-						     u32 page_alignment);
+struct sg_table *i915_sg_from_buddy_resource(struct ttm_resource *res,
+					     u64 region_start);
 
 #endif

@@ -7,35 +7,55 @@
 
 #include <drm/drm_drv.h>
 
+struct intel_memory_region;
+
 struct i915_gem_ww_ctx {
 	struct ww_acquire_ctx ctx;
 	struct list_head obj_list;
+	struct list_head eviction_list;
+	struct i915_gem_ww_region {
+		struct list_head link;
+		struct list_head locked;
+		struct intel_memory_region *mem;
+		struct i915_gem_ww_region *next;
+	} region;
 	struct drm_i915_gem_object *contended;
-	bool intr;
+	bool intr:1;
+	bool loop:1;
+	bool contended_evict:1;
 };
 
 void i915_gem_ww_ctx_init(struct i915_gem_ww_ctx *ctx, bool intr);
 void i915_gem_ww_ctx_fini(struct i915_gem_ww_ctx *ctx);
 int __must_check i915_gem_ww_ctx_backoff(struct i915_gem_ww_ctx *ctx);
 void i915_gem_ww_unlock_single(struct drm_i915_gem_object *obj);
+void i915_gem_ww_ctx_unlock_evictions(struct i915_gem_ww_ctx *ww);
 
-/* Internal function used by the inlines! Don't use. */
+/* Internal functions used by the inlines! Don't use. */
 static inline int __i915_gem_ww_fini(struct i915_gem_ww_ctx *ww, int err)
 {
+	ww->loop = 0;
 	if (err == -EDEADLK) {
 		err = i915_gem_ww_ctx_backoff(ww);
 		if (!err)
-			err = -EDEADLK;
+			ww->loop = 1;
 	}
 
-	if (err != -EDEADLK)
+	if (!ww->loop)
 		i915_gem_ww_ctx_fini(ww);
 
 	return err;
 }
 
-#define for_i915_gem_ww(_ww, _err, _intr)			  \
-	for (i915_gem_ww_ctx_init(_ww, _intr), (_err) = -EDEADLK; \
-	     (_err) == -EDEADLK;				  \
-	     (_err) = __i915_gem_ww_fini(_ww, _err))
+static inline void
+__i915_gem_ww_init(struct i915_gem_ww_ctx *ww, bool intr)
+{
+	i915_gem_ww_ctx_init(ww, intr);
+	ww->loop = 1;
+}
+
+#define for_i915_gem_ww(_ww, _err, _intr)			\
+	for (__i915_gem_ww_init(_ww, _intr); (_ww)->loop;	\
+	     _err = __i915_gem_ww_fini(_ww, _err))
+
 #endif

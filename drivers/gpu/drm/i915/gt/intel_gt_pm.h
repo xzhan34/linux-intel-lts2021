@@ -75,20 +75,24 @@ static inline void intel_gt_pm_put_async(struct intel_gt *gt, intel_wakeref_t ha
 #define with_intel_gt_pm(gt, wf) \
 	for (wf = intel_gt_pm_get(gt); wf; intel_gt_pm_put(gt, wf), wf = 0)
 
-/**
- * with_intel_gt_pm_if_awake - if GT is PM awake, get a reference to prevent
- *	it to sleep, run some code and then asynchrously put the reference
- *	away.
- *
- * @gt: pointer to the gt
- * @wf: pointer to a temporary wakeref.
- */
 #define with_intel_gt_pm_if_awake(gt, wf) \
-	for (wf = intel_gt_pm_get_if_awake(gt); wf; intel_gt_pm_put_async_untracked(gt), wf = 0)
+	for (wf = intel_gt_pm_get_if_awake(gt); wf; intel_gt_pm_put_async(gt, wf), wf = 0)
 
 static inline int intel_gt_pm_wait_for_idle(struct intel_gt *gt)
 {
 	return intel_wakeref_wait_for_idle(&gt->wakeref);
+}
+
+static inline intel_wakeref_t
+intel_gt_pm_get_if_awake_l4(struct intel_gt *gt)
+{
+	return intel_gt_pm_get_if_awake(gt);
+}
+
+static inline void
+intel_gt_pm_put_async_l4(struct intel_gt *gt, intel_wakeref_t wakeref)
+{
+	intel_gt_pm_put_async(gt, wakeref);
 }
 
 void intel_gt_pm_init_early(struct intel_gt *gt);
@@ -97,6 +101,7 @@ void intel_gt_pm_fini(struct intel_gt *gt);
 
 void intel_gt_suspend_prepare(struct intel_gt *gt);
 void intel_gt_suspend_late(struct intel_gt *gt);
+void intel_gt_resume_early(struct intel_gt *gt);
 int intel_gt_resume(struct intel_gt *gt);
 
 void intel_gt_runtime_suspend(struct intel_gt *gt);
@@ -107,6 +112,18 @@ ktime_t intel_gt_get_awake_time(const struct intel_gt *gt);
 static inline bool is_mock_gt(const struct intel_gt *gt)
 {
 	return I915_SELFTEST_ONLY(gt->awake == -ENODEV);
+}
+
+static inline
+int intel_gt_idle_engines_start(struct intel_gt *gt, bool enable)
+{
+	return intel_uc_idle_engines_start(&gt->uc, enable);
+}
+
+static inline
+int intel_gt_idle_engines_wait(struct intel_gt *gt)
+{
+	return intel_uc_idle_engines_wait(&gt->uc);
 }
 
 #endif /* INTEL_GT_PM_H */

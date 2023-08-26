@@ -4,11 +4,12 @@
  * Copyright © 2021 Intel Corporation
  */
 
-#include <drm/drm_drv.h>
+#include <linux/console.h>
 
 #include "gem/i915_gem_context.h"
 #include "gem/i915_gem_object.h"
 #include "i915_active.h"
+#include "i915_buddy.h"
 #include "i915_driver.h"
 #include "i915_params.h"
 #include "i915_pci.h"
@@ -17,7 +18,6 @@
 #include "i915_scheduler.h"
 #include "i915_selftest.h"
 #include "i915_vma.h"
-#include "i915_vma_resource.h"
 
 static int i915_check_nomodeset(void)
 {
@@ -25,8 +25,8 @@ static int i915_check_nomodeset(void)
 
 	/*
 	 * Enable KMS by default, unless explicitly overriden by
-	 * either the i915.modeset parameter or by the
-	 * nomodeset boot option.
+	 * either the i915.modeset prarameter or by the
+	 * vga_text_mode_force boot option.
 	 */
 
 	if (i915_modparams.modeset == 0)
@@ -51,6 +51,8 @@ static const struct {
 	{ .init = i915_check_nomodeset },
 	{ .init = i915_active_module_init,
 	  .exit = i915_active_module_exit },
+	{ .init = i915_buddy_module_init,
+	  .exit = i915_buddy_module_exit },
 	{ .init = i915_context_module_init,
 	  .exit = i915_context_module_exit },
 	{ .init = i915_gem_context_module_init,
@@ -63,8 +65,6 @@ static const struct {
 	  .exit = i915_scheduler_module_exit },
 	{ .init = i915_vma_module_init,
 	  .exit = i915_vma_module_exit },
-	{ .init = i915_vma_resource_module_init,
-	  .exit = i915_vma_resource_module_exit },
 	{ .init = i915_mock_selftests },
 	{ .init = i915_pmu_init,
 	  .exit = i915_pmu_exit },
@@ -79,6 +79,7 @@ static int __init i915_init(void)
 {
 	int err, i;
 
+	DRM_INFO("I915 BACKPORTED INIT - I915_23.6.18_PSB_230425.24+\n");
 	for (i = 0; i < ARRAY_SIZE(init_funcs); i++) {
 		err = init_funcs[i].init();
 		if (err < 0) {

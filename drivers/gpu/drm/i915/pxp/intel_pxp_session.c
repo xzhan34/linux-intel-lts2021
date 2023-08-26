@@ -77,6 +77,7 @@ static int pxp_create_arb_session(struct intel_pxp *pxp)
 		drm_err(&gt->i915->drm, "arb session failed to go in play\n");
 		return ret;
 	}
+	drm_dbg(&gt->i915->drm, "PXP ARB session is alive\n");
 
 	if (!++pxp->key_instance)
 		++pxp->key_instance;
@@ -175,6 +176,5 @@ static void pxp_session_work(struct work_struct *work)
 
 void intel_pxp_session_management_init(struct intel_pxp *pxp)
 {
-	mutex_init(&pxp->arb_mutex);
 	INIT_WORK(&pxp->session_work, pxp_session_work);
 }

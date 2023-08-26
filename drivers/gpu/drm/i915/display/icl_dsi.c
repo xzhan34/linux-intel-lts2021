@@ -25,9 +25,9 @@
  *   Jani Nikula <jani.nikula@intel.com>
  */
 
-#include <drm/display/drm_dsc_helper.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_mipi_dsi.h>
+#include <drm/display/drm_dsc_helper.h>
 
 #include "icl_dsi.h"
 #include "icl_dsi_regs.h"
@@ -44,6 +44,7 @@
 #include "intel_dsi_vbt.h"
 #include "intel_panel.h"
 #include "intel_vdsc.h"
+#include "intel_vdsc_regs.h"
 #include "skl_scaler.h"
 #include "skl_universal_plane.h"
 
@@ -189,8 +190,6 @@ static int dsi_send_pkt_hdr(struct intel_dsi_host *host,
 
 	if (enable_lpdt)
 		tmp |= LP_DATA_TRANSFER;
-	else
-		tmp &= ~LP_DATA_TRANSFER;
 
 	tmp &= ~(PARAM_WC_MASK | VC_MASK | DT_MASK);
 	tmp |= ((packet->header[0] & VC_MASK) << VC_SHIFT);
@@ -299,21 +298,9 @@ static void configure_dual_link_mode(struct intel_encoder *encoder,
 {
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
-	i915_reg_t dss_ctl1_reg, dss_ctl2_reg;
 	u32 dss_ctl1;
 
-	/* FIXME: Move all DSS handling to intel_vdsc.c */
-	if (DISPLAY_VER(dev_priv) >= 12) {
-		struct intel_crtc *crtc = to_intel_crtc(pipe_config->uapi.crtc);
-
-		dss_ctl1_reg = ICL_PIPE_DSS_CTL1(crtc->pipe);
-		dss_ctl2_reg = ICL_PIPE_DSS_CTL2(crtc->pipe);
-	} else {
-		dss_ctl1_reg = DSS_CTL1;
-		dss_ctl2_reg = DSS_CTL2;
-	}
-
-	dss_ctl1 = intel_de_read(dev_priv, dss_ctl1_reg);
+	dss_ctl1 = intel_de_read(dev_priv, DSS_CTL1);
 	dss_ctl1 |= SPLITTER_ENABLE;
 	dss_ctl1 &= ~OVERLAP_PIXELS_MASK;
 	dss_ctl1 |= OVERLAP_PIXELS(intel_dsi->pixel_overlap);
@@ -334,16 +321,16 @@ static void configure_dual_link_mode(struct intel_encoder *encoder,
 
 		dss_ctl1 &= ~LEFT_DL_BUF_TARGET_DEPTH_MASK;
 		dss_ctl1 |= LEFT_DL_BUF_TARGET_DEPTH(dl_buffer_depth);
-		dss_ctl2 = intel_de_read(dev_priv, dss_ctl2_reg);
+		dss_ctl2 = intel_de_read(dev_priv, DSS_CTL2);
 		dss_ctl2 &= ~RIGHT_DL_BUF_TARGET_DEPTH_MASK;
 		dss_ctl2 |= RIGHT_DL_BUF_TARGET_DEPTH(dl_buffer_depth);
-		intel_de_write(dev_priv, dss_ctl2_reg, dss_ctl2);
+		intel_de_write(dev_priv, DSS_CTL2, dss_ctl2);
 	} else {
 		/* Interleave */
 		dss_ctl1 |= DUAL_LINK_MODE_INTERLEAVE;
 	}
 
-	intel_de_write(dev_priv, dss_ctl1_reg, dss_ctl1);
+	intel_de_write(dev_priv, DSS_CTL1, dss_ctl1);
 }
 
 /* aka DSI 8X clock */
@@ -654,13 +641,13 @@ static void gen11_dsi_gate_clocks(struct intel_encoder *encoder)
 	u32 tmp;
 	enum phy phy;
 
-	mutex_lock(&dev_priv->display.dpll.lock);
+	mutex_lock(&dev_priv->dpll.lock);
 	tmp = intel_de_read(dev_priv, ICL_DPCLKA_CFGCR0);
 	for_each_dsi_phy(phy, intel_dsi->phys)
 		tmp |= ICL_DPCLKA_CFGCR0_DDI_CLK_OFF(phy);
 
 	intel_de_write(dev_priv, ICL_DPCLKA_CFGCR0, tmp);
-	mutex_unlock(&dev_priv->display.dpll.lock);
+	mutex_unlock(&dev_priv->dpll.lock);
 }
 
 static void gen11_dsi_ungate_clocks(struct intel_encoder *encoder)
@@ -670,13 +657,13 @@ static void gen11_dsi_ungate_clocks(struct intel_encoder *encoder)
 	u32 tmp;
 	enum phy phy;
 
-	mutex_lock(&dev_priv->display.dpll.lock);
+	mutex_lock(&dev_priv->dpll.lock);
 	tmp = intel_de_read(dev_priv, ICL_DPCLKA_CFGCR0);
 	for_each_dsi_phy(phy, intel_dsi->phys)
 		tmp &= ~ICL_DPCLKA_CFGCR0_DDI_CLK_OFF(phy);
 
 	intel_de_write(dev_priv, ICL_DPCLKA_CFGCR0, tmp);
-	mutex_unlock(&dev_priv->display.dpll.lock);
+	mutex_unlock(&dev_priv->dpll.lock);
 }
 
 static bool gen11_dsi_is_clock_enabled(struct intel_encoder *encoder)
@@ -706,7 +693,7 @@ static void gen11_dsi_map_pll(struct intel_encoder *encoder,
 	enum phy phy;
 	u32 val;
 
-	mutex_lock(&dev_priv->display.dpll.lock);
+	mutex_lock(&dev_priv->dpll.lock);
 
 	val = intel_de_read(dev_priv, ICL_DPCLKA_CFGCR0);
 	for_each_dsi_phy(phy, intel_dsi->phys) {
@@ -722,7 +709,7 @@ static void gen11_dsi_map_pll(struct intel_encoder *encoder,
 
 	intel_de_posting_read(dev_priv, ICL_DPCLKA_CFGCR0);
 
-	mutex_unlock(&dev_priv->display.dpll.lock);
+	mutex_unlock(&dev_priv->dpll.lock);
 }
 
 static void
@@ -1637,8 +1624,6 @@ static int gen11_dsi_dsc_compute_config(struct intel_encoder *encoder,
 	if (crtc_state->dsc.slice_count > 1)
 		crtc_state->dsc.dsc_split = true;
 
-	vdsc_cfg->convert_rgb = true;
-
 	/* FIXME: initialize from VBT */
 	vdsc_cfg->rc_model_size = DSC_RC_MODEL_SIZE_CONST;
 
@@ -1986,16 +1971,8 @@ static void icl_dsi_add_properties(struct intel_connector *connector)
 {
 	const struct drm_display_mode *fixed_mode =
 		intel_panel_preferred_fixed_mode(connector);
-	u32 allowed_scalers;
 
-	allowed_scalers = BIT(DRM_MODE_SCALE_ASPECT) |
-			   BIT(DRM_MODE_SCALE_FULLSCREEN) |
-			   BIT(DRM_MODE_SCALE_CENTER);
-
-	drm_connector_attach_scaling_mode_property(&connector->base,
-						   allowed_scalers);
-
-	connector->base.state->scaling_mode = DRM_MODE_SCALE_ASPECT;
+	intel_attach_scaling_mode_property(&connector->base);
 
 	drm_connector_set_panel_orientation_with_quirk(&connector->base,
 						       intel_dsi_get_panel_orientation(connector),
@@ -2058,8 +2035,6 @@ void icl_dsi_init(struct drm_i915_private *dev_priv)
 			   DRM_MODE_CONNECTOR_DSI);
 	drm_connector_helper_add(connector, &gen11_dsi_connector_helper_funcs);
 	connector->display_info.subpixel_order = SubPixelHorizontalRGB;
-	connector->interlace_allowed = false;
-	connector->doublescan_allowed = false;
 	intel_connector->get_hw_state = intel_connector_get_hw_state;
 
 	/* attach connector to encoder */

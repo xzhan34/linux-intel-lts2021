@@ -17,6 +17,7 @@
 #include "i915_utils.h"
 #include "intel_engine_types.h"
 #include "intel_sseu.h"
+#include "intel_wakeref.h"
 
 #include "uc/intel_guc_fwif.h"
 
@@ -40,8 +41,9 @@ struct intel_context_ops {
 
 	int (*alloc)(struct intel_context *ce);
 
-	void (*revoke)(struct intel_context *ce, struct i915_request *rq,
-		       unsigned int preempt_timeout_ms);
+	void (*ban)(struct intel_context *ce, struct i915_request *rq);
+
+	void (*close)(struct intel_context *ce);
 
 	int (*pre_pin)(struct intel_context *ce, struct i915_gem_ww_ctx *ww, void **vaddr);
 	int (*pin)(struct intel_context *ce, void *vaddr);
@@ -51,12 +53,14 @@ struct intel_context_ops {
 	void (*cancel_request)(struct intel_context *ce,
 			       struct i915_request *rq);
 
+	struct i915_sw_fence *(*suspend)(struct intel_context *ce,
+					 bool atomic);
+	void (*resume)(struct intel_context *ce);
+
 	void (*enter)(struct intel_context *ce);
 	void (*exit)(struct intel_context *ce);
 
 	void (*sched_disable)(struct intel_context *ce);
-
-	void (*update_stats)(struct intel_context *ce);
 
 	void (*reset)(struct intel_context *ce);
 	void (*destroy)(struct kref *kref);
@@ -68,9 +72,15 @@ struct intel_context_ops {
 	struct intel_context *(*create_parallel)(struct intel_engine_cs **engines,
 						 unsigned int num_siblings,
 						 unsigned int width);
+	struct intel_context *(*clone_virtual)(struct intel_engine_cs *engine);
 	struct intel_engine_cs *(*get_sibling)(struct intel_engine_cs *engine,
 					       unsigned int sibling);
+	int (*attach_bond)(struct intel_engine_cs *engine,
+			   const struct intel_engine_cs *master,
+			   const struct intel_engine_cs *sibling);
 };
+
+struct i915_suspend_fence;
 
 struct intel_context {
 	/*
@@ -95,6 +105,7 @@ struct intel_context {
 
 	struct i915_address_space *vm;
 	struct i915_gem_context __rcu *gem_context;
+	struct i915_drm_client *client;
 
 	/*
 	 * @signal_lock protects the list of requests that need signaling,
@@ -110,6 +121,7 @@ struct intel_context {
 	u32 ring_size;
 	struct intel_ring *ring;
 	struct intel_timeline *timeline;
+	intel_wakeref_t wakeref;
 
 	unsigned long flags;
 #define CONTEXT_BARRIER_BIT		0
@@ -124,8 +136,8 @@ struct intel_context {
 #define CONTEXT_LRCA_DIRTY		9
 #define CONTEXT_GUC_INIT		10
 #define CONTEXT_PERMA_PIN		11
-#define CONTEXT_IS_PARKING		12
-#define CONTEXT_EXITING			13
+#define CONTEXT_DEBUG			12
+#define CONTEXT_RUNALONE		13
 
 	struct {
 		u64 timeout_us;
@@ -141,6 +153,8 @@ struct intel_context {
 	} lrc;
 	u32 tag; /* cookie passed to HW to track this context on submission */
 
+	u64 debugger_lrc_id;
+
 	/** stats: Context GPU engine busyness tracking. */
 	struct intel_context_stats {
 		u64 active;
@@ -150,11 +164,26 @@ struct intel_context {
 			struct ewma_runtime avg;
 			u64 total;
 			u32 last;
-			u64 start_gt_clk;
 			I915_SELFTEST_DECLARE(u32 num_underflow);
 			I915_SELFTEST_DECLARE(u32 max_underflow);
 		} runtime;
 	} stats;
+
+	/**
+	 * @schedule_policy - used to collect some context related scheduling
+	 * parameters.
+	 */
+	struct {
+		u32 preempt_timeout_ms;
+		u32 timeslice_duration_ms;
+
+		/**
+		 * @preempt_disable_count: counts the users of the preemption
+		 * timeout. When it's '0' the default value is taken from the
+		 * engine.props structure.
+		 */
+		atomic_t preempt_disable_count;
+	} schedule_policy;
 
 	unsigned int active_count; /* protected by timeline->mutex */
 
@@ -181,6 +210,7 @@ struct intel_context {
 	struct list_head pinned_contexts_link;
 
 	u8 wa_bb_page; /* if set, page num reserved for context workarounds */
+	struct i915_suspend_fence *sfence;
 
 	struct {
 		/** @lock: protects everything in guc_state */
@@ -200,10 +230,6 @@ struct intel_context {
 		 * context's submissions is complete.
 		 */
 		struct i915_sw_fence blocked;
-		/** @number_committed_requests: number of committed requests */
-		int number_committed_requests;
-		/** @requests: list of active requests on this context */
-		struct list_head requests;
 		/** @prio: the context's current guc priority */
 		u8 prio;
 		/**
@@ -211,6 +237,11 @@ struct intel_context {
 		 * each priority bucket
 		 */
 		u32 prio_count[GUC_CLIENT_PRIORITY_NUM];
+		/**
+		 * @sched_disable_delay_work: worker to disable scheduling on this
+		 * context
+		 */
+		struct delayed_work sched_disable_delay_work;
 	} guc_state;
 
 	struct {

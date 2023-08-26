@@ -5,6 +5,7 @@
 
 config INTEL_PMT_CLASS
 	tristate
+	depends on m
 	help
 	  The Intel Platform Monitoring Technology (PMT) class driver provides
 	  the basic sysfs interface and file hierarchy used by PMT devices.
@@ -17,7 +18,8 @@ config INTEL_PMT_CLASS
 
 config INTEL_PMT_TELEMETRY
 	tristate "Intel Platform Monitoring Technology (PMT) Telemetry driver"
-	depends on MFD_INTEL_PMT
+	depends on m
+	depends on INTEL_VSEC
 	select INTEL_PMT_CLASS
 	help
 	  The Intel Platform Monitory Technology (PMT) Telemetry driver provides
@@ -29,7 +31,8 @@ config INTEL_PMT_TELEMETRY
 
 config INTEL_PMT_CRASHLOG
 	tristate "Intel Platform Monitoring Technology (PMT) Crashlog driver"
-	depends on MFD_INTEL_PMT
+	depends on m
+	depends on INTEL_VSEC
 	select INTEL_PMT_CLASS
 	help
 	  The Intel Platform Monitoring Technology (PMT) crashlog driver provides

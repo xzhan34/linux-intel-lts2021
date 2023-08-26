@@ -211,9 +211,9 @@ static void i830_overlay_clock_gating(struct drm_i915_private *dev_priv,
 
 	/* WA_OVERLAY_CLKGATE:alm */
 	if (enable)
-		intel_de_write(dev_priv, DSPCLK_GATE_D(dev_priv), 0);
+		intel_de_write(dev_priv, DSPCLK_GATE_D, 0);
 	else
-		intel_de_write(dev_priv, DSPCLK_GATE_D(dev_priv),
+		intel_de_write(dev_priv, DSPCLK_GATE_D,
 			       OVRUNIT_CLOCK_GATE_DISABLE);
 
 	/* WA_DISABLE_L2CACHE_CLOCK_GATING:alm */
@@ -487,7 +487,7 @@ static int intel_overlay_release_old_vid(struct intel_overlay *overlay)
 
 void intel_overlay_reset(struct drm_i915_private *dev_priv)
 {
-	struct intel_overlay *overlay = dev_priv->display.overlay;
+	struct intel_overlay *overlay = dev_priv->overlay;
 
 	if (!overlay)
 		return;
@@ -760,6 +760,7 @@ static u32 overlay_cmd_reg(struct drm_intel_overlay_put_image *params)
 static struct i915_vma *intel_overlay_pin_fb(struct drm_i915_gem_object *new_bo)
 {
 	struct i915_gem_ww_ctx ww;
+	struct i915_ggtt *ggtt = to_gt(to_i915(new_bo->base.dev))->ggtt;
 	struct i915_vma *vma;
 	int ret;
 
@@ -767,8 +768,9 @@ static struct i915_vma *intel_overlay_pin_fb(struct drm_i915_gem_object *new_bo)
 retry:
 	ret = i915_gem_object_lock(new_bo, &ww);
 	if (!ret) {
-		vma = i915_gem_object_pin_to_display_plane(new_bo, &ww, 0,
-							   NULL, PIN_MAPPABLE);
+		vma = i915_gem_object_pin_to_display_plane(new_bo, &ww,
+							   ggtt, NULL, 0,
+							   PIN_MAPPABLE);
 		ret = PTR_ERR_OR_ZERO(vma);
 	}
 	if (ret == -EDEADLK) {
@@ -1113,7 +1115,7 @@ int intel_overlay_put_image_ioctl(struct drm_device *dev, void *data,
 	struct drm_i915_gem_object *new_bo;
 	int ret;
 
-	overlay = dev_priv->display.overlay;
+	overlay = dev_priv->overlay;
 	if (!overlay) {
 		drm_dbg(&dev_priv->drm, "userspace bug: no overlay\n");
 		return -ENODEV;
@@ -1273,7 +1275,7 @@ int intel_overlay_attrs_ioctl(struct drm_device *dev, void *data,
 	struct intel_overlay *overlay;
 	int ret;
 
-	overlay = dev_priv->display.overlay;
+	overlay = dev_priv->overlay;
 	if (!overlay) {
 		drm_dbg(&dev_priv->drm, "userspace bug: no overlay\n");
 		return -ENODEV;
@@ -1344,6 +1346,7 @@ out_unlock:
 static int get_registers(struct intel_overlay *overlay, bool use_phys)
 {
 	struct drm_i915_private *i915 = overlay->i915;
+	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
 	int err;
@@ -1354,7 +1357,7 @@ static int get_registers(struct intel_overlay *overlay, bool use_phys)
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, PIN_MAPPABLE);
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0, PIN_MAPPABLE);
 	if (IS_ERR(vma)) {
 		err = PTR_ERR(vma);
 		goto err_put_bo;
@@ -1416,7 +1419,7 @@ void intel_overlay_setup(struct drm_i915_private *dev_priv)
 	update_polyphase_filter(overlay->regs);
 	update_reg_attrs(overlay, overlay->regs);
 
-	dev_priv->display.overlay = overlay;
+	dev_priv->overlay = overlay;
 	drm_info(&dev_priv->drm, "Initialized overlay support.\n");
 	return;
 
@@ -1428,7 +1431,7 @@ void intel_overlay_cleanup(struct drm_i915_private *dev_priv)
 {
 	struct intel_overlay *overlay;
 
-	overlay = fetch_and_zero(&dev_priv->display.overlay);
+	overlay = fetch_and_zero(&dev_priv->overlay);
 	if (!overlay)
 		return;
 
@@ -1457,7 +1460,7 @@ struct intel_overlay_error_state {
 struct intel_overlay_error_state *
 intel_overlay_capture_error_state(struct drm_i915_private *dev_priv)
 {
-	struct intel_overlay *overlay = dev_priv->display.overlay;
+	struct intel_overlay *overlay = dev_priv->overlay;
 	struct intel_overlay_error_state *error;
 
 	if (!overlay || !overlay->active)

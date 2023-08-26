@@ -58,7 +58,7 @@ static int populate_ggtt(struct i915_ggtt *ggtt, struct list_head *objects)
 		if (IS_ERR(obj))
 			return PTR_ERR(obj);
 
-		vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, 0);
+		vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0, 0);
 		if (IS_ERR(vma)) {
 			i915_gem_object_put(obj);
 			if (vma == ERR_PTR(-ENOSPC))
@@ -118,7 +118,7 @@ static int igt_evict_something(void *arg)
 
 	/* Everything is pinned, nothing should happen */
 	mutex_lock(&ggtt->vm.mutex);
-	err = i915_gem_evict_something(&ggtt->vm, NULL,
+	err = i915_gem_evict_something(&ggtt->vm,
 				       I915_GTT_PAGE_SIZE, 0, 0,
 				       0, U64_MAX,
 				       0);
@@ -133,7 +133,7 @@ static int igt_evict_something(void *arg)
 
 	/* Everything is unpinned, we should be able to evict something */
 	mutex_lock(&ggtt->vm.mutex);
-	err = i915_gem_evict_something(&ggtt->vm, NULL,
+	err = i915_gem_evict_something(&ggtt->vm,
 				       I915_GTT_PAGE_SIZE, 0, 0,
 				       0, U64_MAX,
 				       0);
@@ -174,7 +174,7 @@ static int igt_overcommit(void *arg)
 
 	quirk_add(obj, &objects);
 
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, 0);
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0, 0);
 	if (vma != ERR_PTR(-ENOSPC)) {
 		pr_err("Failed to evict+insert, i915_gem_object_ggtt_pin returned err=%d\n", (int)PTR_ERR_OR_ZERO(vma));
 		err = -EINVAL;
@@ -205,7 +205,7 @@ static int igt_evict_for_vma(void *arg)
 
 	/* Everything is pinned, nothing should happen */
 	mutex_lock(&ggtt->vm.mutex);
-	err = i915_gem_evict_for_node(&ggtt->vm, NULL, &target, 0);
+	err = i915_gem_evict_for_node(&ggtt->vm, &target, 0);
 	mutex_unlock(&ggtt->vm.mutex);
 	if (err != -ENOSPC) {
 		pr_err("i915_gem_evict_for_node on a full GGTT returned err=%d\n",
@@ -217,7 +217,7 @@ static int igt_evict_for_vma(void *arg)
 
 	/* Everything is unpinned, we should be able to evict the node */
 	mutex_lock(&ggtt->vm.mutex);
-	err = i915_gem_evict_for_node(&ggtt->vm, NULL, &target, 0);
+	err = i915_gem_evict_for_node(&ggtt->vm, &target, 0);
 	mutex_unlock(&ggtt->vm.mutex);
 	if (err) {
 		pr_err("i915_gem_evict_for_node returned err=%d\n",
@@ -245,7 +245,7 @@ static int igt_evict_for_cache_color(void *arg)
 	struct drm_mm_node target = {
 		.start = I915_GTT_PAGE_SIZE * 2,
 		.size = I915_GTT_PAGE_SIZE,
-		.color = I915_CACHE_LLC,
+		.color = i915_gem_get_pat_index(gt->i915, I915_CACHE_LLC),
 	};
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
@@ -269,7 +269,7 @@ static int igt_evict_for_cache_color(void *arg)
 	i915_gem_object_set_cache_coherency(obj, I915_CACHE_LLC);
 	quirk_add(obj, &objects);
 
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0,
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0,
 				       I915_GTT_PAGE_SIZE | flags);
 	if (IS_ERR(vma)) {
 		pr_err("[0]i915_gem_object_ggtt_pin failed\n");
@@ -286,7 +286,7 @@ static int igt_evict_for_cache_color(void *arg)
 	quirk_add(obj, &objects);
 
 	/* Neighbouring; same colour - should fit */
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0,
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0,
 				       (I915_GTT_PAGE_SIZE * 2) | flags);
 	if (IS_ERR(vma)) {
 		pr_err("[1]i915_gem_object_ggtt_pin failed\n");
@@ -298,7 +298,7 @@ static int igt_evict_for_cache_color(void *arg)
 
 	/* Remove just the second vma */
 	mutex_lock(&ggtt->vm.mutex);
-	err = i915_gem_evict_for_node(&ggtt->vm, NULL, &target, 0);
+	err = i915_gem_evict_for_node(&ggtt->vm, &target, 0);
 	mutex_unlock(&ggtt->vm.mutex);
 	if (err) {
 		pr_err("[0]i915_gem_evict_for_node returned err=%d\n", err);
@@ -308,10 +308,10 @@ static int igt_evict_for_cache_color(void *arg)
 	/* Attempt to remove the first *pinned* vma, by removing the (empty)
 	 * neighbour -- this should fail.
 	 */
-	target.color = I915_CACHE_L3_LLC;
+	target.color = i915_gem_get_pat_index(gt->i915, I915_CACHE_L3_LLC);
 
 	mutex_lock(&ggtt->vm.mutex);
-	err = i915_gem_evict_for_node(&ggtt->vm, NULL, &target, 0);
+	err = i915_gem_evict_for_node(&ggtt->vm, &target, 0);
 	mutex_unlock(&ggtt->vm.mutex);
 	if (!err) {
 		pr_err("[1]i915_gem_evict_for_node returned err=%d\n", err);
@@ -332,7 +332,6 @@ static int igt_evict_vm(void *arg)
 {
 	struct intel_gt *gt = arg;
 	struct i915_ggtt *ggtt = gt->ggtt;
-	struct i915_gem_ww_ctx ww;
 	LIST_HEAD(objects);
 	int err;
 
@@ -344,7 +343,7 @@ static int igt_evict_vm(void *arg)
 
 	/* Everything is pinned, nothing should happen */
 	mutex_lock(&ggtt->vm.mutex);
-	err = i915_gem_evict_vm(&ggtt->vm, NULL);
+	err = i915_gem_evict_vm(&ggtt->vm);
 	mutex_unlock(&ggtt->vm.mutex);
 	if (err) {
 		pr_err("i915_gem_evict_vm on a full GGTT returned err=%d]\n",
@@ -354,12 +353,9 @@ static int igt_evict_vm(void *arg)
 
 	unpin_ggtt(ggtt);
 
-	for_i915_gem_ww(&ww, err, false) {
-		mutex_lock(&ggtt->vm.mutex);
-		err = i915_gem_evict_vm(&ggtt->vm, &ww);
-		mutex_unlock(&ggtt->vm.mutex);
-	}
-
+	mutex_lock(&ggtt->vm.mutex);
+	err = i915_gem_evict_vm(&ggtt->vm);
+	mutex_unlock(&ggtt->vm.mutex);
 	if (err) {
 		pr_err("i915_gem_evict_vm on a full GGTT returned err=%d]\n",
 		       err);
@@ -407,7 +403,7 @@ static int igt_evict_contexts(void *arg)
 	/* Reserve a block so that we know we have enough to fit a few rq */
 	memset(&hole, 0, sizeof(hole));
 	mutex_lock(&ggtt->vm.mutex);
-	err = i915_gem_gtt_insert(&ggtt->vm, NULL, &hole,
+	err = i915_gem_gtt_insert(&ggtt->vm, &hole,
 				  PRETEND_GGTT_SIZE, 0, I915_COLOR_UNEVICTABLE,
 				  0, ggtt->vm.total,
 				  PIN_NOEVICT);
@@ -427,7 +423,7 @@ static int igt_evict_contexts(void *arg)
 			goto out_locked;
 		}
 
-		if (i915_gem_gtt_insert(&ggtt->vm, NULL, &r->node,
+		if (i915_gem_gtt_insert(&ggtt->vm, &r->node,
 					1ul << 20, 0, I915_COLOR_UNEVICTABLE,
 					0, ggtt->vm.total,
 					PIN_NOEVICT)) {

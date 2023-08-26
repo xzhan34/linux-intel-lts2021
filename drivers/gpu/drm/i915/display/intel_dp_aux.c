@@ -42,7 +42,7 @@ intel_dp_aux_wait_done(struct intel_dp *intel_dp)
 	bool done;
 
 #define C (((status = intel_uncore_read_notrace(&i915->uncore, ch_ctl)) & DP_AUX_CH_CTL_SEND_BUSY) == 0)
-	done = wait_event_timeout(i915->display.gmbus.wait_queue, C,
+	done = wait_event_timeout(i915->gmbus_wait_queue, C,
 				  msecs_to_jiffies_timeout(timeout_ms));
 
 	/* just trace the final value */
@@ -86,7 +86,7 @@ static u32 ilk_get_aux_clock_divider(struct intel_dp *intel_dp, int index)
 	 * divide by 2000 and use that
 	 */
 	if (dig_port->aux_ch == AUX_CH_A)
-		freq = dev_priv->display.cdclk.hw.cdclk;
+		freq = dev_priv->cdclk.hw.cdclk;
 	else
 		freq = RUNTIME_INFO(dev_priv)->rawclk_freq;
 	return DIV_ROUND_CLOSEST(freq, 2000);
@@ -119,32 +119,6 @@ static u32 skl_get_aux_clock_divider(struct intel_dp *intel_dp, int index)
 	return index ? 0 : 1;
 }
 
-static int intel_dp_aux_sync_len(void)
-{
-	int precharge = 16; /* 10-16 */
-	int preamble = 16;
-
-	return precharge + preamble;
-}
-
-static int intel_dp_aux_fw_sync_len(void)
-{
-	int precharge = 10; /* 10-16 */
-	int preamble = 8;
-
-	return precharge + preamble;
-}
-
-static int g4x_dp_aux_precharge_len(void)
-{
-	int precharge_min = 10;
-	int preamble = 16;
-
-	/* HW wants the length of the extra precharge in 2us units */
-	return (intel_dp_aux_sync_len() -
-		precharge_min - preamble) / 2;
-}
-
 static u32 g4x_get_aux_send_ctl(struct intel_dp *intel_dp,
 				int send_bytes,
 				u32 aux_clock_divider)
@@ -167,7 +141,7 @@ static u32 g4x_get_aux_send_ctl(struct intel_dp *intel_dp,
 	       timeout |
 	       DP_AUX_CH_CTL_RECEIVE_ERROR |
 	       (send_bytes << DP_AUX_CH_CTL_MESSAGE_SIZE_SHIFT) |
-	       (g4x_dp_aux_precharge_len() << DP_AUX_CH_CTL_PRECHARGE_2US_SHIFT) |
+	       (3 << DP_AUX_CH_CTL_PRECHARGE_2US_SHIFT) |
 	       (aux_clock_divider << DP_AUX_CH_CTL_BIT_CLOCK_2X_SHIFT);
 }
 
@@ -191,8 +165,8 @@ static u32 skl_get_aux_send_ctl(struct intel_dp *intel_dp,
 	      DP_AUX_CH_CTL_TIME_OUT_MAX |
 	      DP_AUX_CH_CTL_RECEIVE_ERROR |
 	      (send_bytes << DP_AUX_CH_CTL_MESSAGE_SIZE_SHIFT) |
-	      DP_AUX_CH_CTL_FW_SYNC_PULSE_SKL(intel_dp_aux_fw_sync_len()) |
-	      DP_AUX_CH_CTL_SYNC_PULSE_SKL(intel_dp_aux_sync_len());
+	      DP_AUX_CH_CTL_FW_SYNC_PULSE_SKL(32) |
+	      DP_AUX_CH_CTL_SYNC_PULSE_SKL(32);
 
 	if (intel_tc_port_in_tbt_alt_mode(dig_port))
 		ret |= DP_AUX_CH_CTL_TBT_IO;

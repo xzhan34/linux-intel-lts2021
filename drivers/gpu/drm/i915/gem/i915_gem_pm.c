@@ -4,14 +4,15 @@
  * Copyright © 2019 Intel Corporation
  */
 
+#include "gem/i915_gem_context.h"
 #include "gem/i915_gem_pm.h"
-#include "gem/i915_gem_ttm_pm.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_gt_requests.h"
 
 #include "i915_driver.h"
 #include "i915_drv.h"
+#include "i915_gem_evict.h"
 
 #if defined(CONFIG_X86)
 #include <asm/smp.h>
@@ -20,12 +21,167 @@
 	pr_warn(DRIVER_NAME ": Missing cache flush in %s\n", __func__)
 #endif
 
+static int perma_pinned_swapout(struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_private *i915 = to_i915(obj->base.dev);
+	struct drm_i915_gem_object *dst;
+	int err = -EINVAL;
+
+	assert_object_held(obj);
+	dst = i915_gem_object_create_shmem(i915, obj->base.size);
+	if (IS_ERR(dst))
+		return PTR_ERR(dst);
+
+	/* Temporarily borrow the lock */
+	dst->base.resv = obj->base.resv;
+
+	err = i915_gem_object_memcpy(dst, obj);
+	if (!err)
+		obj->swapto = dst;
+	else
+		i915_gem_object_put(dst);
+
+	return err;
+}
+
+static int perma_pinned_swapin(struct drm_i915_gem_object *obj)
+{
+	struct drm_i915_gem_object *src;
+	int err = -EINVAL;
+
+	assert_object_held(obj);
+	src = obj->swapto;
+
+	err = i915_gem_object_memcpy(obj, src);
+	if (!err) {
+		obj->swapto = NULL;
+		i915_gem_object_put(src);
+	}
+
+	return err;
+}
+
+static int lmem_suspend(struct drm_i915_private *i915)
+{
+	struct intel_memory_region *mem;
+	int id;
+
+	if (i915->quiesce_gpu)
+		return 0;
+
+	for_each_memory_region(mem, i915, id) {
+		struct drm_i915_gem_object *obj;
+		struct list_head *phases[] = {
+			&mem->objects.purgeable,
+			&mem->objects.list,
+			NULL,
+		}, **phase = phases;
+
+		if (mem->type != INTEL_MEMORY_LOCAL)
+			continue;
+
+		/* singlethreaded suspend; list immutable */
+		do list_for_each_entry(obj, *phase, mm.region.link) {
+			int err;
+
+			if (!i915_gem_object_has_pinned_pages(obj))
+				continue;
+
+			/* Skip dead objects, let their pages rot */
+			if (!kref_get_unless_zero(&obj->base.refcount))
+				continue;
+
+			i915_gem_object_lock(obj, NULL);
+			err = perma_pinned_swapout(obj);
+			i915_gem_object_unlock(obj);
+
+			i915_gem_object_put(obj);
+			if (err)
+				return err;
+		} while (*++phase);
+	}
+
+	return 0;
+}
+
+static int lmem_resume(struct drm_i915_private *i915)
+{
+	struct intel_memory_region *mem;
+	int id;
+
+	for_each_memory_region(mem, i915, id) {
+		struct drm_i915_gem_object *obj;
+		struct list_head *phases[] = {
+			&mem->objects.purgeable,
+			&mem->objects.list,
+			NULL,
+		}, **phase = phases;
+
+		if (mem->type != INTEL_MEMORY_LOCAL)
+			continue;
+
+		/* singlethreaded resume; list immutable */
+		do list_for_each_entry(obj, *phase, mm.region.link) {
+			int err;
+
+			if (!obj->swapto ||
+			    !i915_gem_object_has_pinned_pages(obj))
+				continue;
+
+			if (!kref_get_unless_zero(&obj->base.refcount))
+				continue;
+
+			i915_gem_object_lock(obj, NULL);
+			err = perma_pinned_swapin(obj);
+			i915_gem_object_unlock(obj);
+
+			i915_gem_object_put(obj);
+			if (err)
+				return err;
+		} while (*++phase);
+	}
+
+	return 0;
+}
+
+static void suspend_ppgtt_mappings(struct drm_i915_private *i915)
+{
+	struct i915_gem_context *ctx;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(ctx, &i915->gem.contexts.list, link) {
+		struct i915_address_space *vm;
+
+		if (!kref_get_unless_zero(&ctx->ref))
+			continue;
+		rcu_read_unlock();
+
+		vm = i915_gem_context_get_eb_vm(ctx);
+		if (vm) {
+			mutex_lock(&vm->mutex);
+			GEM_WARN_ON(i915_gem_evict_vm(vm));
+			mutex_unlock(&vm->mutex);
+
+			i915_vm_put(vm);
+		}
+
+		rcu_read_lock();
+		i915_gem_context_put(ctx);
+	}
+	rcu_read_unlock();
+}
+
 void i915_gem_suspend(struct drm_i915_private *i915)
 {
+	struct intel_gt *gt;
+	unsigned int i;
+
 	GEM_TRACE("%s\n", dev_name(i915->drm.dev));
 
-	intel_wakeref_auto(&to_gt(i915)->userfault_wakeref, 0);
+	intel_wakeref_auto(&to_gt(i915)->ggtt->userfault_wakeref, 0);
 	flush_workqueue(i915->wq);
+
+	i915_sriov_suspend_prepare(i915);
 
 	/*
 	 * We have to flush all the executing contexts to main memory so
@@ -36,94 +192,15 @@ void i915_gem_suspend(struct drm_i915_private *i915)
 	 * state. Fortunately, the kernel_context is disposable and we do
 	 * not rely on its state.
 	 */
-	intel_gt_suspend_prepare(to_gt(i915));
+	for_each_gt(gt, i915, i)
+		intel_gt_suspend_prepare(gt);
+
+	suspend_ppgtt_mappings(i915);
 
 	i915_gem_drain_freed_objects(i915);
 }
 
-static int lmem_restore(struct drm_i915_private *i915, u32 flags)
-{
-	struct intel_memory_region *mr;
-	int ret = 0, id;
-
-	for_each_memory_region(mr, i915, id) {
-		if (mr->type == INTEL_MEMORY_LOCAL) {
-			ret = i915_ttm_restore_region(mr, flags);
-			if (ret)
-				break;
-		}
-	}
-
-	return ret;
-}
-
-static int lmem_suspend(struct drm_i915_private *i915, u32 flags)
-{
-	struct intel_memory_region *mr;
-	int ret = 0, id;
-
-	for_each_memory_region(mr, i915, id) {
-		if (mr->type == INTEL_MEMORY_LOCAL) {
-			ret = i915_ttm_backup_region(mr, flags);
-			if (ret)
-				break;
-		}
-	}
-
-	return ret;
-}
-
-static void lmem_recover(struct drm_i915_private *i915)
-{
-	struct intel_memory_region *mr;
-	int id;
-
-	for_each_memory_region(mr, i915, id)
-		if (mr->type == INTEL_MEMORY_LOCAL)
-			i915_ttm_recover_region(mr);
-}
-
-int i915_gem_backup_suspend(struct drm_i915_private *i915)
-{
-	int ret;
-
-	/* Opportunistically try to evict unpinned objects */
-	ret = lmem_suspend(i915, I915_TTM_BACKUP_ALLOW_GPU);
-	if (ret)
-		goto out_recover;
-
-	i915_gem_suspend(i915);
-
-	/*
-	 * More objects may have become unpinned as requests were
-	 * retired. Now try to evict again. The gt may be wedged here
-	 * in which case we automatically fall back to memcpy.
-	 * We allow also backing up pinned objects that have not been
-	 * marked for early recover, and that may contain, for example,
-	 * page-tables for the migrate context.
-	 */
-	ret = lmem_suspend(i915, I915_TTM_BACKUP_ALLOW_GPU |
-			   I915_TTM_BACKUP_PINNED);
-	if (ret)
-		goto out_recover;
-
-	/*
-	 * Remaining objects are backed up using memcpy once we've stopped
-	 * using the migrate context.
-	 */
-	ret = lmem_suspend(i915, I915_TTM_BACKUP_PINNED);
-	if (ret)
-		goto out_recover;
-
-	return 0;
-
-out_recover:
-	lmem_recover(i915);
-
-	return ret;
-}
-
-void i915_gem_suspend_late(struct drm_i915_private *i915)
+int i915_gem_suspend_late(struct drm_i915_private *i915)
 {
 	struct drm_i915_gem_object *obj;
 	struct list_head *phases[] = {
@@ -131,8 +208,11 @@ void i915_gem_suspend_late(struct drm_i915_private *i915)
 		&i915->mm.purge_list,
 		NULL
 	}, **phase;
+	struct intel_gt *gt;
 	unsigned long flags;
+	unsigned int i;
 	bool flush = false;
+	int err;
 
 	/*
 	 * Neither the BIOS, ourselves or any other kernel
@@ -154,7 +234,13 @@ void i915_gem_suspend_late(struct drm_i915_private *i915)
 	 * machine in an unusable condition.
 	 */
 
-	intel_gt_suspend_late(to_gt(i915));
+	for_each_gt(gt, i915, i)
+		intel_gt_suspend_late(gt);
+
+	/* Swapout all the residual objects _after_ idling the firmware */
+	err = lmem_suspend(i915);
+	if (err)
+		return err;
 
 	spin_lock_irqsave(&i915->mm.obj_lock, flags);
 	for (phase = phases; *phase; phase++) {
@@ -167,6 +253,8 @@ void i915_gem_suspend_late(struct drm_i915_private *i915)
 	spin_unlock_irqrestore(&i915->mm.obj_lock, flags);
 	if (flush)
 		wbinvd_on_all_cpus();
+
+	return 0;
 }
 
 int i915_gem_freeze(struct drm_i915_private *i915)
@@ -210,22 +298,102 @@ int i915_gem_freeze_late(struct drm_i915_private *i915)
 	return 0;
 }
 
-void i915_gem_resume(struct drm_i915_private *i915)
+void i915_gem_resume_early(struct drm_i915_private *i915)
 {
-	int ret;
+	struct intel_gt *gt;
+	unsigned int i;
 
 	GEM_TRACE("%s\n", dev_name(i915->drm.dev));
 
-	ret = lmem_restore(i915, 0);
-	GEM_WARN_ON(ret);
+	if (lmem_resume(i915))
+		drm_err(&i915->drm,
+			"failed to restore pinned objects in local memory\n");
+
+	for_each_gt(gt, i915, i)
+		intel_gt_resume_early(gt);
+}
+
+void i915_gem_resume(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	int i, j;
+
+	GEM_TRACE("%s\n", dev_name(i915->drm.dev));
 
 	/*
 	 * As we didn't flush the kernel context before suspend, we cannot
 	 * guarantee that the context image is complete. So let's just reset
 	 * it and start again.
 	 */
-	intel_gt_resume(to_gt(i915));
+	for_each_gt(gt, i915, i) {
+		if (intel_gt_resume(gt))
+			goto err_wedged;
 
-	ret = lmem_restore(i915, I915_TTM_BACKUP_ALLOW_GPU);
-	GEM_WARN_ON(ret);
+		/*
+		 * FIXME: this should be moved to a delayed work because it
+		 * takes too long, but for now we're doing it here as this is
+		 * the easiest place to put it without doing throw-away work.
+		 */
+		intel_uc_init_hw_late(&gt->uc);
+	}
+
+	i915_sriov_resume(i915);
+
+	return;
+
+err_wedged:
+	for_each_gt(gt, i915, j) {
+		if (!intel_gt_is_wedged(gt)) {
+			dev_err(i915->drm.dev,
+				"Failed to re-initialize GPU[%u], declaring it wedged!\n",
+				j);
+			intel_gt_set_wedged(gt);
+		}
+
+		if (j == i)
+			break;
+	}
+}
+
+int i915_gem_idle_engines(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int i;
+	int ret = 0;
+
+	if (!i915_is_mem_wa_enabled(i915, I915_WA_IDLE_GPU_BEFORE_UPDATE))
+		return 0;
+
+	/* Disable scheduling on engines */
+	for_each_gt(gt, i915, i) {
+		ret = intel_gt_idle_engines_start(gt, false);
+		if (ret)
+			break;
+	}
+
+	if (!ret) {
+		for_each_gt(gt, i915, i)
+			intel_gt_idle_engines_wait(gt);
+	}
+
+	return ret;
+}
+
+int i915_gem_resume_engines(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int i;
+	int ret = 0;
+
+	if (!i915_is_mem_wa_enabled(i915, I915_WA_IDLE_GPU_BEFORE_UPDATE))
+		return 0;
+
+	/* Enable scheduling on engines */
+	for_each_gt(gt, i915, i) {
+		ret = intel_gt_idle_engines_start(gt, true);
+		if (ret)
+			break;
+	}
+
+	return ret;
 }

@@ -101,6 +101,18 @@ static int vf_handshake_with_guc(struct intel_iov *iov)
 	if (unlikely(err))
 		goto fail;
 
+	/* XXX we don't support interface version change */
+	if ((iov->vf.config.guc_abi.major || iov->vf.config.guc_abi.major) &&
+	    (iov->vf.config.guc_abi.branch != branch ||
+	     iov->vf.config.guc_abi.major != major ||
+	     iov->vf.config.guc_abi.minor != minor)) {
+		IOV_ERROR(iov, "Unexpected interface version change: %u.%u.%u.%u != %u.%u.%u.%u\n",
+			  branch, major, minor, patch,
+			  iov->vf.config.guc_abi.branch, iov->vf.config.guc_abi.major,
+			  iov->vf.config.guc_abi.minor, iov->vf.config.guc_abi.patch);
+		return -EREMCHG;
+	}
+
 	/* XXX we only support one version, there must be a match */
 	if (major != GUC_VF_VERSION_LATEST_MAJOR || minor != GUC_VF_VERSION_LATEST_MINOR)
 		goto fail;
@@ -109,7 +121,10 @@ static int vf_handshake_with_guc(struct intel_iov *iov)
 		 intel_uc_fw_type_repr(guc->fw.type),
 		 branch, major, minor, patch);
 
-	intel_uc_fw_set_preloaded(&guc->fw, major, minor);
+	iov->vf.config.guc_abi.branch = branch;
+	iov->vf.config.guc_abi.major = major;
+	iov->vf.config.guc_abi.minor = minor;
+	iov->vf.config.guc_abi.patch = patch;
 	return 0;
 
 fail:
@@ -220,6 +235,37 @@ static int guc_action_query_single_klv64(struct intel_guc *guc, u32 key, u64 *va
 	return 0;
 }
 
+static int vf_get_tiles(struct intel_iov *iov)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	u32 tile_mask;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+	GEM_BUG_ON(!iov_is_root(iov));
+
+	err = guc_action_query_single_klv32(guc, GUC_KLV_VF_CFG_TILE_MASK_KEY, &tile_mask);
+	if (unlikely(err))
+		return err;
+
+	if (!tile_mask) {
+		IOV_ERROR(iov, "Invalid GT assignment: %#x\n", tile_mask);
+		return -ENODATA;
+	}
+
+	IOV_DEBUG(iov, "tile mask %#x\n", tile_mask);
+
+	if (iov->vf.config.tile_mask && iov->vf.config.tile_mask != tile_mask) {
+		IOV_ERROR(iov, "Unexpected GT reassignment: %#x != %#x\n",
+			  tile_mask, iov->vf.config.tile_mask);
+		return -EREMCHG;
+	}
+
+	iov->vf.config.tile_mask = tile_mask;
+
+	return 0;
+}
+
 static int vf_get_ggtt_info(struct intel_iov *iov)
 {
 	struct intel_guc *guc = iov_to_guc(iov);
@@ -249,6 +295,31 @@ static int vf_get_ggtt_info(struct intel_iov *iov)
 	iov->vf.config.ggtt_size = size;
 
 	return iov->vf.config.ggtt_size ? 0 : -ENODATA;
+}
+
+static int vf_get_lmem_info(struct intel_iov *iov)
+{
+	struct intel_guc *guc = iov_to_guc(iov);
+	u64 size;
+	int err;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	err = guc_action_query_single_klv64(guc, GUC_KLV_VF_CFG_LMEM_SIZE_KEY, &size);
+	if (unlikely(err))
+		return err;
+
+	IOV_DEBUG(iov, "LMEM %lluM\n", size / SZ_1M);
+
+	if (iov->vf.config.lmem_size && iov->vf.config.lmem_size != size) {
+		IOV_ERROR(iov, "Unexpected LMEM reassignment: %lluM != %lluM\n",
+			  size / SZ_1M, iov->vf.config.lmem_size / SZ_1M);
+		return -EREMCHG;
+	}
+
+	iov->vf.config.lmem_size = size;
+
+	return iov->vf.config.lmem_size ? 0 : -ENODATA;
 }
 
 static int vf_get_submission_cfg(struct intel_iov *iov)
@@ -286,6 +357,16 @@ static int vf_get_submission_cfg(struct intel_iov *iov)
 	return iov->vf.config.num_ctxs ? 0 : -ENODATA;
 }
 
+static bool vf_in_tile_mask(struct intel_iov *iov)
+{
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	if (!HAS_REMOTE_TILES(iov_to_i915(iov)))
+		return true;
+
+	return iov_get_root(iov)->vf.config.tile_mask & BIT(iov_to_gt(iov)->info.id);
+}
+
 /**
  * intel_iov_query_config - Query IOV config data over MMIO.
  * @iov: the IOV struct
@@ -300,9 +381,25 @@ int intel_iov_query_config(struct intel_iov *iov)
 
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
 
+	if (HAS_REMOTE_TILES(iov_to_i915(iov)) && iov_is_root(iov)) {
+		err = vf_get_tiles(iov);
+		if (unlikely(err))
+			return err;
+
+		if (!vf_in_tile_mask(iov))
+			return 0;
+	}
+
+
 	err = vf_get_ggtt_info(iov);
 	if (unlikely(err))
 		return err;
+
+	if (HAS_LMEM(iov_to_i915(iov))) {
+		err = vf_get_lmem_info(iov);
+		if (unlikely(err))
+			return err;
+	}
 
 	err = vf_get_submission_cfg(iov);
 	if (unlikely(err))
@@ -398,6 +495,57 @@ static const i915_reg_t tgl_early_regs[] = {
 	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
 	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
 	CTC_MODE,			/* _MMIO(0xA26C) */
+	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
+};
+
+static const i915_reg_t xehpsdv_early_regs[] = {
+	RPM_CONFIG0,			/* _MMIO(0x0D00) */
+	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */
+	HSW_PAVP_FUSE1,			/* _MMIO(0x911C) */
+	XEHP_EU_ENABLE,			/* _MMIO(0x9134) */
+	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
+	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
+	GEN12_GT_COMPUTE_DSS_ENABLE,	/* _MMIO(0x9144) */
+	CTC_MODE,			/* _MMIO(0xA26C) */
+};
+
+static const i915_reg_t dg2_early_regs[] = {
+	RPM_CONFIG0,			/* _MMIO(0x0D00) */
+	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */
+	HSW_PAVP_FUSE1,			/* _MMIO(0x911C) */
+	XEHP_EU_ENABLE,			/* _MMIO(0x9134) */
+	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
+	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
+	GEN12_GT_COMPUTE_DSS_ENABLE,	/* _MMIO(0x9144) */
+	CTC_MODE,			/* _MMIO(0xA26C) */
+	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
+};
+
+static const i915_reg_t pvc_early_regs[] = {
+	RPM_CONFIG0,			/* _MMIO(0x0D00) */
+	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */
+	XEHP_EU_ENABLE,			/* _MMIO(0x9134) */
+	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
+	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
+	GEN12_GT_COMPUTE_DSS_ENABLE,	/* _MMIO(0x9144) */
+	XEHPC_GT_COMPUTE_DSS_ENABLE_EXT,/* _MMIO(0x9148) */
+	CTC_MODE,			/* _MMIO(0xA26C) */
+	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
+};
+
+static const i915_reg_t mtl_early_regs[] = {
+	RPM_CONFIG0,			/* _MMIO(0x0D00) */
+	XEHP_FUSE4,			/* _MMIO(0x9114) */
+	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */
+	HSW_PAVP_FUSE1,			/* _MMIO(0x911C) */
+	XEHP_EU_ENABLE,			/* _MMIO(0x9134) */
+	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
+	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
+	GEN12_GT_COMPUTE_DSS_ENABLE,	/* _MMIO(0x9144) */
+	XEHPC_GT_COMPUTE_DSS_ENABLE_EXT,/* _MMIO(0x9148) */
+	CTC_MODE,			/* _MMIO(0xA26C) */
+	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
+	MTL_GT_ACTIVITY_FACTOR,		/* _MMIO(0x138010) */
 };
 
 static const i915_reg_t *get_early_regs(struct drm_i915_private *i915,
@@ -405,7 +553,19 @@ static const i915_reg_t *get_early_regs(struct drm_i915_private *i915,
 {
 	const i915_reg_t *regs;
 
-	if (IS_TIGERLAKE(i915) || IS_ALDERLAKE_S(i915) || IS_ALDERLAKE_P(i915)) {
+	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 70)) {
+		regs = mtl_early_regs;
+		*size = ARRAY_SIZE(mtl_early_regs);
+	} else if (IS_PONTEVECCHIO(i915)) {
+		regs = pvc_early_regs;
+		*size = ARRAY_SIZE(pvc_early_regs);
+	} else if (IS_DG2(i915)) {
+		regs = dg2_early_regs;
+		*size = ARRAY_SIZE(dg2_early_regs);
+	} else if (IS_XEHPSDV(i915)) {
+		regs = xehpsdv_early_regs;
+		*size = ARRAY_SIZE(xehpsdv_early_regs);
+	} else if (IS_TIGERLAKE(i915) || IS_ALDERLAKE_S(i915) || IS_ALDERLAKE_P(i915)) {
 		regs = tgl_early_regs;
 		*size = ARRAY_SIZE(tgl_early_regs);
 	} else {
@@ -452,7 +612,7 @@ static void vf_show_runtime_info(struct intel_iov *iov)
 
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
 
-	for (; size--; vf_regs++) {
+	for (;size--; vf_regs++) {
 		IOV_DEBUG(iov, "RUNTIME reg[%#x] = %#x\n",
 			  vf_regs->offset, vf_regs->value);
 	}
@@ -578,7 +738,7 @@ static int vf_get_runtime_info_mmio(struct intel_iov *iov)
 			request[1 + n] = vf_regs[i + n].offset;
 
 		/* we will use few bits from crc32 as magic */
-		u32p_replace_bits(request, crc32_le(0, (void *)request, sizeof(request)),
+		u32p_replace_bits(request, crc32_le(0, (void*)request, sizeof(request)),
 				  VF2GUC_MMIO_RELAY_SERVICE_REQUEST_MSG_0_MAGIC);
 
 		ret = guc_send_mmio_relay(iov_to_guc(iov), request, ARRAY_SIZE(request),
@@ -689,6 +849,9 @@ int intel_iov_query_runtime(struct intel_iov *iov, bool early)
 
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
 
+	if (!vf_in_tile_mask(iov))
+		return 0;
+
 	if (early) {
 		err = vf_handshake_with_pf_mmio(iov);
 		if (unlikely(err))
@@ -735,10 +898,17 @@ void intel_iov_query_print_config(struct intel_iov *iov, struct drm_printer *p)
 {
 	GEM_BUG_ON(!intel_iov_is_vf(iov));
 
+	/* tile_mask is valid on root GT only, report it once on primary GT */
+	if (HAS_REMOTE_TILES(iov_to_i915(iov)) && iov_to_gt(iov) == to_gt(iov_to_i915(iov)))
+		drm_printf(p, "tile mask:\t%#x\n", iov_get_root(iov)->vf.config.tile_mask);
+
 	drm_printf(p, "GGTT range:\t%#08llx-%#08llx\n",
 			iov->vf.config.ggtt_base,
 			iov->vf.config.ggtt_base + iov->vf.config.ggtt_size - 1);
 	drm_printf(p, "GGTT size:\t%lluK\n", iov->vf.config.ggtt_size / SZ_1K);
+
+	if (HAS_LMEM(iov_to_i915(iov)))
+		drm_printf(p, "LMEM size:\t%lluM\n", iov->vf.config.lmem_size / SZ_1M);
 
 	drm_printf(p, "contexts:\t%hu\n", iov->vf.config.num_ctxs);
 	drm_printf(p, "doorbells:\t%hu\n", iov->vf.config.num_dbs);

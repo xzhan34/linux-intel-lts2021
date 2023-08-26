@@ -2,6 +2,7 @@
 # Copyright (c) 2003-2019, Intel Corporation. All rights reserved.
 config INTEL_MEI
 	tristate "Intel Management Engine Interface"
+	depends on m
 	depends on X86 && PCI
 	help
 	  The Intel Management Engine (Intel ME) provides Manageability,
@@ -13,6 +14,7 @@ config INTEL_MEI
 
 config INTEL_MEI_ME
 	tristate "ME Enabled Intel Chipsets"
+	depends on m
 	select INTEL_MEI
 	depends on X86 && PCI
 	help
@@ -38,6 +40,7 @@ config INTEL_MEI_ME
 
 config INTEL_MEI_TXE
 	tristate "Intel Trusted Execution Environment with ME Interface"
+	depends on m
 	select INTEL_MEI
 	depends on X86 && PCI
 	help
@@ -48,6 +51,7 @@ config INTEL_MEI_TXE
 
 config INTEL_MEI_GSC
 	tristate "Intel MEI GSC embedded device"
+	depends on m
 	depends on INTEL_MEI
 	depends on INTEL_MEI_ME
 	depends on X86 && PCI
@@ -62,4 +66,5 @@ config INTEL_MEI_GSC
 
 source "drivers/misc/mei/hdcp/Kconfig"
 source "drivers/misc/mei/pxp/Kconfig"
-
+source "drivers/misc/mei/gsc_proxy/Kconfig"
+source "drivers/misc/mei/iaf/Kconfig"

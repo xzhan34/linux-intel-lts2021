@@ -13,6 +13,7 @@
 
 struct intel_context;
 struct i915_pxp_component;
+struct i915_vma;
 
 /**
  * struct intel_pxp - pxp state
@@ -53,9 +54,9 @@ struct intel_pxp {
 	/** @tee_mutex: protects the tee channel binding and messaging. */
 	struct mutex tee_mutex;
 
-	/** @stream_cmd: LMEM obj used to send stream PXP commands to the GSC */
 	struct {
 		struct drm_i915_gem_object *obj; /* contains PXP command memory */
+		struct i915_vma *vma; /* vma for the obj - MTL+ */
 		void *vaddr; /* virtual memory for PXP command */
 	} stream_cmd;
 

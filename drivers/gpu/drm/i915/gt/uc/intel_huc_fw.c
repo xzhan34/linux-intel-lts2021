@@ -25,7 +25,7 @@ int intel_huc_fw_load_and_auth_via_gsc(struct intel_huc *huc)
 	 * component gets re-bound and this function called again. If so, just
 	 * mark the HuC as loaded.
 	 */
-	if (intel_huc_is_authenticated(huc)) {
+	if (intel_huc_check_status(huc) > 0) {
 		intel_uc_fw_change_status(&huc->fw, INTEL_UC_FIRMWARE_RUNNING);
 		return 0;
 	}

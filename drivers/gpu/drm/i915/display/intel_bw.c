@@ -5,22 +5,15 @@
 
 #include <drm/drm_atomic_state_helper.h>
 
-#include "i915_drv.h"
 #include "i915_reg.h"
 #include "i915_utils.h"
 #include "intel_atomic.h"
 #include "intel_bw.h"
 #include "intel_cdclk.h"
-#include "intel_display_core.h"
 #include "intel_display_types.h"
-#include "skl_watermark.h"
 #include "intel_mchbar_regs.h"
 #include "intel_pcode.h"
-
-/* Parameters for Qclk Geyserville (QGV) */
-struct intel_qgv_point {
-	u16 dclk, t_rp, t_rdpre, t_rc, t_ras, t_rcd;
-};
+#include "intel_pm.h"
 
 struct intel_psf_gv_point {
 	u8 clk; /* clock in multiples of 16.6666 MHz */
@@ -146,11 +139,11 @@ static int mtl_read_qgv_point_info(struct drm_i915_private *dev_priv,
 	u16 dclk;
 
 	val = intel_uncore_read(&dev_priv->uncore,
-				MTL_MEM_SS_INFO_QGV_POINT_LOW(point));
+				MTL_MEM_SS_INFO_QGV_POINT(point, 0));
 	val2 = intel_uncore_read(&dev_priv->uncore,
-				 MTL_MEM_SS_INFO_QGV_POINT_HIGH(point));
+				 MTL_MEM_SS_INFO_QGV_POINT(point, 1));
 	dclk = REG_FIELD_GET(MTL_DCLK_MASK, val);
-	sp->dclk = DIV_ROUND_UP((16667 * dclk), 1000);
+	sp->dclk = DIV_ROUND_UP((16667 * dclk) +  500, 1000);
 	sp->t_rp = REG_FIELD_GET(MTL_TRP_MASK, val);
 	sp->t_rcd = REG_FIELD_GET(MTL_TRCD_MASK, val);
 
@@ -162,7 +155,7 @@ static int mtl_read_qgv_point_info(struct drm_i915_private *dev_priv,
 	return 0;
 }
 
-static int
+int
 intel_read_qgv_point_info(struct drm_i915_private *dev_priv,
 			  struct intel_qgv_point *sp,
 			  int point)
@@ -358,7 +351,7 @@ static int icl_get_bw_info(struct drm_i915_private *dev_priv, const struct intel
 	int ipqdepth, ipqdepthpch = 16;
 	int dclk_max;
 	int maxdebw;
-	int num_groups = ARRAY_SIZE(dev_priv->display.bw.max);
+	int num_groups = ARRAY_SIZE(dev_priv->max_bw);
 	int i, ret;
 
 	ret = icl_get_qgv_points(dev_priv, &qi, is_y_tile);
@@ -374,7 +367,7 @@ static int icl_get_bw_info(struct drm_i915_private *dev_priv, const struct intel
 	qi.deinterleave = DIV_ROUND_UP(num_channels, is_y_tile ? 4 : 2);
 
 	for (i = 0; i < num_groups; i++) {
-		struct intel_bw_info *bi = &dev_priv->display.bw.max[i];
+		struct intel_bw_info *bi = &dev_priv->max_bw[i];
 		int clpchgroup;
 		int j;
 
@@ -412,9 +405,9 @@ static int icl_get_bw_info(struct drm_i915_private *dev_priv, const struct intel
 	 * as it will fail and pointless anyway.
 	 */
 	if (qi.num_points == 1)
-		dev_priv->display.sagv.status = I915_SAGV_NOT_CONTROLLED;
+		dev_priv->sagv_status = I915_SAGV_NOT_CONTROLLED;
 	else
-		dev_priv->display.sagv.status = I915_SAGV_ENABLED;
+		dev_priv->sagv_status = I915_SAGV_ENABLED;
 
 	return 0;
 }
@@ -429,7 +422,7 @@ static int tgl_get_bw_info(struct drm_i915_private *dev_priv, const struct intel
 	int dclk_max;
 	int maxdebw, peakbw;
 	int clperchgroup;
-	int num_groups = ARRAY_SIZE(dev_priv->display.bw.max);
+	int num_groups = ARRAY_SIZE(dev_priv->max_bw);
 	int i, ret;
 
 	ret = icl_get_qgv_points(dev_priv, &qi, is_y_tile);
@@ -465,7 +458,7 @@ static int tgl_get_bw_info(struct drm_i915_private *dev_priv, const struct intel
 	clperchgroup = 4 * DIV_ROUND_UP(8, num_channels) * qi.deinterleave;
 
 	for (i = 0; i < num_groups; i++) {
-		struct intel_bw_info *bi = &dev_priv->display.bw.max[i];
+		struct intel_bw_info *bi = &dev_priv->max_bw[i];
 		struct intel_bw_info *bi_next;
 		int clpchgroup;
 		int j;
@@ -473,7 +466,7 @@ static int tgl_get_bw_info(struct drm_i915_private *dev_priv, const struct intel
 		clpchgroup = (sa->deburst * qi.deinterleave / num_channels) << i;
 
 		if (i < num_groups - 1) {
-			bi_next = &dev_priv->display.bw.max[i + 1];
+			bi_next = &dev_priv->max_bw[i + 1];
 
 			if (clpchgroup < clperchgroup)
 				bi_next->num_planes = (ipqdepth - clpchgroup) /
@@ -524,9 +517,9 @@ static int tgl_get_bw_info(struct drm_i915_private *dev_priv, const struct intel
 	 * as it will fail and pointless anyway.
 	 */
 	if (qi.num_points == 1)
-		dev_priv->display.sagv.status = I915_SAGV_NOT_CONTROLLED;
+		dev_priv->sagv_status = I915_SAGV_NOT_CONTROLLED;
 	else
-		dev_priv->display.sagv.status = I915_SAGV_ENABLED;
+		dev_priv->sagv_status = I915_SAGV_ENABLED;
 
 	return 0;
 }
@@ -534,7 +527,7 @@ static int tgl_get_bw_info(struct drm_i915_private *dev_priv, const struct intel
 static void dg2_get_bw_info(struct drm_i915_private *i915)
 {
 	unsigned int deratedbw = IS_DG2_G11(i915) ? 38000 : 50000;
-	int num_groups = ARRAY_SIZE(i915->display.bw.max);
+	int num_groups = ARRAY_SIZE(i915->max_bw);
 	int i;
 
 	/*
@@ -545,7 +538,7 @@ static void dg2_get_bw_info(struct drm_i915_private *i915)
 	 * whereas DG2-G11 platforms have 38 GB/s.
 	 */
 	for (i = 0; i < num_groups; i++) {
-		struct intel_bw_info *bi = &i915->display.bw.max[i];
+		struct intel_bw_info *bi = &i915->max_bw[i];
 
 		bi->num_planes = 1;
 		/* Need only one dummy QGV point per group */
@@ -553,7 +546,7 @@ static void dg2_get_bw_info(struct drm_i915_private *i915)
 		bi->deratedbw[0] = deratedbw;
 	}
 
-	i915->display.sagv.status = I915_SAGV_NOT_CONTROLLED;
+	i915->sagv_status = I915_SAGV_NOT_CONTROLLED;
 }
 
 static unsigned int icl_max_bw(struct drm_i915_private *dev_priv,
@@ -566,9 +559,9 @@ static unsigned int icl_max_bw(struct drm_i915_private *dev_priv,
 	 */
 	num_planes = max(1, num_planes);
 
-	for (i = 0; i < ARRAY_SIZE(dev_priv->display.bw.max); i++) {
+	for (i = 0; i < ARRAY_SIZE(dev_priv->max_bw); i++) {
 		const struct intel_bw_info *bi =
-			&dev_priv->display.bw.max[i];
+			&dev_priv->max_bw[i];
 
 		/*
 		 * Pcode will not expose all QGV points when
@@ -594,9 +587,9 @@ static unsigned int tgl_max_bw(struct drm_i915_private *dev_priv,
 	 */
 	num_planes = max(1, num_planes);
 
-	for (i = ARRAY_SIZE(dev_priv->display.bw.max) - 1; i >= 0; i--) {
+	for (i = ARRAY_SIZE(dev_priv->max_bw) - 1; i >= 0; i--) {
 		const struct intel_bw_info *bi =
-			&dev_priv->display.bw.max[i];
+			&dev_priv->max_bw[i];
 
 		/*
 		 * Pcode will not expose all QGV points when
@@ -609,14 +602,14 @@ static unsigned int tgl_max_bw(struct drm_i915_private *dev_priv,
 			return bi->deratedbw[qgv_point];
 	}
 
-	return dev_priv->display.bw.max[0].deratedbw[qgv_point];
+	return dev_priv->max_bw[0].deratedbw[qgv_point];
 }
 
 static unsigned int adl_psf_bw(struct drm_i915_private *dev_priv,
 			       int psf_gv_point)
 {
 	const struct intel_bw_info *bi =
-			&dev_priv->display.bw.max[0];
+			&dev_priv->max_bw[0];
 
 	return bi->psf_bw[psf_gv_point];
 }
@@ -630,7 +623,7 @@ void intel_bw_init_hw(struct drm_i915_private *dev_priv)
 		tgl_get_bw_info(dev_priv, &mtl_sa_info);
 	else if (IS_DG2(dev_priv))
 		dg2_get_bw_info(dev_priv);
-	else if (IS_ALDERLAKE_P(dev_priv))
+	else if (DISPLAY_VER(dev_priv) >= 13 || IS_ALDERLAKE_P(dev_priv))
 		tgl_get_bw_info(dev_priv, &adlp_sa_info);
 	else if (IS_ALDERLAKE_S(dev_priv))
 		tgl_get_bw_info(dev_priv, &adls_sa_info);
@@ -716,8 +709,8 @@ static unsigned int intel_bw_num_active_planes(struct drm_i915_private *dev_priv
 	return num_active_planes;
 }
 
-static unsigned int intel_bw_data_rate(struct drm_i915_private *dev_priv,
-				       const struct intel_bw_state *bw_state)
+unsigned int intel_bw_data_rate(struct drm_i915_private *dev_priv,
+				const struct intel_bw_state *bw_state)
 {
 	unsigned int data_rate = 0;
 	enum pipe pipe;
@@ -737,7 +730,7 @@ intel_atomic_get_old_bw_state(struct intel_atomic_state *state)
 	struct drm_i915_private *dev_priv = to_i915(state->base.dev);
 	struct intel_global_state *bw_state;
 
-	bw_state = intel_atomic_get_old_global_obj_state(state, &dev_priv->display.bw.obj);
+	bw_state = intel_atomic_get_old_global_obj_state(state, &dev_priv->bw_obj);
 
 	return to_intel_bw_state(bw_state);
 }
@@ -748,7 +741,7 @@ intel_atomic_get_new_bw_state(struct intel_atomic_state *state)
 	struct drm_i915_private *dev_priv = to_i915(state->base.dev);
 	struct intel_global_state *bw_state;
 
-	bw_state = intel_atomic_get_new_global_obj_state(state, &dev_priv->display.bw.obj);
+	bw_state = intel_atomic_get_new_global_obj_state(state, &dev_priv->bw_obj);
 
 	return to_intel_bw_state(bw_state);
 }
@@ -759,7 +752,7 @@ intel_atomic_get_bw_state(struct intel_atomic_state *state)
 	struct drm_i915_private *dev_priv = to_i915(state->base.dev);
 	struct intel_global_state *bw_state;
 
-	bw_state = intel_atomic_get_global_obj_state(state, &dev_priv->display.bw.obj);
+	bw_state = intel_atomic_get_global_obj_state(state, &dev_priv->bw_obj);
 	if (IS_ERR(bw_state))
 		return ERR_CAST(bw_state);
 
@@ -966,8 +959,8 @@ int intel_bw_calc_min_cdclk(struct intel_atomic_state *state,
 
 static u16 icl_qgv_points_mask(struct drm_i915_private *i915)
 {
-	unsigned int num_psf_gv_points = i915->display.bw.max[0].num_psf_gv_points;
-	unsigned int num_qgv_points = i915->display.bw.max[0].num_qgv_points;
+	unsigned int num_psf_gv_points = i915->max_bw[0].num_psf_gv_points;
+	unsigned int num_qgv_points = i915->max_bw[0].num_qgv_points;
 	u16 qgv_points = 0, psf_points = 0;
 
 	/*
@@ -1040,8 +1033,8 @@ int intel_bw_atomic_check(struct intel_atomic_state *state)
 	int i, ret;
 	u16 qgv_points = 0, psf_points = 0;
 	unsigned int max_bw_point = 0, max_bw = 0;
-	unsigned int num_qgv_points = dev_priv->display.bw.max[0].num_qgv_points;
-	unsigned int num_psf_gv_points = dev_priv->display.bw.max[0].num_psf_gv_points;
+	unsigned int num_qgv_points = dev_priv->max_bw[0].num_qgv_points;
+	unsigned int num_psf_gv_points = dev_priv->max_bw[0].num_psf_gv_points;
 	bool changed = false;
 
 	/* FIXME earlier gens need some checks too */
@@ -1196,8 +1189,12 @@ int intel_bw_init(struct drm_i915_private *dev_priv)
 	if (!state)
 		return -ENOMEM;
 
-	intel_atomic_global_obj_init(dev_priv, &dev_priv->display.bw.obj,
+	intel_atomic_global_obj_init(dev_priv, &dev_priv->bw_obj,
 				     &state->base, &intel_bw_funcs);
 
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#include "selftests/selftest_bw.c"
+#endif

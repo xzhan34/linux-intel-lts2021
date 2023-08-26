@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * Copyright(c) 2020-2022, Intel Corporation. All rights reserved.
+ * Copyright(c) 2020, Intel Corporation. All rights reserved.
  */
 
 #ifndef __INTEL_PXP_TEE_INTERFACE_H__
@@ -45,10 +45,11 @@ struct pxp_tee_create_arb_out {
 	struct pxp_tee_cmd_header header;
 } __packed;
 
+
 struct pxp_tee_start_huc_auth_in {
 	struct pxp_tee_cmd_header header;
 	__le64                    huc_base_address;
-};
+} __packed;
 
 struct pxp_tee_start_huc_auth_out {
 	struct pxp_tee_cmd_header header;

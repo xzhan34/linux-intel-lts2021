@@ -93,7 +93,7 @@ static struct i915_vma *create_empty_batch(struct intel_context *ce)
 		goto err_unpin;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err_unpin;
 
@@ -168,8 +168,8 @@ static int perf_mi_bb_start(void *arg)
 				goto out;
 
 			err = rq->engine->emit_bb_start(rq,
-							batch->node.start, 8,
-							0);
+							i915_vma_offset(batch),
+							8, 0);
 			if (err)
 				goto out;
 
@@ -231,7 +231,7 @@ static struct i915_vma *create_nop_batch(struct intel_context *ce)
 		goto err_unpin;
 	}
 
-	err = i915_vma_pin(vma, 0, 0, PIN_USER);
+	err = i915_vma_pin(vma, 0, 0, PIN_USER | PIN_ZONE_48);
 	if (err)
 		goto err_unpin;
 
@@ -309,8 +309,8 @@ static int perf_mi_noop(void *arg)
 				goto out;
 
 			err = rq->engine->emit_bb_start(rq,
-							base->node.start, 8,
-							0);
+							i915_vma_offset(base),
+							8, 0);
 			if (err)
 				goto out;
 
@@ -319,8 +319,8 @@ static int perf_mi_noop(void *arg)
 				goto out;
 
 			err = rq->engine->emit_bb_start(rq,
-							nop->node.start,
-							nop->node.size,
+							i915_vma_offset(nop),
+							i915_vma_size(nop),
 							0);
 			if (err)
 				goto out;

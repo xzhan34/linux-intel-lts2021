@@ -50,8 +50,8 @@ static void measure_clocks(struct intel_engine_cs *engine,
 
 		udelay(1000);
 
-		dt[i] = ktime_sub(ktime_get(), dt[i]);
 		cycles[i] += ENGINE_READ_FW(engine, RING_TIMESTAMP);
+		dt[i] = ktime_sub(ktime_get(), dt[i]);
 		local_irq_enable();
 	}
 
@@ -185,6 +185,8 @@ int intel_gt_pm_live_selftests(struct drm_i915_private *i915)
 	static const struct i915_subtest tests[] = {
 		SUBTEST(live_gt_clocks),
 		SUBTEST(live_rc6_manual),
+		SUBTEST(live_render_pg),
+		SUBTEST(live_media_pg),
 		SUBTEST(live_rps_clock_interval),
 		SUBTEST(live_rps_control),
 		SUBTEST(live_rps_frequency_cs),
@@ -195,10 +197,18 @@ int intel_gt_pm_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(live_gt_resume),
 	};
 
-	if (intel_gt_is_wedged(to_gt(i915)))
-		return 0;
+	struct intel_gt *gt;
+	unsigned int i;
 
-	return intel_gt_live_subtests(tests, to_gt(i915));
+	for_each_gt(gt, i915, i) {
+		int ret;
+
+		ret = intel_gt_live_subtests(tests, gt);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }
 
 int intel_gt_pm_late_selftests(struct drm_i915_private *i915)

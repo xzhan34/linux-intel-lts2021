@@ -8,6 +8,7 @@
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_blend.h>
 #include <drm/drm_damage_helper.h>
+#include <drm/drm_plane_helper.h>
 #include <drm/drm_fourcc.h>
 
 #include "intel_atomic.h"
@@ -19,9 +20,9 @@
 #include "intel_fb.h"
 #include "intel_fb_pin.h"
 #include "intel_frontbuffer.h"
+#include "intel_pm.h"
 #include "intel_psr.h"
 #include "intel_sprite.h"
-#include "skl_watermark.h"
 
 /* Cursor formats */
 static const u32 intel_cursor_formats[] = {
@@ -143,8 +144,8 @@ static int intel_check_cursor(struct intel_crtc_state *crtc_state,
 	}
 
 	ret = intel_atomic_plane_check_clipping(plane_state, crtc_state,
-						DRM_PLANE_NO_SCALING,
-						DRM_PLANE_NO_SCALING,
+						DRM_PLANE_HELPER_NO_SCALING,
+						DRM_PLANE_HELPER_NO_SCALING,
 						true);
 	if (ret)
 		return ret;
@@ -531,9 +532,10 @@ static void i9xx_cursor_update_arm(struct intel_plane *plane,
 		skl_write_cursor_wm(plane, crtc_state);
 
 	if (plane_state)
-		intel_psr2_program_plane_sel_fetch(plane, crtc_state, plane_state, 0);
+		intel_psr2_program_plane_sel_fetch_arm(plane, crtc_state,
+						       plane_state);
 	else
-		intel_psr2_disable_plane_sel_fetch(plane, crtc_state);
+		intel_psr2_disable_plane_sel_fetch_arm(plane, crtc_state);
 
 	if (plane->cursor.base != base ||
 	    plane->cursor.size != fbc_ctl ||
@@ -686,6 +688,10 @@ intel_legacy_cursor_update(struct drm_plane *_plane,
 		goto out_free;
 
 	ret = intel_plane_pin_fb(new_plane_state);
+	if (ret)
+		goto out_free;
+
+	ret = intel_plane_sync_fb(new_plane_state);
 	if (ret)
 		goto out_free;
 

@@ -8,12 +8,15 @@
 
 #include "abi/iov_actions_abi.h"
 #include "abi/iov_actions_mmio_abi.h"
+#include "abi/iov_actions_prelim_abi.h"
 #include "abi/iov_actions_selftest_abi.h"
 #include "abi/iov_errors_abi.h"
 #include "abi/iov_messages_abi.h"
 #include "abi/iov_version_abi.h"
 
 #include "gt/intel_gt_regs.h"
+#include "gt/intel_gtt.h"
+#include "gt/intel_gt_pm.h"
 
 #include "intel_iov_relay.h"
 #include "intel_iov_service.h"
@@ -37,10 +40,63 @@ static const i915_reg_t tgl_runtime_regs[] = {
 	GEN11_GT_SLICE_ENABLE,		/* _MMIO(0x9138) */
 	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
 	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
-	GEN12_GT_COMPUTE_DSS_ENABLE,    /* _MMIO(0x9144) */
 	CTC_MODE,			/* _MMIO(0xA26C) */
 	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
 	GEN9_TIMESTAMP_OVERRIDE,	/* _MMIO(0x44074) */
+};
+
+static const i915_reg_t xehpsdv_runtime_regs[] = {
+	RPM_CONFIG0,			/* _MMIO(0x0D00) */
+	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */
+	HSW_PAVP_FUSE1,			/* _MMIO(0x911C) */
+	XEHP_EU_ENABLE,			/* _MMIO(0x9134) */
+	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
+	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
+	GEN12_GT_COMPUTE_DSS_ENABLE,	/* _MMIO(0x9144) */
+	CTC_MODE,			/* _MMIO(0xA26C) */
+	GEN9_TIMESTAMP_OVERRIDE,	/* _MMIO(0x44074) */
+};
+
+static const i915_reg_t dg2_runtime_regs[] = {
+	RPM_CONFIG0,			/* _MMIO(0x0D00) */
+	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */
+	HSW_PAVP_FUSE1,			/* _MMIO(0x911C) */
+	XEHP_EU_ENABLE,			/* _MMIO(0x9134) */
+	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
+	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
+	GEN12_GT_COMPUTE_DSS_ENABLE,	/* _MMIO(0x9144) */
+	CTC_MODE,			/* _MMIO(0xA26C) */
+	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
+	GEN9_TIMESTAMP_OVERRIDE,	/* _MMIO(0x44074) */
+};
+
+static const i915_reg_t pvc_runtime_regs[] = {
+	RPM_CONFIG0,			/* _MMIO(0x0D00) */
+	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */
+	XEHP_EU_ENABLE,			/* _MMIO(0x9134) */
+	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
+	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
+	GEN12_GT_COMPUTE_DSS_ENABLE,	/* _MMIO(0x9144) */
+	XEHPC_GT_COMPUTE_DSS_ENABLE_EXT,/* _MMIO(0x9148) */
+	CTC_MODE,			/* _MMIO(0xA26C) */
+	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
+	GEN9_TIMESTAMP_OVERRIDE,	/* _MMIO(0x44074) */
+};
+
+static const i915_reg_t mtl_runtime_regs[] = {
+	RPM_CONFIG0,			/* _MMIO(0x0D00) */
+	XEHP_FUSE4,			/* _MMIO(0x9114) */
+	GEN10_MIRROR_FUSE3,		/* _MMIO(0x9118) */
+	HSW_PAVP_FUSE1,			/* _MMIO(0x911C) */
+	XEHP_EU_ENABLE,			/* _MMIO(0x9134) */
+	GEN12_GT_GEOMETRY_DSS_ENABLE,	/* _MMIO(0x913C) */
+	GEN11_GT_VEBOX_VDBOX_DISABLE,	/* _MMIO(0x9140) */
+	GEN12_GT_COMPUTE_DSS_ENABLE,	/* _MMIO(0x9144) */
+	XEHPC_GT_COMPUTE_DSS_ENABLE_EXT,/* _MMIO(0x9148) */
+	CTC_MODE,			/* _MMIO(0xA26C) */
+	GEN11_HUC_KERNEL_LOAD_INFO,	/* _MMIO(0xC1DC) */
+	GEN9_TIMESTAMP_OVERRIDE,	/* _MMIO(0x44074) */
+	MTL_GT_ACTIVITY_FACTOR,		/* _MMIO(0x138010) */
 };
 
 static const i915_reg_t *get_runtime_regs(struct drm_i915_private *i915,
@@ -48,7 +104,19 @@ static const i915_reg_t *get_runtime_regs(struct drm_i915_private *i915,
 {
 	const i915_reg_t *regs;
 
-	if (IS_TIGERLAKE(i915) || IS_ALDERLAKE_S(i915) || IS_ALDERLAKE_P(i915))  {
+	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 70)) {
+		regs = mtl_runtime_regs;
+		*size = ARRAY_SIZE(mtl_runtime_regs);
+	} else if (IS_PONTEVECCHIO(i915)) {
+		regs = pvc_runtime_regs;
+		*size = ARRAY_SIZE(pvc_runtime_regs);
+	} else if (IS_DG2(i915)) {
+		regs = dg2_runtime_regs;
+		*size = ARRAY_SIZE(dg2_runtime_regs);
+	} else if (IS_XEHPSDV(i915)) {
+		regs = xehpsdv_runtime_regs;
+		*size = ARRAY_SIZE(xehpsdv_runtime_regs);
+	} else if (IS_TIGERLAKE(i915) || IS_ALDERLAKE_S(i915) || IS_ALDERLAKE_P(i915)) {
 		regs = tgl_runtime_regs;
 		*size = ARRAY_SIZE(tgl_runtime_regs);
 	} else {
@@ -230,36 +298,46 @@ static int reply_handshake(struct intel_iov *iov, u32 origin,
 {
 	struct intel_iov_relay *relay = &iov->relay;
 	u32 response[VF2PF_HANDSHAKE_RESPONSE_MSG_LEN];
+	u32 wanted_major, wanted_minor;
 	u32 major, minor, mbz;
 
-	GEM_BUG_ON(!origin);
+	GEM_BUG_ON(!origin &&
+		   !I915_SELFTEST_ONLY(relay->selftest.enable_loopback));
 
-	if (unlikely(len > VF2PF_HANDSHAKE_REQUEST_MSG_LEN))
+	if (unlikely(len != VF2PF_HANDSHAKE_REQUEST_MSG_LEN))
 		return -EMSGSIZE;
+
+	wanted_major = FIELD_GET(VF2PF_HANDSHAKE_REQUEST_MSG_1_MAJOR, msg[1]);
+	wanted_minor = FIELD_GET(VF2PF_HANDSHAKE_REQUEST_MSG_1_MINOR, msg[1]);
+	IOV_DEBUG(iov, "VF%u wants ABI version %u.%02u\n", origin,
+		  wanted_major, wanted_minor);
 
 	mbz = FIELD_GET(VF2PF_HANDSHAKE_REQUEST_MSG_0_MBZ, msg[0]);
 	if (unlikely(mbz))
 		return -EINVAL;
 
-	major = FIELD_GET(VF2PF_HANDSHAKE_REQUEST_MSG_1_MAJOR, msg[1]);
-	if (major && major != IOV_VERSION_LATEST_MAJOR)
-		return -ENODATA;
-
-	minor = FIELD_GET(VF2PF_HANDSHAKE_REQUEST_MSG_1_MINOR, msg[1]);
-	if (unlikely(!major && minor))
+	if (!wanted_major && !wanted_minor) {
+		major = IOV_VERSION_LATEST_MAJOR;
+		minor = IOV_VERSION_LATEST_MINOR;
+	} else if (wanted_major > IOV_VERSION_LATEST_MAJOR) {
+		major = IOV_VERSION_LATEST_MAJOR;
+		minor = IOV_VERSION_LATEST_MINOR;
+	} else if (wanted_major < IOV_VERSION_BASE_MAJOR) {
 		return -EINVAL;
-	if (minor > IOV_VERSION_LATEST_MINOR)
-		return -ENODATA;
+	} else if (wanted_major < IOV_VERSION_LATEST_MAJOR) {
+		major = wanted_major;
+		minor = wanted_minor;
+	} else {
+		major = wanted_major;
+		minor = min_t(u32, IOV_VERSION_LATEST_MINOR, wanted_minor);
+	}
 
 	response[0] = FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
 		      FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_RESPONSE_SUCCESS) |
 		      FIELD_PREP(GUC_HXG_RESPONSE_MSG_0_DATA0, 0);
 
-	response[1] = FIELD_PREP(VF2PF_HANDSHAKE_RESPONSE_MSG_1_MAJOR,
-				 IOV_VERSION_LATEST_MAJOR) |
-		      FIELD_PREP(VF2PF_HANDSHAKE_RESPONSE_MSG_1_MINOR,
-				 IOV_VERSION_LATEST_MINOR);
-
+	response[1] = FIELD_PREP(VF2PF_HANDSHAKE_RESPONSE_MSG_1_MAJOR, major) |
+		      FIELD_PREP(VF2PF_HANDSHAKE_RESPONSE_MSG_1_MINOR, minor);
 	return intel_iov_relay_reply_to_vf(relay, origin, relay_id,
 					   response, ARRAY_SIZE(response));
 }
@@ -308,6 +386,40 @@ static int pf_reply_runtime_query(struct intel_iov *iov, u32 origin,
 					   response, 2 + 2 * chunk);
 }
 
+static int pf_handle_l4_wa(struct intel_iov *iov, u32 origin, u32 relay_id,
+			   const u32 *msg, u32 len)
+{
+	struct intel_gt *gt = iov_to_gt(iov);
+	u32 mbz, offset_low, offset_high, pat_index, flags, addr_low, addr_high;
+	intel_wakeref_t wakeref;
+	dma_addr_t addr;
+	u64 offset;
+
+	if (len != VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_LEN)
+		return -EPROTO;
+
+	mbz = FIELD_GET(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_0_MBZ, msg[0]);
+	if (unlikely(mbz))
+		return -EINVAL;
+
+	offset_low = FIELD_GET(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_1_OFFSET_LO, msg[1]);
+	offset_high = FIELD_GET(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_2_OFFSET_HI, msg[2]);
+	pat_index = FIELD_GET(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_3_PAT_INDEX, msg[3]);
+	flags = FIELD_GET(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_4_PTE_FLAGS, msg[4]);
+	addr_low = FIELD_GET(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_5_ADDR_LO, msg[5]);
+	addr_high = FIELD_GET(VF2PF_PF_L4_WA_UPDATE_GGTT_REQUEST_MSG_6_ADDR_HI, msg[6]);
+
+	offset = make_u64(offset_high, offset_low);
+	addr = make_u64(addr_high, addr_low);
+
+	with_intel_gt_pm(gt, wakeref)
+		__gen8_ggtt_insert_page_wa_bcs(iov_to_gt(iov)->ggtt,
+					       origin, addr, offset,
+					       pat_index, flags);
+
+	return intel_iov_relay_reply_ack_to_vf(&iov->relay, origin, relay_id, 0);
+}
+
 /**
  * intel_iov_service_process_msg - Service request message from VF.
  * @iov: the IOV struct
@@ -335,7 +447,7 @@ int intel_iov_service_process_msg(struct intel_iov *iov, u32 origin,
 	data = FIELD_GET(GUC_HXG_REQUEST_MSG_0_DATA0, msg[0]);
 	IOV_DEBUG(iov, "servicing action %#x:%u from %u\n", action, data, origin);
 
-	if (!origin)
+	if (!origin && !I915_SELFTEST_ONLY(iov->relay.selftest.enable_loopback))
 		return -EPROTO;
 
 	switch (action) {
@@ -347,6 +459,9 @@ int intel_iov_service_process_msg(struct intel_iov *iov, u32 origin,
 		break;
 	case IOV_ACTION_VF2PF_PF_ST_ACTION:
 		err = intel_iov_service_perform_selftest_action(iov, origin, relay_id, msg, len);
+		break;
+	case IOV_ACTION_VF2PF_PF_L4_WA_UPDATE_GGTT:
+		err = pf_handle_l4_wa(iov, origin, relay_id, msg, len);
 		break;
 	default:
 		break;
@@ -534,3 +649,8 @@ int intel_iov_service_process_mmio_relay(struct intel_iov *iov, const u32 *msg,
 	intel_runtime_pm_put(rpm, wakeref);
 	return err;
 }
+
+#if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)
+#include "selftests/selftest_mock_iov_service.c"
+#include "selftests/selftest_live_iov_service.c"
+#endif

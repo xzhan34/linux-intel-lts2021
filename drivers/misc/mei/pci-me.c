@@ -22,6 +22,9 @@
 #include "client.h"
 #include "hw-me-regs.h"
 #include "hw-me.h"
+#ifdef BPM_ADD_MODULE_VERSION_MACRO_IN_ALL_MOD
+#include <backport/bp_module_version.h>
+#endif
 
 /* mei_pci_tbl - PCI Device ID Table */
 static const struct pci_device_id mei_me_pci_tbl[] = {
@@ -114,8 +117,6 @@ static const struct pci_device_id mei_me_pci_tbl[] = {
 	{MEI_PCI_DEVICE(MEI_DEV_ID_ADP_LP, MEI_ME_PCH15_CFG)},
 	{MEI_PCI_DEVICE(MEI_DEV_ID_ADP_P, MEI_ME_PCH15_CFG)},
 	{MEI_PCI_DEVICE(MEI_DEV_ID_ADP_N, MEI_ME_PCH15_CFG)},
-
-	{MEI_PCI_DEVICE(MEI_DEV_ID_RPL_S, MEI_ME_PCH15_CFG)},
 
 	{MEI_PCI_DEVICE(MEI_DEV_ID_MTL_M, MEI_ME_PCH15_CFG)},
 
@@ -537,3 +538,6 @@ module_pci_driver(mei_me_driver);
 MODULE_AUTHOR("Intel Corporation");
 MODULE_DESCRIPTION("Intel(R) Management Engine Interface");
 MODULE_LICENSE("GPL v2");
+#ifdef BPM_ADD_MODULE_VERSION_MACRO_IN_ALL_MOD
+MODULE_VERSION(BACKPORT_MOD_VER);
+#endif

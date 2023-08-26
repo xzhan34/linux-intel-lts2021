@@ -109,8 +109,6 @@
 #define MEI_DEV_ID_ADP_P      0x51E0  /* Alder Lake Point P */
 #define MEI_DEV_ID_ADP_N      0x54E0  /* Alder Lake Point N */
 
-#define MEI_DEV_ID_RPL_S      0x7A68  /* Raptor Lake Point S */
-
 #define MEI_DEV_ID_MTL_M      0x7E70  /* Meteor Lake Point M */
 
 /*
@@ -122,7 +120,11 @@
 #  define PCI_CFG_HFS_1_D0I3_MSK     0x80000000
 #  define PCI_CFG_HFS_1_OPMODE_MSK 0xf0000 /* OP MODE Mask: SPS <= 4.0 */
 #  define PCI_CFG_HFS_1_OPMODE_SPS 0xf0000 /* SPS SKU : SPS <= 4.0 */
+#  define PCI_CFG_HFS_1_INITSTATE    0x00000200
 #define PCI_CFG_HFS_2         0x48
+#  define PCI_CFG_HFS_2_PM_CMOFF_TO_CMX_ERROR 0x1000000 /* CMoff->CMx wake after an error */
+#  define PCI_CFG_HFS_2_PM_CM_RESET_ERROR     0x5000000 /* CME reset due to exception */
+#  define PCI_CFG_HFS_2_PM_EVENT_MASK         0xf000000
 #define PCI_CFG_HFS_3         0x60
 #  define PCI_CFG_HFS_3_FW_SKU_MSK   0x00000070
 #  define PCI_CFG_HFS_3_FW_SKU_IGN   0x00000000
