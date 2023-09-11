@@ -5,6 +5,8 @@
 
 #include <linux/sort.h>
 
+#include "gem/i915_gem_internal.h"
+
 #include "selftests/i915_random.h"
 
 static const unsigned int sizes[] = {
@@ -39,9 +41,9 @@ static int copy(struct intel_migrate *migrate,
 {
 	struct drm_i915_private *i915 = migrate->context->engine->i915;
 	struct drm_i915_gem_object *src, *dst;
-	struct i915_request *rq;
+	struct i915_request *rq = NULL;
 	struct i915_gem_ww_ctx ww;
-	u32 *vaddr;
+	u32 *vaddr = NULL;
 	int err = 0;
 	int i;
 
@@ -49,6 +51,7 @@ static int copy(struct intel_migrate *migrate,
 	if (IS_ERR(src))
 		return 0;
 
+	sz = src->base.size;
 	dst = i915_gem_object_create_internal(i915, sz);
 	if (IS_ERR(dst))
 		goto err_free_src;
@@ -139,15 +142,18 @@ static int clear(struct intel_migrate *migrate,
 {
 	struct drm_i915_private *i915 = migrate->context->engine->i915;
 	struct drm_i915_gem_object *obj;
-	struct i915_request *rq;
+	struct i915_request *rq = NULL;
 	struct i915_gem_ww_ctx ww;
-	u32 *vaddr;
+	u32 *vaddr = NULL;
 	int err = 0;
 	int i;
 
 	obj = create_lmem_or_internal(i915, sz);
 	if (IS_ERR(obj))
 		return 0;
+
+	/* Consider the rounded up memory too */
+	sz = obj->base.size;
 
 	for_i915_gem_ww(&ww, err, true) {
 		err = i915_gem_object_lock(obj, &ww);
@@ -212,9 +218,9 @@ static int __migrate_copy(struct intel_migrate *migrate,
 			  struct i915_request **out)
 {
 	return intel_migrate_copy(migrate, ww, NULL,
-				  src->mm.pages->sgl, src->cache_level,
+				  src->mm.pages->sgl, src->pat_index,
 				  i915_gem_object_is_lmem(src),
-				  dst->mm.pages->sgl, dst->cache_level,
+				  dst->mm.pages->sgl, dst->pat_index,
 				  i915_gem_object_is_lmem(dst),
 				  out);
 }
@@ -226,9 +232,9 @@ static int __global_copy(struct intel_migrate *migrate,
 			 struct i915_request **out)
 {
 	return intel_context_migrate_copy(migrate->context, NULL,
-					  src->mm.pages->sgl, src->cache_level,
+					  src->mm.pages->sgl, src->pat_index,
 					  i915_gem_object_is_lmem(src),
-					  dst->mm.pages->sgl, dst->cache_level,
+					  dst->mm.pages->sgl, dst->pat_index,
 					  i915_gem_object_is_lmem(dst),
 					  out);
 }
@@ -253,7 +259,7 @@ static int __migrate_clear(struct intel_migrate *migrate,
 {
 	return intel_migrate_clear(migrate, ww, NULL,
 				   obj->mm.pages->sgl,
-				   obj->cache_level,
+				   obj->pat_index,
 				   i915_gem_object_is_lmem(obj),
 				   value, out);
 }
@@ -266,7 +272,7 @@ static int __global_clear(struct intel_migrate *migrate,
 {
 	return intel_context_migrate_clear(migrate->context, NULL,
 					   obj->mm.pages->sgl,
-					   obj->cache_level,
+					   obj->pat_index,
 					   i915_gem_object_is_lmem(obj),
 					   value, out);
 }
@@ -431,7 +437,7 @@ static int thread_global_clear(void *arg)
 	return threaded_migrate(arg, __thread_global_clear, 0);
 }
 
-int intel_migrate_live_selftests(struct drm_i915_private *i915)
+static int __maybe_unused intel_migrate_live_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(live_migrate_copy),
@@ -441,7 +447,7 @@ int intel_migrate_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(thread_global_copy),
 		SUBTEST(thread_global_clear),
 	};
-	struct intel_gt *gt = &i915->gt;
+	struct intel_gt *gt = to_gt(i915);
 
 	if (!gt->migrate.context)
 		return 0;
@@ -484,7 +490,7 @@ static int wrap_ktime_compare(const void *A, const void *B)
 
 static int __perf_clear_blt(struct intel_context *ce,
 			    struct scatterlist *sg,
-			    enum i915_cache_level cache_level,
+			    unsigned int pat_index,
 			    bool is_lmem,
 			    size_t sz)
 {
@@ -498,7 +504,7 @@ static int __perf_clear_blt(struct intel_context *ce,
 
 		t0 = ktime_get();
 
-		err = intel_context_migrate_clear(ce, NULL, sg, cache_level,
+		err = intel_context_migrate_clear(ce, NULL, sg, pat_index,
 						  is_lmem, 0, &rq);
 		if (rq) {
 			if (i915_request_wait(rq, 0, MAX_SCHEDULE_TIMEOUT) < 0)
@@ -544,7 +550,7 @@ static int perf_clear_blt(void *arg)
 
 		err = __perf_clear_blt(gt->migrate.context,
 				       dst->mm.pages->sgl,
-				       I915_CACHE_NONE,
+				       i915_gem_get_pat_index(gt->i915, I915_CACHE_NONE),
 				       i915_gem_object_is_lmem(dst),
 				       sizes[i]);
 
@@ -559,10 +565,10 @@ static int perf_clear_blt(void *arg)
 
 static int __perf_copy_blt(struct intel_context *ce,
 			   struct scatterlist *src,
-			   enum i915_cache_level src_cache_level,
+			   unsigned int src_pat_index,
 			   bool src_is_lmem,
 			   struct scatterlist *dst,
-			   enum i915_cache_level dst_cache_level,
+			   unsigned int dst_pat_index,
 			   bool dst_is_lmem,
 			   size_t sz)
 {
@@ -577,9 +583,9 @@ static int __perf_copy_blt(struct intel_context *ce,
 		t0 = ktime_get();
 
 		err = intel_context_migrate_copy(ce, NULL,
-						 src, src_cache_level,
+						 src, src_pat_index,
 						 src_is_lmem,
-						 dst, dst_cache_level,
+						 dst, dst_pat_index,
 						 dst_is_lmem,
 						 &rq);
 		if (rq) {
@@ -618,13 +624,15 @@ static int perf_copy_blt(void *arg)
 
 	for (i = 0; i < ARRAY_SIZE(sizes); i++) {
 		struct drm_i915_gem_object *src, *dst;
+		size_t sz;
 		int err;
 
 		src = create_init_lmem_internal(gt, sizes[i], true);
 		if (IS_ERR(src))
 			return PTR_ERR(src);
 
-		dst = create_init_lmem_internal(gt, sizes[i], false);
+		sz = src->base.size;
+		dst = create_init_lmem_internal(gt, sz, false);
 		if (IS_ERR(dst)) {
 			err = PTR_ERR(dst);
 			goto err_src;
@@ -632,12 +640,12 @@ static int perf_copy_blt(void *arg)
 
 		err = __perf_copy_blt(gt->migrate.context,
 				      src->mm.pages->sgl,
-				      I915_CACHE_NONE,
+				      i915_gem_get_pat_index(gt->i915, I915_CACHE_NONE),
 				      i915_gem_object_is_lmem(src),
 				      dst->mm.pages->sgl,
-				      I915_CACHE_NONE,
+				      i915_gem_get_pat_index(gt->i915, I915_CACHE_NONE),
 				      i915_gem_object_is_lmem(dst),
-				      sizes[i]);
+				      sz);
 
 		i915_gem_object_unlock(dst);
 		i915_gem_object_put(dst);
@@ -651,13 +659,13 @@ err_src:
 	return 0;
 }
 
-int intel_migrate_perf_selftests(struct drm_i915_private *i915)
+static int __maybe_unused intel_migrate_perf_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(perf_clear_blt),
 		SUBTEST(perf_copy_blt),
 	};
-	struct intel_gt *gt = &i915->gt;
+	struct intel_gt *gt = to_gt(i915);
 
 	if (intel_gt_is_wedged(gt))
 		return 0;

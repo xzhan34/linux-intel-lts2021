@@ -54,7 +54,6 @@ struct file;
  */
 enum drm_minor_type {
 	DRM_MINOR_PRIMARY,
-	DRM_MINOR_CONTROL,
 	DRM_MINOR_RENDER,
 };
 
@@ -202,6 +201,22 @@ struct drm_file {
 	bool writeback_connectors;
 
 	/**
+	 * This is to enable advance gamma modes using
+	 * gamma_mode property
+	 *
+	 * True if client understands advance gamma
+	 */
+	bool advance_gamma_mode_active : 1;
+
+	/**
+	 * This is to enable advance degamma modes using
+	 * 64 bit LUT values
+	 *
+	 * True if client understands advance degamma
+	 */
+	bool advance_degamma_mode_active : 1;
+
+	/**
 	 * @was_master:
 	 *
 	 * This client has or had, master capability. Protected by struct
@@ -232,10 +247,6 @@ struct drm_file {
 	 * Only relevant if drm_is_primary_client() returns true. Note that
 	 * this only matches &drm_device.master if the master is the currently
 	 * active one.
-	 *
-	 * To update @master, both &drm_device.master_mutex and
-	 * @master_lookup_lock need to be held, therefore holding either of
-	 * them is safe and enough for the read side.
 	 *
 	 * When dereferencing this pointer, either hold struct
 	 * &drm_device.master_mutex for the duration of the pointer's use, or

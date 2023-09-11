@@ -22,9 +22,47 @@
  *
  */
 
+#include <drm/drm_plane.h>
+
+#include "intel_atomic_plane.h"
 #include "intel_color.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
+#include "intel_dpll.h"
+#include "intel_sprite.h"
+#include "skl_universal_plane.h"
+#include "vlv_dsi_pll.h"
+
+struct intel_color_funcs {
+	int (*color_check)(struct intel_crtc_state *crtc_state);
+	/*
+	 * Program non-arming double buffered color management registers
+	 * before vblank evasion. The registers should then latch after
+	 * the arming register is written (by color_commit_arm()) during
+	 * the next vblank start, alongside any other double buffered
+	 * registers involved with the same commit. This hook is optional.
+	 */
+	void (*color_commit_noarm)(const struct intel_crtc_state *crtc_state);
+	/*
+	 * Program arming double buffered color management registers
+	 * during vblank evasion. The registers (and whatever other registers
+	 * they arm that were written by color_commit_noarm) should then latch
+	 * during the next vblank start, alongside any other double buffered
+	 * registers involved with the same commit.
+	 */
+	void (*color_commit_arm)(const struct intel_crtc_state *crtc_state);
+	/*
+	 * Load LUTs (and other single buffered color management
+	 * registers). Will (hopefully) be called during the vblank
+	 * following the latching of any double buffered registers
+	 * involved with the same commit.
+	 */
+	void (*load_luts)(const struct intel_crtc_state *crtc_state);
+	void (*read_luts)(struct intel_crtc_state *crtc_state);
+	/* Add Plane Color callbacks */
+	void (*load_plane_csc_matrix)(const struct drm_plane_state *plane_state);
+	void (*load_plane_luts)(const struct drm_plane_state *plane_state);
+};
 
 #define CTM_COEFF_SIGN	(1ULL << 63)
 
@@ -74,6 +112,23 @@
 #define ILK_CSC_COEFF_1_0 0x7800
 
 #define ILK_CSC_POSTOFF_LIMITED_RANGE (16 * (1 << 12) / 255)
+
+#define GAMMA_MODE_LEGACY_PALETTE_8BIT		BIT(0)
+#define GAMMA_MODE_PRECISION_PALETTE_10BIT	BIT(1)
+#define GAMMA_MODE_INTERPOLATED_12BIT		BIT(2)
+#define GAMMA_MODE_MULTI_SEGMENTED_12BIT	BIT(3)
+#define GAMMA_MODE_SPLIT_12BIT			BIT(4)
+#define GAMMA_MODE_LOGARITHMIC_12BIT		BIT(5) /* XELPD+ */
+
+#define DEGAMMA_MODE_24BIT			BIT(0) /* MTL/D14+ */
+
+#define INTEL_GAMMA_MODE_MASK (\
+		GAMMA_MODE_LEGACY_PALETTE_8BIT | \
+		GAMMA_MODE_PRECISION_PALETTE_10BIT | \
+		GAMMA_MODE_INTERPOLATED_12BIT | \
+		GAMMA_MODE_MULTI_SEGMENTED_12BIT | \
+		GAMMA_MODE_SPLIT_12BIT \
+		GAMMA_MODE_LOGARITHMIC_12BIT)
 
 /* Nop pre/post offsets */
 static const u16 ilk_csc_off_zero[3] = {};
@@ -125,6 +180,29 @@ static bool crtc_state_is_legacy_gamma(const struct intel_crtc_state *crtc_state
 }
 
 /*
+ * Added to accommodate enhanced LUT precision.
+ * Max LUT precision is 32 bits.
+ */
+static u64 drm_color_lut_extract_ext(u64 user_input, u32 bit_precision)
+{
+	u64 val = user_input & 0xffffffff;
+	u32 max;
+
+	if (bit_precision > 32)
+		return 0;
+
+	max = 0xffffffff >> (32 - bit_precision);
+	/* Round only if we're not using full precision. */
+	if (bit_precision < 32) {
+		val += 1UL << (32 - bit_precision - 1);
+		val >>= 32 - bit_precision;
+	}
+
+	return ((user_input & 0xffffffff00000000) |
+		clamp_val(val, 0, max));
+}
+
+/*
  * When using limited range, multiply the matrix given by userspace by
  * the matrix that we would use for the limited range.
  */
@@ -158,29 +236,29 @@ static void ilk_update_pipe_csc(struct intel_crtc *crtc,
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 	enum pipe pipe = crtc->pipe;
 
-	intel_de_write(dev_priv, PIPE_CSC_PREOFF_HI(pipe), preoff[0]);
-	intel_de_write(dev_priv, PIPE_CSC_PREOFF_ME(pipe), preoff[1]);
-	intel_de_write(dev_priv, PIPE_CSC_PREOFF_LO(pipe), preoff[2]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_PREOFF_HI(pipe), preoff[0]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_PREOFF_ME(pipe), preoff[1]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_PREOFF_LO(pipe), preoff[2]);
 
-	intel_de_write(dev_priv, PIPE_CSC_COEFF_RY_GY(pipe),
-		       coeff[0] << 16 | coeff[1]);
-	intel_de_write(dev_priv, PIPE_CSC_COEFF_BY(pipe), coeff[2] << 16);
+	intel_de_write_fw(dev_priv, PIPE_CSC_COEFF_RY_GY(pipe),
+			  coeff[0] << 16 | coeff[1]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_COEFF_BY(pipe), coeff[2] << 16);
 
-	intel_de_write(dev_priv, PIPE_CSC_COEFF_RU_GU(pipe),
-		       coeff[3] << 16 | coeff[4]);
-	intel_de_write(dev_priv, PIPE_CSC_COEFF_BU(pipe), coeff[5] << 16);
+	intel_de_write_fw(dev_priv, PIPE_CSC_COEFF_RU_GU(pipe),
+			  coeff[3] << 16 | coeff[4]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_COEFF_BU(pipe), coeff[5] << 16);
 
-	intel_de_write(dev_priv, PIPE_CSC_COEFF_RV_GV(pipe),
-		       coeff[6] << 16 | coeff[7]);
-	intel_de_write(dev_priv, PIPE_CSC_COEFF_BV(pipe), coeff[8] << 16);
+	intel_de_write_fw(dev_priv, PIPE_CSC_COEFF_RV_GV(pipe),
+			  coeff[6] << 16 | coeff[7]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_COEFF_BV(pipe), coeff[8] << 16);
 
 	if (DISPLAY_VER(dev_priv) >= 7) {
-		intel_de_write(dev_priv, PIPE_CSC_POSTOFF_HI(pipe),
-			       postoff[0]);
-		intel_de_write(dev_priv, PIPE_CSC_POSTOFF_ME(pipe),
-			       postoff[1]);
-		intel_de_write(dev_priv, PIPE_CSC_POSTOFF_LO(pipe),
-			       postoff[2]);
+		intel_de_write_fw(dev_priv, PIPE_CSC_POSTOFF_HI(pipe),
+				  postoff[0]);
+		intel_de_write_fw(dev_priv, PIPE_CSC_POSTOFF_ME(pipe),
+				  postoff[1]);
+		intel_de_write_fw(dev_priv, PIPE_CSC_POSTOFF_LO(pipe),
+				  postoff[2]);
 	}
 }
 
@@ -192,28 +270,28 @@ static void icl_update_output_csc(struct intel_crtc *crtc,
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 	enum pipe pipe = crtc->pipe;
 
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_PREOFF_HI(pipe), preoff[0]);
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_PREOFF_ME(pipe), preoff[1]);
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_PREOFF_LO(pipe), preoff[2]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_PREOFF_HI(pipe), preoff[0]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_PREOFF_ME(pipe), preoff[1]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_PREOFF_LO(pipe), preoff[2]);
 
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_COEFF_RY_GY(pipe),
-		       coeff[0] << 16 | coeff[1]);
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_COEFF_BY(pipe),
-		       coeff[2] << 16);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_COEFF_RY_GY(pipe),
+			  coeff[0] << 16 | coeff[1]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_COEFF_BY(pipe),
+			  coeff[2] << 16);
 
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_COEFF_RU_GU(pipe),
-		       coeff[3] << 16 | coeff[4]);
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_COEFF_BU(pipe),
-		       coeff[5] << 16);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_COEFF_RU_GU(pipe),
+			  coeff[3] << 16 | coeff[4]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_COEFF_BU(pipe),
+			  coeff[5] << 16);
 
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_COEFF_RV_GV(pipe),
-		       coeff[6] << 16 | coeff[7]);
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_COEFF_BV(pipe),
-		       coeff[8] << 16);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_COEFF_RV_GV(pipe),
+			  coeff[6] << 16 | coeff[7]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_COEFF_BV(pipe),
+			  coeff[8] << 16);
 
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_POSTOFF_HI(pipe), postoff[0]);
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_POSTOFF_ME(pipe), postoff[1]);
-	intel_de_write(dev_priv, PIPE_CSC_OUTPUT_POSTOFF_LO(pipe), postoff[2]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_POSTOFF_HI(pipe), postoff[0]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_POSTOFF_ME(pipe), postoff[1]);
+	intel_de_write_fw(dev_priv, PIPE_CSC_OUTPUT_POSTOFF_LO(pipe), postoff[2]);
 }
 
 static bool ilk_csc_limited_range(const struct intel_crtc_state *crtc_state)
@@ -316,15 +394,11 @@ static void ilk_load_csc_matrix(const struct intel_crtc_state *crtc_state)
 				    ilk_csc_coeff_identity,
 				    ilk_csc_off_zero);
 	}
-
-	intel_de_write(dev_priv, PIPE_CSC_MODE(crtc->pipe),
-		       crtc_state->csc_mode);
 }
 
 static void icl_load_csc_matrix(const struct intel_crtc_state *crtc_state)
 {
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
-	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 
 	if (crtc_state->hw.ctm) {
 		u16 coeff[9];
@@ -343,9 +417,6 @@ static void icl_load_csc_matrix(const struct intel_crtc_state *crtc_state)
 				      ilk_csc_coeff_limited_range,
 				      ilk_csc_postoff_limited_range);
 	}
-
-	intel_de_write(dev_priv, PIPE_CSC_MODE(crtc->pipe),
-		       crtc_state->csc_mode);
 }
 
 static void chv_load_cgm_csc(struct intel_crtc *crtc,
@@ -375,16 +446,16 @@ static void chv_load_cgm_csc(struct intel_crtc *crtc,
 		coeffs[i] |= (abs_coeff >> 20) & 0xfff;
 	}
 
-	intel_de_write(dev_priv, CGM_PIPE_CSC_COEFF01(pipe),
-		       coeffs[1] << 16 | coeffs[0]);
-	intel_de_write(dev_priv, CGM_PIPE_CSC_COEFF23(pipe),
-		       coeffs[3] << 16 | coeffs[2]);
-	intel_de_write(dev_priv, CGM_PIPE_CSC_COEFF45(pipe),
-		       coeffs[5] << 16 | coeffs[4]);
-	intel_de_write(dev_priv, CGM_PIPE_CSC_COEFF67(pipe),
-		       coeffs[7] << 16 | coeffs[6]);
-	intel_de_write(dev_priv, CGM_PIPE_CSC_COEFF8(pipe),
-		       coeffs[8]);
+	intel_de_write_fw(dev_priv, CGM_PIPE_CSC_COEFF01(pipe),
+			  coeffs[1] << 16 | coeffs[0]);
+	intel_de_write_fw(dev_priv, CGM_PIPE_CSC_COEFF23(pipe),
+			  coeffs[3] << 16 | coeffs[2]);
+	intel_de_write_fw(dev_priv, CGM_PIPE_CSC_COEFF45(pipe),
+			  coeffs[5] << 16 | coeffs[4]);
+	intel_de_write_fw(dev_priv, CGM_PIPE_CSC_COEFF67(pipe),
+			  coeffs[7] << 16 | coeffs[6]);
+	intel_de_write_fw(dev_priv, CGM_PIPE_CSC_COEFF8(pipe),
+			  coeffs[8]);
 }
 
 /* convert hw value with given bit_precision to lut property val */
@@ -470,35 +541,35 @@ static void icl_lut_multi_seg_pack(struct drm_color_lut *entry, u32 ldw, u32 udw
 				    REG_FIELD_GET(PAL_PREC_MULTI_SEG_BLUE_LDW_MASK, ldw);
 }
 
-static void i9xx_color_commit(const struct intel_crtc_state *crtc_state)
+static void icl_color_commit_noarm(const struct intel_crtc_state *crtc_state)
 {
-	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
-	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
-	enum pipe pipe = crtc->pipe;
-	u32 val;
-
-	val = intel_de_read(dev_priv, PIPECONF(pipe));
-	val &= ~PIPECONF_GAMMA_MODE_MASK_I9XX;
-	val |= PIPECONF_GAMMA_MODE(crtc_state->gamma_mode);
-	intel_de_write(dev_priv, PIPECONF(pipe), val);
+	icl_load_csc_matrix(crtc_state);
 }
 
-static void ilk_color_commit(const struct intel_crtc_state *crtc_state)
+static void ilk_color_commit_noarm(const struct intel_crtc_state *crtc_state)
 {
-	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
-	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
-	enum pipe pipe = crtc->pipe;
-	u32 val;
-
-	val = intel_de_read(dev_priv, PIPECONF(pipe));
-	val &= ~PIPECONF_GAMMA_MODE_MASK_ILK;
-	val |= PIPECONF_GAMMA_MODE(crtc_state->gamma_mode);
-	intel_de_write(dev_priv, PIPECONF(pipe), val);
-
 	ilk_load_csc_matrix(crtc_state);
 }
 
-static void hsw_color_commit(const struct intel_crtc_state *crtc_state)
+static void i9xx_color_commit_arm(const struct intel_crtc_state *crtc_state)
+{
+	/* update PIPECONF GAMMA_MODE */
+	i9xx_set_pipeconf(crtc_state);
+}
+
+static void ilk_color_commit_arm(const struct intel_crtc_state *crtc_state)
+{
+	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
+
+	/* update PIPECONF GAMMA_MODE */
+	ilk_set_pipeconf(crtc_state);
+
+	intel_de_write_fw(dev_priv, PIPE_CSC_MODE(crtc->pipe),
+			  crtc_state->csc_mode);
+}
+
+static void hsw_color_commit_arm(const struct intel_crtc_state *crtc_state)
 {
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
@@ -506,10 +577,11 @@ static void hsw_color_commit(const struct intel_crtc_state *crtc_state)
 	intel_de_write(dev_priv, GAMMA_MODE(crtc->pipe),
 		       crtc_state->gamma_mode);
 
-	ilk_load_csc_matrix(crtc_state);
+	intel_de_write_fw(dev_priv, PIPE_CSC_MODE(crtc->pipe),
+			  crtc_state->csc_mode);
 }
 
-static void skl_color_commit(const struct intel_crtc_state *crtc_state)
+static void skl_color_commit_arm(const struct intel_crtc_state *crtc_state)
 {
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
@@ -530,10 +602,8 @@ static void skl_color_commit(const struct intel_crtc_state *crtc_state)
 	intel_de_write(dev_priv, GAMMA_MODE(crtc->pipe),
 		       crtc_state->gamma_mode);
 
-	if (DISPLAY_VER(dev_priv) >= 11)
-		icl_load_csc_matrix(crtc_state);
-	else
-		ilk_load_csc_matrix(crtc_state);
+	intel_de_write_fw(dev_priv, PIPE_CSC_MODE(crtc->pipe),
+			  crtc_state->csc_mode);
 }
 
 static void i9xx_load_lut_8(struct intel_crtc *crtc,
@@ -550,8 +620,8 @@ static void i9xx_load_lut_8(struct intel_crtc *crtc,
 	lut = blob->data;
 
 	for (i = 0; i < 256; i++)
-		intel_de_write(dev_priv, PALETTE(pipe, i),
-			       i9xx_lut_8(&lut[i]));
+		intel_de_write_fw(dev_priv, PALETTE(pipe, i),
+				  i9xx_lut_8(&lut[i]));
 }
 
 static void i9xx_load_luts(const struct intel_crtc_state *crtc_state)
@@ -574,15 +644,15 @@ static void i965_load_lut_10p6(struct intel_crtc *crtc,
 	enum pipe pipe = crtc->pipe;
 
 	for (i = 0; i < lut_size - 1; i++) {
-		intel_de_write(dev_priv, PALETTE(pipe, 2 * i + 0),
-			       i965_lut_10p6_ldw(&lut[i]));
-		intel_de_write(dev_priv, PALETTE(pipe, 2 * i + 1),
-			       i965_lut_10p6_udw(&lut[i]));
+		intel_de_write_fw(dev_priv, PALETTE(pipe, 2 * i + 0),
+				  i965_lut_10p6_ldw(&lut[i]));
+		intel_de_write_fw(dev_priv, PALETTE(pipe, 2 * i + 1),
+				  i965_lut_10p6_udw(&lut[i]));
 	}
 
-	intel_de_write(dev_priv, PIPEGCMAX(pipe, 0), lut[i].red);
-	intel_de_write(dev_priv, PIPEGCMAX(pipe, 1), lut[i].green);
-	intel_de_write(dev_priv, PIPEGCMAX(pipe, 2), lut[i].blue);
+	intel_de_write_fw(dev_priv, PIPEGCMAX(pipe, 0), lut[i].red);
+	intel_de_write_fw(dev_priv, PIPEGCMAX(pipe, 1), lut[i].green);
+	intel_de_write_fw(dev_priv, PIPEGCMAX(pipe, 2), lut[i].blue);
 }
 
 static void i965_load_luts(const struct intel_crtc_state *crtc_state)
@@ -616,8 +686,8 @@ static void ilk_load_lut_8(struct intel_crtc *crtc,
 	lut = blob->data;
 
 	for (i = 0; i < 256; i++)
-		intel_de_write(dev_priv, LGC_PALETTE(pipe, i),
-			       i9xx_lut_8(&lut[i]));
+		intel_de_write_fw(dev_priv, LGC_PALETTE(pipe, i),
+				  i9xx_lut_8(&lut[i]));
 }
 
 static void ilk_load_lut_10(struct intel_crtc *crtc,
@@ -629,8 +699,8 @@ static void ilk_load_lut_10(struct intel_crtc *crtc,
 	enum pipe pipe = crtc->pipe;
 
 	for (i = 0; i < lut_size; i++)
-		intel_de_write(dev_priv, PREC_PALETTE(pipe, i),
-			       ilk_lut_10(&lut[i]));
+		intel_de_write_fw(dev_priv, PREC_PALETTE(pipe, i),
+				  ilk_lut_10(&lut[i]));
 }
 
 static void ilk_load_luts(const struct intel_crtc_state *crtc_state)
@@ -679,16 +749,16 @@ static void ivb_load_lut_10(struct intel_crtc *crtc,
 		const struct drm_color_lut *entry =
 			&lut[i * (lut_size - 1) / (hw_lut_size - 1)];
 
-		intel_de_write(dev_priv, PREC_PAL_INDEX(pipe), prec_index++);
-		intel_de_write(dev_priv, PREC_PAL_DATA(pipe),
-			       ilk_lut_10(entry));
+		intel_de_write_fw(dev_priv, PREC_PAL_INDEX(pipe), prec_index++);
+		intel_de_write_fw(dev_priv, PREC_PAL_DATA(pipe),
+				  ilk_lut_10(entry));
 	}
 
 	/*
 	 * Reset the index, otherwise it prevents the legacy palette to be
 	 * written properly.
 	 */
-	intel_de_write(dev_priv, PREC_PAL_INDEX(pipe), 0);
+	intel_de_write_fw(dev_priv, PREC_PAL_INDEX(pipe), 0);
 }
 
 /* On BDW+ the index auto increment mode actually works */
@@ -702,23 +772,23 @@ static void bdw_load_lut_10(struct intel_crtc *crtc,
 	int i, lut_size = drm_color_lut_size(blob);
 	enum pipe pipe = crtc->pipe;
 
-	intel_de_write(dev_priv, PREC_PAL_INDEX(pipe),
-		       prec_index | PAL_PREC_AUTO_INCREMENT);
+	intel_de_write_fw(dev_priv, PREC_PAL_INDEX(pipe),
+			  prec_index | PAL_PREC_AUTO_INCREMENT);
 
 	for (i = 0; i < hw_lut_size; i++) {
 		/* We discard half the user entries in split gamma mode */
 		const struct drm_color_lut *entry =
 			&lut[i * (lut_size - 1) / (hw_lut_size - 1)];
 
-		intel_de_write(dev_priv, PREC_PAL_DATA(pipe),
-			       ilk_lut_10(entry));
+		intel_de_write_fw(dev_priv, PREC_PAL_DATA(pipe),
+				  ilk_lut_10(entry));
 	}
 
 	/*
 	 * Reset the index, otherwise it prevents the legacy palette to be
 	 * written properly.
 	 */
-	intel_de_write(dev_priv, PREC_PAL_INDEX(pipe), 0);
+	intel_de_write_fw(dev_priv, PREC_PAL_INDEX(pipe), 0);
 }
 
 static void ivb_load_lut_ext_max(const struct intel_crtc_state *crtc_state)
@@ -806,12 +876,20 @@ static void bdw_load_luts(const struct intel_crtc_state *crtc_state)
 	}
 }
 
+static int glk_degamma_lut_size(struct drm_i915_private *i915)
+{
+	if (DISPLAY_VER(i915) >= 13)
+		return 131;
+	else
+		return 35;
+}
+
 static void glk_load_degamma_lut(const struct intel_crtc_state *crtc_state)
 {
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 	enum pipe pipe = crtc->pipe;
-	int i, lut_size = INTEL_INFO(dev_priv)->color.degamma_lut_size;
+	int i, lut_size = INTEL_INFO(dev_priv)->display.color.degamma_lut_size;
 	const struct drm_color_lut *lut = crtc_state->hw.degamma_lut->data;
 
 	/*
@@ -819,14 +897,14 @@ static void glk_load_degamma_lut(const struct intel_crtc_state *crtc_state)
 	 * ignore the index bits, so we need to reset it to index 0
 	 * separately.
 	 */
-	intel_de_write(dev_priv, PRE_CSC_GAMC_INDEX(pipe), 0);
-	intel_de_write(dev_priv, PRE_CSC_GAMC_INDEX(pipe),
-		       PRE_CSC_GAMC_AUTO_INCREMENT);
+	intel_de_write_fw(dev_priv, PRE_CSC_GAMC_INDEX(pipe), 0);
+	intel_de_write_fw(dev_priv, PRE_CSC_GAMC_INDEX(pipe),
+			  PRE_CSC_GAMC_AUTO_INCREMENT);
 
 	for (i = 0; i < lut_size; i++) {
 		/*
-		 * First 33 entries represent range from 0 to 1.0
-		 * 34th and 35th entry will represent extended range
+		 * First lut_size entries represent range from 0 to 1.0
+		 * 3 additional lut entries will represent extended range
 		 * inputs 3.0 and 7.0 respectively, currently clamped
 		 * at 1.0. Since the precision is 16bit, the user
 		 * value can be directly filled to register.
@@ -837,15 +915,15 @@ static void glk_load_degamma_lut(const struct intel_crtc_state *crtc_state)
 		 * ToDo: Extend to max 7.0. Enable 32 bit input value
 		 * as compared to just 16 to achieve this.
 		 */
-		intel_de_write(dev_priv, PRE_CSC_GAMC_DATA(pipe),
-			       lut[i].green);
+		intel_de_write_fw(dev_priv, PRE_CSC_GAMC_DATA(pipe),
+				  lut[i].green);
 	}
 
 	/* Clamp values > 1.0. */
-	while (i++ < 35)
-		intel_de_write(dev_priv, PRE_CSC_GAMC_DATA(pipe), 1 << 16);
+	while (i++ < glk_degamma_lut_size(dev_priv))
+		intel_de_write_fw(dev_priv, PRE_CSC_GAMC_DATA(pipe), 1 << 16);
 
-	intel_de_write(dev_priv, PRE_CSC_GAMC_INDEX(pipe), 0);
+	intel_de_write_fw(dev_priv, PRE_CSC_GAMC_INDEX(pipe), 0);
 }
 
 static void glk_load_degamma_lut_linear(const struct intel_crtc_state *crtc_state)
@@ -853,28 +931,28 @@ static void glk_load_degamma_lut_linear(const struct intel_crtc_state *crtc_stat
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 	enum pipe pipe = crtc->pipe;
-	int i, lut_size = INTEL_INFO(dev_priv)->color.degamma_lut_size;
+	int i, lut_size = INTEL_INFO(dev_priv)->display.color.degamma_lut_size;
 
 	/*
 	 * When setting the auto-increment bit, the hardware seems to
 	 * ignore the index bits, so we need to reset it to index 0
 	 * separately.
 	 */
-	intel_de_write(dev_priv, PRE_CSC_GAMC_INDEX(pipe), 0);
-	intel_de_write(dev_priv, PRE_CSC_GAMC_INDEX(pipe),
-		       PRE_CSC_GAMC_AUTO_INCREMENT);
+	intel_de_write_fw(dev_priv, PRE_CSC_GAMC_INDEX(pipe), 0);
+	intel_de_write_fw(dev_priv, PRE_CSC_GAMC_INDEX(pipe),
+			  PRE_CSC_GAMC_AUTO_INCREMENT);
 
 	for (i = 0; i < lut_size; i++) {
 		u32 v = (i << 16) / (lut_size - 1);
 
-		intel_de_write(dev_priv, PRE_CSC_GAMC_DATA(pipe), v);
+		intel_de_write_fw(dev_priv, PRE_CSC_GAMC_DATA(pipe), v);
 	}
 
 	/* Clamp values > 1.0. */
-	while (i++ < 35)
-		intel_de_write(dev_priv, PRE_CSC_GAMC_DATA(pipe), 1 << 16);
+	while (i++ < glk_degamma_lut_size(dev_priv))
+		intel_de_write_fw(dev_priv, PRE_CSC_GAMC_DATA(pipe), 1 << 16);
 
-	intel_de_write(dev_priv, PRE_CSC_GAMC_INDEX(pipe), 0);
+	intel_de_write_fw(dev_priv, PRE_CSC_GAMC_INDEX(pipe), 0);
 }
 
 static void glk_load_luts(const struct intel_crtc_state *crtc_state)
@@ -909,6 +987,79 @@ static void glk_load_luts(const struct intel_crtc_state *crtc_state)
 	}
 }
 
+static void mtl_load_legacy_lut(const struct intel_crtc_state *crtc_state)
+{
+	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
+	const struct drm_property_blob *degamma_lut_blob = crtc_state->hw.degamma_lut;
+	struct drm_color_lut *degamma_lut = degamma_lut_blob->data;
+	enum pipe pipe = crtc->pipe;
+	int i, lut_size = drm_color_lut_size(degamma_lut_blob);
+
+	/*
+	 * When setting the auto-increment bit, the hardware seems to
+	 * ignore the index bits, so we need to reset it to index 0
+	 * separately.
+	 */
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe), 0);
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe),
+			  PRE_CSC_GAMC_AUTO_INCREMENT);
+
+	for (i = 0; i < lut_size; i++) {
+		u64 word = mul_u32_u32(degamma_lut[i].green, (1 << 24)) / (1 << 16);
+		u32 lut_val = (word & 0xffffff);
+
+		intel_de_write_fw(i915, PRE_CSC_GAMC_DATA(pipe),
+				  lut_val);
+	}
+	/* Clamp values > 1.0. */
+	while (i++ < glk_degamma_lut_size(i915))
+		intel_de_write_fw(i915, PRE_CSC_GAMC_DATA(pipe), 1 << 24);
+
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe), 0);
+}
+
+static void mtl_load_degamma_lut(const struct intel_crtc_state *crtc_state)
+{
+	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
+	struct drm_color_lut_ext *degamma_lut = crtc_state->hw.degamma_lut->data;
+	u32 i, lut_size = INTEL_INFO(i915)->display.color.degamma_lut_size;
+	enum pipe pipe = crtc->pipe;
+
+	if (crtc_state->uapi.degamma_mode_type == 0) {
+		if (!crtc_state->uapi.advance_degamma_mode_active)
+			mtl_load_legacy_lut(crtc_state);
+		return;
+	}
+
+	/*
+	 * When setting the auto-increment bit, the hardware seems to
+	 * ignore the index bits, so we need to reset it to index 0
+	 * separately.
+	 */
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe), 0);
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe),
+			  PRE_CSC_GAMC_AUTO_INCREMENT);
+
+	for (i = 0; i < lut_size; i++) {
+		u64 word = drm_color_lut_extract_ext(degamma_lut[i].green, 24);
+		u32 lut_val = (word & 0xffffff);
+
+		intel_de_write_fw(i915, PRE_CSC_GAMC_DATA(pipe),
+				  lut_val);
+	}
+
+	/*
+	 * Clamp values > 1.0.
+	 * TODO: Extend to max 7.0.
+	 */
+	while (i++ < glk_degamma_lut_size(i915))
+		intel_de_write_fw(i915, PRE_CSC_GAMC_DATA(pipe), 1 << 24);
+
+	intel_de_write_fw(i915, PRE_CSC_GAMC_INDEX(pipe), 0);
+}
+
 /* ilk+ "12.4" interpolated format (high 10 bits) */
 static u32 ilk_lut_12p4_udw(const struct drm_color_lut *color)
 {
@@ -928,12 +1079,20 @@ icl_load_gcmax(const struct intel_crtc_state *crtc_state,
 	       const struct drm_color_lut *color)
 {
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+	struct drm_i915_private *i915 = to_i915(crtc_state->uapi.crtc->dev);
 	enum pipe pipe = crtc->pipe;
 
-	/* FIXME LUT entries are 16 bit only, so we can prog 0xFFFF max */
-	intel_dsb_reg_write(crtc_state, PREC_PAL_GC_MAX(pipe, 0), color->red);
-	intel_dsb_reg_write(crtc_state, PREC_PAL_GC_MAX(pipe, 1), color->green);
-	intel_dsb_reg_write(crtc_state, PREC_PAL_GC_MAX(pipe, 2), color->blue);
+	if (DISPLAY_VER(i915) >= 13) {
+		/* MAx val from UAPI is 16bit only, so setting fixed for GC max */
+		intel_dsb_reg_write(crtc_state, PREC_PAL_GC_MAX(pipe, 0), 1 << 16);
+		intel_dsb_reg_write(crtc_state, PREC_PAL_GC_MAX(pipe, 1), 1 << 16);
+		intel_dsb_reg_write(crtc_state, PREC_PAL_GC_MAX(pipe, 2), 1 << 16);
+	} else {
+		/* FIXME LUT entries are 16 bit only, so we can prog 0xFFFF max */
+		intel_dsb_reg_write(crtc_state, PREC_PAL_GC_MAX(pipe, 0), color->red);
+		intel_dsb_reg_write(crtc_state, PREC_PAL_GC_MAX(pipe, 1), color->green);
+		intel_dsb_reg_write(crtc_state, PREC_PAL_GC_MAX(pipe, 2), color->blue);
+	}
 }
 
 static void
@@ -1049,6 +1208,74 @@ static void icl_load_luts(const struct intel_crtc_state *crtc_state)
 	intel_dsb_commit(crtc_state);
 }
 
+static void
+xelpd_program_logarithmic_gamma_lut(const struct intel_crtc_state *crtc_state)
+{
+	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
+	const struct drm_property_blob *blob = crtc_state->hw.gamma_lut;
+	u32 lut_size;
+	const struct drm_color_lut *lut;
+	enum pipe pipe = crtc->pipe;
+	u32 i;
+
+	if (!blob || !blob->data)
+		return;
+
+	/*
+	 * In case of advance gamma i.e logarithmic, lut size
+	 * is 513. Till the new UAPI is merged, we need to have
+	 * this s/w WA to allow legacy to co-exist with this.
+	 * FixMe: Update once the new UAPI is in place
+	 */
+	if (crtc_state->uapi.advance_gamma_mode_active)
+		lut_size = drm_color_lut_size(blob);
+	else
+		lut_size = INTEL_INFO(dev_priv)->display.color.gamma_lut_size;
+
+	lut = blob->data;
+	intel_dsb_reg_write(crtc_state, PREC_PAL_INDEX(pipe),
+			    PAL_PREC_AUTO_INCREMENT);
+
+	for (i = 0; i < lut_size - 3; i++) {
+		intel_dsb_indexed_reg_write(crtc_state, PREC_PAL_DATA(pipe),
+					    ilk_lut_12p4_ldw(&lut[i]));
+		intel_dsb_indexed_reg_write(crtc_state, PREC_PAL_DATA(pipe),
+					    ilk_lut_12p4_udw(&lut[i]));
+	}
+
+	icl_load_gcmax(crtc_state, &lut[i]);
+	ivb_load_lut_ext_max(crtc_state);
+}
+
+static void xelpd_load_luts(const struct intel_crtc_state *crtc_state)
+{
+	const struct drm_property_blob *gamma_lut = crtc_state->hw.gamma_lut;
+	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
+
+	if (crtc_state->hw.degamma_lut) {
+		if ((DISPLAY_VER(i915) >= 14))
+			mtl_load_degamma_lut(crtc_state);
+		else
+			glk_load_degamma_lut(crtc_state);
+	}
+
+	switch (crtc_state->gamma_mode & GAMMA_MODE_MODE_MASK) {
+	case GAMMA_MODE_MODE_8BIT:
+		ilk_load_lut_8(crtc, gamma_lut);
+		break;
+	case GAMMA_MODE_MODE_12BIT_LOGARITHMIC:
+		xelpd_program_logarithmic_gamma_lut(crtc_state);
+		break;
+	default:
+		bdw_load_lut_10(crtc, gamma_lut, PAL_PREC_INDEX_VALUE(0));
+		ivb_load_lut_ext_max(crtc_state);
+	}
+
+	intel_dsb_commit(crtc_state);
+}
+
 static u32 chv_cgm_degamma_ldw(const struct drm_color_lut *color)
 {
 	return drm_color_lut_extract(color->green, 14) << 16 |
@@ -1069,10 +1296,10 @@ static void chv_load_cgm_degamma(struct intel_crtc *crtc,
 	enum pipe pipe = crtc->pipe;
 
 	for (i = 0; i < lut_size; i++) {
-		intel_de_write(dev_priv, CGM_PIPE_DEGAMMA(pipe, i, 0),
-			       chv_cgm_degamma_ldw(&lut[i]));
-		intel_de_write(dev_priv, CGM_PIPE_DEGAMMA(pipe, i, 1),
-			       chv_cgm_degamma_udw(&lut[i]));
+		intel_de_write_fw(dev_priv, CGM_PIPE_DEGAMMA(pipe, i, 0),
+				  chv_cgm_degamma_ldw(&lut[i]));
+		intel_de_write_fw(dev_priv, CGM_PIPE_DEGAMMA(pipe, i, 1),
+				  chv_cgm_degamma_udw(&lut[i]));
 	}
 }
 
@@ -1103,10 +1330,10 @@ static void chv_load_cgm_gamma(struct intel_crtc *crtc,
 	enum pipe pipe = crtc->pipe;
 
 	for (i = 0; i < lut_size; i++) {
-		intel_de_write(dev_priv, CGM_PIPE_GAMMA(pipe, i, 0),
-			       chv_cgm_gamma_ldw(&lut[i]));
-		intel_de_write(dev_priv, CGM_PIPE_GAMMA(pipe, i, 1),
-			       chv_cgm_gamma_udw(&lut[i]));
+		intel_de_write_fw(dev_priv, CGM_PIPE_GAMMA(pipe, i, 0),
+				  chv_cgm_gamma_ldw(&lut[i]));
+		intel_de_write_fw(dev_priv, CGM_PIPE_GAMMA(pipe, i, 1),
+				  chv_cgm_gamma_udw(&lut[i]));
 	}
 }
 
@@ -1129,22 +1356,46 @@ static void chv_load_luts(const struct intel_crtc_state *crtc_state)
 	else
 		i965_load_luts(crtc_state);
 
-	intel_de_write(dev_priv, CGM_PIPE_MODE(crtc->pipe),
-		       crtc_state->cgm_mode);
+	intel_de_write_fw(dev_priv, CGM_PIPE_MODE(crtc->pipe),
+			  crtc_state->cgm_mode);
+}
+
+void intel_color_load_plane_csc_matrix(const struct drm_plane_state *plane_state)
+{
+	struct drm_i915_private *dev_priv = to_i915(plane_state->plane->dev);
+
+	if (dev_priv->color_funcs->load_plane_csc_matrix)
+		dev_priv->color_funcs->load_plane_csc_matrix(plane_state);
+}
+
+void intel_color_load_plane_luts(const struct drm_plane_state *plane_state)
+{
+	struct drm_i915_private *dev_priv = to_i915(plane_state->plane->dev);
+
+	if (dev_priv->color_funcs->load_plane_luts)
+		dev_priv->color_funcs->load_plane_luts(plane_state);
 }
 
 void intel_color_load_luts(const struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc_state->uapi.crtc->dev);
 
-	dev_priv->display.load_luts(crtc_state);
+	dev_priv->color_funcs->load_luts(crtc_state);
 }
 
-void intel_color_commit(const struct intel_crtc_state *crtc_state)
+void intel_color_commit_noarm(const struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc_state->uapi.crtc->dev);
 
-	dev_priv->display.color_commit(crtc_state);
+	if (dev_priv->color_funcs->color_commit_noarm)
+		dev_priv->color_funcs->color_commit_noarm(crtc_state);
+}
+
+void intel_color_commit_arm(const struct intel_crtc_state *crtc_state)
+{
+	struct drm_i915_private *dev_priv = to_i915(crtc_state->uapi.crtc->dev);
+
+	dev_priv->color_funcs->color_commit_arm(crtc_state);
 }
 
 static bool intel_can_preload_luts(const struct intel_crtc_state *new_crtc_state)
@@ -1200,15 +1451,15 @@ int intel_color_check(struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc_state->uapi.crtc->dev);
 
-	return dev_priv->display.color_check(crtc_state);
+	return dev_priv->color_funcs->color_check(crtc_state);
 }
 
 void intel_color_get_config(struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc_state->uapi.crtc->dev);
 
-	if (dev_priv->display.read_luts)
-		dev_priv->display.read_luts(crtc_state);
+	if (dev_priv->color_funcs->read_luts)
+		dev_priv->color_funcs->read_luts(crtc_state);
 }
 
 static bool need_plane_update(struct intel_plane *plane,
@@ -1261,6 +1512,23 @@ intel_color_add_affected_planes(struct intel_crtc_state *new_crtc_state)
 	return 0;
 }
 
+static int check_lut_ext_size(const struct drm_property_blob *lut, int expected)
+{
+	int len;
+
+	if (!lut)
+		return 0;
+
+	len = drm_color_lut_ext_size(lut);
+	if (len != expected) {
+		DRM_DEBUG_KMS("Invalid LUT size; got %d, expected %d\n",
+			      len, expected);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int check_lut_size(const struct drm_property_blob *lut, int expected)
 {
 	int len;
@@ -1297,20 +1565,58 @@ static int check_luts(const struct intel_crtc_state *crtc_state)
 		return -EINVAL;
 	}
 
-	degamma_length = INTEL_INFO(dev_priv)->color.degamma_lut_size;
-	gamma_length = INTEL_INFO(dev_priv)->color.gamma_lut_size;
-	degamma_tests = INTEL_INFO(dev_priv)->color.degamma_lut_tests;
-	gamma_tests = INTEL_INFO(dev_priv)->color.gamma_lut_tests;
+	degamma_length = INTEL_INFO(dev_priv)->display.color.degamma_lut_size;
 
-	if (check_lut_size(degamma_lut, degamma_length) ||
-	    check_lut_size(gamma_lut, gamma_length))
-		return -EINVAL;
+	/*
+	 * In case of advance gamma i.e logarithmic, lut size
+	 * is 513. Till the new UAPI is merged, we need to have
+	 * this s/w WA to allow legacy to co-exist with this.
+	 * FixMe: Update once the new UAPI is in place
+	 */
+	if (gamma_lut && crtc_state->uapi.advance_gamma_mode_active)
+		gamma_length = drm_color_lut_size(gamma_lut);
+	else
+		gamma_length = INTEL_INFO(dev_priv)->display.color.gamma_lut_size;
 
-	if (drm_color_lut_check(degamma_lut, degamma_tests) ||
+	degamma_tests = INTEL_INFO(dev_priv)->display.color.degamma_lut_tests;
+	gamma_tests = INTEL_INFO(dev_priv)->display.color.gamma_lut_tests;
+
+	if (check_lut_size(gamma_lut, gamma_length) ||
 	    drm_color_lut_check(gamma_lut, gamma_tests))
 		return -EINVAL;
 
+	/* If extended degamma property set*/
+	if (crtc_state->uapi.advance_degamma_mode_active) {
+		if (check_lut_ext_size(degamma_lut, degamma_length) ||
+		    drm_color_lut_ext_check(degamma_lut, degamma_tests))
+			return -EINVAL;
+	} else {
+		if (check_lut_size(degamma_lut, degamma_length) ||
+		    drm_color_lut_check(degamma_lut, degamma_tests))
+			return -EINVAL;
+	}
+
 	return 0;
+}
+
+static int mtl_check_degamma_lut(const struct intel_crtc_state *crtc_state)
+{
+	const struct drm_property_blob *degamma_lut_blob = crtc_state->hw.gamma_lut;
+
+	if (!degamma_lut_blob)
+		return 0;
+
+	if (crtc_state->uapi.degamma_mode_type == DEGAMMA_MODE_24BIT &&
+	    crtc_state->uapi.advance_degamma_mode_active)
+		return 0;
+
+	/* 16 bit LUT value usecase */
+	if (crtc_state->uapi.degamma_mode_type == 0)
+		return 0;
+
+	DRM_ERROR("%s check failed\n", __func__);
+
+	return -EINVAL;
 }
 
 static u32 i9xx_gamma_mode(struct intel_crtc_state *crtc_state)
@@ -1572,6 +1878,7 @@ static int glk_color_check(struct intel_crtc_state *crtc_state)
 
 static u32 icl_gamma_mode(const struct intel_crtc_state *crtc_state)
 {
+	struct drm_i915_private *i915 = to_i915(crtc_state->uapi.crtc->dev);
 	u32 gamma_mode = 0;
 
 	if (crtc_state->hw.degamma_lut)
@@ -1582,10 +1889,18 @@ static u32 icl_gamma_mode(const struct intel_crtc_state *crtc_state)
 		gamma_mode |= POST_CSC_GAMMA_ENABLE;
 
 	if (!crtc_state->hw.gamma_lut ||
-	    crtc_state_is_legacy_gamma(crtc_state))
+	    crtc_state_is_legacy_gamma(crtc_state)) {
 		gamma_mode |= GAMMA_MODE_MODE_8BIT;
-	else
+	} else if (DISPLAY_VER(i915) >= 13) {
+		if (crtc_state->uapi.gamma_mode_type ==
+				GAMMA_MODE_LOGARITHMIC_12BIT &&
+				crtc_state->uapi.advance_gamma_mode_active)
+			gamma_mode |= GAMMA_MODE_MODE_12BIT_LOGARITHMIC;
+		else
+			gamma_mode |= GAMMA_MODE_MODE_10BIT;
+	} else {
 		gamma_mode |= GAMMA_MODE_MODE_12BIT_MULTI_SEGMENTED;
+	}
 
 	return gamma_mode;
 }
@@ -1604,15 +1919,76 @@ static u32 icl_csc_mode(const struct intel_crtc_state *crtc_state)
 	return csc_mode;
 }
 
+static u32 dither_after_cc1_12bpc(const struct intel_crtc_state *crtc_state)
+{
+	u32 gamma_mode = crtc_state->gamma_mode;
+	struct drm_i915_private *i915 = to_i915(crtc_state->uapi.crtc->dev);
+
+	if (DISPLAY_VER(i915) >= 13) {
+		if (!crtc_state->dither_force_disable &&
+		    (crtc_state->pipe_bpp == 36))
+			gamma_mode |= GAMMA_MODE_DITHER_AFTER_CC1;
+	}
+
+	return gamma_mode;
+}
+
 static int icl_color_check(struct intel_crtc_state *crtc_state)
 {
+	struct drm_device *dev = crtc_state->uapi.crtc->dev;
+	struct drm_i915_private *dev_priv = to_i915(dev);
+	struct drm_property *gamma_mode_property = crtc_state->uapi.crtc->gamma_mode_property;
+	struct drm_property *degamma_mode_property = crtc_state->uapi.crtc->degamma_mode_property;
+	struct drm_property_enum *prop_enum;
+	u32 index = 0;
 	int ret;
 
 	ret = check_luts(crtc_state);
 	if (ret)
 		return ret;
 
+	if (DISPLAY_VER(dev_priv) >= 14) {
+		list_for_each_entry(prop_enum, &degamma_mode_property->enum_list, head) {
+			if (prop_enum->value == crtc_state->uapi.degamma_mode) {
+				if (!strcmp(prop_enum->name,
+					    "extended degamma")) {
+					crtc_state->uapi.degamma_mode_type =
+						DEGAMMA_MODE_24BIT;
+					drm_dbg_kms(dev,
+						    "extended degamma enabled\n");
+				} else {
+					crtc_state->uapi.degamma_mode_type = 0;
+					drm_dbg_kms(dev,
+						    "extended degamma disabled\n");
+				}
+				break;
+			}
+		}
+
+		ret = mtl_check_degamma_lut(crtc_state);
+		if (ret)
+			return ret;
+	}
+
+	if (DISPLAY_VER(dev_priv) >= 13) {
+		list_for_each_entry(prop_enum, &gamma_mode_property->enum_list, head) {
+			if (prop_enum->value == crtc_state->uapi.gamma_mode) {
+				if (!strcmp(prop_enum->name,
+					    "logarithmic gamma")) {
+					crtc_state->uapi.gamma_mode_type =
+						GAMMA_MODE_LOGARITHMIC_12BIT;
+					drm_dbg_kms(dev,
+						    "logarithmic gamma enabled\n");
+				}
+				break;
+			}
+			index++;
+		}
+	}
+
 	crtc_state->gamma_mode = icl_gamma_mode(crtc_state);
+
+	crtc_state->gamma_mode = dither_after_cc1_12bpc(crtc_state);
 
 	crtc_state->csc_mode = icl_csc_mode(crtc_state);
 
@@ -1806,7 +2182,7 @@ static struct drm_property_blob *i9xx_read_lut_8(struct intel_crtc *crtc)
 	lut = blob->data;
 
 	for (i = 0; i < LEGACY_LUT_LENGTH; i++) {
-		u32 val = intel_de_read(dev_priv, PALETTE(pipe, i));
+		u32 val = intel_de_read_fw(dev_priv, PALETTE(pipe, i));
 
 		i9xx_lut_8_pack(&lut[i], val);
 	}
@@ -1827,7 +2203,7 @@ static void i9xx_read_luts(struct intel_crtc_state *crtc_state)
 static struct drm_property_blob *i965_read_lut_10p6(struct intel_crtc *crtc)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
-	int i, lut_size = INTEL_INFO(dev_priv)->color.gamma_lut_size;
+	int i, lut_size = INTEL_INFO(dev_priv)->display.color.gamma_lut_size;
 	enum pipe pipe = crtc->pipe;
 	struct drm_property_blob *blob;
 	struct drm_color_lut *lut;
@@ -1841,15 +2217,15 @@ static struct drm_property_blob *i965_read_lut_10p6(struct intel_crtc *crtc)
 	lut = blob->data;
 
 	for (i = 0; i < lut_size - 1; i++) {
-		u32 ldw = intel_de_read(dev_priv, PALETTE(pipe, 2 * i + 0));
-		u32 udw = intel_de_read(dev_priv, PALETTE(pipe, 2 * i + 1));
+		u32 ldw = intel_de_read_fw(dev_priv, PALETTE(pipe, 2 * i + 0));
+		u32 udw = intel_de_read_fw(dev_priv, PALETTE(pipe, 2 * i + 1));
 
 		i965_lut_10p6_pack(&lut[i], ldw, udw);
 	}
 
-	lut[i].red = i965_lut_11p6_max_pack(intel_de_read(dev_priv, PIPEGCMAX(pipe, 0)));
-	lut[i].green = i965_lut_11p6_max_pack(intel_de_read(dev_priv, PIPEGCMAX(pipe, 1)));
-	lut[i].blue = i965_lut_11p6_max_pack(intel_de_read(dev_priv, PIPEGCMAX(pipe, 2)));
+	lut[i].red = i965_lut_11p6_max_pack(intel_de_read_fw(dev_priv, PIPEGCMAX(pipe, 0)));
+	lut[i].green = i965_lut_11p6_max_pack(intel_de_read_fw(dev_priv, PIPEGCMAX(pipe, 1)));
+	lut[i].blue = i965_lut_11p6_max_pack(intel_de_read_fw(dev_priv, PIPEGCMAX(pipe, 2)));
 
 	return blob;
 }
@@ -1870,7 +2246,7 @@ static void i965_read_luts(struct intel_crtc_state *crtc_state)
 static struct drm_property_blob *chv_read_cgm_gamma(struct intel_crtc *crtc)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
-	int i, lut_size = INTEL_INFO(dev_priv)->color.gamma_lut_size;
+	int i, lut_size = INTEL_INFO(dev_priv)->display.color.gamma_lut_size;
 	enum pipe pipe = crtc->pipe;
 	struct drm_property_blob *blob;
 	struct drm_color_lut *lut;
@@ -1884,8 +2260,8 @@ static struct drm_property_blob *chv_read_cgm_gamma(struct intel_crtc *crtc)
 	lut = blob->data;
 
 	for (i = 0; i < lut_size; i++) {
-		u32 ldw = intel_de_read(dev_priv, CGM_PIPE_GAMMA(pipe, i, 0));
-		u32 udw = intel_de_read(dev_priv, CGM_PIPE_GAMMA(pipe, i, 1));
+		u32 ldw = intel_de_read_fw(dev_priv, CGM_PIPE_GAMMA(pipe, i, 0));
+		u32 udw = intel_de_read_fw(dev_priv, CGM_PIPE_GAMMA(pipe, i, 1));
 
 		chv_cgm_gamma_pack(&lut[i], ldw, udw);
 	}
@@ -1920,7 +2296,7 @@ static struct drm_property_blob *ilk_read_lut_8(struct intel_crtc *crtc)
 	lut = blob->data;
 
 	for (i = 0; i < LEGACY_LUT_LENGTH; i++) {
-		u32 val = intel_de_read(dev_priv, LGC_PALETTE(pipe, i));
+		u32 val = intel_de_read_fw(dev_priv, LGC_PALETTE(pipe, i));
 
 		i9xx_lut_8_pack(&lut[i], val);
 	}
@@ -1931,7 +2307,7 @@ static struct drm_property_blob *ilk_read_lut_8(struct intel_crtc *crtc)
 static struct drm_property_blob *ilk_read_lut_10(struct intel_crtc *crtc)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
-	int i, lut_size = INTEL_INFO(dev_priv)->color.gamma_lut_size;
+	int i, lut_size = INTEL_INFO(dev_priv)->display.color.gamma_lut_size;
 	enum pipe pipe = crtc->pipe;
 	struct drm_property_blob *blob;
 	struct drm_color_lut *lut;
@@ -1945,7 +2321,7 @@ static struct drm_property_blob *ilk_read_lut_10(struct intel_crtc *crtc)
 	lut = blob->data;
 
 	for (i = 0; i < lut_size; i++) {
-		u32 val = intel_de_read(dev_priv, PREC_PALETTE(pipe, i));
+		u32 val = intel_de_read_fw(dev_priv, PREC_PALETTE(pipe, i));
 
 		ilk_lut_10_pack(&lut[i], val);
 	}
@@ -1982,7 +2358,7 @@ static struct drm_property_blob *bdw_read_lut_10(struct intel_crtc *crtc,
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 	int i, hw_lut_size = ivb_lut_10_size(prec_index);
-	int lut_size = INTEL_INFO(dev_priv)->color.gamma_lut_size;
+	int lut_size = INTEL_INFO(dev_priv)->display.color.gamma_lut_size;
 	enum pipe pipe = crtc->pipe;
 	struct drm_property_blob *blob;
 	struct drm_color_lut *lut;
@@ -1997,16 +2373,16 @@ static struct drm_property_blob *bdw_read_lut_10(struct intel_crtc *crtc,
 
 	lut = blob->data;
 
-	intel_de_write(dev_priv, PREC_PAL_INDEX(pipe),
-		       prec_index | PAL_PREC_AUTO_INCREMENT);
+	intel_de_write_fw(dev_priv, PREC_PAL_INDEX(pipe),
+			  prec_index | PAL_PREC_AUTO_INCREMENT);
 
 	for (i = 0; i < lut_size; i++) {
-		u32 val = intel_de_read(dev_priv, PREC_PAL_DATA(pipe));
+		u32 val = intel_de_read_fw(dev_priv, PREC_PAL_DATA(pipe));
 
 		ilk_lut_10_pack(&lut[i], val);
 	}
 
-	intel_de_write(dev_priv, PREC_PAL_INDEX(pipe), 0);
+	intel_de_write_fw(dev_priv, PREC_PAL_INDEX(pipe), 0);
 
 	return blob;
 }
@@ -2035,7 +2411,7 @@ static struct drm_property_blob *
 icl_read_lut_multi_segment(struct intel_crtc *crtc)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
-	int i, lut_size = INTEL_INFO(dev_priv)->color.gamma_lut_size;
+	int i, lut_size = INTEL_INFO(dev_priv)->display.color.gamma_lut_size;
 	enum pipe pipe = crtc->pipe;
 	struct drm_property_blob *blob;
 	struct drm_color_lut *lut;
@@ -2048,17 +2424,17 @@ icl_read_lut_multi_segment(struct intel_crtc *crtc)
 
 	lut = blob->data;
 
-	intel_de_write(dev_priv, PREC_PAL_MULTI_SEG_INDEX(pipe),
-		       PAL_PREC_AUTO_INCREMENT);
+	intel_de_write_fw(dev_priv, PREC_PAL_MULTI_SEG_INDEX(pipe),
+			  PAL_PREC_AUTO_INCREMENT);
 
 	for (i = 0; i < 9; i++) {
-		u32 ldw = intel_de_read(dev_priv, PREC_PAL_MULTI_SEG_DATA(pipe));
-		u32 udw = intel_de_read(dev_priv, PREC_PAL_MULTI_SEG_DATA(pipe));
+		u32 ldw = intel_de_read_fw(dev_priv, PREC_PAL_MULTI_SEG_DATA(pipe));
+		u32 udw = intel_de_read_fw(dev_priv, PREC_PAL_MULTI_SEG_DATA(pipe));
 
 		icl_lut_multi_seg_pack(&lut[i], ldw, udw);
 	}
 
-	intel_de_write(dev_priv, PREC_PAL_MULTI_SEG_INDEX(pipe), 0);
+	intel_de_write_fw(dev_priv, PREC_PAL_MULTI_SEG_INDEX(pipe), 0);
 
 	/*
 	 * FIXME readouts from PAL_PREC_DATA register aren't giving
@@ -2092,65 +2468,960 @@ static void icl_read_luts(struct intel_crtc_state *crtc_state)
 	}
 }
 
+static void xelpd_lut_logarithmic_pack(struct drm_color_lut *entry,
+				       u32 ldw, u32 udw)
+{
+	entry->red = REG_FIELD_GET(PAL_PREC_LOGARITHMIC_RED_UDW_MASK, udw) << 6 |
+				   REG_FIELD_GET(PAL_PREC_LOGARITHMIC_RED_LDW_MASK, ldw);
+	entry->green = REG_FIELD_GET(PAL_PREC_LOGARITHMIC_GREEN_UDW_MASK, udw) << 6 |
+				     REG_FIELD_GET(PAL_PREC_LOGARITHMIC_GREEN_LDW_MASK, ldw);
+	entry->blue = REG_FIELD_GET(PAL_PREC_LOGARITHMIC_BLUE_UDW_MASK, udw) << 6 |
+				    REG_FIELD_GET(PAL_PREC_LOGARITHMIC_BLUE_LDW_MASK, ldw);
+}
+
+static struct drm_property_blob *
+xelpd_read_lut_logarithmic(struct intel_crtc *crtc)
+{
+	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
+	struct intel_crtc_state *crtc_state =
+		to_intel_crtc_state(crtc->base.state);
+	const struct drm_property_blob *gamma_lut = crtc_state->hw.gamma_lut;
+	int i, lut_size;
+	enum pipe pipe = crtc->pipe;
+	struct drm_property_blob *blob;
+	struct drm_color_lut *lut;
+	u32 gamma_max_val = 0xFFFF;
+
+	/*
+	 * In case of advance gamma i.e logarithmic, lut size
+	 * is 513. Till the new UAPI is merged, we need to have
+	 * this s/w WA to allow legacy to co-exist with this.
+	 * FixMe: Update once the new UAPI is in place
+	 */
+	if (crtc_state->uapi.advance_gamma_mode_active)
+		lut_size = drm_color_lut_size(gamma_lut);
+	else
+		lut_size = INTEL_INFO(dev_priv)->display.color.gamma_lut_size;
+
+	blob = drm_property_create_blob(&dev_priv->drm,
+					sizeof(struct drm_color_lut) * lut_size,
+					NULL);
+	if (IS_ERR(blob))
+		return NULL;
+
+	lut = blob->data;
+
+	intel_de_write(dev_priv, PREC_PAL_INDEX(pipe),
+		       PAL_PREC_AUTO_INCREMENT);
+
+	for (i = 0; i < lut_size - 3; i++) {
+		u32 ldw = intel_de_read(dev_priv, PREC_PAL_DATA(pipe));
+		u32 udw = intel_de_read(dev_priv, PREC_PAL_DATA(pipe));
+
+		xelpd_lut_logarithmic_pack(&lut[i], ldw, udw);
+	}
+
+	/* All the extended ranges are now limited to last value of 1.0 */
+	while (i < lut_size) {
+		lut[i].red = gamma_max_val;
+		lut[i].green = gamma_max_val;
+		lut[i].blue = gamma_max_val;
+		i++;
+	};
+
+	intel_de_write(dev_priv, PREC_PAL_INDEX(pipe), 0);
+
+	return blob;
+}
+
+static void xelpd_read_luts(struct intel_crtc_state *crtc_state)
+{
+	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
+
+	if ((crtc_state->gamma_mode & POST_CSC_GAMMA_ENABLE) == 0)
+		return;
+
+	switch (crtc_state->gamma_mode & GAMMA_MODE_MODE_MASK) {
+	case GAMMA_MODE_MODE_8BIT:
+		crtc_state->hw.gamma_lut = ilk_read_lut_8(crtc);
+		break;
+	case GAMMA_MODE_MODE_12BIT_LOGARITHMIC:
+		crtc_state->hw.gamma_lut = xelpd_read_lut_logarithmic(crtc);
+		break;
+	default:
+		crtc_state->hw.gamma_lut = bdw_read_lut_10(crtc, PAL_PREC_INDEX_VALUE(0));
+	}
+}
+
+#define XELPD_GAMMA_CAPABILITY_FLAG	(DRM_MODE_LUT_GAMMA | \
+					 DRM_MODE_LUT_REFLECT_NEGATIVE | \
+					 DRM_MODE_LUT_INTERPOLATE | \
+					 DRM_MODE_LUT_NON_DECREASING)
+ /* FIXME input bpc? */
+static const struct drm_color_lut_range xelpd_logarithmic_gamma[] = {
+	/* segment 0 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 1,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = 0, .end = 0,
+		.min = 0, .max = 0,
+	},
+	/* segment 1 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 1,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = 0, .end = (1 << 0),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 2 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 2,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 0), .end = (1 << 1),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 3 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 2,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 1), .end = (1 << 2),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 4 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 2,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 2), .end = (1 << 3),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 5 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 2,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 3), .end = (1 << 4),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 6 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 4,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 4), .end = (1 << 5),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 7 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 4,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 5), .end = (1 << 6),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 8 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 4,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 6), .end = (1 << 7),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 9 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 8,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 7), .end = (1 << 8),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 10 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 8,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 8), .end = (1 << 9),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 11 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 8,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 9), .end = (1 << 10),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 12 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 16,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 10), .end = (1 << 11),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 13 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 16,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 11), .end = (1 << 12),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 14 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 16,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 12), .end = (1 << 13),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 15 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 32,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 13), .end = (1 << 14),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 16 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 32,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 14), .end = (1 << 15),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 17 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 64,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 15), .end = (1 << 16),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 18 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 64,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 16), .end = (1 << 17),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 19 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 64,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 17), .end = (1 << 18),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 20 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 32,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 18), .end = (1 << 19),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 21 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 32,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 19), .end = (1 << 20),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 22 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 32,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 20), .end = (1 << 21),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 23 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 32,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 21), .end = (1 << 22),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 24 */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG,
+		.count = 32,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 22), .end = (1 << 23),
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 3 aka. coarse segment / PAL_GC_MAX */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG | DRM_MODE_LUT_REUSE_LAST,
+		.count = 1,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 24), .end = (3 << 24),
+		.min = 0, .max = 1 << 16,
+	},
+	/* PAL_EXT_GC_MAX */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG | DRM_MODE_LUT_REUSE_LAST,
+		.count = 1,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (3 << 24), .end = (7 << 24),
+		.min = 0, .max = (8 << 16) - 1,
+	},
+	/* PAL_EXT2_GC_MAX */
+	{
+		.flags = XELPD_GAMMA_CAPABILITY_FLAG | DRM_MODE_LUT_REUSE_LAST,
+		.count = 1,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (7 << 24), .end = (7 << 24),
+		.min = 0, .max = (8 << 16) - 1,
+	},
+};
+
+static void xelpd_program_plane_degamma_lut(const struct drm_plane_state *state,
+					    struct drm_color_lut_ext *degamma_lut,
+					    u32 offset)
+{
+	struct drm_i915_private *dev_priv = to_i915(state->plane->dev);
+	enum pipe pipe = to_intel_plane(state->plane)->pipe;
+	enum plane_id plane = to_intel_plane(state->plane)->id;
+	u32 i, lut_size;
+
+	if (icl_is_hdr_plane(dev_priv, plane)) {
+		lut_size = 128;
+
+		intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_INDEX_ENH(pipe, plane, 0),
+				  PLANE_PAL_PREC_AUTO_INCREMENT);
+
+		if (degamma_lut) {
+			for (i = 0; i < lut_size; i++) {
+				u64 word = drm_color_lut_extract_ext(degamma_lut[i].green, 24);
+				u32 lut_val = (word & 0xffffff);
+
+				intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_DATA_ENH(pipe, plane, 0),
+						  lut_val);
+			}
+
+			/* Program the max register to clamp values > 1.0. */
+			while (i < 131)
+				intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_DATA_ENH(pipe, plane, 0),
+						  degamma_lut[i++].green);
+		} else {
+			for (i = 0; i < lut_size; i++) {
+				u32 v = (i * ((1 << 24) - 1)) / (lut_size - 1);
+
+				intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_DATA_ENH(pipe, plane, 0), v);
+			}
+
+			do {
+				intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_DATA_ENH(pipe, plane, 0),
+						  1 << 24);
+			} while (i++ < 130);
+		}
+
+		intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_INDEX_ENH(pipe, plane, 0), 0);
+	} else {
+		lut_size = 32;
+
+		/*
+		 * First 3 planes are HDR, so reduce by 3 to get to the right
+		 * SDR plane offset
+		 */
+		plane = plane - 3;
+
+		intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_INDEX(pipe, plane, 0),
+				  PLANE_PAL_PREC_AUTO_INCREMENT);
+
+		if (degamma_lut) {
+			for (i = 0; i < lut_size; i++)
+				intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_DATA(pipe, plane, 0),
+						  degamma_lut[i].green);
+			/* Program the max register to clamp values > 1.0. */
+			while (i < 35)
+				intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_DATA(pipe, plane, 0),
+						  degamma_lut[i++].green);
+		} else {
+			for (i = 0; i < lut_size; i++) {
+				u32 v = (i * ((1 << 16) - 1)) / (lut_size - 1);
+
+				intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_DATA(pipe, plane, 0), v);
+			}
+
+			do {
+				intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_DATA(pipe, plane, 0),
+						  1 << 16);
+			} while (i++ < 34);
+		}
+
+		intel_de_write_fw(dev_priv, PLANE_PRE_CSC_GAMC_INDEX(pipe, plane, 0), 0);
+	}
+}
+
+static void xelpd_program_plane_gamma_lut(const struct drm_plane_state *state,
+					  struct drm_color_lut_ext *gamma_lut,
+					  u32 offset)
+{
+	struct drm_i915_private *dev_priv = to_i915(state->plane->dev);
+	enum pipe pipe = to_intel_plane(state->plane)->pipe;
+	enum plane_id plane = to_intel_plane(state->plane)->id;
+	u32 i, lut_size;
+
+	if (icl_is_hdr_plane(dev_priv, plane)) {
+		intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_INDEX_ENH(pipe, plane, 0),
+				  offset | PLANE_PAL_PREC_AUTO_INCREMENT);
+		if (gamma_lut) {
+			lut_size = 32;
+			for (i = 0; i < lut_size; i++) {
+				u64 word = drm_color_lut_extract_ext(gamma_lut[i].green, 24);
+				u32 lut_val = (word & 0xffffff);
+
+				intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_DATA_ENH(pipe, plane, 0),
+						  lut_val);
+			}
+
+			do {
+				/* Program the max register to clamp values > 1.0. */
+				intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_DATA_ENH(pipe, plane, 0),
+						  gamma_lut[i].green);
+			} while (i++ < 34);
+		} else {
+			lut_size = 32;
+			for (i = 0; i < lut_size; i++) {
+				u32 v = (i * ((1 << 24) - 1)) / (lut_size - 1);
+
+				intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_DATA_ENH(pipe, plane, 0), v);
+			}
+
+			do {
+				intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_DATA_ENH(pipe, plane, 0),
+						  1 << 24);
+			} while (i++ < 34);
+		}
+
+		intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_INDEX_ENH(pipe, plane, 0), 0);
+	} else {
+		lut_size = 32;
+		/*
+		 * First 3 planes are HDR, so reduce by 3 to get to the right
+		 * SDR plane offset
+		 */
+		plane = plane - 3;
+
+		intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_INDEX(pipe, plane, 0),
+				  offset | PLANE_PAL_PREC_AUTO_INCREMENT);
+
+		if (gamma_lut) {
+			for (i = 0; i < lut_size; i++)
+				intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_DATA(pipe, plane, 0),
+						  gamma_lut[i].green & 0xffff);
+			/* Program the max register to clamp values > 1.0. */
+			while (i < 35)
+				intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_DATA(pipe, plane, 0),
+						  gamma_lut[i++].green & 0x3ffff);
+		} else {
+			for (i = 0; i < lut_size; i++) {
+				u32 v = (i * ((1 << 16) - 1)) / (lut_size - 1);
+
+				intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_DATA(pipe, plane, 0), v);
+			}
+
+			do {
+				intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_DATA(pipe, plane, 0),
+						  (1 << 16));
+			} while (i++ < 34);
+		}
+
+		intel_de_write_fw(dev_priv, PLANE_POST_CSC_GAMC_INDEX(pipe, plane, 0), 0);
+	}
+}
+
+static void xelpd_plane_load_luts(const struct drm_plane_state *plane_state)
+{
+	const struct drm_property_blob *degamma_lut_blob =
+					plane_state->degamma_lut;
+	const struct drm_property_blob *gamma_lut_blob =
+					plane_state->gamma_lut;
+	struct drm_color_lut_ext *degamma_lut, *gamma_lut;
+
+	if (degamma_lut_blob) {
+		degamma_lut = degamma_lut_blob->data;
+		xelpd_program_plane_degamma_lut(plane_state, degamma_lut, 0);
+	}
+
+	if (gamma_lut_blob) {
+		gamma_lut = gamma_lut_blob->data;
+		xelpd_program_plane_gamma_lut(plane_state, gamma_lut, 0);
+	}
+}
+
+static void xelpd_load_plane_csc_matrix(const struct drm_plane_state *state)
+{
+	struct drm_i915_private *dev_priv = to_i915(state->plane->dev);
+	enum pipe pipe = to_intel_plane(state->plane)->pipe;
+	enum plane_id plane = to_intel_plane(state->plane)->id;
+	struct drm_color_ctm *ctm;
+	const u64 *input;
+	u16 coeffs[9] = {};
+	u16 postoff = 0;
+	int i;
+
+	if (!icl_is_hdr_plane(dev_priv, plane) || !state->ctm)
+		return;
+
+	ctm = state->ctm->data;
+	input = ctm->matrix;
+
+	/*
+	 * Convert fixed point S31.32 input to format supported by the
+	 * hardware.
+	 */
+	for (i = 0; i < ARRAY_SIZE(coeffs); i++) {
+		u64 abs_coeff = ((1ULL << 63) - 1) & input[i];
+
+		/*
+		 * Clamp input value to min/max supported by
+		 * hardware.
+		 */
+		abs_coeff = clamp_val(abs_coeff, 0, CTM_COEFF_4_0 - 1);
+
+		/* sign bit */
+		if (CTM_COEFF_NEGATIVE(input[i]))
+			coeffs[i] |= 1 << 15;
+
+		if (abs_coeff < CTM_COEFF_0_125)
+			coeffs[i] |= (3 << 12) |
+				ILK_CSC_COEFF_FP(abs_coeff, 12);
+		else if (abs_coeff < CTM_COEFF_0_25)
+			coeffs[i] |= (2 << 12) |
+				ILK_CSC_COEFF_FP(abs_coeff, 11);
+		else if (abs_coeff < CTM_COEFF_0_5)
+			coeffs[i] |= (1 << 12) |
+				ILK_CSC_COEFF_FP(abs_coeff, 10);
+		else if (abs_coeff < CTM_COEFF_1_0)
+			coeffs[i] |= ILK_CSC_COEFF_FP(abs_coeff, 9);
+		else if (abs_coeff < CTM_COEFF_2_0)
+			coeffs[i] |= (7 << 12) |
+				ILK_CSC_COEFF_FP(abs_coeff, 8);
+		else
+			coeffs[i] |= (6 << 12) |
+				ILK_CSC_COEFF_FP(abs_coeff, 7);
+	}
+
+	intel_de_write_fw(dev_priv, PLANE_CSC_COEFF(pipe, plane, 0),
+			  coeffs[0] << 16 | coeffs[1]);
+	intel_de_write_fw(dev_priv, PLANE_CSC_COEFF(pipe, plane, 1),
+			  coeffs[2] << 16);
+
+	intel_de_write_fw(dev_priv, PLANE_CSC_COEFF(pipe, plane, 2),
+			  coeffs[3] << 16 | coeffs[4]);
+	intel_de_write_fw(dev_priv, PLANE_CSC_COEFF(pipe, plane, 3),
+			  coeffs[5] << 16);
+
+	intel_de_write_fw(dev_priv, PLANE_CSC_COEFF(pipe, plane, 4),
+			  coeffs[6] << 16 | coeffs[7]);
+	intel_de_write_fw(dev_priv, PLANE_CSC_COEFF(pipe, plane, 5),
+			  coeffs[8] << 16);
+
+	intel_de_write_fw(dev_priv, PLANE_CSC_PREOFF(pipe, plane, 0), 0);
+	intel_de_write_fw(dev_priv, PLANE_CSC_PREOFF(pipe, plane, 1), 0);
+	intel_de_write_fw(dev_priv, PLANE_CSC_PREOFF(pipe, plane, 2), 0);
+
+	intel_de_write_fw(dev_priv, PLANE_CSC_POSTOFF(pipe, plane, 0), postoff);
+	intel_de_write_fw(dev_priv, PLANE_CSC_POSTOFF(pipe, plane, 1), postoff);
+	intel_de_write_fw(dev_priv, PLANE_CSC_POSTOFF(pipe, plane, 2), postoff);
+}
+
+static const struct intel_color_funcs chv_color_funcs = {
+	.color_check = chv_color_check,
+	.color_commit_arm = i9xx_color_commit_arm,
+	.load_luts = chv_load_luts,
+	.read_luts = chv_read_luts,
+};
+
+static const struct intel_color_funcs i965_color_funcs = {
+	.color_check = i9xx_color_check,
+	.color_commit_arm = i9xx_color_commit_arm,
+	.load_luts = i965_load_luts,
+	.read_luts = i965_read_luts,
+};
+
+static const struct intel_color_funcs i9xx_color_funcs = {
+	.color_check = i9xx_color_check,
+	.color_commit_arm = i9xx_color_commit_arm,
+	.load_luts = i9xx_load_luts,
+	.read_luts = i9xx_read_luts,
+};
+
+static const struct intel_color_funcs xelpd_color_funcs = {
+	.color_check = icl_color_check,
+	.color_commit_noarm = icl_color_commit_noarm,
+	.color_commit_arm = skl_color_commit_arm,
+	.load_luts = xelpd_load_luts,
+	.read_luts = xelpd_read_luts,
+	.load_plane_luts = xelpd_plane_load_luts,
+	.load_plane_csc_matrix = xelpd_load_plane_csc_matrix,
+};
+
+static const struct intel_color_funcs icl_color_funcs = {
+	.color_check = icl_color_check,
+	.color_commit_noarm = icl_color_commit_noarm,
+	.color_commit_arm = skl_color_commit_arm,
+	.load_luts = icl_load_luts,
+	.read_luts = icl_read_luts,
+};
+
+static const struct intel_color_funcs glk_color_funcs = {
+	.color_check = glk_color_check,
+	.color_commit_noarm = ilk_color_commit_noarm,
+	.color_commit_arm = skl_color_commit_arm,
+	.load_luts = glk_load_luts,
+	.read_luts = glk_read_luts,
+};
+
+static const struct intel_color_funcs skl_color_funcs = {
+	.color_check = ivb_color_check,
+	.color_commit_noarm = ilk_color_commit_noarm,
+	.color_commit_arm = skl_color_commit_arm,
+	.load_luts = bdw_load_luts,
+	.read_luts = NULL,
+};
+
+static const struct intel_color_funcs bdw_color_funcs = {
+	.color_check = ivb_color_check,
+	.color_commit_noarm = ilk_color_commit_noarm,
+	.color_commit_arm = hsw_color_commit_arm,
+	.load_luts = bdw_load_luts,
+	.read_luts = NULL,
+};
+
+static const struct intel_color_funcs hsw_color_funcs = {
+	.color_check = ivb_color_check,
+	.color_commit_noarm = ilk_color_commit_noarm,
+	.color_commit_arm = hsw_color_commit_arm,
+	.load_luts = ivb_load_luts,
+	.read_luts = NULL,
+};
+
+static const struct intel_color_funcs ivb_color_funcs = {
+	.color_check = ivb_color_check,
+	.color_commit_noarm = ilk_color_commit_noarm,
+	.color_commit_arm = ilk_color_commit_arm,
+	.load_luts = ivb_load_luts,
+	.read_luts = NULL,
+};
+
+static const struct intel_color_funcs ilk_color_funcs = {
+	.color_check = ilk_color_check,
+	.color_commit_noarm = ilk_color_commit_noarm,
+	.color_commit_arm = ilk_color_commit_arm,
+	.load_luts = ilk_load_luts,
+	.read_luts = ilk_read_luts,
+};
+
+ /* FIXME input bpc? */
+static const struct drm_color_lut_range xelpd_degamma_hdr[] = {
+	/* segment 1 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 128,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = 0, .end = (1 << 24) - 1,
+		.min = 0, .max = (1 << 24) - 1,
+	},
+	/* segment 2 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_REUSE_LAST |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 1,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 24) - 1, .end = 1 << 24,
+		.min = 0, .max = (1 << 27) - 1,
+	},
+	/* Segment 3 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_REUSE_LAST |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 1,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = 1 << 24, .end = 3 << 24,
+		.min = 0, .max = (1 << 27) - 1,
+	},
+	/* Segment 4 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_REUSE_LAST |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 1,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = 3 << 24, .end = 7 << 24,
+		.min = 0, .max = (1 << 27) - 1,
+	},
+};
+
+ /* FIXME input bpc? */
+static const struct drm_color_lut_range xelpd_gamma_degamma_sdr[] = {
+	/* segment 1 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 32,
+		.input_bpc = 16, .output_bpc = 16,
+		.start = 0, .end = (1 << 16) - (1 << 16) / 33,
+		.min = 0, .max = (1 << 16) - 1,
+	},
+	/* segment 2 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_REUSE_LAST |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 1,
+		.input_bpc = 16, .output_bpc = 16,
+		.start = (1 << 16) - (1 << 16) / 33, .end = 1 << 16,
+		.min = 0, .max = 1 << 16,
+	},
+	/* Segment 3 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_REUSE_LAST |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 1,
+		.input_bpc = 16, .output_bpc = 16,
+		.start = 1 << 16, .end = 3 << 16,
+		.min = 0, .max = (8 << 16) - 1,
+	},
+	/* Segment 4 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_REUSE_LAST |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 1,
+		.input_bpc = 16, .output_bpc = 16,
+		.start = 3 << 16, .end = 7 << 16,
+		.min = 0, .max = (8 << 16) - 1,
+	},
+};
+
+ /* FIXME input bpc? */
+static const struct drm_color_lut_range xelpd_gamma_hdr[] = {
+	/*
+	 * ToDo: Add Segment 1
+	 * There is an optional fine segment added with 9 lut values
+	 * Will be added later
+	 */
+
+	/* segment 2 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 32,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = 0, .end = (1 << 24) - 1,
+		.min = 0, .max = (1 << 24) - 1,
+	},
+	/* segment 3 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_REUSE_LAST |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 1,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = (1 << 24) - 1, .end = 1 << 24,
+		.min = 0, .max = 1 << 24,
+	},
+	/* Segment 4 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_REUSE_LAST |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 1,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = 1 << 24, .end = 3 << 24,
+		.min = 0, .max = (3 << 24),
+	},
+	/* Segment 5 */
+	{
+		.flags = (DRM_MODE_LUT_GAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_REUSE_LAST |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 1,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = 3 << 24, .end = 7 << 24,
+		.min = 0, .max = (7 << 24),
+	},
+};
+
+static const struct drm_color_lut_range mtl_24bit_degamma[] = {
+	/* segment 0 */
+	{
+		.flags = (DRM_MODE_LUT_DEGAMMA |
+			  DRM_MODE_LUT_REFLECT_NEGATIVE |
+			  DRM_MODE_LUT_INTERPOLATE |
+			  DRM_MODE_LUT_REUSE_LAST |
+			  DRM_MODE_LUT_NON_DECREASING),
+		.count = 128,
+		.input_bpc = 24, .output_bpc = 16,
+		.start = 0, .end = (1 << 24) - 1,
+		.min = 0, .max = (1 << 24) - 1,
+	}
+};
+
+int intel_color_plane_init(struct drm_plane *plane)
+{
+	struct drm_i915_private *dev_priv = to_i915(plane->dev);
+	int ret = 0;
+
+	if (DISPLAY_VER(dev_priv) >= 13) {
+		drm_plane_create_color_mgmt_properties(plane->dev, plane, 2);
+		ret = drm_plane_color_add_gamma_degamma_mode_range(plane, "no degamma",
+								   NULL, 0,
+								   LUT_TYPE_DEGAMMA);
+		if (ret)
+			return ret;
+
+		ret = drm_plane_color_add_gamma_degamma_mode_range(plane, "no gamma",
+								   NULL, 0,
+								   LUT_TYPE_GAMMA);
+		if (ret)
+			return ret;
+
+		if (icl_is_hdr_plane(dev_priv, to_intel_plane(plane)->id)) {
+			ret = drm_plane_color_add_gamma_degamma_mode_range(plane, "plane degamma",
+									   xelpd_degamma_hdr,
+									   sizeof(xelpd_degamma_hdr),
+									   LUT_TYPE_DEGAMMA);
+			if (ret)
+				return ret;
+
+			ret = drm_plane_color_add_gamma_degamma_mode_range(plane, "plane gamma",
+									   xelpd_gamma_hdr,
+									   sizeof(xelpd_gamma_hdr),
+									   LUT_TYPE_GAMMA);
+			if (ret)
+				return ret;
+		} else {
+			ret = drm_plane_color_add_gamma_degamma_mode_range(plane, "plane degamma",
+									   xelpd_gamma_degamma_sdr,
+									   sizeof(xelpd_gamma_degamma_sdr),
+									   LUT_TYPE_DEGAMMA);
+			if (ret)
+				return ret;
+
+			ret = drm_plane_color_add_gamma_degamma_mode_range(plane, "plane gamma",
+									   xelpd_gamma_degamma_sdr,
+									   sizeof(xelpd_gamma_degamma_sdr),
+									   LUT_TYPE_GAMMA);
+			if (ret)
+				return ret;
+		}
+	}
+
+	drm_plane_attach_degamma_properties(plane);
+
+	if (icl_is_hdr_plane(dev_priv, to_intel_plane(plane)->id))
+		drm_plane_attach_ctm_property(plane);
+
+	drm_plane_attach_gamma_properties(plane);
+
+	return ret;
+}
+
 void intel_color_init(struct intel_crtc *crtc)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
-	bool has_ctm = INTEL_INFO(dev_priv)->color.degamma_lut_size != 0;
+	bool has_ctm = INTEL_INFO(dev_priv)->display.color.degamma_lut_size != 0;
 
 	drm_mode_crtc_set_gamma_size(&crtc->base, 256);
 
 	if (HAS_GMCH(dev_priv)) {
 		if (IS_CHERRYVIEW(dev_priv)) {
-			dev_priv->display.color_check = chv_color_check;
-			dev_priv->display.color_commit = i9xx_color_commit;
-			dev_priv->display.load_luts = chv_load_luts;
-			dev_priv->display.read_luts = chv_read_luts;
+			dev_priv->color_funcs = &chv_color_funcs;
 		} else if (DISPLAY_VER(dev_priv) >= 4) {
-			dev_priv->display.color_check = i9xx_color_check;
-			dev_priv->display.color_commit = i9xx_color_commit;
-			dev_priv->display.load_luts = i965_load_luts;
-			dev_priv->display.read_luts = i965_read_luts;
+			dev_priv->color_funcs = &i965_color_funcs;
 		} else {
-			dev_priv->display.color_check = i9xx_color_check;
-			dev_priv->display.color_commit = i9xx_color_commit;
-			dev_priv->display.load_luts = i9xx_load_luts;
-			dev_priv->display.read_luts = i9xx_read_luts;
+			dev_priv->color_funcs = &i9xx_color_funcs;
 		}
 	} else {
-		if (DISPLAY_VER(dev_priv) >= 11)
-			dev_priv->display.color_check = icl_color_check;
-		else if (DISPLAY_VER(dev_priv) >= 10)
-			dev_priv->display.color_check = glk_color_check;
-		else if (DISPLAY_VER(dev_priv) >= 7)
-			dev_priv->display.color_check = ivb_color_check;
-		else
-			dev_priv->display.color_check = ilk_color_check;
+		if (DISPLAY_VER(dev_priv) >= 13) {
+			dev_priv->color_funcs = &xelpd_color_funcs;
+			drm_color_create_gamma_mode_property(&crtc->base, 2);
+			drm_color_add_gamma_degamma_mode_range(&crtc->base,
+							       "no gamma", NULL, 0,
+							       LUT_TYPE_GAMMA);
+			drm_color_add_gamma_degamma_mode_range(&crtc->base,
+							       "logarithmic gamma",
+							       xelpd_logarithmic_gamma,
+							       sizeof(xelpd_logarithmic_gamma),
+							       LUT_TYPE_GAMMA);
+			drm_crtc_attach_gamma_degamma_mode_property(&crtc->base,
+								    LUT_TYPE_GAMMA);
 
-		if (DISPLAY_VER(dev_priv) >= 9)
-			dev_priv->display.color_commit = skl_color_commit;
-		else if (IS_BROADWELL(dev_priv) || IS_HASWELL(dev_priv))
-			dev_priv->display.color_commit = hsw_color_commit;
-		else
-			dev_priv->display.color_commit = ilk_color_commit;
-
-		if (DISPLAY_VER(dev_priv) >= 11) {
-			dev_priv->display.load_luts = icl_load_luts;
-			dev_priv->display.read_luts = icl_read_luts;
+			if (DISPLAY_VER(dev_priv) >= 14) {
+				drm_color_create_degamma_mode_property(&crtc->base, 2);
+				drm_color_add_gamma_degamma_mode_range(&crtc->base,
+								       "no degamma", NULL, 0,
+								       LUT_TYPE_DEGAMMA);
+				drm_color_add_gamma_degamma_mode_range(&crtc->base,
+								       "extended degamma",
+								       mtl_24bit_degamma,
+								       sizeof(mtl_24bit_degamma),
+								       LUT_TYPE_DEGAMMA);
+				drm_crtc_attach_gamma_degamma_mode_property(&crtc->base,
+									    LUT_TYPE_DEGAMMA);
+			}
+		} else if (DISPLAY_VER(dev_priv) >= 11) {
+			dev_priv->color_funcs = &icl_color_funcs;
 		} else if (DISPLAY_VER(dev_priv) == 10) {
-			dev_priv->display.load_luts = glk_load_luts;
-			dev_priv->display.read_luts = glk_read_luts;
-		} else if (DISPLAY_VER(dev_priv) >= 8) {
-			dev_priv->display.load_luts = bdw_load_luts;
-		} else if (DISPLAY_VER(dev_priv) >= 7) {
-			dev_priv->display.load_luts = ivb_load_luts;
+			dev_priv->color_funcs = &glk_color_funcs;
+		} else if (DISPLAY_VER(dev_priv) == 9) {
+			dev_priv->color_funcs = &skl_color_funcs;
+		} else if (DISPLAY_VER(dev_priv) == 8) {
+			dev_priv->color_funcs = &bdw_color_funcs;
+		} else if (DISPLAY_VER(dev_priv) == 7) {
+			if (IS_HASWELL(dev_priv))
+				dev_priv->color_funcs = &hsw_color_funcs;
+			else
+				dev_priv->color_funcs = &ivb_color_funcs;
 		} else {
-			dev_priv->display.load_luts = ilk_load_luts;
-			dev_priv->display.read_luts = ilk_read_luts;
+			dev_priv->color_funcs = &ilk_color_funcs;
 		}
 	}
 
 	drm_crtc_enable_color_mgmt(&crtc->base,
-				   INTEL_INFO(dev_priv)->color.degamma_lut_size,
+				   INTEL_INFO(dev_priv)->display.color.degamma_lut_size,
 				   has_ctm,
-				   INTEL_INFO(dev_priv)->color.gamma_lut_size);
+				   INTEL_INFO(dev_priv)->display.color.gamma_lut_size);
 }

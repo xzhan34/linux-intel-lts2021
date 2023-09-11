@@ -32,8 +32,6 @@
 
 #include "gem/i915_gem_object_types.h"
 
-enum i915_cache_level;
-
 /**
  * DOC: Global GTT views
  *
@@ -97,16 +95,26 @@ enum i915_cache_level;
 
 struct intel_remapped_plane_info {
 	/* in gtt pages */
-	u32 offset;
-	u16 width;
-	u16 height;
-	u16 src_stride;
-	u16 dst_stride;
+	u32 offset:31;
+	u32 linear:1;
+	union {
+		/* in gtt pages for !linear */
+		struct {
+			u16 width;
+			u16 height;
+			u16 src_stride;
+			u16 dst_stride;
+		};
+
+		/* in gtt pages for linear */
+		u32 size;
+	};
 } __packed;
 
 struct intel_remapped_info {
-	struct intel_remapped_plane_info plane[2];
-	u32 unused_mbz;
+	struct intel_remapped_plane_info plane[4];
+	/* in gtt pages */
+	u32 plane_alignment;
 } __packed;
 
 struct intel_rotation_info {
@@ -129,7 +137,7 @@ static inline void assert_i915_gem_gtt_types(void)
 {
 	BUILD_BUG_ON(sizeof(struct intel_rotation_info) != 2 * sizeof(u32) + 8 * sizeof(u16));
 	BUILD_BUG_ON(sizeof(struct intel_partial_info) != sizeof(u64) + sizeof(unsigned int));
-	BUILD_BUG_ON(sizeof(struct intel_remapped_info) != 3 * sizeof(u32) + 8 * sizeof(u16));
+	BUILD_BUG_ON(sizeof(struct intel_remapped_info) != 5 * sizeof(u32) + 16 * sizeof(u16));
 
 	/* Check that rotation/remapped shares offsets for simplicity */
 	BUILD_BUG_ON(offsetof(struct intel_remapped_info, plane[0]) !=
@@ -160,6 +168,17 @@ struct i915_ggtt_view {
 	};
 };
 
+struct i915_vma_clock {
+	spinlock_t lock;
+	struct list_head age[2];
+	struct delayed_work work;
+};
+
+struct i915_vma_metadata {
+	struct list_head vma_link;
+	struct i915_uuid_resource *uuid;
+};
+
 /**
  * DOC: Virtual Memory Address
  *
@@ -185,15 +204,16 @@ struct i915_vma {
 
 	struct i915_fence_reg *fence;
 
-	u64 size;
-	u64 display_alignment;
-	struct i915_page_sizes page_sizes;
-
 	/* mmap-offset associated with fencing for this vma */
 	struct i915_mmap_offset	*mmo;
 
+	u64 size;
+	u32 page_sizes;
+
+	u32 guard; /* padding allocated around vma->pages within the node */
 	u32 fence_size;
 	u32 fence_alignment;
+	u32 display_alignment;
 
 	/**
 	 * Count of the number of times this vma has been opened by different
@@ -256,6 +276,10 @@ struct i915_vma {
 #define I915_VMA_SCANOUT_BIT	18
 #define I915_VMA_SCANOUT	((int)BIT(I915_VMA_SCANOUT_BIT))
 
+#define I915_VMA_PERSISTENT_BIT	19
+#define I915_VMA_PURGED_BIT	20
+#define I915_VMA_HAS_LUT_BIT	21
+
 	struct i915_active active;
 
 #define I915_VMA_PAGES_BIAS 24
@@ -275,14 +299,28 @@ struct i915_vma {
 	/** This object's place on the active/inactive lists */
 	struct list_head vm_link;
 
+	struct list_head vm_bind_link; /* Link in persistent VMA list */
+	struct list_head vm_capture_link; /* Link in captureable VMA list */
+	struct i915_sw_fence *bind_fence;
+	/* (segmented BO) walk adjacent VMAs at unbind or during capture_vma */
+	struct i915_vma *adjacent_next;
+
+	/** Interval tree structures for persistent vma */
+	struct rb_node rb;
+	u64 __subtree_last;
+
 	struct list_head obj_link; /* Link in the object's VMA list */
 	struct rb_node obj_node;
 	struct hlist_node obj_hash;
+	struct intel_flat_ppgtt_request_pool *pool;
 
 	/** This vma's place in the eviction list */
 	struct list_head evict_link;
 
 	struct list_head closed_link;
+
+	spinlock_t metadata_lock;
+	struct list_head metadata_list;
 };
 
 #endif

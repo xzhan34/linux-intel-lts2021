@@ -15,8 +15,6 @@
 #include <linux/rcupdate.h>
 #include <linux/workqueue.h>
 
-#include "i915_utils.h"
-
 struct i915_active_fence {
 	struct dma_fence __rcu *fence;
 	struct dma_fence_cb cb;
@@ -45,5 +43,7 @@ struct i915_active {
 
 	struct llist_head preallocated_barriers;
 };
+
+#define IDLE_BARRIER ERR_PTR(-EPERM)
 
 #endif /* _I915_ACTIVE_TYPES_H_ */

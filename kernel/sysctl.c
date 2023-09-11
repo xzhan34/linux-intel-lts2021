@@ -228,6 +228,10 @@ static int bpf_stats_handler(struct ctl_table *table, int write,
 	return ret;
 }
 
+void __weak unpriv_ebpf_notify(int new_state)
+{
+}
+
 static int bpf_unpriv_handler(struct ctl_table *table, int write,
 			      void *buffer, size_t *lenp, loff_t *ppos)
 {
@@ -245,6 +249,9 @@ static int bpf_unpriv_handler(struct ctl_table *table, int write,
 			return -EPERM;
 		*(int *)table->data = unpriv_enable;
 	}
+
+	unpriv_ebpf_notify(unpriv_enable);
+
 	return ret;
 }
 #endif /* CONFIG_BPF_SYSCALL && CONFIG_SYSCTL */
@@ -2936,6 +2943,17 @@ static struct ctl_table vm_table[] = {
 	},
 
 #endif /* CONFIG_COMPACTION */
+
+#ifdef CONFIG_NUMA_BALANCING
+	{
+		.procname	= "numa_rebalance",
+		.data		= NULL,
+		.maxlen		= sizeof(int),
+		.mode		= 0200,
+		.proc_handler	= sysctl_numa_rebalance_handler,
+	},
+#endif
+
 	{
 		.procname	= "min_free_kbytes",
 		.data		= &min_free_kbytes,

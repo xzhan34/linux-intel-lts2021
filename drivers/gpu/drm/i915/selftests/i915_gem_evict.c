@@ -22,6 +22,7 @@
  *
  */
 
+#include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_pm.h"
 #include "gem/selftests/igt_gem_utils.h"
 #include "gem/selftests/mock_context.h"
@@ -57,7 +58,7 @@ static int populate_ggtt(struct i915_ggtt *ggtt, struct list_head *objects)
 		if (IS_ERR(obj))
 			return PTR_ERR(obj);
 
-		vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, 0);
+		vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0, 0);
 		if (IS_ERR(vma)) {
 			i915_gem_object_put(obj);
 			if (vma == ERR_PTR(-ENOSPC))
@@ -173,7 +174,7 @@ static int igt_overcommit(void *arg)
 
 	quirk_add(obj, &objects);
 
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, 0);
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0, 0);
 	if (vma != ERR_PTR(-ENOSPC)) {
 		pr_err("Failed to evict+insert, i915_gem_object_ggtt_pin returned err=%d\n", (int)PTR_ERR_OR_ZERO(vma));
 		err = -EINVAL;
@@ -244,7 +245,7 @@ static int igt_evict_for_cache_color(void *arg)
 	struct drm_mm_node target = {
 		.start = I915_GTT_PAGE_SIZE * 2,
 		.size = I915_GTT_PAGE_SIZE,
-		.color = I915_CACHE_LLC,
+		.color = i915_gem_get_pat_index(gt->i915, I915_CACHE_LLC),
 	};
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
@@ -268,7 +269,7 @@ static int igt_evict_for_cache_color(void *arg)
 	i915_gem_object_set_cache_coherency(obj, I915_CACHE_LLC);
 	quirk_add(obj, &objects);
 
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0,
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0,
 				       I915_GTT_PAGE_SIZE | flags);
 	if (IS_ERR(vma)) {
 		pr_err("[0]i915_gem_object_ggtt_pin failed\n");
@@ -285,7 +286,7 @@ static int igt_evict_for_cache_color(void *arg)
 	quirk_add(obj, &objects);
 
 	/* Neighbouring; same colour - should fit */
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0,
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0,
 				       (I915_GTT_PAGE_SIZE * 2) | flags);
 	if (IS_ERR(vma)) {
 		pr_err("[1]i915_gem_object_ggtt_pin failed\n");
@@ -307,7 +308,7 @@ static int igt_evict_for_cache_color(void *arg)
 	/* Attempt to remove the first *pinned* vma, by removing the (empty)
 	 * neighbour -- this should fail.
 	 */
-	target.color = I915_CACHE_L3_LLC;
+	target.color = i915_gem_get_pat_index(gt->i915, I915_CACHE_L3_LLC);
 
 	mutex_lock(&ggtt->vm.mutex);
 	err = i915_gem_evict_for_node(&ggtt->vm, &target, 0);
@@ -442,6 +443,7 @@ static int igt_evict_contexts(void *arg)
 	/* Overfill the GGTT with context objects and so try to evict one. */
 	for_each_engine(engine, gt, id) {
 		struct i915_sw_fence fence;
+		struct i915_request *last = NULL;
 
 		count = 0;
 		onstack_fence_init(&fence);
@@ -479,6 +481,9 @@ static int igt_evict_contexts(void *arg)
 
 			i915_request_add(rq);
 			count++;
+			if (last)
+				i915_request_put(last);
+			last = i915_request_get(rq);
 			err = 0;
 		} while(1);
 		onstack_fence_fini(&fence);
@@ -486,6 +491,21 @@ static int igt_evict_contexts(void *arg)
 			count, engine->name);
 		if (err)
 			break;
+		if (last) {
+			if (i915_request_wait(last, 0, HZ) < 0) {
+				err = -EIO;
+				i915_request_put(last);
+				pr_err("Failed waiting for last request (on %s)",
+				       engine->name);
+				break;
+			}
+			i915_request_put(last);
+		}
+		err = intel_gt_wait_for_idle(engine->gt, HZ * 3);
+		if (err) {
+			pr_err("Failed to idle GT (on %s)", engine->name);
+			break;
+		}
 	}
 
 	mutex_lock(&ggtt->vm.mutex);
@@ -526,7 +546,7 @@ int i915_gem_evict_mock_selftests(void)
 		return -ENOMEM;
 
 	with_intel_runtime_pm(&i915->runtime_pm, wakeref)
-		err = i915_subtests(tests, &i915->gt);
+		err = i915_subtests(tests, to_gt(i915));
 
 	mock_destroy_device(i915);
 	return err;
@@ -538,8 +558,8 @@ int i915_gem_evict_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_evict_contexts),
 	};
 
-	if (intel_gt_is_wedged(&i915->gt))
+	if (intel_gt_is_wedged(to_gt(i915)))
 		return 0;
 
-	return intel_gt_live_subtests(tests, &i915->gt);
+	return intel_gt_live_subtests(tests, to_gt(i915));
 }

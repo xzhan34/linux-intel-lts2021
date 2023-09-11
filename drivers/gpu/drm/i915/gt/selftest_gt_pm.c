@@ -5,6 +5,7 @@
 
 #include <linux/sort.h>
 
+#include "intel_engine_regs.h"
 #include "intel_gt_clock_utils.h"
 
 #include "selftest_llc.h"
@@ -43,15 +44,15 @@ static void measure_clocks(struct intel_engine_cs *engine,
 	int i;
 
 	for (i = 0; i < 5; i++) {
-		preempt_disable();
+		local_irq_disable();
 		cycles[i] = -ENGINE_READ_FW(engine, RING_TIMESTAMP);
 		dt[i] = ktime_get();
 
 		udelay(1000);
 
-		dt[i] = ktime_sub(ktime_get(), dt[i]);
 		cycles[i] += ENGINE_READ_FW(engine, RING_TIMESTAMP);
-		preempt_enable();
+		dt[i] = ktime_sub(ktime_get(), dt[i]);
+		local_irq_enable();
 	}
 
 	/* Use the median of both cycle/dt; close enough */
@@ -67,6 +68,7 @@ static int live_gt_clocks(void *arg)
 	struct intel_gt *gt = arg;
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
+	intel_wakeref_t wakeref;
 	int err = 0;
 
 	if (!gt->clock_frequency) { /* unknown */
@@ -96,7 +98,7 @@ static int live_gt_clocks(void *arg)
 		 */
 		return 0;
 
-	intel_gt_pm_get(gt);
+	wakeref = intel_gt_pm_get(gt);
 	intel_uncore_forcewake_get(gt->uncore, FORCEWAKE_ALL);
 
 	for_each_engine(engine, gt, id) {
@@ -133,7 +135,7 @@ static int live_gt_clocks(void *arg)
 	}
 
 	intel_uncore_forcewake_put(gt->uncore, FORCEWAKE_ALL);
-	intel_gt_pm_put(gt);
+	intel_gt_pm_put(gt, wakeref);
 
 	return err;
 }
@@ -183,6 +185,8 @@ int intel_gt_pm_live_selftests(struct drm_i915_private *i915)
 	static const struct i915_subtest tests[] = {
 		SUBTEST(live_gt_clocks),
 		SUBTEST(live_rc6_manual),
+		SUBTEST(live_render_pg),
+		SUBTEST(live_media_pg),
 		SUBTEST(live_rps_clock_interval),
 		SUBTEST(live_rps_control),
 		SUBTEST(live_rps_frequency_cs),
@@ -193,10 +197,18 @@ int intel_gt_pm_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(live_gt_resume),
 	};
 
-	if (intel_gt_is_wedged(&i915->gt))
-		return 0;
+	struct intel_gt *gt;
+	unsigned int i;
 
-	return intel_gt_live_subtests(tests, &i915->gt);
+	for_each_gt(gt, i915, i) {
+		int ret;
+
+		ret = intel_gt_live_subtests(tests, gt);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }
 
 int intel_gt_pm_late_selftests(struct drm_i915_private *i915)
@@ -210,8 +222,8 @@ int intel_gt_pm_late_selftests(struct drm_i915_private *i915)
 		SUBTEST(live_rc6_ctx_wa),
 	};
 
-	if (intel_gt_is_wedged(&i915->gt))
+	if (intel_gt_is_wedged(to_gt(i915)))
 		return 0;
 
-	return intel_gt_live_subtests(tests, &i915->gt);
+	return intel_gt_live_subtests(tests, to_gt(i915));
 }

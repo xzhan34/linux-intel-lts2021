@@ -5,7 +5,9 @@
 
 #include "gen2_engine_cs.h"
 #include "i915_drv.h"
+#include "i915_reg.h"
 #include "intel_engine.h"
+#include "intel_engine_regs.h"
 #include "intel_gpu_commands.h"
 #include "intel_gt.h"
 #include "intel_gt_irq.h"
@@ -150,13 +152,13 @@ static u32 *__gen2_emit_breadcrumb(struct i915_request *rq, u32 *cs,
 	while (flush--) {
 		*cs++ = MI_STORE_DWORD_INDEX;
 		*cs++ = I915_GEM_HWS_SCRATCH * sizeof(u32);
-		*cs++ = rq->fence.seqno;
+		*cs++ = i915_request_seqno(rq);
 	}
 
 	while (post--) {
 		*cs++ = MI_STORE_DWORD_INDEX;
 		*cs++ = I915_GEM_HWS_SEQNO_ADDR;
-		*cs++ = rq->fence.seqno;
+		*cs++ = i915_request_seqno(rq);
 	}
 
 	*cs++ = MI_USER_INTERRUPT;

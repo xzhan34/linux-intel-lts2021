@@ -25,6 +25,7 @@
 #include <linux/prime_numbers.h>
 
 #include "gem/i915_gem_context.h"
+#include "gem/i915_gem_internal.h"
 #include "gem/selftests/mock_context.h"
 
 #include "i915_scatterlist.h"
@@ -118,7 +119,7 @@ static int create_vmas(struct drm_i915_private *i915,
 				struct i915_vma *vma;
 				int err;
 
-				vm = i915_gem_context_get_vm_rcu(ctx);
+				vm = i915_gem_context_get_eb_vm(ctx);
 				vma = checked_vma_instance(obj, vm, NULL);
 				i915_vm_put(vm);
 				if (IS_ERR(vma))
@@ -815,6 +816,7 @@ static int igt_vma_partial(void *arg)
 			for_each_prime_number_from(offset, 0, npages - sz) {
 				struct i915_ggtt_view view;
 
+				memset(&view, 0, sizeof(view));
 				view.type = I915_GGTT_VIEW_PARTIAL;
 				view.partial.offset = offset;
 				view.partial.size = sz;
@@ -907,27 +909,16 @@ int i915_vma_mock_selftests(void)
 		SUBTEST(igt_vma_partial),
 	};
 	struct drm_i915_private *i915;
-	struct i915_ggtt *ggtt;
 	int err;
 
 	i915 = mock_gem_device();
 	if (!i915)
 		return -ENOMEM;
 
-	ggtt = kmalloc(sizeof(*ggtt), GFP_KERNEL);
-	if (!ggtt) {
-		err = -ENOMEM;
-		goto out_put;
-	}
-	mock_init_ggtt(i915, ggtt);
-
-	err = i915_subtests(tests, ggtt);
+	err = i915_subtests(tests, to_gt(i915)->ggtt);
 
 	mock_device_flush(i915);
 	i915_gem_drain_freed_objects(i915);
-	mock_fini_ggtt(ggtt);
-	kfree(ggtt);
-out_put:
 	mock_destroy_device(i915);
 	return err;
 }
@@ -964,10 +955,11 @@ static int igt_vma_remapped_gtt(void *arg)
 		0,
 	}, *t;
 	struct drm_i915_gem_object *obj;
+	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
 	intel_wakeref_t wakeref;
 	int err = 0;
 
-	if (!i915_ggtt_has_aperture(&i915->ggtt))
+	if (!i915_ggtt_has_aperture(ggtt))
 		return 0;
 
 	obj = i915_gem_object_create_internal(i915, 10 * 10 * PAGE_SIZE);
@@ -997,7 +989,8 @@ static int igt_vma_remapped_gtt(void *arg)
 				plane_info[0].dst_stride = *t == I915_GGTT_VIEW_ROTATED ?
 								 p->height : p->width;
 
-			vma = i915_gem_object_ggtt_pin(obj, &view, 0, 0, PIN_MAPPABLE);
+			vma = i915_gem_object_ggtt_pin(obj, ggtt, &view,
+						       0, 0, PIN_MAPPABLE);
 			if (IS_ERR(vma)) {
 				err = PTR_ERR(vma);
 				goto out;
@@ -1028,7 +1021,8 @@ static int igt_vma_remapped_gtt(void *arg)
 
 			i915_vma_unpin_iomap(vma);
 
-			vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, PIN_MAPPABLE);
+			vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL,
+						       0, 0, PIN_MAPPABLE);
 			if (IS_ERR(vma)) {
 				err = PTR_ERR(vma);
 				goto out;
@@ -1085,5 +1079,5 @@ int i915_vma_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_vma_remapped_gtt),
 	};
 
-	return i915_subtests(tests, i915);
+	return i915_live_subtests(tests, i915);
 }

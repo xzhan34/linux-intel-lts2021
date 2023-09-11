@@ -20,7 +20,6 @@
  * OF THIS SOFTWARE.
  */
 
-#include <drm/drm_auth.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_encoder.h>
@@ -1602,7 +1601,7 @@ EXPORT_SYMBOL(drm_mode_create_tv_properties);
  * connectors.
  *
  * Atomic drivers should use drm_connector_attach_scaling_mode_property()
- * instead to correctly assign &drm_connector_state.picture_aspect_ratio
+ * instead to correctly assign &drm_connector_state.scaling_mode
  * in the atomic state.
  */
 int drm_mode_create_scaling_mode_property(struct drm_device *dev)
@@ -1722,7 +1721,7 @@ EXPORT_SYMBOL(drm_connector_attach_vrr_capable_property);
  * @scaling_mode_mask: or'ed mask of BIT(%DRM_MODE_SCALE_\*).
  *
  * This is used to add support for scaling mode to atomic drivers.
- * The scaling mode will be set to &drm_connector_state.picture_aspect_ratio
+ * The scaling mode will be set to &drm_connector_state.scaling_mode
  * and can be used from &drm_connector_helper_funcs->atomic_check for validation.
  *
  * This is the atomic version of drm_mode_create_scaling_mode_property().
@@ -2233,6 +2232,9 @@ EXPORT_SYMBOL(drm_connector_atomic_hdr_metadata_equal);
 void drm_connector_set_vrr_capable_property(
 		struct drm_connector *connector, bool capable)
 {
+	if (!connector->vrr_capable_property)
+		return;
+
 	drm_object_property_set_value(&connector->base,
 				      connector->vrr_capable_property,
 				      capable);
@@ -2414,7 +2416,6 @@ int drm_mode_getconnector(struct drm_device *dev, void *data,
 	struct drm_mode_modeinfo u_mode;
 	struct drm_mode_modeinfo __user *mode_ptr;
 	uint32_t __user *encoder_ptr;
-	bool is_current_master;
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EOPNOTSUPP;
@@ -2445,17 +2446,11 @@ int drm_mode_getconnector(struct drm_device *dev, void *data,
 	out_resp->connector_type = connector->connector_type;
 	out_resp->connector_type_id = connector->connector_type_id;
 
-	is_current_master = drm_is_current_master(file_priv);
-
 	mutex_lock(&dev->mode_config.mutex);
 	if (out_resp->count_modes == 0) {
-		if (is_current_master)
-			connector->funcs->fill_modes(connector,
-						     dev->mode_config.max_width,
-						     dev->mode_config.max_height);
-		else
-			drm_dbg_kms(dev, "User-space requested a forced probe on [CONNECTOR:%d:%s] but is not the DRM master, demoting to read-only probe",
-				    connector->base.id, connector->name);
+		connector->funcs->fill_modes(connector,
+					     dev->mode_config.max_width,
+					     dev->mode_config.max_height);
 	}
 
 	out_resp->mm_width = connector->display_info.width_mm;

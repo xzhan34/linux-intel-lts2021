@@ -1,0 +1,17 @@
+DII-TAG,Commit Header,JIRA,Requester,PSB Branch Tag
+,PSB_Automation: Add CSV file for automation,vlk-47017,Muqthyar,I915-23.6.0
+6936.0,Fix more klocwork warning,,Muqthyar,I915-23.6.12
+6947.0,Rebase to DII_6947,,Muqthyar,I915-23.6.13
+6948.0,mei: narrow down reset print override,,hgirotra,
+,Release object reference for coredump page capture,VLK-48745,hgirotra,
+6949.0,Prevent interruption during wait-for-go in parallel children,VLK-48662,hgirotra,I915-23.6.14
+6953.0,Acquire active fence before decoupling,vlk-48708 vlk-47217,parupall,I915-23.6.15
+6955.0,Don't keep a persistent error on the vma for interrupted construction, vlk-48657,Naveena,
+6956.0,Manage vm_bind_list under vm->root_obj->resv locking, vlk-43247,Naveena,
+6957.0,Close vm_unbind vs evict race, vlk-43247,Naveena,
+6958.0,GuC 70.7.0 + WA 14018913170 for DG2/PVC,Naveena,,
+6959.0,Remove GT active deferral of vma close, gsd-5291/vlk-48924,Naveena,
+6961.0,mei: initilaize fw_pm_event variable, VLK-48833,Naveena,
+6962.0,INTEL_DII: drm/i915/debugger: Purge deferred vm-bind on unbind v3, VLK-48842,Naveena,I915-23.6.16
+,"Revert ""Remove GT active deferral of vma close""",,Muqthyar,I915-23.6.17
+6972.0,INTEL_DII: drm/i915/iaf: Address two IAF Jiras,GSD-3189 VLK-47900,parupall,I915-23.6.18

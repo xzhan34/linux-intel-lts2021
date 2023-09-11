@@ -175,6 +175,7 @@ struct drm_sched_fence *to_drm_sched_fence(struct dma_fence *f);
  * @sched: the scheduler instance on which this job is scheduled.
  * @s_fence: contains the fences for the scheduling of job.
  * @finish_cb: the callback for the finished fence.
+ * @work: Helper to reschdeule job kill to different context.
  * @id: a unique id assigned to each job scheduled on the scheduler.
  * @karma: increment on every hang caused by this job. If this exceeds the hang
  *         limit of the scheduler then the job is marked guilty and will not
@@ -308,7 +309,7 @@ struct drm_sched_backend_ops {
  * @pending_list: the list of jobs which are currently in the job queue.
  * @job_list_lock: lock to protect the pending_list.
  * @hang_limit: once the hangs by a job crosses this limit then it is marked
- *              guilty and it will no longer be considered for scheduling.
+ *              guilty and it will be considered for scheduling further.
  * @score: score to help loadbalancer pick a idle sched
  * @_score: score used when the driver doesn't provide one
  * @ready: marks if the underlying HW is ready to work

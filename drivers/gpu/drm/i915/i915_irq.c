@@ -29,12 +29,15 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/circ_buf.h>
+#include <linux/irq.h>
 #include <linux/slab.h>
 #include <linux/sysrq.h>
 
 #include <drm/drm_drv.h>
 
+#include "display/icl_dsi_regs.h"
 #include "display/intel_de.h"
+#include "display/intel_display_trace.h"
 #include "display/intel_display_types.h"
 #include "display/intel_fifo_underrun.h"
 #include "display/intel_hotplug.h"
@@ -45,11 +48,13 @@
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_irq.h"
 #include "gt/intel_gt_pm_irq.h"
+#include "gt/intel_gt_regs.h"
 #include "gt/intel_rps.h"
+#include "gt/iov/intel_iov_memirq.h"
 
+#include "i915_driver.h"
 #include "i915_drv.h"
 #include "i915_irq.h"
-#include "i915_trace.h"
 #include "intel_pm.h"
 
 /**
@@ -62,7 +67,7 @@
 
 /*
  * Interrupt statistic for PMU. Increments the counter only if the
- * interrupt originated from the the GPU so interrupts from a device which
+ * interrupt originated from the GPU so interrupts from a device which
  * shares the interrupt line are not accounted.
  */
 static inline void pmu_irq_stats(struct drm_i915_private *i915,
@@ -79,8 +84,7 @@ static inline void pmu_irq_stats(struct drm_i915_private *i915,
 }
 
 typedef bool (*long_pulse_detect_func)(enum hpd_pin pin, u32 val);
-typedef u32 (*hotplug_enables_func)(struct drm_i915_private *i915,
-				    enum hpd_pin pin);
+typedef u32 (*hotplug_enables_func)(struct intel_encoder *encoder);
 
 static const u32 hpd_ilk[HPD_NUM_PINS] = {
 	[HPD_PORT_A] = DE_DP_A_HOTPLUG,
@@ -160,6 +164,13 @@ static const u32 hpd_gen11[HPD_NUM_PINS] = {
 	[HPD_PORT_TC6] = GEN11_TC_HOTPLUG(HPD_PORT_TC6) | GEN11_TBT_HOTPLUG(HPD_PORT_TC6),
 };
 
+static const u32 hpd_xelpdp[HPD_NUM_PINS] = {
+	[HPD_PORT_TC1] = XELPDP_TBT_HOTPLUG(HPD_PORT_TC1) | XELPDP_DP_ALT_HOTPLUG(HPD_PORT_TC1),
+	[HPD_PORT_TC2] = XELPDP_TBT_HOTPLUG(HPD_PORT_TC2) | XELPDP_DP_ALT_HOTPLUG(HPD_PORT_TC2),
+	[HPD_PORT_TC3] = XELPDP_TBT_HOTPLUG(HPD_PORT_TC3) | XELPDP_DP_ALT_HOTPLUG(HPD_PORT_TC3),
+	[HPD_PORT_TC4] = XELPDP_TBT_HOTPLUG(HPD_PORT_TC4) | XELPDP_DP_ALT_HOTPLUG(HPD_PORT_TC4),
+};
+
 static const u32 hpd_icp[HPD_NUM_PINS] = {
 	[HPD_PORT_A] = SDE_DDI_HOTPLUG_ICP(HPD_PORT_A),
 	[HPD_PORT_B] = SDE_DDI_HOTPLUG_ICP(HPD_PORT_B),
@@ -177,6 +188,16 @@ static const u32 hpd_sde_dg1[HPD_NUM_PINS] = {
 	[HPD_PORT_B] = SDE_DDI_HOTPLUG_ICP(HPD_PORT_B),
 	[HPD_PORT_C] = SDE_DDI_HOTPLUG_ICP(HPD_PORT_C),
 	[HPD_PORT_D] = SDE_DDI_HOTPLUG_ICP(HPD_PORT_D),
+	[HPD_PORT_TC1] = SDE_TC_HOTPLUG_DG2(HPD_PORT_TC1),
+};
+
+static const u32 hpd_mtp[HPD_NUM_PINS] = {
+	[HPD_PORT_A] = SDE_DDI_HOTPLUG_ICP(HPD_PORT_A),
+	[HPD_PORT_B] = SDE_DDI_HOTPLUG_ICP(HPD_PORT_B),
+	[HPD_PORT_TC1] = SDE_TC_HOTPLUG_ICP(HPD_PORT_TC1),
+	[HPD_PORT_TC2] = SDE_TC_HOTPLUG_ICP(HPD_PORT_TC2),
+	[HPD_PORT_TC3] = SDE_TC_HOTPLUG_ICP(HPD_PORT_TC3),
+	[HPD_PORT_TC4] = SDE_TC_HOTPLUG_ICP(HPD_PORT_TC4),
 };
 
 static void intel_hpd_init_pins(struct drm_i915_private *dev_priv)
@@ -192,7 +213,9 @@ static void intel_hpd_init_pins(struct drm_i915_private *dev_priv)
 		return;
 	}
 
-	if (DISPLAY_VER(dev_priv) >= 11)
+	if (DISPLAY_VER(dev_priv) >= 14)
+		hpd->hpd = hpd_xelpdp;
+	else if (DISPLAY_VER(dev_priv) >= 11)
 		hpd->hpd = hpd_gen11;
 	else if (IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv))
 		hpd->hpd = hpd_bxt;
@@ -209,6 +232,8 @@ static void intel_hpd_init_pins(struct drm_i915_private *dev_priv)
 
 	if (INTEL_PCH_TYPE(dev_priv) >= PCH_DG1)
 		hpd->pch_hpd = hpd_sde_dg1;
+	else if (INTEL_PCH_TYPE(dev_priv) >= PCH_MTP)
+		hpd->pch_hpd = hpd_mtp;
 	else if (INTEL_PCH_TYPE(dev_priv) >= PCH_ICP)
 		hpd->pch_hpd = hpd_icp;
 	else if (HAS_PCH_CNP(dev_priv) || HAS_PCH_SPT(dev_priv))
@@ -224,7 +249,7 @@ static void intel_hpd_init_pins(struct drm_i915_private *dev_priv)
 static void
 intel_handle_vblank(struct drm_i915_private *dev_priv, enum pipe pipe)
 {
-	struct intel_crtc *crtc = intel_get_crtc_for_pipe(dev_priv, pipe);
+	struct intel_crtc *crtc = intel_crtc_for_pipe(dev_priv, pipe);
 
 	drm_crtc_handle_vblank(&crtc->base);
 }
@@ -359,9 +384,8 @@ void i915_hotplug_interrupt_update(struct drm_i915_private *dev_priv,
  * @interrupt_mask: mask of interrupt bits to update
  * @enabled_irq_mask: mask of interrupt bits to enable
  */
-void ilk_update_display_irq(struct drm_i915_private *dev_priv,
-			    u32 interrupt_mask,
-			    u32 enabled_irq_mask)
+static void ilk_update_display_irq(struct drm_i915_private *dev_priv,
+				   u32 interrupt_mask, u32 enabled_irq_mask)
 {
 	u32 new_val;
 
@@ -378,6 +402,16 @@ void ilk_update_display_irq(struct drm_i915_private *dev_priv,
 		intel_uncore_write(&dev_priv->uncore, DEIMR, dev_priv->irq_mask);
 		intel_uncore_posting_read(&dev_priv->uncore, DEIMR);
 	}
+}
+
+void ilk_enable_display_irq(struct drm_i915_private *i915, u32 bits)
+{
+	ilk_update_display_irq(i915, bits, bits);
+}
+
+void ilk_disable_display_irq(struct drm_i915_private *i915, u32 bits)
+{
+	ilk_update_display_irq(i915, bits, 0);
 }
 
 /**
@@ -419,10 +453,9 @@ static void bdw_update_port_irq(struct drm_i915_private *dev_priv,
  * @interrupt_mask: mask of interrupt bits to update
  * @enabled_irq_mask: mask of interrupt bits to enable
  */
-void bdw_update_pipe_irq(struct drm_i915_private *dev_priv,
-			 enum pipe pipe,
-			 u32 interrupt_mask,
-			 u32 enabled_irq_mask)
+static void bdw_update_pipe_irq(struct drm_i915_private *dev_priv,
+				enum pipe pipe, u32 interrupt_mask,
+				u32 enabled_irq_mask)
 {
 	u32 new_val;
 
@@ -444,15 +477,27 @@ void bdw_update_pipe_irq(struct drm_i915_private *dev_priv,
 	}
 }
 
+void bdw_enable_pipe_irq(struct drm_i915_private *i915,
+			 enum pipe pipe, u32 bits)
+{
+	bdw_update_pipe_irq(i915, pipe, bits, bits);
+}
+
+void bdw_disable_pipe_irq(struct drm_i915_private *i915,
+			  enum pipe pipe, u32 bits)
+{
+	bdw_update_pipe_irq(i915, pipe, bits, 0);
+}
+
 /**
  * ibx_display_interrupt_update - update SDEIMR
  * @dev_priv: driver private
  * @interrupt_mask: mask of interrupt bits to update
  * @enabled_irq_mask: mask of interrupt bits to enable
  */
-void ibx_display_interrupt_update(struct drm_i915_private *dev_priv,
-				  u32 interrupt_mask,
-				  u32 enabled_irq_mask)
+static void ibx_display_interrupt_update(struct drm_i915_private *dev_priv,
+					 u32 interrupt_mask,
+					 u32 enabled_irq_mask)
 {
 	u32 sdeimr = intel_uncore_read(&dev_priv->uncore, SDEIMR);
 	sdeimr &= ~interrupt_mask;
@@ -467,6 +512,16 @@ void ibx_display_interrupt_update(struct drm_i915_private *dev_priv,
 
 	intel_uncore_write(&dev_priv->uncore, SDEIMR, sdeimr);
 	intel_uncore_posting_read(&dev_priv->uncore, SDEIMR);
+}
+
+void ibx_enable_display_interrupt(struct drm_i915_private *i915, u32 bits)
+{
+	ibx_display_interrupt_update(i915, bits, bits);
+}
+
+void ibx_disable_display_interrupt(struct drm_i915_private *i915, u32 bits)
+{
+	ibx_display_interrupt_update(i915, bits, 0);
 }
 
 u32 i915_pipestat_enable_mask(struct drm_i915_private *dev_priv,
@@ -806,10 +861,7 @@ static int __intel_get_crtc_scanline(struct intel_crtc *crtc)
 	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
 		vtotal /= 2;
 
-	if (DISPLAY_VER(dev_priv) == 2)
-		position = intel_de_read_fw(dev_priv, PIPEDSL(pipe)) & DSL_LINEMASK_GEN2;
-	else
-		position = intel_de_read_fw(dev_priv, PIPEDSL(pipe)) & DSL_LINEMASK_GEN3;
+	position = intel_de_read_fw(dev_priv, PIPEDSL(pipe)) & PIPEDSL_LINE_MASK;
 
 	/*
 	 * On HSW, the DSL reg (0x70000) appears to return 0 if we
@@ -828,7 +880,7 @@ static int __intel_get_crtc_scanline(struct intel_crtc *crtc)
 
 		for (i = 0; i < 100; i++) {
 			udelay(1);
-			temp = intel_de_read_fw(dev_priv, PIPEDSL(pipe)) & DSL_LINEMASK_GEN3;
+			temp = intel_de_read_fw(dev_priv, PIPEDSL(pipe)) & PIPEDSL_LINE_MASK;
 			if (temp != position) {
 				position = temp;
 				break;
@@ -1010,7 +1062,7 @@ static void ivb_parity_work(struct work_struct *work)
 {
 	struct drm_i915_private *dev_priv =
 		container_of(work, typeof(*dev_priv), l3_parity.error_work);
-	struct intel_gt *gt = &dev_priv->gt;
+	struct intel_gt *gt = to_gt(dev_priv);
 	u32 error_status, row, bank, subbank;
 	char *parity_event[6];
 	u32 misccpctl;
@@ -1073,9 +1125,9 @@ static void ivb_parity_work(struct work_struct *work)
 
 out:
 	drm_WARN_ON(&dev_priv->drm, dev_priv->l3_parity.which_slice);
-	spin_lock_irq(&gt->irq_lock);
+	spin_lock_irq(gt->irq_lock);
 	gen5_gt_enable_irq(gt, GT_PARITY_ERROR(dev_priv));
-	spin_unlock_irq(&gt->irq_lock);
+	spin_unlock_irq(gt->irq_lock);
 
 	mutex_unlock(&dev_priv->drm.struct_mutex);
 }
@@ -1266,7 +1318,7 @@ static u32 intel_hpd_hotplug_enables(struct drm_i915_private *i915,
 	u32 hotplug = 0;
 
 	for_each_intel_encoder(&i915->drm, encoder)
-		hotplug |= hotplug_enables(i915, encoder->hpd_pin);
+		hotplug |= hotplug_enables(encoder);
 
 	return hotplug;
 }
@@ -1288,7 +1340,7 @@ static void display_pipe_crc_irq_handler(struct drm_i915_private *dev_priv,
 					 u32 crc2, u32 crc3,
 					 u32 crc4)
 {
-	struct intel_crtc *crtc = intel_get_crtc_for_pipe(dev_priv, pipe);
+	struct intel_crtc *crtc = intel_crtc_for_pipe(dev_priv, pipe);
 	struct intel_pipe_crc *pipe_crc = &crtc->pipe_crc;
 	u32 crcs[5] = { crc0, crc1, crc2, crc3, crc4 };
 
@@ -1327,7 +1379,7 @@ display_pipe_crc_irq_handler(struct drm_i915_private *dev_priv,
 static void flip_done_handler(struct drm_i915_private *i915,
 			      enum pipe pipe)
 {
-	struct intel_crtc *crtc = intel_get_crtc_for_pipe(i915, pipe);
+	struct intel_crtc *crtc = intel_crtc_for_pipe(i915, pipe);
 	struct drm_crtc_state *crtc_state = crtc->base.state;
 	struct drm_pending_vblank_event *e = crtc_state->event;
 	struct drm_device *dev = &i915->drm;
@@ -1688,9 +1740,9 @@ static irqreturn_t valleyview_irq_handler(int irq, void *arg)
 		intel_uncore_write(&dev_priv->uncore, VLV_MASTER_IER, MASTER_INTERRUPT_ENABLE);
 
 		if (gt_iir)
-			gen6_gt_irq_handler(&dev_priv->gt, gt_iir);
+			gen6_gt_irq_handler(to_gt(dev_priv), gt_iir);
 		if (pm_iir)
-			gen6_rps_irq_handler(&dev_priv->gt.rps, pm_iir);
+			gen6_rps_irq_handler(&to_gt(dev_priv)->rps, pm_iir);
 
 		if (hotplug_status)
 			i9xx_hpd_irq_handler(dev_priv, hotplug_status);
@@ -1747,7 +1799,7 @@ static irqreturn_t cherryview_irq_handler(int irq, void *arg)
 		ier = intel_uncore_read(&dev_priv->uncore, VLV_IER);
 		intel_uncore_write(&dev_priv->uncore, VLV_IER, 0);
 
-		gen8_gt_irq_handler(&dev_priv->gt, master_ctl);
+		gen8_gt_irq_handler(to_gt(dev_priv), master_ctl);
 
 		if (iir & I915_DISPLAY_PORT_INTERRUPT)
 			hotplug_status = i9xx_hpd_irq_ack(dev_priv);
@@ -1941,6 +1993,44 @@ static void cpt_irq_handler(struct drm_i915_private *dev_priv, u32 pch_iir)
 		cpt_serr_int_handler(dev_priv);
 }
 
+static void xelpdp_pica_irq_handler(struct drm_i915_private *i915, u32 iir)
+{
+	enum hpd_pin pin;
+	u32 hotplug_trigger = iir & (XELPDP_DP_ALT_HOTPLUG_MASK | XELPDP_TBT_HOTPLUG_MASK);
+	u32 trigger_aux = iir & XELPDP_AUX_TC_MASK;
+	u32 pin_mask = 0, long_mask = 0;
+
+	for (pin = HPD_PORT_TC1; pin <= HPD_PORT_TC4; pin++) {
+		u32 val;
+
+		if (!(i915->hotplug.hpd[pin] & hotplug_trigger))
+			continue;
+
+		pin_mask |= BIT(pin);
+
+		val = intel_de_read(i915, XELPDP_PORT_HOTPLUG_CTL(pin));
+		intel_de_write(i915, XELPDP_PORT_HOTPLUG_CTL(pin), val);
+
+		if (val & (XELPDP_DP_ALT_HPD_LONG_DETECT | XELPDP_TBT_HPD_LONG_DETECT))
+			long_mask |= BIT(pin);
+	}
+
+	if (pin_mask) {
+		drm_dbg(&i915->drm,
+			"pica hotplug event received, stat 0x%08x, pins 0x%08x, long 0x%08x\n",
+			hotplug_trigger, pin_mask, long_mask);
+
+		intel_hpd_irq_handler(i915, pin_mask, long_mask);
+	}
+
+	if (trigger_aux)
+		dp_aux_irq_handler(i915);
+
+	if (!pin_mask && !trigger_aux)
+		drm_err(&i915->drm,
+			"Unexpected DE HPD/AUX interrupt 0x%08x\n", iir);
+}
+
 static void icp_irq_handler(struct drm_i915_private *dev_priv, u32 pch_iir)
 {
 	u32 ddi_hotplug_trigger = pch_iir & SDE_DDI_HOTPLUG_MASK_ICP;
@@ -2078,7 +2168,7 @@ static void ilk_display_irq_handler(struct drm_i915_private *dev_priv,
 	}
 
 	if (DISPLAY_VER(dev_priv) == 5 && de_iir & DE_PCU_EVENT)
-		gen5_rps_irq_handler(&dev_priv->gt.rps);
+		gen5_rps_irq_handler(&to_gt(dev_priv)->rps);
 }
 
 static void ivb_display_irq_handler(struct drm_i915_private *dev_priv,
@@ -2092,22 +2182,6 @@ static void ivb_display_irq_handler(struct drm_i915_private *dev_priv,
 
 	if (de_iir & DE_ERR_INT_IVB)
 		ivb_err_int_handler(dev_priv);
-
-	if (de_iir & DE_EDP_PSR_INT_HSW) {
-		struct intel_encoder *encoder;
-
-		for_each_intel_encoder_with_psr(&dev_priv->drm, encoder) {
-			struct intel_dp *intel_dp = enc_to_intel_dp(encoder);
-
-			u32 psr_iir = intel_uncore_read(&dev_priv->uncore,
-							EDP_PSR_IIR);
-
-			intel_psr_irq_handler(intel_dp, psr_iir);
-			intel_uncore_write(&dev_priv->uncore,
-					   EDP_PSR_IIR, psr_iir);
-			break;
-		}
-	}
 
 	if (de_iir & DE_AUX_CHANNEL_A_IVB)
 		dp_aux_irq_handler(dev_priv);
@@ -2175,9 +2249,9 @@ static irqreturn_t ilk_irq_handler(int irq, void *arg)
 	if (gt_iir) {
 		raw_reg_write(regs, GTIIR, gt_iir);
 		if (GRAPHICS_VER(i915) >= 6)
-			gen6_gt_irq_handler(&i915->gt, gt_iir);
+			gen6_gt_irq_handler(to_gt(i915), gt_iir);
 		else
-			gen5_gt_irq_handler(&i915->gt, gt_iir);
+			gen5_gt_irq_handler(to_gt(i915), gt_iir);
 		ret = IRQ_HANDLED;
 	}
 
@@ -2195,7 +2269,7 @@ static irqreturn_t ilk_irq_handler(int irq, void *arg)
 		u32 pm_iir = raw_reg_read(regs, GEN6_PMIIR);
 		if (pm_iir) {
 			raw_reg_write(regs, GEN6_PMIIR, pm_iir);
-			gen6_rps_irq_handler(&i915->gt.rps, pm_iir);
+			gen6_rps_irq_handler(&to_gt(i915)->rps, pm_iir);
 			ret = IRQ_HANDLED;
 		}
 	}
@@ -2269,7 +2343,10 @@ static u32 gen8_de_port_aux_mask(struct drm_i915_private *dev_priv)
 {
 	u32 mask;
 
-	if (DISPLAY_VER(dev_priv) >= 13)
+	if (DISPLAY_VER(dev_priv) >= 14)
+		return TGL_DE_PORT_AUX_DDIA |
+			TGL_DE_PORT_AUX_DDIB;
+	else if (DISPLAY_VER(dev_priv) >= 13)
 		return TGL_DE_PORT_AUX_DDIA |
 			TGL_DE_PORT_AUX_DDIB |
 			TGL_DE_PORT_AUX_DDIC |
@@ -2317,6 +2394,11 @@ static u32 gen8_de_pipe_fault_mask(struct drm_i915_private *dev_priv)
 		return GEN8_DE_PIPE_IRQ_FAULT_ERRORS;
 }
 
+static void intel_pmdemand_irq_handler(struct drm_i915_private *dev_priv)
+{
+	wake_up_all(&dev_priv->pmdemand.waitqueue);
+}
+
 static void
 gen8_de_misc_irq_handler(struct drm_i915_private *dev_priv, u32 iir)
 {
@@ -2352,6 +2434,18 @@ gen8_de_misc_irq_handler(struct drm_i915_private *dev_priv, u32 iir)
 			if (DISPLAY_VER(dev_priv) < 12)
 				break;
 		}
+	}
+
+	if (iir & XELPDP_PMDEMAND_RSPTOUT_ERR) {
+		drm_dbg(&dev_priv->drm,
+			"Error waiting for Punit PM Demand Response\n");
+		intel_pmdemand_irq_handler(dev_priv);
+		found = true;
+	}
+
+	if (iir & XELPDP_PMDEMAND_RSP) {
+		intel_pmdemand_irq_handler(dev_priv);
+		found = true;
 	}
 
 	if (!found)
@@ -2434,6 +2528,34 @@ u32 gen8_de_pipe_underrun_mask(struct drm_i915_private *dev_priv)
 	return mask;
 }
 
+static void gen8_read_and_ack_pch_irqs(struct drm_i915_private *i915, u32 *pch_iir, u32 *pica_iir)
+{
+	u32 pica_ier = 0;
+
+	*pica_iir = 0;
+	*pch_iir = intel_de_read(i915, SDEIIR);
+	if (!*pch_iir)
+		return;
+
+	/**
+	 * PICA IER must be disabled/re-enabled around clearing PICA IIR and
+	 * SDEIIR, to avoid losing PICA IRQs and to ensure that such IRQs set
+	 * their flags both in the PICA and SDE IIR.
+	 */
+	if (*pch_iir & SDE_PICAINTERRUPT) {
+		drm_WARN_ON(&i915->drm, INTEL_PCH_TYPE(i915) < PCH_MTP);
+
+		pica_ier = intel_de_rmw(i915, PICAINTERRUPT_IER, ~0, 0);
+		*pica_iir = intel_de_read(i915, PICAINTERRUPT_IIR);
+		intel_de_write(i915, PICAINTERRUPT_IIR, *pica_iir);
+	}
+
+	intel_de_write(i915, SDEIIR, *pch_iir);
+
+	if (pica_ier)
+		intel_de_write(i915, PICAINTERRUPT_IER, pica_ier);
+}
+
 static irqreturn_t
 gen8_de_irq_handler(struct drm_i915_private *dev_priv, u32 master_ctl)
 {
@@ -2450,8 +2572,8 @@ gen8_de_irq_handler(struct drm_i915_private *dev_priv, u32 master_ctl)
 			ret = IRQ_HANDLED;
 			gen8_de_misc_irq_handler(dev_priv, iir);
 		} else {
-			drm_err(&dev_priv->drm,
-				"The master control interrupt lied (DE MISC)!\n");
+			drm_err_ratelimited(&dev_priv->drm,
+					    "The master control interrupt lied (DE MISC)!\n");
 		}
 	}
 
@@ -2462,8 +2584,8 @@ gen8_de_irq_handler(struct drm_i915_private *dev_priv, u32 master_ctl)
 			ret = IRQ_HANDLED;
 			gen11_hpd_irq_handler(dev_priv, iir);
 		} else {
-			drm_err(&dev_priv->drm,
-				"The master control interrupt lied, (DE HPD)!\n");
+			drm_err_ratelimited(&dev_priv->drm,
+					    "The master control interrupt lied, (DE HPD)!\n");
 		}
 	}
 
@@ -2512,12 +2634,12 @@ gen8_de_irq_handler(struct drm_i915_private *dev_priv, u32 master_ctl)
 			}
 
 			if (!found)
-				drm_err(&dev_priv->drm,
-					"Unexpected DE Port interrupt\n");
+				drm_err_ratelimited(&dev_priv->drm,
+						    "Unexpected DE Port interrupt\n");
 		}
 		else
-			drm_err(&dev_priv->drm,
-				"The master control interrupt lied (DE PORT)!\n");
+			drm_err_ratelimited(&dev_priv->drm,
+					    "The master control interrupt lied (DE PORT)!\n");
 	}
 
 	for_each_pipe(dev_priv, pipe) {
@@ -2528,8 +2650,8 @@ gen8_de_irq_handler(struct drm_i915_private *dev_priv, u32 master_ctl)
 
 		iir = intel_uncore_read(&dev_priv->uncore, GEN8_DE_PIPE_IIR(pipe));
 		if (!iir) {
-			drm_err(&dev_priv->drm,
-				"The master control interrupt lied (DE PIPE)!\n");
+			drm_err_ratelimited(&dev_priv->drm,
+					    "The master control interrupt lied (DE PIPE)!\n");
 			continue;
 		}
 
@@ -2550,23 +2672,27 @@ gen8_de_irq_handler(struct drm_i915_private *dev_priv, u32 master_ctl)
 
 		fault_errors = iir & gen8_de_pipe_fault_mask(dev_priv);
 		if (fault_errors)
-			drm_err(&dev_priv->drm,
-				"Fault errors on pipe %c: 0x%08x\n",
-				pipe_name(pipe),
-				fault_errors);
+			drm_err_ratelimited(&dev_priv->drm,
+					    "Fault errors on pipe %c: 0x%08x\n",
+					    pipe_name(pipe),
+					    fault_errors);
 	}
 
 	if (HAS_PCH_SPLIT(dev_priv) && !HAS_PCH_NOP(dev_priv) &&
 	    master_ctl & GEN8_DE_PCH_IRQ) {
+		u32 pica_iir;
+
 		/*
 		 * FIXME(BDW): Assume for now that the new interrupt handling
 		 * scheme also closed the SDE interrupt handling race we've seen
 		 * on older pch-split platforms. But this needs testing.
 		 */
-		iir = intel_uncore_read(&dev_priv->uncore, SDEIIR);
+		gen8_read_and_ack_pch_irqs(dev_priv, &iir, &pica_iir);
 		if (iir) {
-			intel_uncore_write(&dev_priv->uncore, SDEIIR, iir);
 			ret = IRQ_HANDLED;
+
+			if (pica_iir)
+				xelpdp_pica_irq_handler(dev_priv, pica_iir);
 
 			if (INTEL_PCH_TYPE(dev_priv) >= PCH_ICP)
 				icp_irq_handler(dev_priv, iir);
@@ -2621,7 +2747,7 @@ static irqreturn_t gen8_irq_handler(int irq, void *arg)
 	}
 
 	/* Find, queue (onto bottom-halves), then clear each source */
-	gen8_gt_irq_handler(&dev_priv->gt, master_ctl);
+	gen8_gt_irq_handler(to_gt(dev_priv), master_ctl);
 
 	/* IRQs are synced during runtime_suspend, we don't require a wakeref */
 	if (master_ctl & ~GEN8_GT_IRQS) {
@@ -2637,10 +2763,982 @@ static irqreturn_t gen8_irq_handler(int irq, void *arg)
 	return IRQ_HANDLED;
 }
 
-static u32
-gen11_gu_misc_irq_ack(struct intel_gt *gt, const u32 master_ctl)
+static const char *
+hardware_error_type_to_str(const enum hardware_error hw_err)
+{
+	switch (hw_err) {
+	case HARDWARE_ERROR_CORRECTABLE:
+		return "CORRECTABLE";
+	case HARDWARE_ERROR_NONFATAL:
+		return "NONFATAL";
+	case HARDWARE_ERROR_FATAL:
+		return "FATAL";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+#define log_gt_hw_err(gt, fmt, ...) \
+	drm_err_ratelimited(&(gt)->i915->drm, HW_ERR "GT%d detected " fmt, \
+			    (gt)->info.id, ##__VA_ARGS__)
+
+static const char *
+soc_err_index_to_str(unsigned long index)
+{
+	switch (index) {
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, HARDWARE_ERROR_FATAL, SOC_PSF_CSC_0):
+		return "PSF CSC0";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, HARDWARE_ERROR_FATAL, SOC_PSF_CSC_1):
+		return "PSF CSC1";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, HARDWARE_ERROR_FATAL, SOC_PSF_CSC_2):
+		return "PSF CSC2";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, HARDWARE_ERROR_FATAL, PVC_SOC_PSF_0):
+		return "PSF0";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, HARDWARE_ERROR_FATAL, PVC_SOC_PSF_1):
+		return "PSF1";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, HARDWARE_ERROR_FATAL, PVC_SOC_PSF_2):
+		return "PSF2";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_CD0):
+		return "CD0";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_CD0_MDFI):
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_NONFATAL, PVC_SOC_CD0_MDFI):
+		return "CD0 MDFI";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, HARDWARE_ERROR_FATAL, PVC_SOC_MDFI_EAST):
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, HARDWARE_ERROR_NONFATAL, PVC_SOC_MDFI_EAST):
+		return "MDFI T2T";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, HARDWARE_ERROR_FATAL, PVC_SOC_MDFI_SOUTH):
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, HARDWARE_ERROR_NONFATAL, PVC_SOC_MDFI_SOUTH):
+		return "MDFI T2C";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_PUNIT):
+		return "PUNIT";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_HBM_SS0_0):
+		return "HBM SS0: Sbbridge0";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_HBM_SS0_1):
+		return "HBM SS0: Sbbridge1";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_HBM_SS0_2):
+		return "HBM SS0: Sbbridge2";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_HBM_SS0_3):
+		return "HBM SS0: Sbbridge3";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_HBM_SS0_4):
+		return "HBM SS0: Sbbridge4";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_HBM_SS0_5):
+		return "HBM SS0: Sbbridge5";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_HBM_SS0_6):
+		return "HBM SS0: Sbbridge6";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, SOC_HBM_SS0_7):
+		return "HBM SS0: Sbbridge7";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS1_0):
+		return "HBM SS1: Sbbridge0";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS1_1):
+		return "HBM SS1: Sbbridge1";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS1_2):
+		return "HBM SS1: Sbbridge2";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS1_3):
+		return "HBM SS1: Sbbridge3";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS1_4):
+		return "HBM SS1: Sbbridge4";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS1_5):
+		return "HBM SS1: Sbbridge5";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS1_6):
+		return "HBM SS1: Sbbridge6";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS1_7):
+		return "HBM SS1: Sbbridge7";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS2_0):
+		return "HBM SS2: Sbbridge0";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS2_1):
+		return "HBM SS2: Sbbridge1";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS2_2):
+		return "HBM SS2: Sbbridge2";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS2_3):
+		return "HBM SS2: Sbbridge3";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS2_4):
+		return "HBM SS2: Sbbridge4";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS2_5):
+		return "HBM SS2: Sbbridge5";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS2_6):
+		return "HBM SS2: Sbbridge6";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS2_7):
+		return "HBM SS2: Sbbridge7";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS3_0):
+		return "HBM SS3: Sbbridge0";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS3_1):
+		return "HBM SS3: Sbbridge1";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS3_2):
+		return "HBM SS3: Sbbridge2";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS3_3):
+		return "HBM SS3: Sbbridge3";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS3_4):
+		return "HBM SS3: Sbbridge4";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS3_5):
+		return "HBM SS3: Sbbridge5";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS3_6):
+		return "HBM SS3: Sbbridge6";
+	case SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, HARDWARE_ERROR_FATAL, PVC_SOC_HBM_SS3_7):
+		return "HBM SS3: Sbbridge7";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+static void log_soc_hw_error(struct intel_gt *gt, unsigned long index,
+			     const enum hardware_error hw_err)
+{
+	const char *error_name;
+
+	if (!IS_PONTEVECCHIO(gt->i915))
+		return;
+
+	error_name = soc_err_index_to_str(index);
+	if (!strcmp(error_name, "UNKNOWN"))
+		intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT, "UNKNOWN SOC %s error\n",
+					  hardware_error_type_to_str(hw_err));
+	else
+		log_gt_hw_err(gt, "%s SOC %s error\n", error_name, hardware_error_type_to_str(hw_err));
+}
+
+static void update_soc_hw_error_cnt(struct intel_gt *gt, unsigned long index)
+{
+	unsigned long flags;
+	void *entry;
+
+	entry = xa_load(&gt->errors.soc, index);
+	entry = xa_mk_value(xa_to_value(entry) + 1);
+
+	xa_lock_irqsave(&gt->errors.soc, flags);
+	if (xa_is_err(__xa_store(&gt->errors.soc, index, entry, GFP_ATOMIC)))
+		drm_err_ratelimited(&gt->i915->drm,
+				    HW_ERR "SOC error reported by IEH%lu on GT %d lost\n",
+				   (index >> IEH_SHIFT) & IEH_MASK,
+				    gt->info.id);
+	xa_unlock_irqrestore(&gt->errors.soc, flags);
+}
+
+static void
+gen12_soc_hw_error_handler(struct intel_gt *gt,
+			  const enum hardware_error hw_err)
 {
 	void __iomem * const regs = gt->uncore->regs;
+	unsigned long mst_glb_errstat, slv_glb_errstat, lcl_errstat, index;
+	u32 errbit;
+	u32 base = SOC_XEHPSDV_BASE;
+	u32 slave_base = SOC_XEHPSDV_SLAVE_BASE;
+	int i;
+
+	lockdep_assert_held(gt->irq_lock);
+	if (!IS_XEHPSDV(gt->i915) && !IS_PONTEVECCHIO(gt->i915))
+		return;
+
+	if (IS_XEHPSDV(gt->i915)) {
+		base = SOC_XEHPSDV_BASE;
+		slave_base = SOC_XEHPSDV_SLAVE_BASE;
+	} else if (IS_PONTEVECCHIO(gt->i915)) {
+		base = SOC_PVC_BASE;
+		slave_base = SOC_PVC_SLAVE_BASE;
+	}
+
+	log_gt_hw_err(gt, "SOC %s error\n", hardware_error_type_to_str(hw_err));
+
+	if (hw_err == HARDWARE_ERROR_CORRECTABLE ||
+	    (hw_err == HARDWARE_ERROR_NONFATAL && !IS_PONTEVECCHIO(gt->i915))) {
+		for (i = 0; i < INTEL_GT_SOC_NUM_IEH; i++)
+			raw_reg_write(regs, SOC_GSYSEVTCTL_REG(base, slave_base, i),
+				      ~REG_BIT(hw_err));
+
+		raw_reg_write(regs, SOC_GLOBAL_ERR_STAT_MASTER_REG(base, hw_err),
+			      REG_GENMASK(31, 0));
+		raw_reg_write(regs, SOC_LOCAL_ERR_STAT_MASTER_REG(base, hw_err),
+			      REG_GENMASK(31, 0));
+		raw_reg_write(regs, SOC_GLOBAL_ERR_STAT_SLAVE_REG(slave_base, hw_err),
+			      REG_GENMASK(31, 0));
+		raw_reg_write(regs, SOC_LOCAL_ERR_STAT_SLAVE_REG(slave_base, hw_err),
+			      REG_GENMASK(31, 0));
+
+		intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT, "UNKNOWN SOC %s error\n", hardware_error_type_to_str(hw_err));
+
+		goto unmask_gsysevtctl;
+	}
+
+	/*
+	 * Mask error type in GSYSEVTCTL so that no new errors of the type
+	 * will be reported. Read the master global IEH error register if
+	 * BIT 1 is set then process the slave IEH first. If BIT 0 in
+	 * global error register is set then process the corresponding
+	 * Local error registers
+	 */
+	for (i = 0; i < INTEL_GT_SOC_NUM_IEH; i++)
+		raw_reg_write(regs, SOC_GSYSEVTCTL_REG(base, slave_base, i), ~REG_BIT(hw_err));
+
+	mst_glb_errstat = raw_reg_read(regs,
+				       SOC_GLOBAL_ERR_STAT_MASTER_REG(base, hw_err));
+	log_gt_hw_err(gt, "SOC_GLOBAL_ERR_STAT_MASTER_REG_%s:0x%08lx\n",
+		      hardware_error_type_to_str(hw_err), mst_glb_errstat);
+	if (mst_glb_errstat & REG_BIT(SOC_SLAVE_IEH)) {
+		slv_glb_errstat = raw_reg_read(regs,
+					       SOC_GLOBAL_ERR_STAT_SLAVE_REG(slave_base,
+									     hw_err));
+		log_gt_hw_err(gt, "SOC_GLOBAL_ERR_STAT_SLAVE_REG_%s:0x%08lx\n",
+			      hardware_error_type_to_str(hw_err), slv_glb_errstat);
+
+		if (slv_glb_errstat & REG_BIT(SOC_IEH1_LOCAL_ERR_STATUS)) {
+			lcl_errstat = raw_reg_read(regs,
+						   SOC_LOCAL_ERR_STAT_SLAVE_REG(slave_base,
+										hw_err));
+			log_gt_hw_err(gt, "SOC_LOCAL_ERR_STAT_SLAVE_REG_%s:0x%08lx\n",
+				      hardware_error_type_to_str(hw_err), lcl_errstat);
+
+			for_each_set_bit(errbit, &lcl_errstat,
+					 SOC_HW_ERR_MAX_BITS) {
+				/*
+				 * SOC errors have global and local error
+				 * registers for each correctable non-fatal
+				 * and fatal categories and these are per IEH
+				 * on platform. XEHPSDV and PVC have two IEHs
+				 */
+				index = SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_LOCAL, hw_err, errbit);
+				update_soc_hw_error_cnt(gt, index);
+				log_soc_hw_error(gt, index, hw_err);
+			}
+			raw_reg_write(regs, SOC_LOCAL_ERR_STAT_SLAVE_REG(slave_base, hw_err),
+				      lcl_errstat);
+		}
+
+		for_each_set_bit(errbit, &slv_glb_errstat, SOC_HW_ERR_MAX_BITS) {
+			/* Skip reprocessing of SOC_IEH1_LOCAL_ERR_STATUS bit */
+			if (errbit == SOC_IEH1_LOCAL_ERR_STATUS)
+				continue;
+
+			index = SOC_ERR_INDEX(INTEL_GT_SOC_IEH1, INTEL_SOC_REG_GLOBAL, hw_err, errbit);
+			update_soc_hw_error_cnt(gt, index);
+			log_soc_hw_error(gt, index, hw_err);
+		}
+		raw_reg_write(regs, SOC_GLOBAL_ERR_STAT_SLAVE_REG(slave_base, hw_err),
+			      slv_glb_errstat);
+	}
+
+	if (mst_glb_errstat & REG_BIT(SOC_IEH0_LOCAL_ERR_STATUS)) {
+		lcl_errstat = raw_reg_read(regs,
+					   SOC_LOCAL_ERR_STAT_MASTER_REG(base, hw_err));
+		log_gt_hw_err(gt, "SOC_LOCAL_ERR_STAT_MASTER_REG_%s:0x%08lx\n",
+			      hardware_error_type_to_str(hw_err), lcl_errstat);
+		for_each_set_bit(errbit, &lcl_errstat, SOC_HW_ERR_MAX_BITS) {
+			index = SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_LOCAL, hw_err, errbit);
+			update_soc_hw_error_cnt(gt, index);
+			log_soc_hw_error(gt, index, hw_err);
+		}
+		raw_reg_write(regs, SOC_LOCAL_ERR_STAT_MASTER_REG(base, hw_err),
+			      lcl_errstat);
+	}
+
+	for_each_set_bit(errbit, &mst_glb_errstat, SOC_HW_ERR_MAX_BITS) {
+		/* Skip reprocessing of SOC_SLAVE_IEH and SOC_IEH0_LOCAL_ERR_STATUS */
+		if (errbit == SOC_SLAVE_IEH || errbit == SOC_IEH0_LOCAL_ERR_STATUS)
+			continue;
+
+		index = SOC_ERR_INDEX(INTEL_GT_SOC_IEH0, INTEL_SOC_REG_GLOBAL, hw_err, errbit);
+		update_soc_hw_error_cnt(gt, index);
+		log_soc_hw_error(gt, index, hw_err);
+	}
+	raw_reg_write(regs, SOC_GLOBAL_ERR_STAT_MASTER_REG(base, hw_err),
+		      mst_glb_errstat);
+
+unmask_gsysevtctl:
+	for (i = 0; i < INTEL_GT_SOC_NUM_IEH; i++)
+		raw_reg_write(regs, SOC_GSYSEVTCTL_REG(base, slave_base, i),
+			      (HARDWARE_ERROR_MAX << 1) + 1);
+
+}
+
+static void gen12_gt_fatal_hw_error_stats_update(struct intel_gt *gt,
+						 unsigned long errstat)
+{
+	u32 errbit, cnt;
+
+	if (!errstat && HAS_GT_ERROR_VECTORS(gt->i915))
+		return;
+
+	for_each_set_bit(errbit, &errstat, GT_HW_ERROR_MAX_ERR_BITS) {
+		if (IS_PONTEVECCHIO(gt->i915) && !(REG_BIT(errbit) & PVC_FAT_ERR_MASK)) {
+			intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+						  "UNKNOWN FATAL error\n");
+			continue;
+		}
+
+		switch (errbit) {
+		case ARRAY_BIST_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_ARR_BIST]++;
+			log_gt_hw_err(gt, "Array BIST FATAL error\n");
+			break;
+		case FPU_UNCORR_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_FPU]++;
+			log_gt_hw_err(gt, "FPU FATAL error\n");
+			break;
+		case L3_DOUBLE_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_L3_DOUB]++;
+			log_gt_hw_err(gt, "L3 Double FATAL error\n");
+			break;
+		case L3_ECC_CHK_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_L3_ECC_CHK]++;
+			log_gt_hw_err(gt, "L3 ECC Checker FATAL error\n");
+			break;
+		case GUC_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_GUC]++;
+			log_gt_hw_err(gt, "GUC SRAM FATAL error\n");
+			break;
+		case IDI_PAR_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_IDI_PAR]++;
+			log_gt_hw_err(gt, "IDI PARITY FATAL error\n");
+			break;
+		case SQIDI_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_SQIDI]++;
+			log_gt_hw_err(gt, "SQIDI FATAL error\n");
+			break;
+		case SAMPLER_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_SAMPLER]++;
+			log_gt_hw_err(gt, "SAMPLER FATAL error\n");
+			break;
+		case SLM_FAT_ERR:
+			cnt = intel_uncore_read(gt->uncore,
+						SLM_ECC_ERROR_CNTR(HARDWARE_ERROR_FATAL));
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_SLM] = cnt;
+			log_gt_hw_err(gt, "%u SLM FATAL error\n", cnt);
+			break;
+		case EU_IC_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_EU_IC]++;
+			log_gt_hw_err(gt, "EU IC FATAL error\n");
+			break;
+		case EU_GRF_FAT_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_FAT_EU_GRF]++;
+			log_gt_hw_err(gt, "EU GRF FATAL error\n");
+			break;
+		default:
+			intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+						  "UNKNOWN FATAL error\n");
+			break;
+		}
+	}
+}
+
+static void
+gen12_gt_correctable_hw_error_stats_update(struct intel_gt *gt,
+					   unsigned long errstat)
+{
+	u32 errbit, cnt;
+
+	if (!errstat && HAS_GT_ERROR_VECTORS(gt->i915))
+		return;
+
+	for_each_set_bit(errbit, &errstat, GT_HW_ERROR_MAX_ERR_BITS) {
+		if (IS_PONTEVECCHIO(gt->i915) && !(REG_BIT(errbit) & PVC_COR_ERR_MASK)) {
+			intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+						  "UNKNOWN CORRECTABLE error\n");
+			continue;
+		}
+
+		switch (errbit) {
+		case L3_SNG_COR_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_L3_SNG]++;
+			log_gt_hw_err(gt, "l3 single correctable error\n");
+			break;
+		case GUC_COR_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_GUC]++;
+			log_gt_hw_err(gt, "SINGLE BIT GUC SRAM CORRECTABLE error\n");
+			break;
+		case SAMPLER_COR_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_SAMPLER]++;
+			log_gt_hw_err(gt, "SINGLE BIT SAMPLER CORRECTABLE error\n");
+			break;
+		case SLM_COR_ERR:
+			cnt = intel_uncore_read(gt->uncore,
+						SLM_ECC_ERROR_CNTR(HARDWARE_ERROR_CORRECTABLE));
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_SLM] = cnt;
+			log_gt_hw_err(gt, "%u SINGLE BIT SLM CORRECTABLE error\n", cnt);
+			break;
+		case EU_IC_COR_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_EU_IC]++;
+			log_gt_hw_err(gt, "SINGLE BIT EU IC CORRECTABLE error\n");
+			break;
+		case EU_GRF_COR_ERR:
+			gt->errors.hw[INTEL_GT_HW_ERROR_COR_EU_GRF]++;
+			log_gt_hw_err(gt, "SINGLE BIT EU GRF CORRECTABLE error\n");
+			break;
+		default:
+			intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT, "UNKNOWN CORRECTABLE error\n");
+			break;
+		}
+	}
+}
+
+static void gen12_gsc_hw_error_work(struct work_struct *work)
+{
+	struct intel_gt *gt =
+		container_of(work, typeof(*gt), gsc_hw_error_work);
+	char *csc_hw_error_event[3];
+
+	csc_hw_error_event[0] = PRELIM_I915_MEMORY_HEALTH_UEVENT "=1";
+	csc_hw_error_event[1] = "SPARING_STATUS_UNKNOWN=1 RESET_REQUIRED=1";
+	csc_hw_error_event[2] = NULL;
+	gt->mem_sparing.health_status = MEM_HEALTH_UNKNOWN;
+
+	dev_notice(gt->i915->drm.dev, "Unknown memory health status, Reset Required\n");
+	kobject_uevent_env(&gt->i915->drm.primary->kdev->kobj, KOBJ_CHANGE,
+			   csc_hw_error_event);
+}
+
+static void gen12_mem_health_work(struct work_struct *work)
+{
+	struct intel_gt *gt =
+		container_of(work, typeof(*gt), mem_sparing.mem_health_work);
+	u32 cause;
+	int event_idx = 0;
+	char *sparing_event[3];
+
+	spin_lock_irq(gt->irq_lock);
+	cause = fetch_and_zero(&gt->mem_sparing.cause);
+	spin_unlock_irq(gt->irq_lock);
+	if (!cause)
+		return;
+
+	sparing_event[event_idx++] = PRELIM_I915_MEMORY_HEALTH_UEVENT "=1";
+	switch (cause) {
+	case BANK_SPARNG_ERR_MITIGATION_DOWNGRADED:
+		gt->mem_sparing.health_status = MEM_HEALTH_ALARM;
+		sparing_event[event_idx++] = "MEM_HEALTH_ALARM=1";
+		dev_notice(gt->i915->drm.dev,
+			   "Memory Health Report: Error occurred - No action required.\n"
+			   "Error Cause: 0x%x\n", cause);
+		break;
+	case BANK_SPARNG_DIS_PCLS_EXCEEDED:
+		/* We get this correctable error notification only
+		 * after a threshold in the firmware for correctable
+		 * errors has been reached. Hence the recommendation
+		 * is to run through PPR which happens after the
+		 * card is reset.
+		 */
+		gt->mem_sparing.health_status = MEM_HEALTH_EC_PENDING;
+		sparing_event[event_idx++] = "RESET_REQUIRED=1 EC_PENDING=1";
+		dev_crit(gt->i915->drm.dev,
+			 "Memory Health Report: Error correction pending.\n"
+			 "Card needs to be reset.\n"
+			 "Error Cause: 0x%x\n", cause);
+		break;
+	case BANK_SPARNG_ENA_PCLS_UNCORRECTABLE:
+		gt->mem_sparing.health_status = MEM_HEALTH_DEGRADED;
+		sparing_event[event_idx++] = "DEGRADED=1 EC_FAILED=1";
+		dev_crit(gt->i915->drm.dev,
+			 "Memory Health Report: Memory Health degraded, and runtime fix not feasible.\n"
+			 "Replacing card might be the best option.\n"
+			 "Error Cause: 0x%x\n", cause);
+		add_taint(TAINT_MACHINE_CHECK, LOCKDEP_STILL_OK);
+		break;
+	default:
+		gt->mem_sparing.health_status = MEM_HEALTH_UNKNOWN;
+		sparing_event[event_idx++] = "SPARING_STATUS_UNKNOWN=1";
+		dev_notice(gt->i915->drm.dev,
+			   "Unknown memory health status\n");
+		break;
+	}
+
+	sparing_event[event_idx++] = NULL;
+
+	kobject_uevent_env(&gt->i915->drm.primary->kdev->kobj, KOBJ_CHANGE,
+			   sparing_event);
+}
+
+static void log_hbm_err_info(struct intel_gt *gt, u32 cause,
+			     u32 reg_swf0, u32 reg_swf1)
+{
+	struct swf0_bitfields {
+		u32 event_num:5;
+		u32 tile:1;
+		u32 channel:5;
+		u32 pseudochannel:1;
+		u32 row:18;
+	};
+
+	struct swf1_bitfields {
+		u32 column:10;
+		u32 bank:6;
+		u32 old_state:4;
+		u32 new_state:4;
+	};
+
+	bool report_state_change = false;
+	struct swf0_bitfields bfswf0;
+	struct swf1_bitfields bfswf1;
+	const char *event;
+
+	bfswf0.event_num = REG_FIELD_GET(EVENT_MASK, reg_swf0);
+	bfswf0.tile = REG_FIELD_GET(TILE_MASK, reg_swf0);
+	bfswf0.channel = REG_FIELD_GET(CHANNEL_MASK, reg_swf0);
+	bfswf0.pseudochannel = REG_FIELD_GET(PSEUDOCHANNEL_MASK, reg_swf0);
+	bfswf0.row = REG_FIELD_GET(ROW_MASK, reg_swf0);
+	bfswf1.column = REG_FIELD_GET(COLUMN_MASK, reg_swf1);
+	bfswf1.bank = REG_FIELD_GET(BANK_MASK, reg_swf1);
+	bfswf1.old_state = REG_FIELD_GET(OLDSTATE_MASK, reg_swf1);
+	bfswf1.new_state = REG_FIELD_GET(NEWSTATE_MASK, reg_swf1);
+
+	switch (cause) {
+	case BANK_CORRECTABLE_ERROR:
+		event = "Correctable Error Received on";
+		drm_err_ratelimited(&gt->i915->drm, HW_ERR
+				    "[HBM ERROR]: %s HBM Tile%u, Channel%u, Pseudo Channel %u, Bank%u, Row%u, Column%u\n",
+				    event, bfswf0.tile, bfswf0.channel, bfswf0.pseudochannel,
+				    bfswf1.bank, bfswf0.row, bfswf1.column);
+
+		if (bfswf1.old_state != bfswf1.new_state)
+			report_state_change = true;
+
+		break;
+	case BANK_SPARNG_ERR_MITIGATION_DOWNGRADED:
+		event = "PCLS Applied";
+		drm_err_ratelimited(&gt->i915->drm, HW_ERR
+				    "[HBM ERROR]: %s on HBM Tile%u, Channel%u, Pseudo Channel%u, Bank%u, Row%u, Column%u\n",
+				    event, bfswf0.tile, bfswf0.channel, bfswf0.pseudochannel,
+				    bfswf1.bank, bfswf0.row, bfswf1.column);
+		break;
+	case BANK_SPARNG_DIS_PCLS_EXCEEDED:
+		switch (bfswf0.event_num) {
+		case UC_DEMAND_ACCESS:
+			event = "Uncorrectable Error on Demand Access received";
+			drm_err_ratelimited(&gt->i915->drm, HW_ERR
+					    "[HBM ERROR]: %s of HBM Tile%u, Channel%u, Pseudo Channel%u, Bank%u, Row%u\n",
+					    event, bfswf0.tile, bfswf0.channel,
+					    bfswf0.pseudochannel, bfswf1.bank, bfswf0.row);
+			break;
+		case PATROL_SCRUB_ERROR:
+			event = "Uncorrectable Error on Patrol Scrub";
+			drm_err_ratelimited(&gt->i915->drm, HW_ERR
+					    "[HBM ERROR]: %s of HBM Tile%u, Channel%u, Pseudo Channel%u, Bank%u, Row%u\n",
+					    event, bfswf0.tile, bfswf0.channel,
+					    bfswf0.pseudochannel, bfswf1.bank, bfswf0.row);
+			break;
+		case PCLS_EXCEEDED:
+			event = "Exceeded PCLS Threshold";
+			drm_err_ratelimited(&gt->i915->drm, HW_ERR
+					    "[HBM ERROR]: %s on HBM Tile%u, Channel%u, Pseudo Channel%u\n",
+					    event, bfswf0.tile, bfswf0.channel,
+					    bfswf0.pseudochannel);
+			if (bfswf1.old_state != bfswf1.new_state)
+				report_state_change = true;
+
+			break;
+		case PCLS_SAME_CACHELINE:
+			event = "Cannot Apply PCLS, PCLS Already Applied to This Line";
+			drm_err_ratelimited(&gt->i915->drm, HW_ERR
+					    "[HBM ERROR]: %s on HBM Tile%u, Channel%u, Pseudo Channel%u\n",
+					    event, bfswf0.tile, bfswf0.channel,
+					    bfswf0.pseudochannel);
+			break;
+		default:
+			event = "Unknown event for Error Cause:";
+			drm_err_ratelimited(&gt->i915->drm, HW_ERR "%s 0x%x\n",
+					    event, cause);
+			break;
+		}
+		break;
+	case BANK_SPARNG_ENA_PCLS_UNCORRECTABLE:
+		drm_err_ratelimited(&gt->i915->drm, HW_ERR "[HBM ERROR]: REPLACE\n");
+		break;
+	default:
+		event = "Unknown Error Cause";
+		drm_err_ratelimited(&gt->i915->drm, HW_ERR
+				    "%s: 0x%x\n", event, cause);
+		break;
+	}
+	if (report_state_change)
+		drm_err_ratelimited(&gt->i915->drm, HW_ERR
+				    "[HBM ERROR]: Old_State%u to New_State%u for HBM TILE%u\n",
+				    bfswf1.old_state, bfswf1.new_state, bfswf0.tile);
+}
+
+static void
+gen12_gsc_hw_error_handler(struct intel_gt *gt,
+			   const enum hardware_error hw_err)
+{
+	void __iomem * const regs = gt->uncore->regs;
+	u32 base = DG1_GSC_HECI1_BASE;
+	unsigned long err_status;
+	u32 errbit;
+
+	if (!HAS_MEM_SPARING_SUPPORT(gt->i915))
+		return;
+
+	if (IS_XEHPSDV(gt->i915))
+		base = DG1_GSC_HECI1_BASE;
+	else if (IS_PONTEVECCHIO(gt->i915))
+		base = PVC_GSC_HECI1_BASE;
+
+	lockdep_assert_held(gt->irq_lock);
+
+	err_status = raw_reg_read(regs, GSC_HEC_CORR_UNCORR_ERR_STATUS(base, hw_err));
+	if (unlikely(!err_status))
+		return;
+
+	switch (hw_err) {
+	case HARDWARE_ERROR_CORRECTABLE:
+		for_each_set_bit(errbit, &err_status, GSC_HW_ERROR_MAX_ERR_BITS) {
+			u32 err_type = GSC_HW_ERROR_MAX_ERR_BITS;
+			u32 sw0_reg, sw1_reg;
+			const char *name;
+
+			switch (errbit) {
+			case GSC_COR_SRAM_ECC_SINGLE_BIT_ERR:
+				name = "Single bit error on CSME SRAM";
+				err_type = INTEL_GSC_HW_ERROR_COR_SRAM_ECC;
+				break;
+			case GSC_COR_FW_REPORTED_ERR:
+				gt->mem_sparing.cause |=
+					raw_reg_read(regs,
+						     GSC_HEC_CORR_FW_ERR_DW0(base));
+				if (unlikely(!gt->mem_sparing.cause))
+					goto re_enable_interrupt;
+
+				if (IS_PONTEVECCHIO(gt->i915)) {
+					sw0_reg = raw_reg_read(regs, SWF_0);
+					sw1_reg = raw_reg_read(regs, SWF_1);
+					log_hbm_err_info(gt, sw0_reg,
+							 sw1_reg, gt->mem_sparing.cause);
+
+					/* These registers are written by FSP,
+					 * so write 0 to clear
+					 */
+					raw_reg_write(regs, SWF_0, 0);
+					raw_reg_write(regs, SWF_1, 0);
+				}
+
+				schedule_work(&gt->mem_sparing.mem_health_work);
+				break;
+			default:
+				name = "Unknown";
+				break;
+			}
+
+			if (err_type != GSC_HW_ERROR_MAX_ERR_BITS)
+				gt->errors.gsc_hw[err_type]++;
+
+			if (errbit != GSC_COR_FW_REPORTED_ERR)
+				drm_err_ratelimited(&gt->i915->drm, HW_ERR
+						    "%s GSC Correctable Error, GSC_HEC_CORR_ERR_STATUS:0x%08lx\n",
+						    name, err_status);
+		}
+		break;
+	case HARDWARE_ERROR_NONFATAL:
+		for_each_set_bit(errbit, &err_status, GSC_HW_ERROR_MAX_ERR_BITS) {
+			u32 err_type = GSC_HW_ERROR_MAX_ERR_BITS;
+			const char *name;
+
+			switch (errbit) {
+			case GSC_UNCOR_MIA_SHUTDOWN_ERR:
+				name = "MinuteIA Unexpected Shutdown";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_MIA_SHUTDOWN;
+				break;
+			case GSC_UNCOR_MIA_INT_ERR:
+				name = "MinuteIA Internal Error";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_MIA_INT;
+				break;
+			case GSC_UNCOR_SRAM_ECC_ERR:
+				name = "Double bit error on CSME SRAM";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_SRAM_ECC;
+				break;
+			case GSC_UNCOR_WDG_TIMEOUT_ERR:
+				name = "WDT 2nd Timeout";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_WDG_TIMEOUT;
+				break;
+			case GSC_UNCOR_ROM_PARITY_ERR:
+				name = "ROM has a parity error";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_ROM_PARITY;
+				break;
+			case GSC_UNCOR_UCODE_PARITY_ERR:
+				name = "Ucode has a parity error";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_UCODE_PARITY;
+				break;
+			case GSC_UNCOR_FW_REPORTED_ERR:
+				name = "Errors Reported to FW and Detected by FW";
+				break;
+			case GSC_UNCOR_GLITCH_DET_ERR:
+				name = "Glitch is detected on voltage rail";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_GLITCH_DET;
+				break;
+			case GSC_UNCOR_FUSE_PULL_ERR:
+				name = "Fuse Pull Error";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_FUSE_PULL;
+				break;
+			case GSC_UNCOR_FUSE_CRC_CHECK_ERR:
+				name = "Fuse CRC Check Failed on Fuse Pull";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_FUSE_CRC_CHECK;
+				break;
+			case GSC_UNCOR_SELFMBIST_ERR:
+				name = "Self Mbist Failed";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_SELFMBIST;
+				break;
+			case GSC_UNCOR_AON_PARITY_ERR:
+				name = "AON RF has parity error";
+				err_type = INTEL_GSC_HW_ERROR_UNCOR_AON_PARITY;
+				break;
+			default:
+				name = "Unknown";
+				break;
+			}
+
+			if (err_type != GSC_HW_ERROR_MAX_ERR_BITS)
+				gt->errors.gsc_hw[err_type]++;
+
+			schedule_work(&gt->gsc_hw_error_work);
+			drm_err_ratelimited(&gt->i915->drm, HW_ERR
+					    "%s GSC NON_FATAL Error, GSC_HEC_UNCORR_ERR_STATUS:0x%08lx\n",
+					    name, err_status);
+		}
+		break;
+	case HARDWARE_ERROR_FATAL:
+		/* GSC error not handled for Fatal Error status */
+		drm_err_ratelimited(&gt->i915->drm,
+				    HW_ERR "Fatal Memory Error Detected\n");
+	default:
+		break;
+	}
+
+re_enable_interrupt:
+	raw_reg_write(regs, GSC_HEC_CORR_UNCORR_ERR_STATUS(base, hw_err), err_status);
+}
+
+static void
+gen12_gt_hw_error_handler(struct intel_gt *gt,
+			  const enum hardware_error hw_err)
+{
+	void __iomem * const regs = gt->uncore->regs;
+	const char *hw_err_str = hardware_error_type_to_str(hw_err);
+	unsigned long errstat;
+
+	lockdep_assert_held(gt->irq_lock);
+
+	if (!HAS_GT_ERROR_VECTORS(gt->i915)) {
+		errstat = raw_reg_read(regs, ERR_STAT_GT_REG(hw_err));
+		if (unlikely(!errstat)) {
+			intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+						  "ERR_STAT_GT_REG_%s blank!\n", hw_err_str);
+			return;
+		}
+	}
+
+	switch (hw_err) {
+	case HARDWARE_ERROR_CORRECTABLE:
+		if (HAS_GT_ERROR_VECTORS(gt->i915)) {
+			bool error = false;
+			int i;
+
+			errstat = 0;
+			for (i = 0; i < ERR_STAT_GT_COR_VCTR_LEN; i++) {
+				u32 err_type = ERR_STAT_GT_COR_VCTR_LEN;
+				unsigned long vctr;
+				const char *name;
+
+				vctr = raw_reg_read(regs, ERR_STAT_GT_COR_VCTR_REG(i));
+				if (!vctr)
+					continue;
+
+				switch (i) {
+				case ERR_STAT_GT_VCTR0:
+				case ERR_STAT_GT_VCTR1:
+					err_type = INTEL_GT_HW_ERROR_COR_SUBSLICE;
+					gt->errors.hw[err_type] += hweight32(vctr);
+					name = "SUBSLICE";
+
+					/* Avoid second read/write to error status register*/
+					if (errstat)
+						break;
+
+					errstat = raw_reg_read(regs, ERR_STAT_GT_REG(hw_err));
+					log_gt_hw_err(gt, "ERR_STAT_GT_CORRECTABLE:0x%08lx\n",
+						      errstat);
+					gen12_gt_correctable_hw_error_stats_update(gt, errstat);
+					if (errstat)
+						raw_reg_write(regs, ERR_STAT_GT_REG(hw_err), errstat);
+					break;
+
+				case ERR_STAT_GT_VCTR2:
+				case ERR_STAT_GT_VCTR3:
+					err_type = INTEL_GT_HW_ERROR_COR_L3BANK;
+					gt->errors.hw[err_type] += hweight32(vctr);
+					name = "L3 BANK";
+					break;
+				default:
+					name = "UNKNOWN";
+					break;
+				}
+				raw_reg_write(regs, ERR_STAT_GT_COR_VCTR_REG(i), vctr);
+				log_gt_hw_err(gt, "%s CORRECTABLE error, ERR_VECT_GT_CORRECTABLE_%d:0x%08lx\n",
+					      name, i, vctr);
+				error = true;
+			}
+
+			if (!error)
+				log_gt_hw_err(gt, "UNKNOWN CORRECTABLE error\n");
+		} else {
+			gen12_gt_correctable_hw_error_stats_update(gt, errstat);
+			log_gt_hw_err(gt, "ERR_STAT_GT_CORRECTABLE:0x%08lx\n", errstat);
+		}
+		break;
+	case HARDWARE_ERROR_NONFATAL:
+		/*
+		 * TODO: The GT Non Fatal Error Status Register
+		 * only has reserved bitfields defined.
+		 * Remove once there is something to service.
+		 */
+		drm_err_ratelimited(&gt->i915->drm,
+				    HW_ERR "detected Non-Fatal error\n");
+		break;
+	case HARDWARE_ERROR_FATAL:
+		if (HAS_GT_ERROR_VECTORS(gt->i915)) {
+			bool error = false;
+			int i;
+
+			errstat = 0;
+			for (i = 0; i < ERR_STAT_GT_FATAL_VCTR_LEN; i++) {
+				u32 err_type = ERR_STAT_GT_FATAL_VCTR_LEN;
+				unsigned long vctr;
+				const char *name;
+
+				vctr = raw_reg_read(regs, ERR_STAT_GT_FATAL_VCTR_REG(i));
+				if (!vctr)
+					continue;
+
+				/* i represents the vector register index */
+				switch (i) {
+				case ERR_STAT_GT_VCTR0:
+				case ERR_STAT_GT_VCTR1:
+					err_type = INTEL_GT_HW_ERROR_FAT_SUBSLICE;
+					gt->errors.hw[err_type] += hweight32(vctr);
+					name = "SUBSLICE";
+
+					/*Avoid second read/write to error status register.*/
+					if (errstat)
+						break;
+
+					errstat = raw_reg_read(regs, ERR_STAT_GT_REG(hw_err));
+					log_gt_hw_err(gt, "ERR_STAT_GT_FATAL:0x%08lx\n", errstat);
+					gen12_gt_fatal_hw_error_stats_update(gt, errstat);
+					if (errstat)
+						raw_reg_write(regs, ERR_STAT_GT_REG(hw_err), errstat);
+					break;
+
+				case ERR_STAT_GT_VCTR2:
+				case ERR_STAT_GT_VCTR3:
+					err_type = INTEL_GT_HW_ERROR_FAT_L3BANK;
+					gt->errors.hw[err_type] += hweight32(vctr);
+					name = "L3 BANK";
+					break;
+				case ERR_STAT_GT_VCTR6:
+					gt->errors.hw[INTEL_GT_HW_ERROR_FAT_TLB] += hweight16(vctr);
+					name = "TLB";
+					break;
+				case ERR_STAT_GT_VCTR7:
+					gt->errors.hw[INTEL_GT_HW_ERROR_FAT_L3_FABRIC] += hweight8(vctr);
+					name = "L3 FABRIC";
+					break;
+				default:
+					name = "UNKNOWN";
+					break;
+				}
+				raw_reg_write(regs, ERR_STAT_GT_FATAL_VCTR_REG(i), vctr);
+				log_gt_hw_err(gt, "%s FATAL error, ERR_VECT_GT_FATAL_%d:0x%08lx\n",
+					      name, i, vctr);
+				error = true;
+			}
+			if (!error)
+				log_gt_hw_err(gt, "UNKNOWN FATAL error\n");
+		} else {
+			gen12_gt_fatal_hw_error_stats_update(gt, errstat);
+			log_gt_hw_err(gt, "ERR_STAT_GT_FATAL:0x%08lx\n", errstat);
+		}
+		break;
+	default:
+		break;
+	}
+
+	if (!HAS_GT_ERROR_VECTORS(gt->i915))
+		raw_reg_write(regs, ERR_STAT_GT_REG(hw_err), errstat);
+}
+
+static void
+gen12_hw_error_source_handler(struct intel_gt *gt,
+			      const enum hardware_error hw_err)
+{
+	void __iomem * const regs = gt->uncore->regs;
+	const char *hw_err_str = hardware_error_type_to_str(hw_err);
+	unsigned long flags;
+	u32 errsrc;
+
+	spin_lock_irqsave(gt->irq_lock, flags);
+	errsrc = raw_reg_read(regs, DEV_ERR_STAT_REG(hw_err));
+
+	if (unlikely(!errsrc)) {
+		intel_gt_log_driver_error(gt, INTEL_GT_DRIVER_ERROR_INTERRUPT,
+					  "DEV_ERR_STAT_REG_%s blank!\n", hw_err_str);
+		goto out_unlock;
+	}
+
+	if (errsrc & DEV_ERR_STAT_GT_ERROR)
+		gen12_gt_hw_error_handler(gt, hw_err);
+
+	if (errsrc & DEV_ERR_STAT_SGUNIT_ERROR) {
+		log_gt_hw_err(gt, "SGUNIT %s error\n", hardware_error_type_to_str(hw_err));
+		gt->errors.sgunit[hw_err]++;
+	}
+
+	if (errsrc & DEV_ERR_STAT_SOC_ERROR)
+		gen12_soc_hw_error_handler(gt, hw_err);
+
+	/* Memory health status is being tracked on root tile only */
+	if ((errsrc & DEV_ERR_STAT_GSC_ERROR) && gt->info.id == 0)
+		gen12_gsc_hw_error_handler(gt, hw_err);
+
+	raw_reg_write(regs, DEV_ERR_STAT_REG(hw_err), errsrc);
+
+out_unlock:
+	spin_unlock_irqrestore(gt->irq_lock, flags);
+}
+
+/**
+ * gen12_iaf_irq_handler - handle accelerator fabric IRQs
+ *
+ * Gen12+ can have an accelerator fabric attached.  Handle the IRQs that are
+ * sourced by the device supporting the fabric.
+ */
+static void gen12_iaf_irq_handler(struct intel_gt *gt, const u32 master_ctl)
+{
+	if (master_ctl & GEN12_IAF_IRQ)
+		generic_handle_irq(gt->iaf_irq);
+}
+
+/*
+ * GEN12+ adds three Error bits to the Master Interrupt
+ * Register to support dgfx card error handling.
+ * These three bits are used to convey the class of error:
+ * FATAL, NONFATAL, or CORRECTABLE.
+ *
+ * To process an interrupt:
+ *	1. Determine source of error (IP block) by reading
+ *	   the Device Error Source Register (RW1C) that
+ *	   corresponds to the class of error being serviced.
+ *	2. For GT as the generating IP block, read and log
+ *	   the GT Error Register (RW1C) that corresponds to
+ *	   the class of error being serviced.
+ */
+static void
+gen12_hw_error_irq_handler(struct intel_gt *gt, const u32 master_ctl)
+{
+	enum hardware_error hw_err;
+
+	for (hw_err = 0; hw_err < HARDWARE_ERROR_MAX; hw_err++) {
+		if (master_ctl & GEN12_ERROR_IRQ(hw_err))
+			gen12_hw_error_source_handler(gt, hw_err);
+	}
+}
+
+static u32
+gen11_gu_misc_irq_ack(struct drm_i915_private *i915, const u32 master_ctl)
+{
+	void __iomem * const regs = i915->uncore.regs;
 	u32 iir;
 
 	if (!(master_ctl & GEN11_GU_MISC_IRQ))
@@ -2654,10 +3752,10 @@ gen11_gu_misc_irq_ack(struct intel_gt *gt, const u32 master_ctl)
 }
 
 static void
-gen11_gu_misc_irq_handler(struct intel_gt *gt, const u32 iir)
+gen11_gu_misc_irq_handler(struct drm_i915_private *i915, const u32 iir)
 {
 	if (iir & GEN11_GU_MISC_GSE)
-		intel_opregion_asle_intr(gt->i915);
+		intel_opregion_asle_intr(i915);
 }
 
 static inline u32 gen11_master_intr_disable(void __iomem * const regs)
@@ -2701,7 +3799,7 @@ static irqreturn_t gen11_irq_handler(int irq, void *arg)
 {
 	struct drm_i915_private *i915 = arg;
 	void __iomem * const regs = i915->uncore.regs;
-	struct intel_gt *gt = &i915->gt;
+	struct intel_gt *gt = to_gt(i915);
 	u32 master_ctl;
 	u32 gu_misc_iir;
 
@@ -2721,11 +3819,11 @@ static irqreturn_t gen11_irq_handler(int irq, void *arg)
 	if (master_ctl & GEN11_DISPLAY_IRQ)
 		gen11_display_irq_handler(i915);
 
-	gu_misc_iir = gen11_gu_misc_irq_ack(gt, master_ctl);
+	gu_misc_iir = gen11_gu_misc_irq_ack(i915, master_ctl);
 
 	gen11_master_intr_enable(regs);
 
-	gen11_gu_misc_irq_handler(gt, gu_misc_iir);
+	gen11_gu_misc_irq_handler(i915, gu_misc_iir);
 
 	pmu_irq_stats(i915, IRQ_HANDLED);
 
@@ -2757,44 +3855,108 @@ static inline void dg1_master_intr_enable(void __iomem * const regs)
 static irqreturn_t dg1_irq_handler(int irq, void *arg)
 {
 	struct drm_i915_private * const i915 = arg;
-	struct intel_gt *gt = &i915->gt;
-	void __iomem * const regs = i915->uncore.regs;
+	struct intel_gt *gt = to_gt(i915);
+	void __iomem * const t0_regs = gt->uncore->regs;
 	u32 master_tile_ctl, master_ctl;
-	u32 gu_misc_iir;
+	u32 gu_misc_iir = 0;
+	unsigned int i;
 
 	if (!intel_irqs_enabled(i915))
 		return IRQ_NONE;
 
-	master_tile_ctl = dg1_master_intr_disable(regs);
+	master_tile_ctl = dg1_master_intr_disable(t0_regs);
 	if (!master_tile_ctl) {
-		dg1_master_intr_enable(regs);
+		dg1_master_intr_enable(t0_regs);
 		return IRQ_NONE;
 	}
 
-	/* FIXME: we only support tile 0 for now. */
-	if (master_tile_ctl & DG1_MSTR_TILE(0)) {
+	for_each_gt(gt, i915, i) {
+		void __iomem *const regs = gt->uncore->regs;
+
+		if ((master_tile_ctl & DG1_MSTR_TILE(i)) == 0)
+			continue;
+
+		/*
+		 * All interrupts for standalone media come in through
+		 * the primary GT.  We deal with them lower in the handler
+		 * stack while processing the primary GT's interrupts.
+		 */
+		if (drm_WARN_ON_ONCE(&i915->drm, gt->type == GT_MEDIA))
+			continue;
+
 		master_ctl = raw_reg_read(regs, GEN11_GFX_MSTR_IRQ);
+
+		/*
+		 * We might be in irq handler just when PCIe DPC is initiated and all
+		 * MMIO reads will be returned with all 1's. Ignore this irq as device
+		 * is inaccessible.
+		 */
+		if (master_ctl == REG_GENMASK(31, 0)) {
+			dev_dbg(gt->i915->drm.dev, "Ignore this IRQ as device might be in DPC containment.\n");
+			return IRQ_HANDLED;
+		}
+
 		raw_reg_write(regs, GEN11_GFX_MSTR_IRQ, master_ctl);
-	} else {
-		DRM_ERROR("Tile not supported: 0x%08x\n", master_tile_ctl);
-		dg1_master_intr_enable(regs);
-		return IRQ_NONE;
+
+		gen11_gt_irq_handler(gt, master_ctl);
+		gen12_iaf_irq_handler(gt, master_ctl);
+		gen12_hw_error_irq_handler(gt, master_ctl);
+
+		/*
+		 * We'll probably only get display interrupts on tile 0, but
+		 * it doesn't hurt to check the bit on each tile just to be
+		 * safe.
+		 */
+		if (master_ctl & GEN11_DISPLAY_IRQ)
+			gen11_display_irq_handler(i915);
+
+		gu_misc_iir |= gen11_gu_misc_irq_ack(i915, master_ctl);
 	}
 
-	gen11_gt_irq_handler(gt, master_ctl);
+	dg1_master_intr_enable(t0_regs);
 
-	if (master_ctl & GEN11_DISPLAY_IRQ)
-		gen11_display_irq_handler(i915);
-
-	gu_misc_iir = gen11_gu_misc_irq_ack(gt, master_ctl);
-
-	dg1_master_intr_enable(regs);
-
-	gen11_gu_misc_irq_handler(gt, gu_misc_iir);
+	gen11_gu_misc_irq_handler(i915, gu_misc_iir);
 
 	pmu_irq_stats(i915, IRQ_HANDLED);
 
 	return IRQ_HANDLED;
+}
+
+static irqreturn_t vf_mem_irq_handler(int irq, void *arg)
+{
+	struct drm_i915_private * const i915 = arg;
+	struct intel_gt *gt;
+	unsigned int i;
+
+	if (!intel_irqs_enabled(i915))
+		return IRQ_NONE;
+
+	for_each_gt(gt, i915, i)
+		intel_iov_memirq_handler(&gt->iov);
+
+	pmu_irq_stats(i915, IRQ_HANDLED);
+
+	return IRQ_HANDLED;
+}
+
+static void vf_mem_irq_reset(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int i;
+
+	for_each_gt(gt, i915, i)
+		intel_iov_memirq_reset(&gt->iov);
+}
+
+static int vf_mem_irq_postinstall(struct drm_i915_private *i915)
+{
+	struct intel_gt *gt;
+	unsigned int i;
+
+	for_each_gt(gt, i915, i)
+		intel_iov_memirq_postinstall(&gt->iov);
+
+	return 0;
 }
 
 /* Called from drm generic code, passed 'crtc' which
@@ -3002,7 +4164,7 @@ static void vlv_display_irq_reset(struct drm_i915_private *dev_priv)
 	if (IS_CHERRYVIEW(dev_priv))
 		intel_uncore_write(uncore, DPINVGTT, DPINVGTT_STATUS_MASK_CHV);
 	else
-		intel_uncore_write(uncore, DPINVGTT, DPINVGTT_STATUS_MASK);
+		intel_uncore_write(uncore, DPINVGTT, DPINVGTT_STATUS_MASK_VLV);
 
 	i915_hotplug_interrupt_update_locked(dev_priv, 0xffffffff, 0);
 	intel_uncore_write(uncore, PORT_HOTPLUG_STAT, intel_uncore_read(&dev_priv->uncore, PORT_HOTPLUG_STAT));
@@ -3061,7 +4223,7 @@ static void ilk_irq_reset(struct drm_i915_private *dev_priv)
 		intel_uncore_write(uncore, EDP_PSR_IIR, 0xffffffff);
 	}
 
-	gen5_gt_irq_reset(&dev_priv->gt);
+	gen5_gt_irq_reset(to_gt(dev_priv));
 
 	ibx_irq_reset(dev_priv);
 }
@@ -3071,7 +4233,7 @@ static void valleyview_irq_reset(struct drm_i915_private *dev_priv)
 	intel_uncore_write(&dev_priv->uncore, VLV_MASTER_IER, 0);
 	intel_uncore_posting_read(&dev_priv->uncore, VLV_MASTER_IER);
 
-	gen5_gt_irq_reset(&dev_priv->gt);
+	gen5_gt_irq_reset(to_gt(dev_priv));
 
 	spin_lock_irq(&dev_priv->irq_lock);
 	if (dev_priv->display_irqs_enabled)
@@ -3105,7 +4267,7 @@ static void gen8_irq_reset(struct drm_i915_private *dev_priv)
 
 	gen8_master_intr_disable(dev_priv->uncore.regs);
 
-	gen8_gt_irq_reset(&dev_priv->gt);
+	gen8_gt_irq_reset(to_gt(dev_priv));
 	gen8_display_irq_reset(dev_priv);
 	GEN3_IRQ_RESET(uncore, GEN8_PCU_);
 
@@ -3151,7 +4313,11 @@ static void gen11_display_irq_reset(struct drm_i915_private *dev_priv)
 
 	GEN3_IRQ_RESET(uncore, GEN8_DE_PORT_);
 	GEN3_IRQ_RESET(uncore, GEN8_DE_MISC_);
-	GEN3_IRQ_RESET(uncore, GEN11_DE_HPD_);
+
+	if (DISPLAY_VER(dev_priv) >= 14)
+		GEN3_IRQ_RESET(uncore, PICAINTERRUPT_);
+	else
+		GEN3_IRQ_RESET(uncore, GEN11_DE_HPD_);
 
 	if (INTEL_PCH_TYPE(dev_priv) >= PCH_ICP)
 		GEN3_IRQ_RESET(uncore, SDE);
@@ -3159,28 +4325,37 @@ static void gen11_display_irq_reset(struct drm_i915_private *dev_priv)
 
 static void gen11_irq_reset(struct drm_i915_private *dev_priv)
 {
-	struct intel_uncore *uncore = &dev_priv->uncore;
+	struct intel_gt *gt = to_gt(dev_priv);
+	struct intel_uncore *uncore = gt->uncore;
 
 	gen11_master_intr_disable(dev_priv->uncore.regs);
 
-	gen11_gt_irq_reset(&dev_priv->gt);
+	gen11_gt_irq_reset(gt);
 	gen11_display_irq_reset(dev_priv);
 
-	GEN3_IRQ_RESET(uncore, GEN11_GU_MISC_);
-	GEN3_IRQ_RESET(uncore, GEN8_PCU_);
+	if (!IS_SRIOV_VF(dev_priv)) {
+		GEN3_IRQ_RESET(uncore, GEN11_GU_MISC_);
+		GEN3_IRQ_RESET(uncore, GEN8_PCU_);
+	}
 }
 
 static void dg1_irq_reset(struct drm_i915_private *dev_priv)
 {
-	struct intel_uncore *uncore = &dev_priv->uncore;
+	struct intel_gt *gt = to_gt(dev_priv);
+	struct intel_uncore *uncore = gt->uncore;
+	unsigned int i;
 
 	dg1_master_intr_disable(dev_priv->uncore.regs);
 
-	gen11_gt_irq_reset(&dev_priv->gt);
-	gen11_display_irq_reset(dev_priv);
+	for_each_gt(gt, dev_priv, i) {
+		gen11_gt_irq_reset(gt);
 
-	GEN3_IRQ_RESET(uncore, GEN11_GU_MISC_);
-	GEN3_IRQ_RESET(uncore, GEN8_PCU_);
+		uncore = gt->uncore;
+		GEN3_IRQ_RESET(uncore, GEN11_GU_MISC_);
+		GEN3_IRQ_RESET(uncore, GEN8_PCU_);
+	}
+
+	gen11_display_irq_reset(dev_priv);
 }
 
 void gen8_irq_power_well_post_enable(struct drm_i915_private *dev_priv,
@@ -3236,7 +4411,7 @@ static void cherryview_irq_reset(struct drm_i915_private *dev_priv)
 	intel_uncore_write(&dev_priv->uncore, GEN8_MASTER_IRQ, 0);
 	intel_uncore_posting_read(&dev_priv->uncore, GEN8_MASTER_IRQ);
 
-	gen8_gt_irq_reset(&dev_priv->gt);
+	gen8_gt_irq_reset(to_gt(dev_priv));
 
 	GEN3_IRQ_RESET(uncore, GEN8_PCU_);
 
@@ -3246,10 +4421,11 @@ static void cherryview_irq_reset(struct drm_i915_private *dev_priv)
 	spin_unlock_irq(&dev_priv->irq_lock);
 }
 
-static u32 ibx_hotplug_enables(struct drm_i915_private *i915,
-			       enum hpd_pin pin)
+static u32 ibx_hotplug_enables(struct intel_encoder *encoder)
 {
-	switch (pin) {
+	struct drm_i915_private *i915 = to_i915(encoder->base.dev);
+
+	switch (encoder->hpd_pin) {
 	case HPD_PORT_A:
 		/*
 		 * When CPU and PCH are on the same package, port A
@@ -3304,31 +4480,29 @@ static void ibx_hpd_irq_setup(struct drm_i915_private *dev_priv)
 	ibx_hpd_detection_setup(dev_priv);
 }
 
-static u32 icp_ddi_hotplug_enables(struct drm_i915_private *i915,
-				   enum hpd_pin pin)
+static u32 icp_ddi_hotplug_enables(struct intel_encoder *encoder)
 {
-	switch (pin) {
+	switch (encoder->hpd_pin) {
 	case HPD_PORT_A:
 	case HPD_PORT_B:
 	case HPD_PORT_C:
 	case HPD_PORT_D:
-		return SHOTPLUG_CTL_DDI_HPD_ENABLE(pin);
+		return SHOTPLUG_CTL_DDI_HPD_ENABLE(encoder->hpd_pin);
 	default:
 		return 0;
 	}
 }
 
-static u32 icp_tc_hotplug_enables(struct drm_i915_private *i915,
-				  enum hpd_pin pin)
+static u32 icp_tc_hotplug_enables(struct intel_encoder *encoder)
 {
-	switch (pin) {
+	switch (encoder->hpd_pin) {
 	case HPD_PORT_TC1:
 	case HPD_PORT_TC2:
 	case HPD_PORT_TC3:
 	case HPD_PORT_TC4:
 	case HPD_PORT_TC5:
 	case HPD_PORT_TC6:
-		return ICP_TC_HPD_ENABLE(pin);
+		return ICP_TC_HPD_ENABLE(encoder->hpd_pin);
 	default:
 		return 0;
 	}
@@ -3378,33 +4552,33 @@ static void icp_hpd_irq_setup(struct drm_i915_private *dev_priv)
 	icp_tc_hpd_detection_setup(dev_priv);
 }
 
-static u32 gen11_hotplug_enables(struct drm_i915_private *i915,
-				 enum hpd_pin pin)
+static u32 gen11_hotplug_enables(struct intel_encoder *encoder)
 {
-	switch (pin) {
+	switch (encoder->hpd_pin) {
 	case HPD_PORT_TC1:
 	case HPD_PORT_TC2:
 	case HPD_PORT_TC3:
 	case HPD_PORT_TC4:
 	case HPD_PORT_TC5:
 	case HPD_PORT_TC6:
-		return GEN11_HOTPLUG_CTL_ENABLE(pin);
+		return GEN11_HOTPLUG_CTL_ENABLE(encoder->hpd_pin);
 	default:
 		return 0;
 	}
 }
 
+static void dg1_hpd_invert(struct drm_i915_private *i915)
+{
+	u32 val = (INVERT_DDIA_HPD |
+		   INVERT_DDIB_HPD |
+		   INVERT_DDIC_HPD |
+		   INVERT_DDID_HPD);
+	intel_uncore_rmw(&i915->uncore, SOUTH_CHICKEN1, 0, val);
+}
+
 static void dg1_hpd_irq_setup(struct drm_i915_private *dev_priv)
 {
-	u32 val;
-
-	val = intel_uncore_read(&dev_priv->uncore, SOUTH_CHICKEN1);
-	val |= (INVERT_DDIA_HPD |
-		INVERT_DDIB_HPD |
-		INVERT_DDIC_HPD |
-		INVERT_DDID_HPD);
-	intel_uncore_write(&dev_priv->uncore, SOUTH_CHICKEN1, val);
-
+	dg1_hpd_invert(dev_priv);
 	icp_hpd_irq_setup(dev_priv);
 }
 
@@ -3459,10 +4633,119 @@ static void gen11_hpd_irq_setup(struct drm_i915_private *dev_priv)
 		icp_hpd_irq_setup(dev_priv);
 }
 
-static u32 spt_hotplug_enables(struct drm_i915_private *i915,
-			       enum hpd_pin pin)
+static u32 mtp_ddi_hotplug_enables(struct intel_encoder *encoder)
 {
-	switch (pin) {
+	switch (encoder->hpd_pin) {
+	case HPD_PORT_A:
+	case HPD_PORT_B:
+		return SHOTPLUG_CTL_DDI_HPD_ENABLE(encoder->hpd_pin);
+	default:
+		return 0;
+	}
+}
+
+static u32 mtp_tc_hotplug_enables(struct intel_encoder *encoder)
+{
+	switch (encoder->hpd_pin) {
+	case HPD_PORT_TC1:
+	case HPD_PORT_TC2:
+	case HPD_PORT_TC3:
+	case HPD_PORT_TC4:
+		return ICP_TC_HPD_ENABLE(encoder->hpd_pin);
+	default:
+		return 0;
+	}
+}
+
+static void mtp_ddi_hpd_detection_setup(struct drm_i915_private *i915)
+{
+	intel_de_rmw(i915, SHOTPLUG_CTL_DDI,
+		     (SHOTPLUG_CTL_DDI_HPD_ENABLE(HPD_PORT_A) |
+		      SHOTPLUG_CTL_DDI_HPD_ENABLE(HPD_PORT_B)),
+		     intel_hpd_hotplug_enables(i915, mtp_ddi_hotplug_enables));
+}
+
+static void mtp_tc_hpd_detection_setup(struct drm_i915_private *i915)
+{
+	intel_de_rmw(i915, SHOTPLUG_CTL_TC,
+		     (ICP_TC_HPD_ENABLE(HPD_PORT_TC1) |
+		      ICP_TC_HPD_ENABLE(HPD_PORT_TC2) |
+		      ICP_TC_HPD_ENABLE(HPD_PORT_TC3) |
+		      ICP_TC_HPD_ENABLE(HPD_PORT_TC4)),
+		     intel_hpd_hotplug_enables(i915, mtp_tc_hotplug_enables));
+}
+
+static void mtp_hpd_invert(struct drm_i915_private *i915)
+{
+	u32 val = (INVERT_DDIA_HPD |
+		   INVERT_DDIB_HPD |
+		   INVERT_DDIC_HPD |
+		   INVERT_TC1_HPD |
+		   INVERT_TC2_HPD |
+		   INVERT_TC3_HPD |
+		   INVERT_TC4_HPD |
+		   INVERT_DDID_HPD_MTP |
+		   INVERT_DDIE_HPD);
+	intel_de_rmw(i915, SOUTH_CHICKEN1, 0, val);
+}
+
+static void mtp_hpd_irq_setup(struct drm_i915_private *i915)
+{
+	u32 hotplug_irqs, enabled_irqs;
+
+	enabled_irqs = intel_hpd_enabled_irqs(i915, i915->hotplug.pch_hpd);
+	hotplug_irqs = intel_hpd_hotplug_irqs(i915, i915->hotplug.pch_hpd);
+
+	intel_de_write(i915, SHPD_FILTER_CNT, SHPD_FILTER_CNT_500_ADJ);
+
+	mtp_hpd_invert(i915);
+	ibx_display_interrupt_update(i915, hotplug_irqs, enabled_irqs);
+
+	mtp_ddi_hpd_detection_setup(i915);
+	mtp_tc_hpd_detection_setup(i915);
+}
+
+static void xelpdp_pica_hpd_detection_setup(struct drm_i915_private *i915)
+{
+	struct intel_encoder *encoder;
+	enum hpd_pin pin;
+	u32 available_pins = 0;
+
+	BUILD_BUG_ON(BITS_PER_TYPE(available_pins) < HPD_NUM_PINS);
+
+	for_each_intel_encoder(&i915->drm, encoder)
+		available_pins |= BIT(encoder->hpd_pin);
+
+	for (pin = HPD_PORT_TC1; pin <= HPD_PORT_TC4; pin++) {
+		u32 mask = XELPDP_TBT_HOTPLUG_ENABLE |
+			   XELPDP_DP_ALT_HOTPLUG_ENABLE;
+
+		intel_de_rmw(i915, XELPDP_PORT_HOTPLUG_CTL(pin),
+			     mask,
+			     available_pins & BIT(pin) ?  mask : 0);
+	}
+}
+
+static void xelpdp_hpd_irq_setup(struct drm_i915_private *i915)
+{
+	u32 hotplug_irqs, enabled_irqs;
+
+	enabled_irqs = intel_hpd_enabled_irqs(i915, i915->hotplug.hpd);
+	hotplug_irqs = intel_hpd_hotplug_irqs(i915, i915->hotplug.hpd);
+
+	intel_de_rmw(i915, PICAINTERRUPT_IMR, hotplug_irqs,
+		     ~enabled_irqs & hotplug_irqs);
+	intel_uncore_posting_read(&i915->uncore, PICAINTERRUPT_IMR);
+
+	xelpdp_pica_hpd_detection_setup(i915);
+
+	if (INTEL_PCH_TYPE(i915) >= PCH_MTP)
+		mtp_hpd_irq_setup(i915);
+}
+
+static u32 spt_hotplug_enables(struct intel_encoder *encoder)
+{
+	switch (encoder->hpd_pin) {
 	case HPD_PORT_A:
 		return PORTA_HOTPLUG_ENABLE;
 	case HPD_PORT_B:
@@ -3476,10 +4759,9 @@ static u32 spt_hotplug_enables(struct drm_i915_private *i915,
 	}
 }
 
-static u32 spt_hotplug2_enables(struct drm_i915_private *i915,
-				enum hpd_pin pin)
+static u32 spt_hotplug2_enables(struct intel_encoder *encoder)
 {
-	switch (pin) {
+	switch (encoder->hpd_pin) {
 	case HPD_PORT_E:
 		return PORTE_HOTPLUG_ENABLE;
 	default:
@@ -3529,10 +4811,9 @@ static void spt_hpd_irq_setup(struct drm_i915_private *dev_priv)
 	spt_hpd_detection_setup(dev_priv);
 }
 
-static u32 ilk_hotplug_enables(struct drm_i915_private *i915,
-			       enum hpd_pin pin)
+static u32 ilk_hotplug_enables(struct intel_encoder *encoder)
 {
-	switch (pin) {
+	switch (encoder->hpd_pin) {
 	case HPD_PORT_A:
 		return DIGITAL_PORTA_HOTPLUG_ENABLE |
 			DIGITAL_PORTA_PULSE_DURATION_2ms;
@@ -3574,12 +4855,12 @@ static void ilk_hpd_irq_setup(struct drm_i915_private *dev_priv)
 	ibx_hpd_irq_setup(dev_priv);
 }
 
-static u32 bxt_hotplug_enables(struct drm_i915_private *i915,
-			       enum hpd_pin pin)
+static u32 bxt_hotplug_enables(struct intel_encoder *encoder)
 {
+	struct drm_i915_private *i915 = to_i915(encoder->base.dev);
 	u32 hotplug;
 
-	switch (pin) {
+	switch (encoder->hpd_pin) {
 	case HPD_PORT_A:
 		hotplug = PORTA_HOTPLUG_ENABLE;
 		if (intel_bios_is_port_hpd_inverted(i915, PORT_A))
@@ -3693,7 +4974,7 @@ static void ilk_irq_postinstall(struct drm_i915_private *dev_priv)
 
 	ibx_irq_postinstall(dev_priv);
 
-	gen5_gt_irq_postinstall(&dev_priv->gt);
+	gen5_gt_irq_postinstall(to_gt(dev_priv));
 
 	GEN3_IRQ_INIT(uncore, DE, dev_priv->irq_mask,
 		      display_mask | extra_mask);
@@ -3730,7 +5011,7 @@ void valleyview_disable_display_irqs(struct drm_i915_private *dev_priv)
 
 static void valleyview_irq_postinstall(struct drm_i915_private *dev_priv)
 {
-	gen5_gt_irq_postinstall(&dev_priv->gt);
+	gen5_gt_irq_postinstall(to_gt(dev_priv));
 
 	spin_lock_irq(&dev_priv->irq_lock);
 	if (dev_priv->display_irqs_enabled)
@@ -3764,7 +5045,10 @@ static void gen8_de_irq_postinstall(struct drm_i915_private *dev_priv)
 	if (IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv))
 		de_port_masked |= BXT_DE_PORT_GMBUS;
 
-	if (DISPLAY_VER(dev_priv) >= 11) {
+	if (DISPLAY_VER(dev_priv) >= 14)
+		de_misc_masked |= XELPDP_PMDEMAND_RSPTOUT_ERR |
+				  XELPDP_PMDEMAND_RSP;
+	else if (DISPLAY_VER(dev_priv) >= 11) {
 		enum port port;
 
 		if (intel_bios_is_dsi_present(dev_priv, &port))
@@ -3811,7 +5095,7 @@ static void gen8_de_irq_postinstall(struct drm_i915_private *dev_priv)
 	GEN3_IRQ_INIT(uncore, GEN8_DE_PORT_, ~de_port_masked, de_port_enables);
 	GEN3_IRQ_INIT(uncore, GEN8_DE_MISC_, ~de_misc_masked, de_misc_masked);
 
-	if (DISPLAY_VER(dev_priv) >= 11) {
+	if (IS_DISPLAY_VER(dev_priv, 11, 13)) {
 		u32 de_hpd_masked = 0;
 		u32 de_hpd_enables = GEN11_DE_TC_HOTPLUG_MASK |
 				     GEN11_DE_TBT_HOTPLUG_MASK;
@@ -3819,6 +5103,20 @@ static void gen8_de_irq_postinstall(struct drm_i915_private *dev_priv)
 		GEN3_IRQ_INIT(uncore, GEN11_DE_HPD_, ~de_hpd_masked,
 			      de_hpd_enables);
 	}
+}
+
+static void mtp_irq_postinstall(struct drm_i915_private *i915)
+{
+	struct intel_uncore *uncore = &i915->uncore;
+	u32 sde_mask = SDE_GMBUS_ICP | SDE_PICAINTERRUPT;
+	u32 de_hpd_mask = XELPDP_AUX_TC_MASK;
+	u32 de_hpd_enables = de_hpd_mask | XELPDP_DP_ALT_HOTPLUG_MASK |
+			     XELPDP_TBT_HOTPLUG_MASK;
+
+	GEN3_IRQ_INIT(uncore, PICAINTERRUPT_, ~de_hpd_mask,
+		      de_hpd_enables);
+
+	GEN3_IRQ_INIT(uncore, SDE, ~sde_mask, 0xffffffff);
 }
 
 static void icp_irq_postinstall(struct drm_i915_private *dev_priv)
@@ -3836,7 +5134,7 @@ static void gen8_irq_postinstall(struct drm_i915_private *dev_priv)
 	else if (HAS_PCH_SPLIT(dev_priv))
 		ibx_irq_postinstall(dev_priv);
 
-	gen8_gt_irq_postinstall(&dev_priv->gt);
+	gen8_gt_irq_postinstall(to_gt(dev_priv));
 	gen8_de_irq_postinstall(dev_priv);
 
 	gen8_master_intr_enable(dev_priv->uncore.regs);
@@ -3855,44 +5153,101 @@ static void gen11_de_irq_postinstall(struct drm_i915_private *dev_priv)
 
 static void gen11_irq_postinstall(struct drm_i915_private *dev_priv)
 {
-	struct intel_uncore *uncore = &dev_priv->uncore;
+	struct intel_gt *gt = to_gt(dev_priv);
+	struct intel_uncore *uncore = gt->uncore;
 	u32 gu_misc_masked = GEN11_GU_MISC_GSE;
 
 	if (INTEL_PCH_TYPE(dev_priv) >= PCH_ICP)
 		icp_irq_postinstall(dev_priv);
 
-	gen11_gt_irq_postinstall(&dev_priv->gt);
+	gen11_gt_irq_postinstall(gt);
 	gen11_de_irq_postinstall(dev_priv);
 
-	GEN3_IRQ_INIT(uncore, GEN11_GU_MISC_, ~gu_misc_masked, gu_misc_masked);
+	if (!IS_SRIOV_VF(dev_priv))
+		GEN3_IRQ_INIT(uncore, GEN11_GU_MISC_, ~gu_misc_masked, gu_misc_masked);
 
 	gen11_master_intr_enable(uncore->regs);
 	intel_uncore_posting_read(&dev_priv->uncore, GEN11_GFX_MSTR_IRQ);
 }
 
+static void clear_all_soc_errors(struct intel_gt *gt)
+{
+	void __iomem * const regs = gt->uncore->regs;
+	enum hardware_error hw_err;
+	u32 base = SOC_XEHPSDV_BASE;
+	u32 slave_base = SOC_XEHPSDV_SLAVE_BASE;
+	unsigned int i;
+
+	if (IS_XEHPSDV(gt->i915)) {
+		base = SOC_XEHPSDV_BASE;
+		slave_base = SOC_XEHPSDV_SLAVE_BASE;
+	} else if (IS_PONTEVECCHIO(gt->i915)) {
+		base = SOC_PVC_BASE;
+		slave_base = SOC_PVC_SLAVE_BASE;
+	}
+
+	hw_err = HARDWARE_ERROR_CORRECTABLE;
+	while (hw_err < HARDWARE_ERROR_MAX) {
+		for (i = 0; i < INTEL_GT_SOC_NUM_IEH; i++)
+			raw_reg_write(regs, SOC_GSYSEVTCTL_REG(base, slave_base, i),
+				      ~REG_BIT(hw_err));
+
+		raw_reg_write(regs, SOC_GLOBAL_ERR_STAT_MASTER_REG(base, hw_err),
+			      REG_GENMASK(31, 0));
+		raw_reg_write(regs, SOC_LOCAL_ERR_STAT_MASTER_REG(base, hw_err),
+			      REG_GENMASK(31, 0));
+		raw_reg_write(regs, SOC_GLOBAL_ERR_STAT_SLAVE_REG(slave_base, hw_err),
+			      REG_GENMASK(31, 0));
+		raw_reg_write(regs, SOC_LOCAL_ERR_STAT_SLAVE_REG(slave_base, hw_err),
+			      REG_GENMASK(31, 0));
+		hw_err++;
+	}
+
+	for (i = 0; i < INTEL_GT_SOC_NUM_IEH; i++)
+		raw_reg_write(regs, SOC_GSYSEVTCTL_REG(base, slave_base, i),
+			      (HARDWARE_ERROR_MAX << 1) + 1);
+}
+
 static void dg1_irq_postinstall(struct drm_i915_private *dev_priv)
 {
-	struct intel_uncore *uncore = &dev_priv->uncore;
 	u32 gu_misc_masked = GEN11_GU_MISC_GSE;
+	struct intel_gt *gt;
+	unsigned int i;
 
-	gen11_gt_irq_postinstall(&dev_priv->gt);
+	for_each_gt(gt, dev_priv, i) {
+		/*
+		 * All Soc error correctable, non fatal and fatal are reported
+		 * to IEH registers only. To be safe we are clearing these errors as well.
+		 */
+		if (IS_XEHPSDV(gt->i915) || IS_PONTEVECCHIO(gt->i915))
+			clear_all_soc_errors(gt);
 
-	GEN3_IRQ_INIT(uncore, GEN11_GU_MISC_, ~gu_misc_masked, gu_misc_masked);
+		gen11_gt_irq_postinstall(gt);
+
+		GEN3_IRQ_INIT(gt->uncore, GEN11_GU_MISC_, ~gu_misc_masked,
+			      gu_misc_masked);
+		intel_uncore_write(gt->uncore, GEN11_GFX_MSTR_IRQ, REG_GENMASK(30, 0));
+	}
 
 	if (HAS_DISPLAY(dev_priv)) {
-		icp_irq_postinstall(dev_priv);
+		if (DISPLAY_VER(dev_priv) >= 14)
+			mtp_irq_postinstall(dev_priv);
+		else
+			icp_irq_postinstall(dev_priv);
+
 		gen8_de_irq_postinstall(dev_priv);
 		intel_uncore_write(&dev_priv->uncore, GEN11_DISPLAY_INT_CTL,
 				   GEN11_DISPLAY_IRQ_ENABLE);
 	}
 
-	dg1_master_intr_enable(dev_priv->uncore.regs);
-	intel_uncore_posting_read(&dev_priv->uncore, DG1_MSTR_TILE_INTR);
+	intel_uncore_write(&dev_priv->uncore, DG1_MSTR_TILE_INTR, REG_GENMASK(3, 0));
+	dg1_master_intr_enable(to_gt(dev_priv)->uncore->regs);
+	intel_uncore_posting_read(to_gt(dev_priv)->uncore, DG1_MSTR_TILE_INTR);
 }
 
 static void cherryview_irq_postinstall(struct drm_i915_private *dev_priv)
 {
-	gen8_gt_irq_postinstall(&dev_priv->gt);
+	gen8_gt_irq_postinstall(to_gt(dev_priv));
 
 	spin_lock_irq(&dev_priv->irq_lock);
 	if (dev_priv->display_irqs_enabled)
@@ -4055,7 +5410,7 @@ static irqreturn_t i8xx_irq_handler(int irq, void *arg)
 		intel_uncore_write16(&dev_priv->uncore, GEN2_IIR, iir);
 
 		if (iir & I915_USER_INTERRUPT)
-			intel_engine_cs_irq(dev_priv->gt.engine[RCS0], iir);
+			intel_engine_cs_irq(to_gt(dev_priv)->engine[RCS0], iir);
 
 		if (iir & I915_MASTER_ERROR_INTERRUPT)
 			i8xx_error_irq_handler(dev_priv, eir, eir_stuck);
@@ -4163,7 +5518,7 @@ static irqreturn_t i915_irq_handler(int irq, void *arg)
 		intel_uncore_write(&dev_priv->uncore, GEN2_IIR, iir);
 
 		if (iir & I915_USER_INTERRUPT)
-			intel_engine_cs_irq(dev_priv->gt.engine[RCS0], iir);
+			intel_engine_cs_irq(to_gt(dev_priv)->engine[RCS0], iir);
 
 		if (iir & I915_MASTER_ERROR_INTERRUPT)
 			i9xx_error_irq_handler(dev_priv, eir, eir_stuck);
@@ -4308,11 +5663,11 @@ static irqreturn_t i965_irq_handler(int irq, void *arg)
 		intel_uncore_write(&dev_priv->uncore, GEN2_IIR, iir);
 
 		if (iir & I915_USER_INTERRUPT)
-			intel_engine_cs_irq(dev_priv->gt.engine[RCS0],
+			intel_engine_cs_irq(to_gt(dev_priv)->engine[RCS0],
 					    iir);
 
 		if (iir & I915_BSD_USER_INTERRUPT)
-			intel_engine_cs_irq(dev_priv->gt.engine[VCS0],
+			intel_engine_cs_irq(to_gt(dev_priv)->engine[VCS0],
 					    iir >> 25);
 
 		if (iir & I915_MASTER_ERROR_INTERRUPT)
@@ -4331,6 +5686,31 @@ static irqreturn_t i965_irq_handler(int irq, void *arg)
 	return ret;
 }
 
+struct intel_hotplug_funcs {
+	void (*hpd_irq_setup)(struct drm_i915_private *i915);
+};
+
+#define HPD_FUNCS(platform)					 \
+static const struct intel_hotplug_funcs platform##_hpd_funcs = { \
+	.hpd_irq_setup = platform##_hpd_irq_setup,		 \
+}
+
+HPD_FUNCS(i915);
+HPD_FUNCS(xelpdp);
+HPD_FUNCS(dg1);
+HPD_FUNCS(gen11);
+HPD_FUNCS(bxt);
+HPD_FUNCS(icp);
+HPD_FUNCS(spt);
+HPD_FUNCS(ilk);
+#undef HPD_FUNCS
+
+void intel_hpd_irq_setup(struct drm_i915_private *i915)
+{
+	if (i915->display_irqs_enabled && i915->hotplug_funcs)
+		i915->hotplug_funcs->hpd_irq_setup(i915);
+}
+
 /**
  * intel_irq_init - initializes irq support
  * @dev_priv: i915 device instance
@@ -4341,15 +5721,24 @@ static irqreturn_t i965_irq_handler(int irq, void *arg)
 void intel_irq_init(struct drm_i915_private *dev_priv)
 {
 	struct drm_device *dev = &dev_priv->drm;
+	struct intel_gt *gt = to_root_gt(dev_priv);
 	int i;
 
 	INIT_WORK(&dev_priv->l3_parity.error_work, ivb_parity_work);
 	for (i = 0; i < MAX_L3_SLICES; ++i)
 		dev_priv->l3_parity.remap_info[i] = NULL;
 
+	if (HAS_MEM_SPARING_SUPPORT(dev_priv))
+		INIT_WORK(&gt->gsc_hw_error_work, gen12_gsc_hw_error_work);
+
+	if (HAS_MEM_SPARING_SUPPORT(dev_priv)) {
+		INIT_WORK(&gt->mem_sparing.mem_health_work,
+			  gen12_mem_health_work);
+	}
+
 	/* pre-gen11 the guc irqs bits are in the upper 16 bits of the pm reg */
 	if (HAS_GT_UC(dev_priv) && GRAPHICS_VER(dev_priv) < 11)
-		dev_priv->gt.pm_guc_events = GUC_INTR_GUC2HOST << 16;
+		gt->pm_guc_events = GUC_INTR_GUC2HOST << 16;
 
 	if (!HAS_DISPLAY(dev_priv))
 		return;
@@ -4381,20 +5770,24 @@ void intel_irq_init(struct drm_i915_private *dev_priv)
 
 	if (HAS_GMCH(dev_priv)) {
 		if (I915_HAS_HOTPLUG(dev_priv))
-			dev_priv->display.hpd_irq_setup = i915_hpd_irq_setup;
+			dev_priv->hotplug_funcs = &i915_hpd_funcs;
 	} else {
-		if (HAS_PCH_DG1(dev_priv))
-			dev_priv->display.hpd_irq_setup = dg1_hpd_irq_setup;
+		if (HAS_PCH_DG2(dev_priv))
+			dev_priv->hotplug_funcs = &icp_hpd_funcs;
+		else if (HAS_PCH_DG1(dev_priv))
+			dev_priv->hotplug_funcs = &dg1_hpd_funcs;
+		else if (DISPLAY_VER(dev_priv) >= 14)
+			dev_priv->hotplug_funcs = &xelpdp_hpd_funcs;
 		else if (DISPLAY_VER(dev_priv) >= 11)
-			dev_priv->display.hpd_irq_setup = gen11_hpd_irq_setup;
+			dev_priv->hotplug_funcs = &gen11_hpd_funcs;
 		else if (IS_GEMINILAKE(dev_priv) || IS_BROXTON(dev_priv))
-			dev_priv->display.hpd_irq_setup = bxt_hpd_irq_setup;
+			dev_priv->hotplug_funcs = &bxt_hpd_funcs;
 		else if (INTEL_PCH_TYPE(dev_priv) >= PCH_ICP)
-			dev_priv->display.hpd_irq_setup = icp_hpd_irq_setup;
+			dev_priv->hotplug_funcs = &icp_hpd_funcs;
 		else if (INTEL_PCH_TYPE(dev_priv) >= PCH_SPT)
-			dev_priv->display.hpd_irq_setup = spt_hpd_irq_setup;
+			dev_priv->hotplug_funcs = &spt_hpd_funcs;
 		else
-			dev_priv->display.hpd_irq_setup = ilk_hpd_irq_setup;
+			dev_priv->hotplug_funcs = &ilk_hpd_funcs;
 	}
 }
 
@@ -4426,7 +5819,9 @@ static irq_handler_t intel_irq_handler(struct drm_i915_private *dev_priv)
 		else
 			return i8xx_irq_handler;
 	} else {
-		if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
+		if (HAS_MEMORY_IRQ_STATUS(dev_priv))
+			return vf_mem_irq_handler;
+		else if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
 			return dg1_irq_handler;
 		else if (GRAPHICS_VER(dev_priv) >= 11)
 			return gen11_irq_handler;
@@ -4439,6 +5834,9 @@ static irq_handler_t intel_irq_handler(struct drm_i915_private *dev_priv)
 
 static void intel_irq_reset(struct drm_i915_private *dev_priv)
 {
+	if (dev_priv->quiesce_gpu)
+		return;
+
 	if (HAS_GMCH(dev_priv)) {
 		if (IS_CHERRYVIEW(dev_priv))
 			cherryview_irq_reset(dev_priv);
@@ -4451,7 +5849,9 @@ static void intel_irq_reset(struct drm_i915_private *dev_priv)
 		else
 			i8xx_irq_reset(dev_priv);
 	} else {
-		if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
+		if (HAS_MEMORY_IRQ_STATUS(dev_priv))
+			vf_mem_irq_reset(dev_priv);
+		else if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
 			dg1_irq_reset(dev_priv);
 		else if (GRAPHICS_VER(dev_priv) >= 11)
 			gen11_irq_reset(dev_priv);
@@ -4476,7 +5876,9 @@ static void intel_irq_postinstall(struct drm_i915_private *dev_priv)
 		else
 			i8xx_irq_postinstall(dev_priv);
 	} else {
-		if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
+		if (HAS_MEMORY_IRQ_STATUS(dev_priv))
+			vf_mem_irq_postinstall(dev_priv);
+		else if (GRAPHICS_VER_FULL(dev_priv) >= IP_VER(12, 10))
 			dg1_irq_postinstall(dev_priv);
 		else if (GRAPHICS_VER(dev_priv) >= 11)
 			gen11_irq_postinstall(dev_priv);
@@ -4485,6 +5887,38 @@ static void intel_irq_postinstall(struct drm_i915_private *dev_priv)
 		else
 			ilk_irq_postinstall(dev_priv);
 	}
+}
+
+/**
+ * process_hw_errors - checks for the occurrence of HW errors
+ * @dev_priv: i915 device instance
+ *
+ * This checks for the HW Errors including FATAL error that might
+ * have occurred in the previous boot of the driver which will
+ * initiate PCIe FLR reset of the device and cause the
+ * driver to reload.
+ */
+static void process_hw_errors(struct drm_i915_private *dev_priv)
+{
+	struct intel_gt *gt = to_gt(dev_priv);
+	void __iomem * const t0_regs = gt->uncore->regs;
+	u32 dev_pcieerr_status, master_ctl;
+	int i;
+
+	dev_pcieerr_status = raw_reg_read(t0_regs, DEV_PCIEERR_STATUS);
+
+	for_each_gt(gt, dev_priv, i) {
+		void __iomem *const regs = gt->uncore->regs;
+
+		if (dev_pcieerr_status & DEV_PCIEERR_IS_FATAL(i))
+			gen12_hw_error_source_handler(gt, HARDWARE_ERROR_FATAL);
+
+		master_ctl = raw_reg_read(regs, GEN11_GFX_MSTR_IRQ);
+		raw_reg_write(regs, GEN11_GFX_MSTR_IRQ, master_ctl);
+		gen12_hw_error_irq_handler(gt, master_ctl);
+	}
+	if (dev_pcieerr_status)
+		raw_reg_write(t0_regs, DEV_PCIEERR_STATUS, dev_pcieerr_status);
 }
 
 /**
@@ -4503,6 +5937,9 @@ int intel_irq_install(struct drm_i915_private *dev_priv)
 	int irq = to_pci_dev(dev_priv->drm.dev)->irq;
 	int ret;
 
+	if (IS_DGFX(dev_priv))
+		process_hw_errors(dev_priv);
+
 	/*
 	 * We enable some interrupt sources in our postinstall hooks, so mark
 	 * interrupts as enabled _before_ actually enabling them to avoid
@@ -4510,14 +5947,14 @@ int intel_irq_install(struct drm_i915_private *dev_priv)
 	 */
 	dev_priv->runtime_pm.irqs_enabled = true;
 
-	dev_priv->irq_enabled = true;
+	dev_priv->drm.irq_enabled = true;
 
 	intel_irq_reset(dev_priv);
 
 	ret = request_irq(irq, intel_irq_handler(dev_priv),
 			  IRQF_SHARED, DRIVER_NAME, dev_priv);
 	if (ret < 0) {
-		dev_priv->irq_enabled = false;
+		dev_priv->drm.irq_enabled = false;
 		return ret;
 	}
 
@@ -4543,11 +5980,10 @@ void intel_irq_uninstall(struct drm_i915_private *dev_priv)
 	 * intel_modeset_driver_remove() calling us out of sequence.
 	 * Would be nice if it didn't do that...
 	 */
-	if (!dev_priv->irq_enabled)
+	if (!dev_priv->drm.irq_enabled)
 		return;
 
-	dev_priv->irq_enabled = false;
-
+	dev_priv->drm.irq_enabled = false;
 	intel_irq_reset(dev_priv);
 
 	free_irq(irq, dev_priv);
@@ -4565,6 +6001,9 @@ void intel_irq_uninstall(struct drm_i915_private *dev_priv)
  */
 void intel_runtime_pm_disable_interrupts(struct drm_i915_private *dev_priv)
 {
+	if (dev_priv->quiesce_gpu)
+		return;
+
 	intel_irq_reset(dev_priv);
 	dev_priv->runtime_pm.irqs_enabled = false;
 	intel_synchronize_irq(dev_priv);

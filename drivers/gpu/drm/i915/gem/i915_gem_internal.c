@@ -10,12 +10,12 @@
 
 #include "i915_drv.h"
 #include "i915_gem.h"
+#include "i915_gem_internal.h"
 #include "i915_gem_object.h"
 #include "i915_scatterlist.h"
 #include "i915_utils.h"
 
 #define QUIET (__GFP_NORETRY | __GFP_NOWARN)
-#define MAYFAIL (__GFP_RETRY_MAYFAIL | __GFP_NOWARN)
 
 static void internal_free_pages(struct sg_table *st)
 {
@@ -36,9 +36,12 @@ static int i915_gem_object_get_pages_internal(struct drm_i915_gem_object *obj)
 	struct sg_table *st;
 	struct scatterlist *sg;
 	unsigned int sg_page_sizes;
-	unsigned int npages;
+	pgoff_t npages; /* restricted by sg_alloc_table */
 	int max_order;
 	gfp_t gfp;
+
+	if (!safe_conversion(&npages, obj->base.size >> PAGE_SHIFT))
+		return -E2BIG;
 
 	max_order = MAX_ORDER;
 #ifdef CONFIG_SWIOTLB
@@ -66,7 +69,6 @@ create_st:
 	if (!st)
 		return -ENOMEM;
 
-	npages = obj->base.size / PAGE_SIZE;
 	if (sg_alloc_table(st, npages, GFP_KERNEL)) {
 		kfree(st);
 		return -ENOMEM;
@@ -81,15 +83,23 @@ create_st:
 		struct page *page;
 
 		do {
-			page = alloc_pages(gfp | (order ? QUIET : MAYFAIL),
+			page = alloc_pages(gfp | (order ? QUIET : I915_GFP_ALLOW_FAIL),
 					   order);
 			if (page)
 				break;
-			if (!order--)
+
+			if (obj->flags & I915_BO_ALLOC_CONTIGUOUS || !order) {
+				if (i915_gem_shrink(NULL, i915, npages, NULL,
+						    I915_SHRINK_BOUND |
+						    I915_SHRINK_UNBOUND |
+						    I915_SHRINK_ACTIVE))
+					continue;
+
 				goto err;
+			}
 
 			/* Limit subsequent allocations as well */
-			max_order = order;
+			max_order = --order;
 		} while (1);
 
 		sg_set_page(sg, page, PAGE_SIZE << order, 0);
@@ -127,13 +137,15 @@ err:
 	return -ENOMEM;
 }
 
-static void i915_gem_object_put_pages_internal(struct drm_i915_gem_object *obj,
+static int i915_gem_object_put_pages_internal(struct drm_i915_gem_object *obj,
 					       struct sg_table *pages)
 {
 	i915_gem_gtt_finish_pages(obj, pages);
 	internal_free_pages(pages);
 
-	obj->mm.dirty = false;
+	__start_cpu_write(obj);
+
+	return 0;
 }
 
 static const struct drm_i915_gem_object_ops i915_gem_object_internal_ops = {
@@ -177,8 +189,8 @@ i915_gem_object_create_internal(struct drm_i915_private *i915,
 		return ERR_PTR(-ENOMEM);
 
 	drm_gem_private_object_init(&i915->drm, &obj->base, size);
-	i915_gem_object_init(obj, &i915_gem_object_internal_ops, &lock_class, 0);
-	obj->mem_flags |= I915_BO_FLAG_STRUCT_PAGE;
+	i915_gem_object_init(obj, &i915_gem_object_internal_ops, &lock_class,
+			     I915_BO_STRUCT_PAGE);
 
 	/*
 	 * Mark the object as volatile, such that the pages are marked as

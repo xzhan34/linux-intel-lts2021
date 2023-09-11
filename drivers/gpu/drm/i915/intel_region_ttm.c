@@ -86,8 +86,7 @@ int intel_region_ttm_init(struct intel_memory_region *mem)
 	int ret;
 
 	ret = i915_ttm_buddy_man_init(bdev, mem_type, false,
-				      resource_size(&mem->region),
-				      mem->min_page_size, PAGE_SIZE);
+				      resource_size(&mem->region), PAGE_SIZE);
 	if (ret)
 		return ret;
 
@@ -134,7 +133,7 @@ struct sg_table *intel_region_ttm_resource_to_st(struct intel_memory_region *mem
 			to_ttm_range_mgr_node(res);
 
 		return i915_sg_from_mm_node(&range_node->mm_nodes[0],
-					    mem->region.start);
+				mem->region.start);
 	} else {
 		return i915_sg_from_buddy_resource(res, mem->region.start);
 	}
@@ -168,6 +167,7 @@ intel_region_ttm_resource_alloc(struct intel_memory_region *mem,
 	int ret;
 
 	mock_bo.base.size = size;
+	mock_bo.page_alignment = 1;
 	place.flags = flags;
 
 	ret = man->func->alloc(man, &mock_bo, &place, &res);

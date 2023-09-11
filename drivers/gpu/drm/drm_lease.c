@@ -15,57 +15,6 @@
 #include "drm_crtc_internal.h"
 #include "drm_internal.h"
 
-/**
- * DOC: drm leasing
- *
- * DRM leases provide information about whether a DRM master may control a DRM
- * mode setting object. This enables the creation of multiple DRM masters that
- * manage subsets of display resources.
- *
- * The original DRM master of a device 'owns' the available drm resources. It
- * may create additional DRM masters and 'lease' resources which it controls
- * to the new DRM master. This gives the new DRM master control over the
- * leased resources until the owner revokes the lease, or the new DRM master
- * is closed. Some helpful terminology:
- *
- * - An 'owner' is a &struct drm_master that is not leasing objects from
- *   another &struct drm_master, and hence 'owns' the objects. The owner can be
- *   identified as the &struct drm_master for which &drm_master.lessor is NULL.
- *
- * - A 'lessor' is a &struct drm_master which is leasing objects to one or more
- *   other &struct drm_master. Currently, lessees are not allowed to
- *   create sub-leases, hence the lessor is the same as the owner.
- *
- * - A 'lessee' is a &struct drm_master which is leasing objects from some
- *   other &struct drm_master. Each lessee only leases resources from a single
- *   lessor recorded in &drm_master.lessor, and holds the set of objects that
- *   it is leasing in &drm_master.leases.
- *
- * - A 'lease' is a contract between the lessor and lessee that identifies
- *   which resources may be controlled by the lessee. All of the resources
- *   that are leased must be owned by or leased to the lessor, and lessors are
- *   not permitted to lease the same object to multiple lessees.
- *
- * The set of objects any &struct drm_master 'controls' is limited to the set
- * of objects it leases (for lessees) or all objects (for owners).
- *
- * Objects not controlled by a &struct drm_master cannot be modified through
- * the various state manipulating ioctls, and any state reported back to user
- * space will be edited to make them appear idle and/or unusable. For
- * instance, connectors always report 'disconnected', while encoders
- * report no possible crtcs or clones.
- *
- * Since each lessee may lease objects from a single lessor, display resource
- * leases form a tree of &struct drm_master. As lessees are currently not
- * allowed to create sub-leases, the tree depth is limited to 1. All of
- * these get activated simultaneously when the top level device owner changes
- * through the SETMASTER or DROPMASTER IOCTL, so &drm_device.master points to
- * the owner at the top of the lease tree (i.e. the &struct drm_master for which
- * &drm_master.lessor is NULL). The full list of lessees that are leasing
- * objects from the owner can be searched via the owner's
- * &drm_master.lessee_idr.
- */
-
 #define drm_for_each_lessee(lessee, lessor) \
 	list_for_each_entry((lessee), &(lessor)->lessees, lessee_list)
 
@@ -489,12 +438,6 @@ int drm_mode_create_lease_ioctl(struct drm_device *dev,
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EOPNOTSUPP;
 
-	/* need some objects */
-	if (cl->object_count == 0) {
-		DRM_DEBUG_LEASE("no objects in lease\n");
-		return -EINVAL;
-	}
-
 	if (cl->flags && (cl->flags & ~(O_CLOEXEC | O_NONBLOCK))) {
 		DRM_DEBUG_LEASE("invalid flags\n");
 		return -EINVAL;
@@ -510,23 +453,26 @@ int drm_mode_create_lease_ioctl(struct drm_device *dev,
 
 	object_count = cl->object_count;
 
-	object_ids = memdup_user(u64_to_user_ptr(cl->object_ids),
-			array_size(object_count, sizeof(__u32)));
-	if (IS_ERR(object_ids)) {
-		ret = PTR_ERR(object_ids);
-		goto out_lessor;
-	}
-
+	/* Handle leased objects, if any */
 	idr_init(&leases);
+	if (object_count != 0) {
+		object_ids = memdup_user(u64_to_user_ptr(cl->object_ids),
+					 array_size(object_count, sizeof(__u32)));
+		if (IS_ERR(object_ids)) {
+			ret = PTR_ERR(object_ids);
+			idr_destroy(&leases);
+			goto out_lessor;
+		}
 
-	/* fill and validate the object idr */
-	ret = fill_object_idr(dev, lessor_priv, &leases,
-			      object_count, object_ids);
-	kfree(object_ids);
-	if (ret) {
-		DRM_DEBUG_LEASE("lease object lookup failed: %i\n", ret);
-		idr_destroy(&leases);
-		goto out_lessor;
+		/* fill and validate the object idr */
+		ret = fill_object_idr(dev, lessor_priv, &leases,
+				      object_count, object_ids);
+		kfree(object_ids);
+		if (ret) {
+			DRM_DEBUG_LEASE("lease object lookup failed: %i\n", ret);
+			idr_destroy(&leases);
+			goto out_lessor;
+		}
 	}
 
 	/* Allocate a file descriptor for the lease */

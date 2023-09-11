@@ -20,6 +20,7 @@
 #include "gt/intel_gt_requests.h"
 
 #include "i915_drv.h"
+#include "i915_gem_evict.h"
 #include "i915_scatterlist.h"
 #include "i915_trace.h"
 #include "i915_vgpu.h"
@@ -30,7 +31,7 @@ int i915_gem_gtt_prepare_pages(struct drm_i915_gem_object *obj,
 	do {
 		if (dma_map_sg_attrs(obj->base.dev->dev,
 				     pages->sgl, pages->nents,
-				     PCI_DMA_BIDIRECTIONAL,
+				     DMA_BIDIRECTIONAL,
 				     DMA_ATTR_SKIP_CPU_SYNC |
 				     DMA_ATTR_NO_KERNEL_MAPPING |
 				     DMA_ATTR_NO_WARN))
@@ -56,15 +57,16 @@ void i915_gem_gtt_finish_pages(struct drm_i915_gem_object *obj,
 			       struct sg_table *pages)
 {
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
-	struct i915_ggtt *ggtt = &i915->ggtt;
+	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
 
 	/* XXX This does not prevent more requests being submitted! */
 	if (unlikely(ggtt->do_idle_maps))
 		/* Wait a bit, in the hope it avoids the hang */
 		usleep_range(100, 250);
 
-	dma_unmap_sg(i915->drm.dev, pages->sgl, pages->nents,
-		     PCI_DMA_BIDIRECTIONAL);
+	dma_unmap_sg_attrs(i915->drm.dev, pages->sgl, pages->nents,
+			DMA_BIDIRECTIONAL,
+			DMA_ATTR_SKIP_CPU_SYNC);
 }
 
 /**
@@ -103,7 +105,7 @@ int i915_gem_gtt_reserve(struct i915_address_space *vm,
 	GEM_BUG_ON(!IS_ALIGNED(size, I915_GTT_PAGE_SIZE));
 	GEM_BUG_ON(!IS_ALIGNED(offset, I915_GTT_MIN_ALIGNMENT));
 	GEM_BUG_ON(range_overflows(offset, size, vm->total));
-	GEM_BUG_ON(vm == &vm->i915->ggtt.alias->vm);
+	GEM_BUG_ON(vm == &to_gt(vm->i915)->ggtt->alias->vm);
 	GEM_BUG_ON(drm_mm_node_allocated(node));
 
 	node->size = size;
@@ -201,7 +203,7 @@ int i915_gem_gtt_insert(struct i915_address_space *vm,
 	GEM_BUG_ON(start >= end);
 	GEM_BUG_ON(start > 0  && !IS_ALIGNED(start, I915_GTT_PAGE_SIZE));
 	GEM_BUG_ON(end < U64_MAX && !IS_ALIGNED(end, I915_GTT_PAGE_SIZE));
-	GEM_BUG_ON(vm == &vm->i915->ggtt.alias->vm);
+	GEM_BUG_ON(vm == &to_gt(vm->i915)->ggtt->alias->vm);
 	GEM_BUG_ON(drm_mm_node_allocated(node));
 
 	if (unlikely(range_overflows(start, size, end)))
@@ -285,6 +287,28 @@ int i915_gem_gtt_insert(struct i915_address_space *vm,
 	return drm_mm_insert_node_in_range(&vm->mm, node,
 					   size, alignment, color,
 					   start, end, DRM_MM_INSERT_EVICT);
+}
+
+struct drm_mm_node *i915_gem_gtt_lookup(struct i915_address_space *vm, u64 addr)
+{
+	struct drm_mm_node *node;
+	u64 page_size, start, end;
+
+	lockdep_assert_held(&vm->mutex);
+
+	if (unlikely(!(addr < vm->total)))
+		return NULL;
+
+	page_size = BIT(__ffs(INTEL_INFO(vm->i915)->page_sizes));
+	start = round_down(addr, page_size);
+	end = start + page_size;
+
+	drm_mm_for_each_node_in_range(node, &vm->mm, start, end)
+		if (addr >= node->start && addr < node->start + node->size &&
+		    drm_mm_node_allocated(node))
+			return node;
+
+	return NULL;
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_SELFTEST)

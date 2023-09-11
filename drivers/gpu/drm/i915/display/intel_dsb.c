@@ -4,9 +4,12 @@
  *
  */
 
+#include "gem/i915_gem_internal.h"
+
 #include "i915_drv.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
+#include "gem/i915_gem_lmem.h"
 
 #define DSB_BUF_SIZE    (2 * PAGE_SIZE)
 
@@ -100,7 +103,7 @@ void intel_dsb_indexed_reg_write(const struct intel_crtc_state *crtc_state,
 	u32 reg_val;
 
 	if (!dsb) {
-		intel_de_write(dev_priv, reg, val);
+		intel_de_write_fw(dev_priv, reg, val);
 		return;
 	}
 	buf = dsb->cmd_buf;
@@ -177,7 +180,7 @@ void intel_dsb_reg_write(const struct intel_crtc_state *crtc_state,
 
 	dsb = crtc_state->dsb;
 	if (!dsb) {
-		intel_de_write(dev_priv, reg, val);
+		intel_de_write_fw(dev_priv, reg, val);
 		return;
 	}
 
@@ -262,6 +265,7 @@ void intel_dsb_prepare(struct intel_crtc_state *crtc_state)
 {
 	struct intel_crtc *crtc = to_intel_crtc(crtc_state->uapi.crtc);
 	struct drm_i915_private *i915 = to_i915(crtc->base.dev);
+	struct i915_ggtt *ggtt = to_gt(i915)->ggtt;
 	struct intel_dsb *dsb;
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
@@ -279,16 +283,18 @@ void intel_dsb_prepare(struct intel_crtc_state *crtc_state)
 
 	wakeref = intel_runtime_pm_get(&i915->runtime_pm);
 
-	obj = i915_gem_object_create_internal(i915, DSB_BUF_SIZE);
+	if (HAS_LMEM(i915))
+		obj = i915_gem_object_create_lmem(i915, DSB_BUF_SIZE, 0);
+	else
+		obj = i915_gem_object_create_internal(i915, DSB_BUF_SIZE);
+
 	if (IS_ERR(obj)) {
-		drm_err(&i915->drm, "Gem object creation failed\n");
 		kfree(dsb);
 		goto out;
 	}
 
-	vma = i915_gem_object_ggtt_pin(obj, NULL, 0, 0, 0);
+	vma = i915_gem_object_ggtt_pin(obj, ggtt, NULL, 0, 0, 0);
 	if (IS_ERR(vma)) {
-		drm_err(&i915->drm, "Vma creation failed\n");
 		i915_gem_object_put(obj);
 		kfree(dsb);
 		goto out;
@@ -296,7 +302,6 @@ void intel_dsb_prepare(struct intel_crtc_state *crtc_state)
 
 	buf = i915_gem_object_pin_map_unlocked(vma->obj, I915_MAP_WC);
 	if (IS_ERR(buf)) {
-		drm_err(&i915->drm, "Command buffer creation failed\n");
 		i915_vma_unpin_and_release(&vma, I915_VMA_RELEASE_MAP);
 		kfree(dsb);
 		goto out;
@@ -309,6 +314,10 @@ void intel_dsb_prepare(struct intel_crtc_state *crtc_state)
 	dsb->ins_start_offset = 0;
 	crtc_state->dsb = dsb;
 out:
+	if (!crtc_state->dsb)
+		drm_info(&i915->drm,
+			 "DSB queue setup failed, will fallback to MMIO for display HW programming\n");
+
 	intel_runtime_pm_put(&i915->runtime_pm, wakeref);
 }
 

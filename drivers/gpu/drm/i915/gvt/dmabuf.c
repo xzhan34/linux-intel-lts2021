@@ -31,7 +31,13 @@
 #include <linux/dma-buf.h>
 #include <linux/vfio.h>
 
+#include <drm/drm_fourcc.h>
+#include <drm/drm_plane.h>
+
+#include "gem/i915_gem_dmabuf.h"
+
 #include "i915_drv.h"
+#include "i915_reg.h"
 #include "gvt.h"
 
 #define GEN8_DECODE_PTE(pte) (pte & GENMASK_ULL(63, 12))
@@ -54,8 +60,7 @@ static void vgpu_unpin_dma_address(struct intel_vgpu *vgpu,
 	intel_gvt_hypervisor_dma_unmap_guest_page(vgpu, dma_addr);
 }
 
-static int vgpu_gem_get_pages(
-		struct drm_i915_gem_object *obj)
+static int vgpu_gem_get_pages(struct drm_i915_gem_object *obj)
 {
 	struct drm_i915_private *dev_priv = to_i915(obj->base.dev);
 	struct intel_vgpu *vgpu;
@@ -64,7 +69,10 @@ static int vgpu_gem_get_pages(
 	int i, j, ret;
 	gen8_pte_t __iomem *gtt_entries;
 	struct intel_vgpu_fb_info *fb_info;
-	u32 page_num;
+	pgoff_t page_num;
+
+	if (!safe_conversion(&page_num, obj->base.size >> PAGE_SHIFT))
+		return -E2BIG;
 
 	fb_info = (struct intel_vgpu_fb_info *)obj->gvt_info;
 	if (drm_WARN_ON(&dev_priv->drm, !fb_info))
@@ -78,13 +86,12 @@ static int vgpu_gem_get_pages(
 	if (unlikely(!st))
 		return -ENOMEM;
 
-	page_num = obj->base.size >> PAGE_SHIFT;
 	ret = sg_alloc_table(st, page_num, GFP_KERNEL);
 	if (ret) {
 		kfree(st);
 		return ret;
 	}
-	gtt_entries = (gen8_pte_t __iomem *)dev_priv->ggtt.gsm +
+	gtt_entries = (gen8_pte_t __iomem *)to_gt(dev_priv)->ggtt->gsm +
 		(fb_info->start >> PAGE_SHIFT);
 	for_each_sg(st->sgl, sg, page_num, i) {
 		dma_addr_t dma_addr =
@@ -118,7 +125,7 @@ out:
 
 }
 
-static void vgpu_gem_put_pages(struct drm_i915_gem_object *obj,
+static int vgpu_gem_put_pages(struct drm_i915_gem_object *obj,
 		struct sg_table *pages)
 {
 	struct scatterlist *sg;
@@ -136,6 +143,7 @@ static void vgpu_gem_put_pages(struct drm_i915_gem_object *obj,
 
 	sg_free_table(pages);
 	kfree(pages);
+	return 0;
 }
 
 static void dmabuf_gem_object_free(struct kref *kref)

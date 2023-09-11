@@ -35,8 +35,11 @@
 #include "gt/intel_context_types.h"
 #include "gt/intel_sseu.h"
 
+#include "gem/i915_gem_object_types.h"
+
 struct drm_printer;
 struct drm_i915_private;
+struct intel_gt_definition;
 
 /* Keep in gen based order, and chronological order within a gen */
 enum intel_platform {
@@ -88,6 +91,8 @@ enum intel_platform {
 	INTEL_ALDERLAKE_P,
 	INTEL_XEHPSDV,
 	INTEL_DG2,
+	INTEL_PONTEVECCHIO,
+	INTEL_METEORLAKE,
 	INTEL_MAX_PLATFORMS
 };
 
@@ -96,7 +101,7 @@ enum intel_platform {
  * it is fine for the same bit to be used on multiple parent platforms.
  */
 
-#define INTEL_SUBPLATFORM_BITS (2)
+#define INTEL_SUBPLATFORM_BITS (3)
 #define INTEL_SUBPLATFORM_MASK (BIT(INTEL_SUBPLATFORM_BITS) - 1)
 
 /* HSW/BDW/SKL/KBL/CFL */
@@ -106,9 +111,28 @@ enum intel_platform {
 /* ICL */
 #define INTEL_SUBPLATFORM_PORTF	(0)
 
+/* TGL */
+#define INTEL_SUBPLATFORM_UY	(0)
+
 /* DG2 */
 #define INTEL_SUBPLATFORM_G10	0
 #define INTEL_SUBPLATFORM_G11	1
+#define INTEL_SUBPLATFORM_G12	2
+
+/* ADL */
+#define INTEL_SUBPLATFORM_RPL	0
+
+/* ADL-P */
+/*
+ * As #define INTEL_SUBPLATFORM_RPL 0 will apply
+ * here too, SUBPLATFORM_N will have different
+ * bit set
+ */
+#define INTEL_SUBPLATFORM_N    1
+
+/* MTL */
+#define INTEL_SUBPLATFORM_M	0
+#define INTEL_SUBPLATFORM_P	1
 
 enum intel_ppgtt_type {
 	INTEL_PPGTT_NONE = I915_GEM_PPGTT_NONE,
@@ -123,24 +147,67 @@ enum intel_ppgtt_type {
 	func(is_dgfx); \
 	/* Keep has_* in alphabetical order */ \
 	func(has_64bit_reloc); \
+	func(has_64k_pages); \
+	func(has_access_counter); \
+	func(has_asid_tlb_invalidation); \
+	func(has_cache_clos); \
+	func(has_coherent_ggtt); \
+	func(has_gmd_id); \
 	func(gpu_reset_clobbers_display); \
 	func(has_reset_engine); \
+	func(has_3d_pipeline); \
+	func(has_4tile); \
+	func(has_eu_stall_sampling); \
+	func(has_flat_ccs); \
+	func(has_full_ps64); \
 	func(has_global_mocs); \
+	func(has_gt_error_vectors); \
 	func(has_gt_uc); \
+	func(has_guc_deprivilege); \
+	func(has_guc_programmable_mocs); \
+	func(has_heci_pxp); \
+	func(has_heci_gscfi); \
+	func(has_iaf); \
+	func(has_iov_memirq); \
+	func(has_l3_ccs_read); \
 	func(has_l3_dpf); \
+	func(has_link_copy_engines); \
 	func(has_llc); \
+	func(has_lmtt_lvl2); \
 	func(has_logical_ring_contexts); \
 	func(has_logical_ring_elsq); \
-	func(has_mslices); \
+	func(has_media_ratio_mode); \
+	func(has_mem_sparing); \
+	func(has_mslice_steering); \
+	func(has_oa_bpc_reporting); \
+	func(has_oa_buf_128m); \
+	func(has_oa_mmio_trigger); \
+	func(has_oa_slice_contrib_limits); \
+	func(has_oac); \
+	func(has_oam); \
+	func(has_one_eu_per_fuse_bit); \
 	func(has_pooled_eu); \
+	func(has_pxp); \
 	func(has_rc6); \
 	func(has_rc6p); \
+	func(has_recoverable_page_fault); \
+	func(has_remote_tiles); \
 	func(has_rps); \
 	func(has_runtime_pm); \
+	func(has_selective_tlb_invalidation); \
+	func(has_semaphore_xehpsdv); \
+	func(has_slim_vdbox); \
 	func(has_snoop); \
-	func(has_coherent_ggtt); \
+	func(has_sriov); \
+	func(has_um_queues); \
+	func(has_null_page); \
+	func(tuning_thread_rr_after_dep); \
+	func(has_csc_uid);	\
+	func(has_lmem_max_bandwidth);	\
 	func(unfenced_needs_alignment); \
-	func(hws_needs_physical);
+	func(hws_needs_physical); \
+	func(oam_uses_vdbox0_channel); \
+	func(needs_driver_flr);
 
 #define DEV_INFO_DISPLAY_FOR_EACH_FLAG(func) \
 	/* Keep in alphabetical order */ \
@@ -151,7 +218,6 @@ enum intel_ppgtt_type {
 	func(has_dp_mst); \
 	func(has_dsb); \
 	func(has_dsc); \
-	func(has_fbc); \
 	func(has_fpga_dbg); \
 	func(has_gmch); \
 	func(has_hdcp); \
@@ -165,11 +231,15 @@ enum intel_ppgtt_type {
 	func(overlay_needs_physical); \
 	func(supports_tv);
 
+struct ip_version {
+	u8 ver;
+	u8 rel;
+	u8 step;
+};
+
 struct intel_device_info {
-	u8 graphics_ver;
-	u8 graphics_rel;
-	u8 media_ver;
-	u8 media_rel;
+	struct ip_version graphics;
+	struct ip_version media;
 
 	intel_engine_mask_t platform_engine_mask; /* Engines supported by the HW */
 
@@ -180,18 +250,15 @@ struct intel_device_info {
 	enum intel_ppgtt_type ppgtt_type;
 	unsigned int ppgtt_size; /* log2, e.g. 31/32/48 bits */
 
+	unsigned int ppgtt_msb; /* Virtual Addresss msb supported by the HW */
+
 	unsigned int page_sizes; /* page sizes supported by the HW */
 
 	u32 memory_regions; /* regions supported by the HW */
 
-	u32 display_mmio_offset;
+	const struct intel_gt_definition *extra_gt_list;
 
 	u8 gt; /* GT number, 0 if undefined */
-
-	u8 pipe_mask;
-	u8 cpu_transcoder_mask;
-
-	u8 abox_mask;
 
 #define DEFINE_FLAG(name) u8 name:1
 	DEV_INFO_FOR_EACH_FLAG(DEFINE_FLAG);
@@ -199,28 +266,39 @@ struct intel_device_info {
 
 	struct {
 		u8 ver;
+		u8 rel;
+
+		u8 pipe_mask;
+		u8 cpu_transcoder_mask;
+		u8 fbc_mask;
+		u8 abox_mask;
+
+		struct {
+			u16 size; /* in blocks */
+			u8 slice_mask;
+		} dbuf;
 
 #define DEFINE_FLAG(name) u8 name:1
 		DEV_INFO_DISPLAY_FOR_EACH_FLAG(DEFINE_FLAG);
 #undef DEFINE_FLAG
+
+		/* Global register offset for the display engine */
+		u32 mmio_offset;
+
+		/* Register offsets for the various display pipes and transcoders */
+		u32 pipe_offsets[I915_MAX_TRANSCODERS];
+		u32 trans_offsets[I915_MAX_TRANSCODERS];
+		u32 cursor_offsets[I915_MAX_PIPES];
+
+		struct {
+			u32 degamma_lut_size;
+			u32 gamma_lut_size;
+			u32 degamma_lut_tests;
+			u32 gamma_lut_tests;
+		} color;
 	} display;
 
-	struct {
-		u16 size; /* in blocks */
-		u8 slice_mask;
-	} dbuf;
-
-	/* Register offsets for the various display pipes and transcoders */
-	int pipe_offsets[I915_MAX_TRANSCODERS];
-	int trans_offsets[I915_MAX_TRANSCODERS];
-	int cursor_offsets[I915_MAX_PIPES];
-
-	struct color_luts {
-		u32 degamma_lut_size;
-		u32 gamma_lut_size;
-		u32 degamma_lut_tests;
-		u32 gamma_lut_tests;
-	} color;
+	unsigned int cachelevel_to_pat[I915_MAX_CACHE_LEVEL];
 };
 
 struct intel_runtime_info {
@@ -234,7 +312,21 @@ struct intel_runtime_info {
 	 */
 	u32 platform_mask[2];
 
+	/*
+	 * On modern platforms, the architecture major.minor version numbers
+	 * and stepping are read directly from the hardware rather than derived
+	 * from the PCI device and revision ID's.
+	 *
+	 * Note that the hardware gives us a single "graphics" number that
+	 * should represent render, compute, and copy behavior.
+	 */
+	struct ip_version graphics;
+	struct ip_version media;
+	struct ip_version display;
+
 	u16 device_id;
+
+	u64 uid; /* device uid, used for generating uuid */
 
 	u8 num_sprites[I915_MAX_PIPES];
 	u8 num_scalers[I915_MAX_PIPES];

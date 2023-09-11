@@ -37,7 +37,9 @@
 #include <linux/slab.h>
 
 #include "i915_drv.h"
+#include "gt/intel_engine_regs.h"
 #include "gt/intel_gpu_commands.h"
+#include "gt/intel_gt_regs.h"
 #include "gt/intel_lrc.h"
 #include "gt/intel_ring.h"
 #include "gt/intel_gt_requests.h"
@@ -426,7 +428,7 @@ struct cmd_info {
 #define R_VECS	BIT(VECS0)
 #define R_ALL (R_RCS | R_VCS | R_BCS | R_VECS)
 	/* rings that support this cmd: BLT/RCS/VCS/VECS */
-	u16 rings;
+	intel_engine_mask_t rings;
 
 	/* devices that support this cmd: SNB/IVB/HSW/... */
 	u16 devices;
@@ -3015,23 +3017,16 @@ static int shadow_indirect_ctx(struct intel_shadow_wa_ctx *wa_ctx)
 		goto put_obj;
 	}
 
-	i915_gem_object_lock(obj, NULL);
-	ret = i915_gem_object_set_to_cpu_domain(obj, false);
-	i915_gem_object_unlock(obj);
-	if (ret) {
-		gvt_vgpu_err("failed to set shadow indirect ctx to CPU\n");
-		goto unmap_src;
-	}
-
 	ret = copy_gma_to_hva(workload->vgpu,
-				workload->vgpu->gtt.ggtt_mm,
-				guest_gma, guest_gma + ctx_size,
-				map);
+			      workload->vgpu->gtt.ggtt_mm,
+			      guest_gma, guest_gma + ctx_size,
+			      map);
 	if (ret < 0) {
 		gvt_vgpu_err("fail to copy guest indirect ctx\n");
 		goto unmap_src;
 	}
 
+	i915_gem_object_flush_map(obj);
 	wa_ctx->indirect_ctx.obj = obj;
 	wa_ctx->indirect_ctx.shadow_va = map;
 	return 0;
@@ -3115,9 +3110,9 @@ void intel_gvt_update_reg_whitelist(struct intel_vgpu *vgpu)
 			continue;
 
 		vaddr = shmem_pin_map(engine->default_state);
-		if (IS_ERR(vaddr)) {
-			gvt_err("failed to map %s->default state, err:%zd\n",
-				engine->name, PTR_ERR(vaddr));
+		if (!vaddr) {
+			gvt_err("failed to map %s->default state\n",
+				engine->name);
 			return;
 		}
 

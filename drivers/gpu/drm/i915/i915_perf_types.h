@@ -17,9 +17,12 @@
 #include <linux/wait.h>
 #include <uapi/drm/i915_drm.h>
 
+#include "gt/intel_engine_types.h"
 #include "gt/intel_sseu.h"
-#include "i915_reg.h"
+#include "i915_reg_defs.h"
+#include "intel_uncore.h"
 #include "intel_wakeref.h"
+#include "gt/intel_sseu.h"
 
 struct drm_i915_private;
 struct file;
@@ -30,9 +33,45 @@ struct i915_vma;
 struct intel_context;
 struct intel_engine_cs;
 
+enum report_header {
+	HDR_32_BIT = 0,
+	HDR_64_BIT,
+};
+
+enum {
+	PERF_GROUP_OAG = 0,
+	PERF_GROUP_OAM_SAMEDIA_0 = 0,
+	PERF_GROUP_OAM_0 = 1,
+	PERF_GROUP_OAM_1 = 2,
+	PERF_GROUP_OAM_2 = 3,
+	PERF_GROUP_OAM_3 = 4,
+
+	PERF_GROUP_MAX,
+	PERF_GROUP_INVALID = U32_MAX,
+};
+
+struct i915_perf_regs {
+	u32 base;
+	i915_reg_t oa_head_ptr;
+	i915_reg_t oa_tail_ptr;
+	i915_reg_t oa_buffer;
+	i915_reg_t oa_ctx_ctrl;
+	i915_reg_t oa_ctrl;
+	i915_reg_t oa_debug;
+	i915_reg_t oa_status;
+	u32 oa_ctrl_counter_format_shift;
+};
+
+enum {
+	TYPE_OAG,
+	TYPE_OAM,
+};
+
 struct i915_oa_format {
 	u32 format;
 	int size;
+	int type;
+	enum report_header header;
 };
 
 struct i915_oa_reg {
@@ -55,7 +94,7 @@ struct i915_oa_config {
 
 	struct attribute_group sysfs_metric;
 	struct attribute *attrs[2];
-	struct device_attribute sysfs_metric_id;
+	struct kobj_attribute sysfs_metric_id;
 
 	struct kref ref;
 	struct rcu_head rcu;
@@ -145,6 +184,11 @@ struct i915_perf_stream {
 	 * @engine: Engine associated with this performance stream.
 	 */
 	struct intel_engine_cs *engine;
+
+	/*
+	 * Lock associated with operations on stream
+	 */
+	struct mutex lock;
 
 	/**
 	 * @sample_flags: Flags representing the `DRM_I915_PERF_PROP_SAMPLE_*`
@@ -245,11 +289,10 @@ struct i915_perf_stream {
 	 * @oa_buffer: State of the OA buffer.
 	 */
 	struct {
+		const struct i915_oa_format *format;
 		struct i915_vma *vma;
 		u8 *vaddr;
 		u32 last_ctx_id;
-		int format;
-		int format_size;
 		int size_exponent;
 
 		/**
@@ -275,18 +318,6 @@ struct i915_perf_stream {
 		spinlock_t ptr_lock;
 
 		/**
-		 * @aging_tail: The last HW tail reported by HW. The data
-		 * might not have made it to memory yet though.
-		 */
-		u32 aging_tail;
-
-		/**
-		 * @aging_timestamp: A monotonic timestamp for when the current aging tail pointer
-		 * was read; used to determine when it is old enough to trust.
-		 */
-		u64 aging_timestamp;
-
-		/**
 		 * @head: Although we can always read back the head pointer register,
 		 * we prefer to avoid trusting the HW state, just to avoid any
 		 * risk that some hardware condition could * somehow bump the
@@ -299,6 +330,11 @@ struct i915_perf_stream {
 		 * @tail: The last verified tail that can be read by userspace.
 		 */
 		u32 tail;
+
+		/**
+		 * @group: The group object for this OA buffer.
+		 */
+		struct i915_perf_group *group;
 	} oa_buffer;
 
 	/**
@@ -312,6 +348,18 @@ struct i915_perf_stream {
 	 * buffer should be checked for available data.
 	 */
 	u64 poll_oa_period;
+
+	/**
+	 * @oa_whitelisted: Indicates that the oa registers are whitelisted.
+	 */
+	bool oa_whitelisted;
+
+
+	/**
+	 * @override_gucrc: GuC RC has been overridden for the perf stream,
+	 * and we need to restore the default configuration on release.
+	 */
+	bool override_gucrc:1;
 };
 
 /**
@@ -380,6 +428,82 @@ struct i915_oa_ops {
 	u32 (*oa_hw_tail_read)(struct i915_perf_stream *stream);
 };
 
+struct i915_perf_group {
+	/*
+	 * @type: Identifier for the OA unit.
+	 */
+	u32 oa_unit_id;
+
+	/*
+	 * @gt: gt that this group belongs to
+	 */
+	struct intel_gt *gt;
+
+	/*
+	 * @exclusive_stream: The stream currently using the OA unit. This is
+	 * sometimes accessed outside a syscall associated to its file
+	 * descriptor.
+	 */
+	struct i915_perf_stream *exclusive_stream;
+
+	/*
+	 * @num_engines: The number of engines using this OA buffer.
+	 */
+	u32 num_engines;
+
+	/*
+	 * @engine_mask: A mask of engines using a single OA buffer.
+	 */
+	intel_engine_mask_t engine_mask;
+
+	/*
+	 * @regs: OA buffer register group for programming the OA unit.
+	 */
+	struct i915_perf_regs regs;
+
+	/*
+	 * @type: Type of OA buffer, OAM, OAG etc.
+	 */
+	int type;
+
+	/*
+	 * @fw_domains: forcewake domains required for this group.
+	 */
+	enum forcewake_domains fw_domains;
+};
+
+struct i915_perf_gt {
+	/*
+	 * Lock associated with anything below within this structure.
+	 */
+	struct mutex lock;
+
+	/**
+	 * @sseu: sseu configuration selected to run while perf is active,
+	 * applies to all contexts.
+	 */
+	struct intel_sseu sseu;
+
+	/**
+	 * @num_perf_groups: number of perf groups per gt.
+	 */
+	u32 num_perf_groups;
+
+	/*
+	 * @group: list of OA groups - one for each OA buffer.
+	 */
+	struct i915_perf_group *group;
+
+};
+
+struct i915_eu_stall_cntr_gt {
+	/* Lock to protect stream */
+	struct mutex lock;
+
+	/* Execution Unit (EU) stall counter stream */
+	struct i915_eu_stall_cntr_stream *stream;
+};
+
 struct i915_perf {
 	struct drm_i915_private *i915;
 
@@ -397,25 +521,6 @@ struct i915_perf {
 	 */
 	struct idr metrics_idr;
 
-	/*
-	 * Lock associated with anything below within this structure
-	 * except exclusive_stream.
-	 */
-	struct mutex lock;
-
-	/*
-	 * The stream currently using the OA unit. If accessed
-	 * outside a syscall associated to its file
-	 * descriptor.
-	 */
-	struct i915_perf_stream *exclusive_stream;
-
-	/**
-	 * @sseu: sseu configuration selected to run while perf is active,
-	 * applies to all contexts.
-	 */
-	struct intel_sseu sseu;
-
 	/**
 	 * For rate limiting any notifications of spurious
 	 * invalid OA reports
@@ -429,8 +534,9 @@ struct i915_perf {
 	struct ratelimit_state tail_pointer_race;
 
 	u32 gen7_latched_oastatus1;
-	u32 ctx_oactxctrl_offset;
+	u32 ctx_oactxctrl_offset[PRELIM_I915_ENGINE_CLASS_COMPUTE + 1];
 	u32 ctx_flexeu0_offset;
+	u32 ctx_pwr_clk_state_offset[PRELIM_I915_ENGINE_CLASS_COMPUTE + 1];
 
 	/**
 	 * The RPT_ID/reason field for Gen8+ includes a bit
@@ -446,10 +552,51 @@ struct i915_perf {
 	 * Use a format mask to store the supported formats
 	 * for a platform.
 	 */
-#define FORMAT_MASK_SIZE DIV_ROUND_UP(I915_OA_FORMAT_MAX - 1, BITS_PER_LONG)
+#define FORMAT_MASK_SIZE DIV_ROUND_UP(PRELIM_I915_OA_FORMAT_MAX - 1, BITS_PER_LONG)
 	unsigned long format_mask[FORMAT_MASK_SIZE];
 
 	atomic64_t noa_programming_delay;
+
+	struct i915_engine_class_instance default_ci;
+
+	/* oa unit ids */
+	u32 oa_unit_ids;
+};
+
+struct per_dss_buf {
+	u8 *vaddr;
+	u32 write;
+	u32 read;
+	bool line_drop;
+	/* lock to protect read and write pointers */
+	struct mutex lock;
+};
+
+/**
+ * struct i915_eu_stall_cntr_stream - state of EU stall counter stream FD
+ */
+struct i915_eu_stall_cntr_stream {
+	struct intel_gt *tile_gt;
+
+	/**
+	 * @enabled: Whether the stream is currently enabled.
+	 */
+	bool enabled;
+	bool pollin;
+	size_t per_dss_buf_size;
+	struct hrtimer poll_check_timer;
+	struct work_struct buf_check_work;
+	struct workqueue_struct *buf_check_wq;
+	wait_queue_head_t poll_wq;
+	u32 event_report_count;
+	u64 poll_period;
+
+	/**
+	 * State of the EU stall counter buffer.
+	 */
+	u8 *vaddr;
+	struct i915_vma *vma;
+	struct per_dss_buf dss_buf[I915_MAX_SS_FUSE_BITS];
 };
 
 #endif /* _I915_PERF_TYPES_H_ */

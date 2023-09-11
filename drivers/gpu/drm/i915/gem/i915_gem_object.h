@@ -12,33 +12,27 @@
 #include <drm/drm_device.h>
 
 #include "display/intel_frontbuffer.h"
-#include "intel_memory_region.h"
+#include "i915_buddy.h"
 #include "i915_gem_object_types.h"
 #include "i915_gem_gtt.h"
-#include "i915_gem_ww.h"
 #include "i915_vma_types.h"
+#include "i915_gem_ww.h"
+#include "i915_drm_client.h"
+#include "intel_memory_region.h"
 
-enum intel_region_id;
+#define obj_to_i915(obj__) to_i915((obj__)->base.dev)
 
-/*
- * XXX: There is a prevalence of the assumption that we fit the
- * object's page count inside a 32bit _signed_ variable. Let's document
- * this and catch if we ever need to fix it. In the meantime, if you do
- * spot such a local variable, please consider fixing!
- *
- * Aside from our own locals (for which we have no excuse!):
- * - sg_table embeds unsigned int for num_pages
- * - get_user_pages*() mixed ints with longs
- */
-#define GEM_CHECK_SIZE_OVERFLOW(sz) \
-	GEM_WARN_ON((sz) >> PAGE_SHIFT > INT_MAX)
+#define i915_gem_object_first_segment(obj__) \
+	rb_entry_safe(rb_first_cached(&(obj__)->segments), typeof(*(obj__)), segment_node)
+
+#define for_each_object_segment(sobj__, obj__) \
+	for ((sobj__) = i915_gem_object_first_segment((obj__)); \
+	     (sobj__); \
+	     (sobj__) = rb_entry_safe(rb_next(&(sobj__)->segment_node), typeof(*(sobj__)), segment_node))
 
 static inline bool i915_gem_object_size_2big(u64 size)
 {
 	struct drm_i915_gem_object *obj;
-
-	if (GEM_CHECK_SIZE_OVERFLOW(size))
-		return true;
 
 	if (overflows_type(size, obj->base.size))
 		return true;
@@ -46,7 +40,12 @@ static inline bool i915_gem_object_size_2big(u64 size)
 	return false;
 }
 
+unsigned int i915_gem_get_pat_index(struct drm_i915_private *i915,
+				    enum i915_cache_level level);
+bool i915_gem_object_has_cache_level(const struct drm_i915_gem_object *obj,
+				     enum i915_cache_level lvl);
 void i915_gem_init__objects(struct drm_i915_private *i915);
+u32 i915_gem_object_max_page_size(const struct drm_i915_gem_object *obj);
 
 void i915_objects_module_exit(void);
 int i915_objects_module_init(void);
@@ -64,10 +63,6 @@ i915_gem_object_create_shmem(struct drm_i915_private *i915,
 struct drm_i915_gem_object *
 i915_gem_object_create_shmem_from_data(struct drm_i915_private *i915,
 				       const void *data, resource_size_t size);
-struct drm_i915_gem_object *
-__i915_gem_object_create_user(struct drm_i915_private *i915, u64 size,
-			      struct intel_memory_region **placements,
-			      unsigned int n_placements);
 
 extern const struct drm_i915_gem_object_ops i915_gem_shmem_ops;
 
@@ -86,7 +81,39 @@ void i915_gem_object_put_pages_shmem(struct drm_i915_gem_object *obj,
 void i915_gem_object_put_pages_phys(struct drm_i915_gem_object *obj,
 				    struct sg_table *pages);
 
+enum intel_region_id;
+int i915_gem_object_prepare_move(struct drm_i915_gem_object *obj,
+				 struct i915_gem_ww_ctx *ww);
+bool i915_gem_object_can_migrate(struct drm_i915_gem_object *obj,
+				 enum intel_region_id id);
+int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
+			    struct i915_gem_ww_ctx *ww,
+			    struct intel_context *ce,
+			    enum intel_region_id id,
+			    bool nowait);
+int i915_gem_object_memcpy(struct drm_i915_gem_object *dst,
+			   struct drm_i915_gem_object *src);
+int i915_gem_object_migrate_region(struct drm_i915_gem_object *obj,
+				   struct i915_gem_ww_ctx *ww,
+				   struct intel_memory_region **regions,
+				   int size);
+int i915_gem_object_migrate_to_smem(struct drm_i915_gem_object *obj,
+				    struct i915_gem_ww_ctx *ww,
+				    bool check_placement);
+
 void i915_gem_flush_free_objects(struct drm_i915_private *i915);
+
+struct drm_i915_gem_object *
+i915_gem_object_lookup_segment(struct drm_i915_gem_object *obj, unsigned long offset,
+			       unsigned long *adjusted_offset);
+void i915_gem_object_add_segment(struct drm_i915_gem_object *obj,
+				 struct drm_i915_gem_object *new_obj,
+				 struct drm_i915_gem_object *prev_obj,
+				 unsigned long offset);
+void i915_gem_object_release_segments(struct drm_i915_gem_object *obj);
+
+void __i915_gem_object_reset_page_iter(struct drm_i915_gem_object *obj,
+				       struct sg_table *pages);
 
 struct sg_table *
 __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj);
@@ -153,12 +180,30 @@ i915_gem_object_put(struct drm_i915_gem_object *obj)
 	__drm_gem_object_put(&obj->base);
 }
 
+int i915_gem_object_account(struct drm_i915_gem_object *obj);
+void i915_gem_object_unaccount(struct drm_i915_gem_object *obj);
+
+static inline u32
+i915_gem_object_get_accounting(const struct drm_i915_gem_object *obj)
+{
+	if (obj->memory_mask & REGION_SMEM)
+		return INTEL_MEMORY_OVERCOMMIT_SHARED;
+	else
+		return INTEL_MEMORY_OVERCOMMIT_LMEM;
+}
+
 #define assert_object_held(obj) dma_resv_assert_held((obj)->base.resv)
 
+#define object_is_isolated(obj)					\
+	(!IS_ENABLED(CONFIG_LOCKDEP) ||				\
+	 ((kref_read(&obj->base.refcount) == 0) ||		\
+	  ((kref_read(&obj->base.refcount) == 1) &&		\
+	   list_empty_careful(&obj->mm.link) &&			\
+	   list_empty_careful(&obj->vma.list))))
 /*
  * If more than one potential simultaneous locker, assert held.
  */
-static inline void assert_object_held_shared(const struct drm_i915_gem_object *obj)
+static inline void assert_object_held_shared(struct drm_i915_gem_object *obj)
 {
 	/*
 	 * Note mm list lookup is protected by
@@ -183,11 +228,20 @@ static inline int __i915_gem_object_lock(struct drm_i915_gem_object *obj,
 	if (!ret && ww) {
 		i915_gem_object_get(obj);
 		list_add_tail(&obj->obj_link, &ww->obj_list);
+		obj->evict_locked = false;
 	}
-	if (ret == -EALREADY)
+
+	if (ret == -EALREADY) {
 		ret = 0;
+		/* We've already evicted an object needed for this batch. */
+		if (obj->evict_locked) {
+			list_move_tail(&obj->obj_link, &ww->obj_list);
+			obj->evict_locked = false;
+		}
+	}
 
 	if (ret == -EDEADLK) {
+		ww->contended_evict = false;
 		i915_gem_object_get(obj);
 		ww->contended = obj;
 	}
@@ -213,12 +267,63 @@ static inline bool i915_gem_object_trylock(struct drm_i915_gem_object *obj)
 	return dma_resv_trylock(obj->base.resv);
 }
 
+static inline void i915_gem_object_lock_isolated(struct drm_i915_gem_object *obj)
+{
+	int ret;
+
+	WARN_ON(!object_is_isolated(obj));
+	ret = dma_resv_trylock(obj->base.resv);
+	GEM_WARN_ON(!ret);
+}
+
 static inline void i915_gem_object_unlock(struct drm_i915_gem_object *obj)
 {
 	if (obj->ops->adjust_lru)
 		obj->ops->adjust_lru(obj);
 
 	dma_resv_unlock(obj->base.resv);
+}
+
+static inline bool
+i915_gem_object_has_segments(const struct drm_i915_gem_object *obj)
+{
+	return !RB_EMPTY_ROOT(&obj->segments.rb_root);
+}
+
+static inline bool
+i915_gem_object_is_segment(const struct drm_i915_gem_object *obj)
+{
+	return !RB_EMPTY_NODE(&obj->segment_node);
+}
+
+static inline void
+i915_gem_object_set_backing_store(struct drm_i915_gem_object *obj)
+{
+	obj->flags |= I915_BO_HAS_BACKING_STORE;
+}
+
+static inline bool
+i915_gem_object_has_backing_store(const struct drm_i915_gem_object *obj)
+{
+	return obj->flags & I915_BO_HAS_BACKING_STORE;
+}
+
+static inline void
+i915_gem_object_set_fabric(struct drm_i915_gem_object *obj)
+{
+	obj->flags |= I915_BO_FABRIC;
+}
+
+static inline void
+i915_gem_object_clear_fabric(struct drm_i915_gem_object *obj)
+{
+	obj->flags &= ~I915_BO_FABRIC;
+}
+
+static inline bool
+i915_gem_object_has_fabric(const struct drm_i915_gem_object *obj)
+{
+	return obj->flags & I915_BO_FABRIC;
 }
 
 static inline void
@@ -231,6 +336,31 @@ static inline bool
 i915_gem_object_is_readonly(const struct drm_i915_gem_object *obj)
 {
 	return obj->flags & I915_BO_READONLY;
+}
+
+static inline bool
+i915_gem_object_allows_atomic_system(struct drm_i915_gem_object *obj)
+{
+	return obj->mm.madv_atomic == I915_BO_ATOMIC_SYSTEM;
+}
+
+static inline bool
+i915_gem_object_allows_atomic_device(struct drm_i915_gem_object *obj)
+{
+	/* GPU atomics allowed with either ATOMIC_DEVICE or ATOMIC_SYSTEM */
+	return obj->mm.madv_atomic == I915_BO_ATOMIC_DEVICE ||
+	       obj->mm.madv_atomic == I915_BO_ATOMIC_SYSTEM;
+}
+
+static inline bool
+i915_gem_object_test_preferred_location(struct drm_i915_gem_object *obj,
+					enum intel_region_id region_id)
+{
+
+	if (!obj->mm.preferred_region)
+		return false;
+
+	return obj->mm.preferred_region->id == region_id;
 }
 
 static inline bool
@@ -270,15 +400,29 @@ i915_gem_object_clear_tiling_quirk(struct drm_i915_gem_object *obj)
 }
 
 static inline bool
+i915_gem_object_is_protected(const struct drm_i915_gem_object *obj)
+{
+	return obj->flags & I915_BO_PROTECTED;
+}
+
+static inline bool
 i915_gem_object_type_has(const struct drm_i915_gem_object *obj,
 			 unsigned long flags)
 {
 	return obj->ops->flags & flags;
 }
 
-bool i915_gem_object_has_struct_page(const struct drm_i915_gem_object *obj);
+static inline bool
+i915_gem_object_has_struct_page(const struct drm_i915_gem_object *obj)
+{
+	return obj->flags & I915_BO_STRUCT_PAGE;
+}
 
-bool i915_gem_object_has_iomem(const struct drm_i915_gem_object *obj);
+static inline bool
+i915_gem_object_has_iomem(const struct drm_i915_gem_object *obj)
+{
+	return i915_gem_object_type_has(obj, I915_GEM_OBJECT_HAS_IOMEM);
+}
 
 static inline bool
 i915_gem_object_is_shrinkable(const struct drm_i915_gem_object *obj)
@@ -348,41 +492,71 @@ int i915_gem_object_set_tiling(struct drm_i915_gem_object *obj,
 struct scatterlist *
 __i915_gem_object_get_sg(struct drm_i915_gem_object *obj,
 			 struct i915_gem_object_page_iter *iter,
-			 unsigned int n,
-			 unsigned int *offset, bool dma);
+			 pgoff_t  n,
+			 unsigned int *offset);
+
+#define __i915_gem_object_get_sg(obj, it, n, offset) ({ \
+	exactly_pgoff_t(n); \
+	(__i915_gem_object_get_sg)(obj, it, n, offset); \
+})
 
 static inline struct scatterlist *
-i915_gem_object_get_sg(struct drm_i915_gem_object *obj,
-		       unsigned int n,
+i915_gem_object_get_sg(struct drm_i915_gem_object *obj, pgoff_t n,
 		       unsigned int *offset)
 {
-	return __i915_gem_object_get_sg(obj, &obj->mm.get_page, n, offset, false);
+	return __i915_gem_object_get_sg(obj, &obj->mm.get_page, n, offset);
 }
+
+#define i915_gem_object_get_sg(obj, n, offset) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_sg)(obj, n, offset); \
+})
 
 static inline struct scatterlist *
-i915_gem_object_get_sg_dma(struct drm_i915_gem_object *obj,
-			   unsigned int n,
+i915_gem_object_get_sg_dma(struct drm_i915_gem_object *obj, pgoff_t n,
 			   unsigned int *offset)
 {
-	return __i915_gem_object_get_sg(obj, &obj->mm.get_dma_page, n, offset, true);
+	return __i915_gem_object_get_sg(obj, &obj->mm.get_dma_page, n, offset);
 }
 
-struct page *
-i915_gem_object_get_page(struct drm_i915_gem_object *obj,
-			 unsigned int n);
+#define i915_gem_object_get_sg_dma(obj, n, offset) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_sg_dma)(obj, n, offset); \
+})
 
 struct page *
-i915_gem_object_get_dirty_page(struct drm_i915_gem_object *obj,
-			       unsigned int n);
+i915_gem_object_get_page(struct drm_i915_gem_object *obj, pgoff_t n);
+
+#define i915_gem_object_get_page(obj, n) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_page)(obj, n); \
+})
+
+struct page *
+i915_gem_object_get_dirty_page(struct drm_i915_gem_object *obj, pgoff_t n);
+
+#define i915_gem_object_get_dirty_page(obj, n) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_dirty_page)(obj, n); \
+})
 
 dma_addr_t
-i915_gem_object_get_dma_address_len(struct drm_i915_gem_object *obj,
-				    unsigned long n,
+i915_gem_object_get_dma_address_len(struct drm_i915_gem_object *obj, pgoff_t n,
 				    unsigned int *len);
+#define i915_gem_object_get_dma_address_len(obj, n, len) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_dma_address_len)(obj, n, len); \
+})
 
 dma_addr_t
-i915_gem_object_get_dma_address(struct drm_i915_gem_object *obj,
-				unsigned long n);
+i915_gem_object_get_dma_address(struct drm_i915_gem_object *obj, pgoff_t n);
+
+#define i915_gem_object_get_dma_address(obj, n) ({ \
+	exactly_pgoff_t(n); \
+	(i915_gem_object_get_dma_address)(obj, n); \
+})
+
+unsigned int i915_gem_sg_segment_size(const struct drm_i915_gem_object *obj);
 
 void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 				 struct sg_table *pages,
@@ -390,6 +564,8 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 
 int ____i915_gem_object_get_pages(struct drm_i915_gem_object *obj);
 int __i915_gem_object_get_pages(struct drm_i915_gem_object *obj);
+
+void __i915_gem_object_free_mmaps(struct drm_i915_gem_object *obj);
 
 static inline int __must_check
 i915_gem_object_pin_pages(struct drm_i915_gem_object *obj)
@@ -403,6 +579,7 @@ i915_gem_object_pin_pages(struct drm_i915_gem_object *obj)
 }
 
 int i915_gem_object_pin_pages_unlocked(struct drm_i915_gem_object *obj);
+int i915_gem_object_pin_pages_sync(struct drm_i915_gem_object *obj);
 
 static inline bool
 i915_gem_object_has_pages(struct drm_i915_gem_object *obj)
@@ -503,25 +680,11 @@ i915_gem_object_finish_access(struct drm_i915_gem_object *obj)
 	i915_gem_object_unpin_pages(obj);
 }
 
-static inline struct intel_engine_cs *
-i915_gem_object_last_write_engine(struct drm_i915_gem_object *obj)
-{
-	struct intel_engine_cs *engine = NULL;
-	struct dma_fence *fence;
-
-	rcu_read_lock();
-	fence = dma_resv_get_excl_unlocked(obj->base.resv);
-	rcu_read_unlock();
-
-	if (fence && dma_fence_is_i915(fence) && !dma_fence_is_signaled(fence))
-		engine = to_request(fence)->engine;
-	dma_fence_put(fence);
-
-	return engine;
-}
-
 void i915_gem_object_set_cache_coherency(struct drm_i915_gem_object *obj,
 					 unsigned int cache_level);
+void i915_gem_object_set_pat_index(struct drm_i915_gem_object *obj,
+				   unsigned int pat_index);
+bool i915_gem_object_can_bypass_llc(struct drm_i915_gem_object *obj);
 void i915_gem_object_flush_if_display(struct drm_i915_gem_object *obj);
 void i915_gem_object_flush_if_display_locked(struct drm_i915_gem_object *obj);
 
@@ -534,13 +697,16 @@ i915_gem_object_set_to_cpu_domain(struct drm_i915_gem_object *obj, bool write);
 struct i915_vma * __must_check
 i915_gem_object_pin_to_display_plane(struct drm_i915_gem_object *obj,
 				     struct i915_gem_ww_ctx *ww,
-				     u32 alignment,
+				     struct i915_ggtt *ggtt,
 				     const struct i915_ggtt_view *view,
+				     u32 alignment,
 				     unsigned int flags);
 
 void i915_gem_object_make_unshrinkable(struct drm_i915_gem_object *obj);
 void i915_gem_object_make_shrinkable(struct drm_i915_gem_object *obj);
 void i915_gem_object_make_purgeable(struct drm_i915_gem_object *obj);
+int i915_gem_object_set_hint(struct drm_i915_gem_object *obj,
+			     struct prelim_drm_i915_gem_vm_advise *args);
 
 static inline bool cpu_write_needs_clflush(struct drm_i915_gem_object *obj)
 {
@@ -562,15 +728,20 @@ static inline void __start_cpu_write(struct drm_i915_gem_object *obj)
 		obj->cache_dirty = true;
 }
 
-void i915_gem_fence_wait_priority(struct dma_fence *fence,
-				  const struct i915_sched_attr *attr);
+void i915_gem_fence_wait_priority(struct dma_fence *fence, int prio);
 
+long
+__i915_gem_object_wait(struct drm_i915_gem_object *obj,
+		     unsigned int flags,
+		     long timeout);
 int i915_gem_object_wait(struct drm_i915_gem_object *obj,
 			 unsigned int flags,
 			 long timeout);
 int i915_gem_object_wait_priority(struct drm_i915_gem_object *obj,
 				  unsigned int flags,
-				  const struct i915_sched_attr *attr);
+				  int prio);
+
+bool i915_gem_object_is_active(struct drm_i915_gem_object *obj);
 
 void __i915_gem_object_flush_frontbuffer(struct drm_i915_gem_object *obj,
 					 enum fb_op_origin origin);
@@ -605,18 +776,28 @@ bool i915_gem_object_evictable(struct drm_i915_gem_object *obj);
 
 bool i915_gem_object_migratable(struct drm_i915_gem_object *obj);
 
-int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
-			    struct i915_gem_ww_ctx *ww,
-			    enum intel_region_id id);
+bool i915_gem_object_validates_to_lmem(struct drm_i915_gem_object *obj);
 
-bool i915_gem_object_can_migrate(struct drm_i915_gem_object *obj,
-				 enum intel_region_id id);
+/**
+ * i915_gem_get_locking_ctx - Get the locking context of a locked object
+ * if any.
+ *
+ * @obj: The object to get the locking ctx from
+ *
+ * RETURN: The locking context if the object was locked using a context.
+ * NULL otherwise.
+ */
+static inline struct i915_gem_ww_ctx *
+i915_gem_get_locking_ctx(const struct drm_i915_gem_object *obj)
+{
+	struct ww_acquire_ctx *ctx;
 
-int i915_gem_object_wait_migration(struct drm_i915_gem_object *obj,
-				   unsigned int flags);
+	ctx = READ_ONCE(obj->base.resv->lock.ctx);
+	if (!ctx)
+		return NULL;
 
-bool i915_gem_object_placement_possible(struct drm_i915_gem_object *obj,
-					enum intel_memory_type type);
+	return container_of(ctx, struct i915_gem_ww_ctx, ctx);
+}
 
 #ifdef CONFIG_MMU_NOTIFIER
 static inline bool
@@ -624,17 +805,77 @@ i915_gem_object_is_userptr(struct drm_i915_gem_object *obj)
 {
 	return obj->userptr.notifier.mm;
 }
-
-int i915_gem_object_userptr_submit_init(struct drm_i915_gem_object *obj);
-int i915_gem_object_userptr_submit_done(struct drm_i915_gem_object *obj);
-int i915_gem_object_userptr_validate(struct drm_i915_gem_object *obj);
 #else
 static inline bool i915_gem_object_is_userptr(struct drm_i915_gem_object *obj) { return false; }
-
-static inline int i915_gem_object_userptr_submit_init(struct drm_i915_gem_object *obj) { GEM_BUG_ON(1); return -ENODEV; }
-static inline int i915_gem_object_userptr_submit_done(struct drm_i915_gem_object *obj) { GEM_BUG_ON(1); return -ENODEV; }
-static inline int i915_gem_object_userptr_validate(struct drm_i915_gem_object *obj) { GEM_BUG_ON(1); return -ENODEV; }
-
 #endif
+
+int i915_window_blt_copy(struct drm_i915_gem_object *dst,
+			 struct drm_i915_gem_object *src, bool compressed);
+int i915_setup_blt_windows(struct drm_i915_private *i915);
+void i915_teardown_blt_windows(struct drm_i915_private *i915);
+
+bool i915_gem_object_should_migrate_smem(struct drm_i915_gem_object *obj);
+bool i915_gem_object_should_migrate_lmem(struct drm_i915_gem_object *obj,
+					 enum intel_region_id dst_region_id,
+					 bool is_atomic_fault);
+
+void i915_gem_object_migrate_prepare(struct drm_i915_gem_object *obj,
+				     struct dma_fence *f);
+int i915_gem_object_migrate_await(struct drm_i915_gem_object *obj,
+				  struct i915_request *rq);
+void i915_gem_object_migrate_boost(struct drm_i915_gem_object *obj, int prio);
+long i915_gem_object_migrate_wait(struct drm_i915_gem_object *obj,
+				  unsigned int flags,
+				  long timeout);
+int i915_gem_object_migrate_sync(struct drm_i915_gem_object *obj);
+void i915_gem_object_migrate_decouple(struct drm_i915_gem_object *obj);
+int i915_gem_object_migrate_finish(struct drm_i915_gem_object *obj);
+
+static inline bool
+i915_gem_object_has_migrate(struct drm_i915_gem_object *obj)
+{
+	return !i915_active_fence_is_signaled(&obj->mm.migrate);
+}
+
+static inline int
+i915_gem_object_migrate_has_error(const struct drm_i915_gem_object *obj)
+{
+	return i915_active_fence_has_error(&obj->mm.migrate);
+}
+
+static inline bool
+i915_gem_object_mem_idle(const struct drm_i915_gem_object *obj)
+{
+	struct i915_buddy_block *block;
+
+	if (!obj->mm.region.mem)
+		return true;
+
+	list_for_each_entry(block, &obj->mm.blocks, link) {
+		if (!i915_active_fence_is_signaled(&block->active))
+			return false;
+	}
+
+	return true;
+}
+
+/**
+ * i915_gem_object_inuse - Is this object accessible by userspace?
+ *
+ * An object may be published (accessible by others and userspace)
+ * only if either a GEM handle to this object exists, or if this
+ * object has been exported via dma-buf.
+ * For BO segments, we have to test if parent BO is accessible.
+ */
+static inline bool
+i915_gem_object_inuse(const struct drm_i915_gem_object *obj)
+{
+	if (obj->parent)
+		obj = obj->parent;
+	return READ_ONCE(obj->base.handle_count) || obj->base.dma_buf;
+}
+
+void i915_gem_object_share_resv(struct drm_i915_gem_object *parent,
+				struct drm_i915_gem_object *child);
 
 #endif

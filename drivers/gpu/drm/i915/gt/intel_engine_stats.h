@@ -15,46 +15,30 @@
 
 static inline void intel_engine_context_in(struct intel_engine_cs *engine)
 {
-	unsigned long flags;
+	struct intel_engine_execlists_stats *stats = &engine->stats.execlists;
 
-	if (engine->stats.active) {
-		engine->stats.active++;
+	if (stats->active++)
 		return;
-	}
 
-	/* The writer is serialised; but the pmu reader may be from hardirq */
-	local_irq_save(flags);
-	write_seqcount_begin(&engine->stats.lock);
-
-	engine->stats.start = ktime_get();
-	engine->stats.active++;
-
-	write_seqcount_end(&engine->stats.lock);
-	local_irq_restore(flags);
-
-	GEM_BUG_ON(!engine->stats.active);
+	smp_wmb(); /* pairs with intel_engine_get_busy_time() */
+	WRITE_ONCE(stats->start, ktime_get());
 }
 
 static inline void intel_engine_context_out(struct intel_engine_cs *engine)
 {
-	unsigned long flags;
+	struct intel_engine_execlists_stats *stats = &engine->stats.execlists;
+	ktime_t total;
 
-	GEM_BUG_ON(!engine->stats.active);
-	if (engine->stats.active > 1) {
-		engine->stats.active--;
+	GEM_BUG_ON(!stats->active);
+	if (--stats->active)
 		return;
-	}
 
-	local_irq_save(flags);
-	write_seqcount_begin(&engine->stats.lock);
+	total = ktime_sub(ktime_get(), stats->start);
+	total = ktime_add(stats->total, total);
 
-	engine->stats.active--;
-	engine->stats.total =
-		ktime_add(engine->stats.total,
-			  ktime_sub(ktime_get(), engine->stats.start));
-
-	write_seqcount_end(&engine->stats.lock);
-	local_irq_restore(flags);
+	WRITE_ONCE(stats->start, 0);
+	smp_wmb(); /* pairs with intel_engine_get_busy_time() */
+	stats->total = total;
 }
 
 #endif /* __INTEL_ENGINE_STATS_H__ */

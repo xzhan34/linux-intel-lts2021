@@ -3,12 +3,15 @@
  * Copyright © 2019 Intel Corporation
  */
 
+#include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_object.h"
+#include "gem/i915_gem_region.h"
 
 #include "i915_drv.h"
 #include "i915_vma.h"
 #include "intel_engine.h"
+#include "intel_engine_regs.h"
 #include "intel_gpu_commands.h"
 #include "intel_ring.h"
 #include "intel_timeline.h"
@@ -39,19 +42,16 @@ int intel_ring_pin(struct intel_ring *ring, struct i915_gem_ww_ctx *ww)
 	if (atomic_fetch_inc(&ring->pin_count))
 		return 0;
 
-	/* Ring wraparound at offset 0 sometimes hangs. No idea why. */
-	flags = PIN_OFFSET_BIAS | i915_ggtt_pin_bias(vma);
-
 	if (i915_gem_object_is_stolen(vma->obj))
-		flags |= PIN_MAPPABLE;
+		flags = PIN_MAPPABLE;
 	else
-		flags |= PIN_HIGH;
+		flags = PIN_HIGH;
 
-	ret = i915_ggtt_pin(vma, ww, 0, flags);
+	ret = i915_ggtt_pin_for_gt(vma, ww, 0, flags);
 	if (unlikely(ret))
 		goto err_unpin;
 
-	if (i915_vma_is_map_and_fenceable(vma)) {
+	if (i915_vma_is_map_and_fenceable(vma) && !HAS_LLC(vma->vm->i915)) {
 		addr = (void __force *)i915_vma_pin_iomap(vma);
 	} else {
 		int type = i915_coherent_map_type(vma->vm->i915, vma->obj, false);
@@ -96,7 +96,7 @@ void intel_ring_unpin(struct intel_ring *ring)
 		return;
 
 	i915_vma_unset_ggtt_write(vma);
-	if (i915_vma_is_map_and_fenceable(vma))
+	if (i915_vma_is_map_and_fenceable(vma) && !HAS_LLC(vma->vm->i915))
 		i915_vma_unpin_iomap(vma);
 	else
 		i915_gem_object_unpin_map(vma->obj);
@@ -112,8 +112,11 @@ static struct i915_vma *create_ring_vma(struct i915_ggtt *ggtt, int size)
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
 
-	obj = i915_gem_object_create_lmem(i915, size, I915_BO_ALLOC_VOLATILE);
-	if (IS_ERR(obj) && i915_ggtt_has_aperture(ggtt))
+	obj = ERR_PTR(-ENODEV);
+	if (!i915_is_mem_wa_enabled(i915, I915_WA_FORCE_SMEM_OBJECT))
+		obj = intel_gt_object_create_lmem(ggtt->vm.gt, size,
+						  I915_BO_ALLOC_VOLATILE);
+	if (IS_ERR(obj) && i915_ggtt_has_aperture(ggtt) && !HAS_LLC(i915))
 		obj = i915_gem_object_create_stolen(i915, size);
 	if (IS_ERR(obj))
 		obj = i915_gem_object_create_internal(i915, size);
@@ -187,9 +190,10 @@ void intel_ring_free(struct kref *ref)
 
 static noinline int
 wait_for_space(struct intel_ring *ring,
-	       struct intel_timeline *tl,
+	       struct i915_request *rq,
 	       unsigned int bytes)
 {
+	struct intel_timeline *tl = i915_request_timeline(rq);
 	struct i915_request *target;
 	long timeout;
 
@@ -210,11 +214,16 @@ wait_for_space(struct intel_ring *ring,
 	if (GEM_WARN_ON(&target->link == &tl->requests))
 		return -ENOSPC;
 
-	timeout = i915_request_wait(target,
-				    I915_WAIT_INTERRUPTIBLE,
-				    MAX_SCHEDULE_TIMEOUT);
-	if (timeout < 0)
-		return timeout;
+	if (!__i915_request_is_complete(target)) {
+		if (i915_request_is_nonblocking(rq))
+			return -EAGAIN;
+
+		timeout = i915_request_wait(target,
+					    I915_WAIT_INTERRUPTIBLE,
+					    MAX_SCHEDULE_TIMEOUT);
+		if (timeout < 0)
+			return timeout;
+	}
 
 	i915_request_retire_upto(target);
 
@@ -274,9 +283,7 @@ u32 *intel_ring_begin(struct i915_request *rq, unsigned int num_dwords)
 		 */
 		GEM_BUG_ON(!rq->reserved_space);
 
-		ret = wait_for_space(ring,
-				     i915_request_timeline(rq),
-				     total_bytes);
+		ret = wait_for_space(ring, rq, total_bytes);
 		if (unlikely(ret))
 			return ERR_PTR(ret);
 	}
@@ -296,7 +303,8 @@ u32 *intel_ring_begin(struct i915_request *rq, unsigned int num_dwords)
 	GEM_BUG_ON(ring->emit > ring->size - bytes);
 	GEM_BUG_ON(ring->space < bytes);
 	cs = ring->vaddr + ring->emit;
-	GEM_DEBUG_EXEC(memset32(cs, POISON_INUSE, bytes / sizeof(*cs)));
+	if (IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM))
+		memset32(cs, POISON_INUSE, bytes / sizeof(*cs));
 	ring->emit += bytes;
 	ring->space -= bytes;
 

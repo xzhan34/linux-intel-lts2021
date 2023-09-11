@@ -1,535 +1,69 @@
 /* SPDX-License-Identifier: GPL-2.0 */
+
+#undef TRACE_SYSTEM
+#define TRACE_SYSTEM i915
+
 #if !defined(_I915_TRACE_H_) || defined(TRACE_HEADER_MULTI_READ)
 #define _I915_TRACE_H_
 
 #include <linux/stringify.h>
+#include <linux/string_helpers.h>
 #include <linux/types.h>
 #include <linux/tracepoint.h>
 
 #include <drm/drm_drv.h>
 
-#include "display/intel_crtc.h"
-#include "display/intel_display_types.h"
 #include "gt/intel_engine.h"
+#include "gt/intel_engine_user.h"
+#include "gt/intel_gt_regs.h"
+#include "gt/intel_pagefault.h"
 
 #include "i915_drv.h"
 #include "i915_irq.h"
 
-#undef TRACE_SYSTEM
-#define TRACE_SYSTEM i915
-#define TRACE_INCLUDE_FILE i915_trace
-
-/* watermark/fifo updates */
-
-TRACE_EVENT(intel_pipe_enable,
-	    TP_PROTO(struct intel_crtc *crtc),
-	    TP_ARGS(crtc),
-
-	    TP_STRUCT__entry(
-			     __array(u32, frame, 3)
-			     __array(u32, scanline, 3)
-			     __field(enum pipe, pipe)
-			     ),
-	    TP_fast_assign(
-			   struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
-			   struct intel_crtc *it__;
-			   for_each_intel_crtc(&dev_priv->drm, it__) {
-				   __entry->frame[it__->pipe] = intel_crtc_get_vblank_counter(it__);
-				   __entry->scanline[it__->pipe] = intel_get_crtc_scanline(it__);
-			   }
-			   __entry->pipe = crtc->pipe;
-			   ),
-
-	    TP_printk("pipe %c enable, pipe A: frame=%u, scanline=%u, pipe B: frame=%u, scanline=%u, pipe C: frame=%u, scanline=%u",
-		      pipe_name(__entry->pipe),
-		      __entry->frame[PIPE_A], __entry->scanline[PIPE_A],
-		      __entry->frame[PIPE_B], __entry->scanline[PIPE_B],
-		      __entry->frame[PIPE_C], __entry->scanline[PIPE_C])
-);
-
-TRACE_EVENT(intel_pipe_disable,
-	    TP_PROTO(struct intel_crtc *crtc),
-	    TP_ARGS(crtc),
-
-	    TP_STRUCT__entry(
-			     __array(u32, frame, 3)
-			     __array(u32, scanline, 3)
-			     __field(enum pipe, pipe)
-			     ),
-
-	    TP_fast_assign(
-			   struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
-			   struct intel_crtc *it__;
-			   for_each_intel_crtc(&dev_priv->drm, it__) {
-				   __entry->frame[it__->pipe] = intel_crtc_get_vblank_counter(it__);
-				   __entry->scanline[it__->pipe] = intel_get_crtc_scanline(it__);
-			   }
-			   __entry->pipe = crtc->pipe;
-			   ),
-
-	    TP_printk("pipe %c disable, pipe A: frame=%u, scanline=%u, pipe B: frame=%u, scanline=%u, pipe C: frame=%u, scanline=%u",
-		      pipe_name(__entry->pipe),
-		      __entry->frame[PIPE_A], __entry->scanline[PIPE_A],
-		      __entry->frame[PIPE_B], __entry->scanline[PIPE_B],
-		      __entry->frame[PIPE_C], __entry->scanline[PIPE_C])
-);
-
-TRACE_EVENT(intel_pipe_crc,
-	    TP_PROTO(struct intel_crtc *crtc, const u32 *crcs),
-	    TP_ARGS(crtc, crcs),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     __array(u32, crcs, 5)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   memcpy(__entry->crcs, crcs, sizeof(__entry->crcs));
-			   ),
-
-	    TP_printk("pipe %c, frame=%u, scanline=%u crc=%08x %08x %08x %08x %08x",
-		      pipe_name(__entry->pipe), __entry->frame, __entry->scanline,
-		      __entry->crcs[0], __entry->crcs[1], __entry->crcs[2],
-		      __entry->crcs[3], __entry->crcs[4])
-);
-
-TRACE_EVENT(intel_cpu_fifo_underrun,
-	    TP_PROTO(struct drm_i915_private *dev_priv, enum pipe pipe),
-	    TP_ARGS(dev_priv, pipe),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     ),
-
-	    TP_fast_assign(
-			    struct intel_crtc *crtc = intel_get_crtc_for_pipe(dev_priv, pipe);
-			   __entry->pipe = pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   ),
-
-	    TP_printk("pipe %c, frame=%u, scanline=%u",
-		      pipe_name(__entry->pipe),
-		      __entry->frame, __entry->scanline)
-);
-
-TRACE_EVENT(intel_pch_fifo_underrun,
-	    TP_PROTO(struct drm_i915_private *dev_priv, enum pipe pch_transcoder),
-	    TP_ARGS(dev_priv, pch_transcoder),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     ),
-
-	    TP_fast_assign(
-			   enum pipe pipe = pch_transcoder;
-			   struct intel_crtc *crtc = intel_get_crtc_for_pipe(dev_priv, pipe);
-			   __entry->pipe = pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   ),
-
-	    TP_printk("pch transcoder %c, frame=%u, scanline=%u",
-		      pipe_name(__entry->pipe),
-		      __entry->frame, __entry->scanline)
-);
-
-TRACE_EVENT(intel_memory_cxsr,
-	    TP_PROTO(struct drm_i915_private *dev_priv, bool old, bool new),
-	    TP_ARGS(dev_priv, old, new),
-
-	    TP_STRUCT__entry(
-			     __array(u32, frame, 3)
-			     __array(u32, scanline, 3)
-			     __field(bool, old)
-			     __field(bool, new)
-			     ),
-
-	    TP_fast_assign(
-			   struct intel_crtc *crtc;
-			   for_each_intel_crtc(&dev_priv->drm, crtc) {
-				   __entry->frame[crtc->pipe] = intel_crtc_get_vblank_counter(crtc);
-				   __entry->scanline[crtc->pipe] = intel_get_crtc_scanline(crtc);
-			   }
-			   __entry->old = old;
-			   __entry->new = new;
-			   ),
-
-	    TP_printk("%s->%s, pipe A: frame=%u, scanline=%u, pipe B: frame=%u, scanline=%u, pipe C: frame=%u, scanline=%u",
-		      onoff(__entry->old), onoff(__entry->new),
-		      __entry->frame[PIPE_A], __entry->scanline[PIPE_A],
-		      __entry->frame[PIPE_B], __entry->scanline[PIPE_B],
-		      __entry->frame[PIPE_C], __entry->scanline[PIPE_C])
-);
-
-TRACE_EVENT(g4x_wm,
-	    TP_PROTO(struct intel_crtc *crtc, const struct g4x_wm_values *wm),
-	    TP_ARGS(crtc, wm),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     __field(u16, primary)
-			     __field(u16, sprite)
-			     __field(u16, cursor)
-			     __field(u16, sr_plane)
-			     __field(u16, sr_cursor)
-			     __field(u16, sr_fbc)
-			     __field(u16, hpll_plane)
-			     __field(u16, hpll_cursor)
-			     __field(u16, hpll_fbc)
-			     __field(bool, cxsr)
-			     __field(bool, hpll)
-			     __field(bool, fbc)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   __entry->primary = wm->pipe[crtc->pipe].plane[PLANE_PRIMARY];
-			   __entry->sprite = wm->pipe[crtc->pipe].plane[PLANE_SPRITE0];
-			   __entry->cursor = wm->pipe[crtc->pipe].plane[PLANE_CURSOR];
-			   __entry->sr_plane = wm->sr.plane;
-			   __entry->sr_cursor = wm->sr.cursor;
-			   __entry->sr_fbc = wm->sr.fbc;
-			   __entry->hpll_plane = wm->hpll.plane;
-			   __entry->hpll_cursor = wm->hpll.cursor;
-			   __entry->hpll_fbc = wm->hpll.fbc;
-			   __entry->cxsr = wm->cxsr;
-			   __entry->hpll = wm->hpll_en;
-			   __entry->fbc = wm->fbc_en;
-			   ),
-
-	    TP_printk("pipe %c, frame=%u, scanline=%u, wm %d/%d/%d, sr %s/%d/%d/%d, hpll %s/%d/%d/%d, fbc %s",
-		      pipe_name(__entry->pipe), __entry->frame, __entry->scanline,
-		      __entry->primary, __entry->sprite, __entry->cursor,
-		      yesno(__entry->cxsr), __entry->sr_plane, __entry->sr_cursor, __entry->sr_fbc,
-		      yesno(__entry->hpll), __entry->hpll_plane, __entry->hpll_cursor, __entry->hpll_fbc,
-		      yesno(__entry->fbc))
-);
-
-TRACE_EVENT(vlv_wm,
-	    TP_PROTO(struct intel_crtc *crtc, const struct vlv_wm_values *wm),
-	    TP_ARGS(crtc, wm),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     __field(u32, level)
-			     __field(u32, cxsr)
-			     __field(u32, primary)
-			     __field(u32, sprite0)
-			     __field(u32, sprite1)
-			     __field(u32, cursor)
-			     __field(u32, sr_plane)
-			     __field(u32, sr_cursor)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   __entry->level = wm->level;
-			   __entry->cxsr = wm->cxsr;
-			   __entry->primary = wm->pipe[crtc->pipe].plane[PLANE_PRIMARY];
-			   __entry->sprite0 = wm->pipe[crtc->pipe].plane[PLANE_SPRITE0];
-			   __entry->sprite1 = wm->pipe[crtc->pipe].plane[PLANE_SPRITE1];
-			   __entry->cursor = wm->pipe[crtc->pipe].plane[PLANE_CURSOR];
-			   __entry->sr_plane = wm->sr.plane;
-			   __entry->sr_cursor = wm->sr.cursor;
-			   ),
-
-	    TP_printk("pipe %c, frame=%u, scanline=%u, level=%d, cxsr=%d, wm %d/%d/%d/%d, sr %d/%d",
-		      pipe_name(__entry->pipe), __entry->frame,
-		      __entry->scanline, __entry->level, __entry->cxsr,
-		      __entry->primary, __entry->sprite0, __entry->sprite1, __entry->cursor,
-		      __entry->sr_plane, __entry->sr_cursor)
-);
-
-TRACE_EVENT(vlv_fifo_size,
-	    TP_PROTO(struct intel_crtc *crtc, u32 sprite0_start, u32 sprite1_start, u32 fifo_size),
-	    TP_ARGS(crtc, sprite0_start, sprite1_start, fifo_size),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     __field(u32, sprite0_start)
-			     __field(u32, sprite1_start)
-			     __field(u32, fifo_size)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   __entry->sprite0_start = sprite0_start;
-			   __entry->sprite1_start = sprite1_start;
-			   __entry->fifo_size = fifo_size;
-			   ),
-
-	    TP_printk("pipe %c, frame=%u, scanline=%u, %d/%d/%d",
-		      pipe_name(__entry->pipe), __entry->frame,
-		      __entry->scanline, __entry->sprite0_start,
-		      __entry->sprite1_start, __entry->fifo_size)
-);
-
-/* plane updates */
-
-TRACE_EVENT(intel_update_plane,
-	    TP_PROTO(struct drm_plane *plane, struct intel_crtc *crtc),
-	    TP_ARGS(plane, crtc),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     __array(int, src, 4)
-			     __array(int, dst, 4)
-			     __string(name, plane->name)
-			     ),
-
-	    TP_fast_assign(
-			   __assign_str(name, plane->name);
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   memcpy(__entry->src, &plane->state->src, sizeof(__entry->src));
-			   memcpy(__entry->dst, &plane->state->dst, sizeof(__entry->dst));
-			   ),
-
-	    TP_printk("pipe %c, plane %s, frame=%u, scanline=%u, " DRM_RECT_FP_FMT " -> " DRM_RECT_FMT,
-		      pipe_name(__entry->pipe), __get_str(name),
-		      __entry->frame, __entry->scanline,
-		      DRM_RECT_FP_ARG((const struct drm_rect *)__entry->src),
-		      DRM_RECT_ARG((const struct drm_rect *)__entry->dst))
-);
-
-TRACE_EVENT(intel_disable_plane,
-	    TP_PROTO(struct drm_plane *plane, struct intel_crtc *crtc),
-	    TP_ARGS(plane, crtc),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     __string(name, plane->name)
-			     ),
-
-	    TP_fast_assign(
-			   __assign_str(name, plane->name);
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   ),
-
-	    TP_printk("pipe %c, plane %s, frame=%u, scanline=%u",
-		      pipe_name(__entry->pipe), __get_str(name),
-		      __entry->frame, __entry->scanline)
-);
-
-/* fbc */
-
-TRACE_EVENT(intel_fbc_activate,
-	    TP_PROTO(struct intel_crtc *crtc),
-	    TP_ARGS(crtc),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   ),
-
-	    TP_printk("pipe %c, frame=%u, scanline=%u",
-		      pipe_name(__entry->pipe), __entry->frame, __entry->scanline)
-);
-
-TRACE_EVENT(intel_fbc_deactivate,
-	    TP_PROTO(struct intel_crtc *crtc),
-	    TP_ARGS(crtc),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   ),
-
-	    TP_printk("pipe %c, frame=%u, scanline=%u",
-		      pipe_name(__entry->pipe), __entry->frame, __entry->scanline)
-);
-
-TRACE_EVENT(intel_fbc_nuke,
-	    TP_PROTO(struct intel_crtc *crtc),
-	    TP_ARGS(crtc),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   ),
-
-	    TP_printk("pipe %c, frame=%u, scanline=%u",
-		      pipe_name(__entry->pipe), __entry->frame, __entry->scanline)
-);
-
-/* pipe updates */
-
-TRACE_EVENT(intel_pipe_update_start,
-	    TP_PROTO(struct intel_crtc *crtc),
-	    TP_ARGS(crtc),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     __field(u32, min)
-			     __field(u32, max)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   __entry->min = crtc->debug.min_vbl;
-			   __entry->max = crtc->debug.max_vbl;
-			   ),
-
-	    TP_printk("pipe %c, frame=%u, scanline=%u, min=%u, max=%u",
-		      pipe_name(__entry->pipe), __entry->frame,
-		       __entry->scanline, __entry->min, __entry->max)
-);
-
-TRACE_EVENT(intel_pipe_update_vblank_evaded,
-	    TP_PROTO(struct intel_crtc *crtc),
-	    TP_ARGS(crtc),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     __field(u32, min)
-			     __field(u32, max)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = crtc->debug.start_vbl_count;
-			   __entry->scanline = crtc->debug.scanline_start;
-			   __entry->min = crtc->debug.min_vbl;
-			   __entry->max = crtc->debug.max_vbl;
-			   ),
-
-	    TP_printk("pipe %c, frame=%u, scanline=%u, min=%u, max=%u",
-		      pipe_name(__entry->pipe), __entry->frame,
-		       __entry->scanline, __entry->min, __entry->max)
-);
-
-TRACE_EVENT(intel_pipe_update_end,
-	    TP_PROTO(struct intel_crtc *crtc, u32 frame, int scanline_end),
-	    TP_ARGS(crtc, frame, scanline_end),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = frame;
-			   __entry->scanline = scanline_end;
-			   ),
-
-	    TP_printk("pipe %c, frame=%u, scanline=%u",
-		      pipe_name(__entry->pipe), __entry->frame,
-		      __entry->scanline)
-);
-
-/* frontbuffer tracking */
-
-TRACE_EVENT(intel_frontbuffer_invalidate,
-	    TP_PROTO(unsigned int frontbuffer_bits, unsigned int origin),
-	    TP_ARGS(frontbuffer_bits, origin),
-
-	    TP_STRUCT__entry(
-			     __field(unsigned int, frontbuffer_bits)
-			     __field(unsigned int, origin)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->frontbuffer_bits = frontbuffer_bits;
-			   __entry->origin = origin;
-			   ),
-
-	    TP_printk("frontbuffer_bits=0x%08x, origin=%u",
-		      __entry->frontbuffer_bits, __entry->origin)
-);
-
-TRACE_EVENT(intel_frontbuffer_flush,
-	    TP_PROTO(unsigned int frontbuffer_bits, unsigned int origin),
-	    TP_ARGS(frontbuffer_bits, origin),
-
-	    TP_STRUCT__entry(
-			     __field(unsigned int, frontbuffer_bits)
-			     __field(unsigned int, origin)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->frontbuffer_bits = frontbuffer_bits;
-			   __entry->origin = origin;
-			   ),
-
-	    TP_printk("frontbuffer_bits=0x%08x, origin=%u",
-		      __entry->frontbuffer_bits, __entry->origin)
-);
-
 /* object tracking */
 
 TRACE_EVENT(i915_gem_object_create,
-	    TP_PROTO(struct drm_i915_gem_object *obj),
-	    TP_ARGS(obj),
+	    TP_PROTO(struct drm_i915_gem_object *obj, u64 nsegments),
+	    TP_ARGS(obj, nsegments),
 
 	    TP_STRUCT__entry(
 			     __field(struct drm_i915_gem_object *, obj)
 			     __field(u64, size)
+			     __field(u64, nsegments)
 			     ),
 
 	    TP_fast_assign(
 			   __entry->obj = obj;
 			   __entry->size = obj->base.size;
+			   __entry->nsegments = nsegments;
 			   ),
 
-	    TP_printk("obj=%p, size=0x%llx", __entry->obj, __entry->size)
+	    TP_printk("obj=%p, segments=%llu size=0x%llx", __entry->obj,
+		      __entry->nsegments, __entry->size)
+);
+
+TRACE_EVENT(i915_dma_buf_attach,
+	    TP_PROTO(struct drm_i915_gem_object *obj, unsigned int fabric, int dist),
+	    TP_ARGS(obj, fabric, dist),
+
+	    TP_STRUCT__entry(
+			     __field(struct drm_i915_gem_object *, obj)
+			     __field(bool, lmem)
+			     __field(unsigned int, fabric)
+			     __field(int, distance)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->obj = obj;
+			   __entry->lmem = i915_gem_object_is_lmem(obj);
+			   __entry->fabric = fabric;
+			   __entry->distance = dist;
+			   ),
+
+	    TP_printk("obj=%p, lmem=%d, fabric=%d p2p distance=%d",
+		      __entry->obj, __entry->lmem, __entry->fabric,
+		      __entry->distance)
 );
 
 TRACE_EVENT(i915_gem_shrink,
@@ -641,11 +175,12 @@ TRACE_EVENT(i915_gem_object_pread,
 );
 
 TRACE_EVENT(i915_gem_object_fault,
-	    TP_PROTO(struct drm_i915_gem_object *obj, u64 index, bool gtt, bool write),
-	    TP_ARGS(obj, index, gtt, write),
+	    TP_PROTO(struct drm_i915_gem_object *obj, unsigned long addr, u64 index, bool gtt, bool write),
+	    TP_ARGS(obj, addr, index, gtt, write),
 
 	    TP_STRUCT__entry(
 			     __field(struct drm_i915_gem_object *, obj)
+			     __field(unsigned long, addr)
 			     __field(u64, index)
 			     __field(bool, gtt)
 			     __field(bool, write)
@@ -653,14 +188,16 @@ TRACE_EVENT(i915_gem_object_fault,
 
 	    TP_fast_assign(
 			   __entry->obj = obj;
+			   __entry->addr = addr;
 			   __entry->index = index;
 			   __entry->gtt = gtt;
 			   __entry->write = write;
 			   ),
 
-	    TP_printk("obj=%p, %s index=%llu %s",
+	    TP_printk("CPU page fault on obj=%p, %s address %lx (page index=%llu) %s",
 		      __entry->obj,
 		      __entry->gtt ? "GTT" : "CPU",
+		      __entry->addr,
 		      __entry->index,
 		      __entry->write ? ", writable" : "")
 );
@@ -778,7 +315,7 @@ TRACE_EVENT(i915_request_queue,
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
-			   __entry->seqno = rq->fence.seqno;
+			   __entry->seqno = i915_request_seqno(rq);
 			   __entry->flags = flags;
 			   ),
 
@@ -794,6 +331,7 @@ DECLARE_EVENT_CLASS(i915_request,
 	    TP_STRUCT__entry(
 			     __field(u32, dev)
 			     __field(u64, ctx)
+			     __field(u32, guc_id)
 			     __field(u16, class)
 			     __field(u16, instance)
 			     __field(u32, seqno)
@@ -804,14 +342,16 @@ DECLARE_EVENT_CLASS(i915_request,
 			   __entry->dev = rq->engine->i915->drm.primary->index;
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
+			   __entry->guc_id = rq->context->guc_id.id;
 			   __entry->ctx = rq->fence.context;
-			   __entry->seqno = rq->fence.seqno;
+			   __entry->seqno = i915_request_seqno(rq);
 			   __entry->tail = rq->tail;
 			   ),
 
-	    TP_printk("dev=%u, engine=%u:%u, ctx=%llu, seqno=%u, tail=%u",
+	    TP_printk("dev=%u, engine=%u:%u, guc_id=%u, ctx=%llu, seqno=%u, tail=%u",
 		      __entry->dev, __entry->class, __entry->instance,
-		      __entry->ctx, __entry->seqno, __entry->tail)
+		      __entry->guc_id, __entry->ctx, __entry->seqno,
+		      __entry->tail)
 );
 
 DEFINE_EVENT(i915_request, i915_request_add,
@@ -854,7 +394,7 @@ TRACE_EVENT(i915_request_in,
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
-			   __entry->seqno = rq->fence.seqno;
+			   __entry->seqno = i915_request_seqno(rq);
 			   __entry->prio = rq->sched.attr.priority;
 			   __entry->port = port;
 			   ),
@@ -883,7 +423,7 @@ TRACE_EVENT(i915_request_out,
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
-			   __entry->seqno = rq->fence.seqno;
+			   __entry->seqno = i915_request_seqno(rq);
 			   __entry->completed = i915_request_completed(rq);
 			   ),
 
@@ -900,23 +440,19 @@ DECLARE_EVENT_CLASS(intel_context,
 			     __field(u32, guc_id)
 			     __field(int, pin_count)
 			     __field(u32, sched_state)
-			     __field(u32, guc_sched_state_no_lock)
 			     __field(u8, guc_prio)
 			     ),
 
 		    TP_fast_assign(
-			   __entry->guc_id = ce->guc_id;
+			   __entry->guc_id = ce->guc_id.id;
 			   __entry->pin_count = atomic_read(&ce->pin_count);
 			   __entry->sched_state = ce->guc_state.sched_state;
-			   __entry->guc_sched_state_no_lock =
-			   atomic_read(&ce->guc_sched_state_no_lock);
-			   __entry->guc_prio = ce->guc_prio;
+			   __entry->guc_prio = ce->guc_state.prio;
 			   ),
 
-		    TP_printk("guc_id=%d, pin_count=%d sched_state=0x%x,0x%x, guc_prio=%u",
+		    TP_printk("guc_id=%d, pin_count=%d sched_state=0x%x, guc_prio=%u",
 			      __entry->guc_id, __entry->pin_count,
 			      __entry->sched_state,
-			      __entry->guc_sched_state_no_lock,
 			      __entry->guc_prio)
 );
 
@@ -1128,7 +664,7 @@ TRACE_EVENT(i915_request_wait_begin,
 			   __entry->class = rq->engine->uabi_class;
 			   __entry->instance = rq->engine->uabi_instance;
 			   __entry->ctx = rq->fence.context;
-			   __entry->seqno = rq->fence.seqno;
+			   __entry->seqno = i915_request_seqno(rq);
 			   __entry->flags = flags;
 			   ),
 
@@ -1184,6 +720,41 @@ TRACE_EVENT(intel_gpu_freq_change,
 			   ),
 
 	    TP_printk("new_freq=%u", __entry->freq)
+);
+
+TRACE_EVENT(i915_eu_stall_cntr_read,
+	    TP_PROTO(u8 slice, u8 subslice,
+		     u32 read_ptr, u32 write_ptr,
+		     u32 read_offset, u32 write_offset,
+		     size_t total_size),
+	    TP_ARGS(slice, subslice, read_ptr, write_ptr,
+		    read_offset, write_offset, total_size),
+
+	    TP_STRUCT__entry(
+			     __field(u8, slice)
+			     __field(u8, subslice)
+			     __field(u32, read_ptr)
+			     __field(u32, write_ptr)
+			     __field(u32, read_offset)
+			     __field(u32, write_offset)
+			     __field(size_t, total_size)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->slice = slice;
+			   __entry->subslice = subslice;
+			   __entry->read_ptr = read_ptr;
+			   __entry->write_ptr = write_ptr;
+			   __entry->read_offset = read_offset;
+			   __entry->write_offset = write_offset;
+			   __entry->total_size = total_size;
+			   ),
+
+	    TP_printk("slice:%u subslice:%u readptr:0x%x writeptr:0x%x read off:%u write off:%u size:%zu ",
+		      __entry->slice, __entry->subslice,
+		      __entry->read_ptr, __entry->write_ptr,
+		      __entry->read_offset, __entry->write_offset,
+		      __entry->total_size)
 );
 
 /**
@@ -1260,9 +831,242 @@ DEFINE_EVENT(i915_context, i915_context_free,
 	TP_ARGS(ctx)
 );
 
+TRACE_EVENT(intel_gt_cat_error,
+	    TP_PROTO(struct intel_gt *gt, const char *guc_ctx_id),
+	    TP_ARGS(gt, guc_ctx_id),
+
+	    TP_STRUCT__entry(
+			     __field(struct intel_gt *, gt)
+			     __array(char, guc_ctx_id, 11)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->gt = gt;
+			   strscpy(__entry->guc_ctx_id, guc_ctx_id, 11);
+			   ),
+
+	    TP_printk("GPU catastrophic memory error. GT: %d, GuC context: %s",
+		      __entry->gt->info.id,
+		      __entry->guc_ctx_id)
+);
+
+TRACE_EVENT(intel_gt_pagefault,
+	    TP_PROTO(struct intel_gt *gt, u64 address, u32 fault_reg, bool is_ggtt),
+	    TP_ARGS(gt, address, fault_reg, is_ggtt),
+
+	    TP_STRUCT__entry(
+			     __field(struct intel_gt *, gt)
+			     __field(u64, address)
+			     __field(u32, fault_reg)
+			     __field(bool, is_ggtt)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->gt = gt;
+			   __entry->address = address;
+			   __entry->fault_reg = fault_reg;
+			   __entry->is_ggtt = is_ggtt;
+			   ),
+
+	    TP_printk("dev %p: GPU %s fault: GT: %d, address space %s, address: %#llx, engine ID: %u, source ID: %u, type: %u, fault level: %u",
+		      __entry->gt->i915,
+		      !!(__entry->fault_reg & RING_FAULT_ACCESS_TYPE) ? "Write" : "Read",
+		      __entry->gt->info.id,
+		      __entry->is_ggtt ? "GGTT" : "PPGTT",
+		      __entry->address,
+		      GEN8_RING_FAULT_ENGINE_ID(__entry->fault_reg),
+		      RING_FAULT_SRCID(__entry->fault_reg),
+		      RING_FAULT_FAULT_TYPE(__entry->fault_reg),
+		      RING_FAULT_LEVEL(__entry->fault_reg))
+);
+
+TRACE_EVENT(i915_gem_object_migrate,
+	    TP_PROTO(struct drm_i915_gem_object *obj,
+			enum intel_region_id region),
+	    TP_ARGS(obj, region),
+
+	    TP_STRUCT__entry(
+			     __field(struct drm_i915_private*, dev)
+			     __field(struct drm_i915_gem_object*, obj)
+			     __field(u64, size)
+			     __field(u32, src)
+			     __field(u32, dst)
+			     __field(bool, has_pages)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->dev = to_i915(obj->base.dev);
+			   __entry->obj = obj;
+			   __entry->size = obj->base.size;
+			   __entry->src = obj->mm.region.mem->id;
+			   __entry->dst = region;
+			   __entry->has_pages = i915_gem_object_has_pages(obj);
+			   ),
+
+	    TP_printk("dev %p migrate object %p [size %llx] %s %s from %s to %s",
+		      __entry->dev, __entry->obj, __entry->size,
+		      __entry->has_pages ? "with" : "without", "backing storage",
+		      intel_memory_region_id2str(__entry->src),
+		      intel_memory_region_id2str(__entry->dst))
+);
+
+TRACE_EVENT(i915_mm_fault,
+	    TP_PROTO(struct drm_i915_private *i915,
+			struct i915_address_space *vm,
+			struct i915_vma *vma,
+			struct recoverable_page_fault_info *info),
+	    TP_ARGS(i915, vm, vma, info),
+
+	    TP_STRUCT__entry(
+			     __field(struct drm_i915_private*, dev)
+			     __field(struct i915_address_space*, vm)
+			     __field(struct drm_i915_gem_object*, obj)
+			     __field(u64, obj_size)
+			     __field(u64, addr)
+			     __field(u64, vma_size)
+			     __field(u32, asid)
+			     __field(u32, pg_sz_mask)
+			     __field(u32, region)
+			     __field(u16, pdata)
+			     __field(u8, access_type)
+			     __field(u8, fault_type)
+			     __field(u8, fault_level)
+			     __field(u8, engine_class)
+			     __field(u8, engine_instance)
+			     __field(bool, is_bound)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->dev = i915;
+			   __entry->vm = vm;
+			   if (vma) {
+				   __entry->obj = vma->obj;
+				   __entry->obj_size = vma->obj->base.size;
+				   __entry->vma_size = i915_vma_size(vma);
+				   __entry->region = !vma->obj->mm.region.mem ?
+				   	INTEL_REGION_UNKNOWN :
+				   	vma->obj->mm.region.mem->id;
+				   __entry->pg_sz_mask = vma->page_sizes;
+				   __entry->is_bound = i915_vma_is_bound(vma, PIN_USER);
+			   } else {
+				   __entry->obj = NULL;
+				   __entry->obj_size = 0;
+				   __entry->vma_size = 0;
+				   __entry->region = INTEL_REGION_UNKNOWN;
+				   __entry->pg_sz_mask = 0;
+				   __entry->is_bound = false;
+			   }
+			   __entry->addr = info->page_addr;
+			   __entry->asid = info->asid;
+			   __entry->access_type = info->access_type;
+			   __entry->fault_type = info->fault_type;
+			   __entry->fault_level = info->fault_level;
+			   __entry->engine_class = info->engine_class;
+			   __entry->engine_instance = info->engine_instance;
+			   __entry->pdata = info->pdata;
+			   ),
+
+	    TP_printk("dev %p vm %p [asid %d]: GPU %s fault on %s obj %p [size %lld] address %llx%s size 0x%llx pgsz %x, %s[%d] %d: %s (0x%x)",
+		      __entry->dev, __entry->vm, __entry->asid,
+		      intel_access_type2str(__entry->access_type),
+		      intel_memory_region_id2str(__entry->region),
+		      __entry->obj, __entry->obj_size, __entry->addr,
+		      __entry->is_bound ? " bound" : "", __entry->vma_size, __entry->pg_sz_mask,
+		      intel_engine_class_repr(__entry->engine_class),
+		      __entry->engine_instance, __entry->fault_level,
+		      intel_pagefault_type2str(__entry->fault_type), __entry->pdata)
+);
+
+TRACE_EVENT(intel_tlb_invalidate,
+	    TP_PROTO(struct intel_gt *gt, u64 start, u64 len),
+	    TP_ARGS(gt, start, len),
+
+	    TP_STRUCT__entry(
+			     __field(struct drm_i915_private*, dev)
+			     __field(u32, id)
+			     __field(u64, start)
+			     __field(u64, len)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->dev = gt->i915;
+			   __entry->id = gt->info.id;
+			   __entry->start = start;
+			   __entry->len = len;
+			   ),
+
+	    TP_printk("dev %p gt%d %s TLB invalidation, start %llx len %llx",
+		      __entry->dev, __entry->id,
+		      (__entry->len) ? "range" : "full",
+		      __entry->start, __entry->len)
+);
+
+TRACE_EVENT(intel_access_counter,
+	    TP_PROTO(struct intel_gt *gt, struct acc_info *info, int err),
+	    TP_ARGS(gt, info, err),
+
+	    TP_STRUCT__entry(
+			     __field(u32, dev)
+			     __field(u32, id)
+			     __field(u32, region_type)
+			     __field(u32, sub_region_hit_vector)
+			     __field(u32, asid)
+			     __field(u32, engine_class)
+			     __field(u32, engine_instance)
+			     __field(u32, err)
+			     __field(u64, vaddr_base)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->dev = gt->i915->drm.primary->index;
+			   __entry->id = gt->info.id;
+			   __entry->region_type = info->granularity;
+			   __entry->sub_region_hit_vector = info->sub_granularity;
+			   __entry->asid = info->asid;
+			   __entry->engine_class = info->engine_class;
+			   __entry->engine_instance = info->engine_instance;
+			   __entry->err = err;
+			   __entry->vaddr_base = info->va_range_base;
+			   ),
+
+	    TP_printk("%s dev%u gt%u asid%d %d KB Region/%d KB sub-region %s[%d], VA_BASE: %llx, sub-region hit vector %x",
+		      intel_acc_err2str(__entry->err), __entry->dev, __entry->id, __entry->asid,
+		      granularity_in_byte(__entry->region_type) / SZ_1K,
+		      sub_granularity_in_byte(__entry->region_type) / SZ_1K,
+		      intel_engine_class_repr(__entry->engine_class),
+		      __entry->engine_instance, __entry->vaddr_base, __entry->sub_region_hit_vector)
+);
+
+TRACE_EVENT(i915_vm_prefetch,
+	    TP_PROTO(struct drm_i915_private *i915, u32 vm_id, u64 start, u64 len, enum intel_region_id region),
+	    TP_ARGS(i915, vm_id, start, len, region),
+
+	    TP_STRUCT__entry(
+			     __field(struct drm_i915_private*, dev)
+			     __field(u32, vm_id)
+			     __field(u64, start)
+			     __field(u64, len)
+			     __field(enum intel_region_id, region)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->dev = i915;
+			   __entry->vm_id = vm_id;
+			   __entry->start = start;
+			   __entry->len = len;
+			   __entry->region = region;
+			   ),
+
+	    TP_printk("dev %p prefetch va start %llx (len %llx) to region %s for vm %d",
+		      __entry->dev,
+		      __entry->start, __entry->len,
+		      intel_memory_region_id2str(__entry->region), __entry->vm_id)
+);
 #endif /* _I915_TRACE_H_ */
 
 /* This part must be outside protection */
 #undef TRACE_INCLUDE_PATH
+#undef TRACE_INCLUDE_FILE
 #define TRACE_INCLUDE_PATH ../../drivers/gpu/drm/i915
+#define TRACE_INCLUDE_FILE i915_trace
 #include <trace/define_trace.h>

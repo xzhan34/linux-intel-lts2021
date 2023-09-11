@@ -14,16 +14,15 @@
 
 #include "gem/i915_gem_context.h"
 #include "gem/i915_gem_lmem.h"
+#include "gem/i915_gem_object_blt.h"
 #include "gem/i915_gem_region.h"
+#include "gem/i915_gem_object_blt.h"
 #include "gem/selftests/igt_gem_utils.h"
 #include "gem/selftests/mock_context.h"
-#include "gt/intel_engine_pm.h"
 #include "gt/intel_engine_user.h"
 #include "gt/intel_gt.h"
 #include "i915_buddy.h"
-#include "gt/intel_migrate.h"
 #include "i915_memcpy.h"
-#include "i915_ttm_buddy_manager.h"
 #include "selftests/igt_flush_test.h"
 #include "selftests/i915_random.h"
 
@@ -52,7 +51,7 @@ static void close_objects(struct intel_memory_region *mem,
 static int igt_mock_fill(void *arg)
 {
 	struct intel_memory_region *mem = arg;
-	resource_size_t total = resource_size(&mem->region);
+	resource_size_t total = mem->mm.size;
 	resource_size_t page_size;
 	resource_size_t rem;
 	unsigned long max_pages;
@@ -61,14 +60,15 @@ static int igt_mock_fill(void *arg)
 	int err = 0;
 
 	page_size = PAGE_SIZE;
-	max_pages = div64_u64(total, page_size);
 	rem = total;
+retry:
+	max_pages = div64_u64(rem, page_size);
 
 	for_each_prime_number_from(page_num, 1, max_pages) {
 		resource_size_t size = page_num * page_size;
 		struct drm_i915_gem_object *obj;
 
-		obj = i915_gem_object_create_region(mem, size, 0, 0);
+		obj = i915_gem_object_create_region(mem, size, 0);
 		if (IS_ERR(obj)) {
 			err = PTR_ERR(obj);
 			break;
@@ -88,6 +88,11 @@ static int igt_mock_fill(void *arg)
 		err = 0;
 	if (err == -ENXIO) {
 		if (page_num * page_size <= rem) {
+			if (mem->is_range_manager && max_pages > 1) {
+				max_pages >>= 1;
+				goto retry;
+			}
+
 			pr_err("%s failed, space still left in region\n",
 			       __func__);
 			err = -EINVAL;
@@ -110,9 +115,16 @@ igt_object_create(struct intel_memory_region *mem,
 	struct drm_i915_gem_object *obj;
 	int err;
 
-	obj = i915_gem_object_create_region(mem, size, 0, flags);
+	obj = i915_gem_object_create_region(mem, size, flags);
 	if (IS_ERR(obj))
 		return obj;
+
+	if (obj->base.size != size) {
+		pr_err("Tried to create object with size %lld, but returned %zd\n",
+		       size, obj->base.size);
+		err = -EINVAL;
+		goto put;
+	}
 
 	err = i915_gem_object_pin_pages_unlocked(obj);
 	if (err)
@@ -155,7 +167,6 @@ static int igt_mock_reserve(void *arg)
 {
 	struct intel_memory_region *mem = arg;
 	struct drm_i915_private *i915 = mem->i915;
-	resource_size_t avail = resource_size(&mem->region);
 	struct drm_i915_gem_object *obj;
 	const u32 chunk_size = SZ_32M;
 	u32 i, offset, count, *order;
@@ -164,12 +175,12 @@ static int igt_mock_reserve(void *arg)
 	LIST_HEAD(objects);
 	int err = 0;
 
-	count = avail / chunk_size;
+	count = atomic64_read(&mem->avail) / chunk_size;
 	order = i915_random_order(count, &prng);
 	if (!order)
 		return 0;
 
-	mem = mock_region_create(i915, 0, SZ_2G, I915_GTT_PAGE_SIZE_4K, 0);
+	mem = mock_region_create(to_gt(i915), 0, SZ_2G, I915_GTT_PAGE_SIZE_4K, 0, 0);
 	if (IS_ERR(mem)) {
 		pr_err("failed to create memory region\n");
 		err = PTR_ERR(mem);
@@ -194,32 +205,40 @@ static int igt_mock_reserve(void *arg)
 			pr_err("%s failed to reserve range", __func__);
 			goto out_close;
 		}
-
-		/* XXX: maybe sanity check the block range here? */
-		avail -= size;
 	}
+
+	pr_info("After reservation, available %pa / %pa\n",
+		&mem->avail, &mem->mm.size);
 
 	/* Try to see if we can allocate from the remaining space */
 	allocated = 0;
-	cur_avail = avail;
-	do {
+	cur_avail = atomic64_read(&mem->avail);
+	while (cur_avail) {
 		u32 size = i915_prandom_u32_max_state(cur_avail, &prng);
 
+retry:
 		size = max_t(u32, round_up(size, PAGE_SIZE), PAGE_SIZE);
 		obj = igt_object_create(mem, &objects, size, 0);
 		if (IS_ERR(obj)) {
-			if (PTR_ERR(obj) == -ENXIO)
+			if (PTR_ERR(obj) == -ENXIO) {
+				if (mem->is_range_manager &&
+				    size > mem->mm.chunk_size) {
+					size >>= 1;
+					goto retry;
+				}
 				break;
-
+			}
 			err = PTR_ERR(obj);
+			pr_err("%s allocation { size: %d, avail : %lld / %pa } failed",
+			       __func__, size, cur_avail, &mem->avail);
 			goto out_close;
 		}
 		cur_avail -= size;
 		allocated += size;
-	} while (1);
+	}
 
-	if (allocated != avail) {
-		pr_err("%s mismatch between allocation and free space", __func__);
+	if (atomic64_read(&mem->avail)) {
+		pr_err("%s mismatch between allocation:%lld and remaining free space:%lld/%lld", __func__, allocated, cur_avail, atomic64_read(&mem->avail));
 		err = -EINVAL;
 	}
 
@@ -236,15 +255,14 @@ static int igt_mock_contiguous(void *arg)
 	struct intel_memory_region *mem = arg;
 	struct drm_i915_gem_object *obj;
 	unsigned long n_objects;
+	resource_size_t total = mem->mm.size;
+	resource_size_t min;
 	LIST_HEAD(objects);
 	LIST_HEAD(holes);
 	I915_RND_STATE(prng);
-	resource_size_t total;
-	resource_size_t min;
-	u64 target;
+	u64 target, max;
 	int err = 0;
 
-	total = resource_size(&mem->region);
 
 	/* Min size */
 	obj = igt_object_create(mem, &objects, PAGE_SIZE,
@@ -261,7 +279,8 @@ static int igt_mock_contiguous(void *arg)
 	igt_object_release(obj);
 
 	/* Max size */
-	obj = igt_object_create(mem, &objects, total, I915_BO_ALLOC_CONTIGUOUS);
+	max = BIT_ULL(mem->mm.max_order) * mem->mm.chunk_size;
+	obj = igt_object_create(mem, &objects, max, I915_BO_ALLOC_CONTIGUOUS);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
@@ -275,7 +294,7 @@ static int igt_mock_contiguous(void *arg)
 
 	/* Internal fragmentation should not bleed into the object size */
 	target = i915_prandom_u64_state(&prng);
-	div64_u64_rem(target, total, &target);
+	div64_u64_rem(target, max, &target);
 	target = round_up(target, PAGE_SIZE);
 	target = max_t(u64, PAGE_SIZE, target);
 
@@ -326,16 +345,18 @@ static int igt_mock_contiguous(void *arg)
 	close_objects(mem, &holes);
 
 	min = target;
-	target = total >> 1;
+	target = max >> 1;
 
-	/* Make sure we can still allocate all the fragmented space */
-	obj = igt_object_create(mem, &objects, target, 0);
-	if (IS_ERR(obj)) {
-		err = PTR_ERR(obj);
-		goto err_close_objects;
+	if (!mem->is_range_manager) {
+		/* Make sure we can still allocate all the fragmented space */
+		obj = igt_object_create(mem, &objects, target, 0);
+		if (IS_ERR(obj)) {
+			err = PTR_ERR(obj);
+			goto err_close_objects;
+		}
+
+		igt_object_release(obj);
 	}
-
-	igt_object_release(obj);
 
 	/*
 	 * Even though we have enough free space, we don't have a big enough
@@ -367,9 +388,7 @@ static int igt_mock_splintered_region(void *arg)
 {
 	struct intel_memory_region *mem = arg;
 	struct drm_i915_private *i915 = mem->i915;
-	struct i915_ttm_buddy_resource *res;
 	struct drm_i915_gem_object *obj;
-	struct i915_buddy_mm *mm;
 	unsigned int expected_order;
 	LIST_HEAD(objects);
 	u64 size;
@@ -377,36 +396,27 @@ static int igt_mock_splintered_region(void *arg)
 
 	/*
 	 * Sanity check we can still allocate everything even if the
-	 * mm.max_order != mm.size. i.e our starting address space size is not a
+	 * max_order != mm.size. i.e our starting address space size is not a
 	 * power-of-two.
 	 */
 
 	size = (SZ_4G - 1) & PAGE_MASK;
-	mem = mock_region_create(i915, 0, size, PAGE_SIZE, 0);
+	mem = mock_region_create(to_gt(i915), 0, size, PAGE_SIZE, 0, 0);
 	if (IS_ERR(mem))
 		return PTR_ERR(mem);
+
+	expected_order = get_order(rounddown_pow_of_two(size));
+	if (mem->mm.max_order != expected_order) {
+		pr_err("%s order mismatch(%u != %u)\n",
+		       __func__, mem->mm.max_order, expected_order);
+		err = -EINVAL;
+		goto out_put;
+	}
 
 	obj = igt_object_create(mem, &objects, size, 0);
 	if (IS_ERR(obj)) {
 		err = PTR_ERR(obj);
 		goto out_close;
-	}
-
-	res = to_ttm_buddy_resource(obj->mm.res);
-	mm = res->mm;
-	if (mm->size != size) {
-		pr_err("%s size mismatch(%llu != %llu)\n",
-		       __func__, mm->size, size);
-		err = -EINVAL;
-		goto out_put;
-	}
-
-	expected_order = get_order(rounddown_pow_of_two(size));
-	if (mm->max_order != expected_order) {
-		pr_err("%s order mismatch(%u != %u)\n",
-		       __func__, mm->max_order, expected_order);
-		err = -EINVAL;
-		goto out_put;
 	}
 
 	close_objects(mem, &objects);
@@ -419,12 +429,15 @@ static int igt_mock_splintered_region(void *arg)
 	 * sure that does indeed hold true.
 	 */
 
-	obj = igt_object_create(mem, &objects, size, I915_BO_ALLOC_CONTIGUOUS);
-	if (!IS_ERR(obj)) {
-		pr_err("%s too large contiguous allocation was not rejected\n",
-		       __func__);
-		err = -EINVAL;
-		goto out_close;
+	if (!mem->is_range_manager) {
+		obj = igt_object_create(mem, &objects, size,
+					I915_BO_ALLOC_CONTIGUOUS);
+		if (!IS_ERR(obj)) {
+			pr_err("%s too large contiguous allocation was not rejected\n",
+			       __func__);
+			err = -EINVAL;
+			goto out_close;
+		}
 	}
 
 	obj = igt_object_create(mem, &objects, rounddown_pow_of_two(size),
@@ -452,11 +465,8 @@ static int igt_mock_max_segment(void *arg)
 	const unsigned int max_segment = rounddown(UINT_MAX, PAGE_SIZE);
 	struct intel_memory_region *mem = arg;
 	struct drm_i915_private *i915 = mem->i915;
-	struct i915_ttm_buddy_resource *res;
 	struct drm_i915_gem_object *obj;
 	struct i915_buddy_block *block;
-	struct i915_buddy_mm *mm;
-	struct list_head *blocks;
 	struct scatterlist *sg;
 	LIST_HEAD(objects);
 	u64 size;
@@ -470,7 +480,7 @@ static int igt_mock_max_segment(void *arg)
 	 */
 
 	size = SZ_8G;
-	mem = mock_region_create(i915, 0, size, PAGE_SIZE, 0);
+	mem = mock_region_create(to_gt(i915), 0, size, PAGE_SIZE, 0, 0);
 	if (IS_ERR(mem))
 		return PTR_ERR(mem);
 
@@ -480,13 +490,10 @@ static int igt_mock_max_segment(void *arg)
 		goto out_put;
 	}
 
-	res = to_ttm_buddy_resource(obj->mm.res);
-	blocks = &res->blocks;
-	mm = res->mm;
 	size = 0;
-	list_for_each_entry(block, blocks, link) {
-		if (i915_buddy_block_size(mm, block) > size)
-			size = i915_buddy_block_size(mm, block);
+	list_for_each_entry(block, &obj->mm.blocks, link) {
+		if (i915_buddy_block_size(&mem->mm, block) > size)
+			size = i915_buddy_block_size(&mem->mm, block);
 	}
 	if (size < max_segment) {
 		pr_err("%s: Failed to create a huge contiguous block [> %u], largest block %lld\n",
@@ -550,7 +557,8 @@ static int igt_cpu_check(struct drm_i915_gem_object *obj, u32 dword, u32 val)
 	return err;
 }
 
-static int igt_gpu_write(struct i915_gem_context *ctx,
+static int igt_gpu_write(struct intel_gt *sdw_gt,
+			 struct i915_gem_context *ctx,
 			 struct drm_i915_gem_object *obj)
 {
 	struct i915_gem_engines *engines;
@@ -571,6 +579,8 @@ static int igt_gpu_write(struct i915_gem_context *ctx,
 	count = 0;
 	for_each_gem_engine(ce, i915_gem_context_lock_engines(ctx), it) {
 		count++;
+		if (ce->engine->gt != sdw_gt)
+			continue;
 		if (!intel_engine_can_store_dword(ce->engine))
 			continue;
 
@@ -603,7 +613,9 @@ static int igt_gpu_write(struct i915_gem_context *ctx,
 
 		ce = engines->engines[order[i] % engines->num_engines];
 		i = (i + 1) % (count * count);
-		if (!ce || !intel_engine_can_store_dword(ce->engine))
+		if (!ce ||
+		    ce->engine->gt != sdw_gt ||
+		    !intel_engine_can_store_dword(ce->engine))
 			continue;
 
 		err = igt_gpu_write_dw(ce, vma, dword, rng);
@@ -629,11 +641,11 @@ out_free:
 
 static int igt_lmem_create(void *arg)
 {
-	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt = arg;
 	struct drm_i915_gem_object *obj;
 	int err = 0;
 
-	obj = i915_gem_object_create_lmem(i915, PAGE_SIZE, 0);
+	obj = intel_gt_object_create_lmem(gt, PAGE_SIZE, 0);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
@@ -648,65 +660,123 @@ out_put:
 	return err;
 }
 
-static int igt_lmem_create_with_ps(void *arg)
+static struct intel_engine_cs *
+random_engine_class(struct intel_gt *gt,
+		    unsigned int class,
+		    struct rnd_state *prng)
 {
-	struct drm_i915_private *i915 = arg;
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+	unsigned int count;
+
+	count = 0;
+	for_each_engine(engine, gt, id) {
+		if (engine->class != class)
+			continue;
+		count++;
+	}
+
+	do {
+		count = i915_prandom_u32_max_state(count, prng);
+		engine = gt->engine_class[class][count];
+	} while (!engine);
+
+	return engine;
+}
+
+static int
+igt_create_migrate(struct intel_gt *gt,
+		   struct intel_gt *bcs_gt,
+		   struct intel_memory_region *src,
+		   struct intel_memory_region *dst)
+{
+	I915_RND_STATE(prng);
+	struct intel_engine_cs *engine =
+		random_engine_class(bcs_gt, COPY_ENGINE_CLASS, &prng);
+	struct drm_i915_gem_object *obj;
+	struct i915_gem_ww_ctx ww;
 	int err = 0;
-	u32 ps;
 
-	for (ps = PAGE_SIZE; ps <= SZ_1G; ps <<= 1) {
-		struct drm_i915_gem_object *obj;
-		dma_addr_t daddr;
+	pr_info("%s: migrating %x->%x using %s\n",
+		__func__, src->id, dst->id, engine->name);
 
-		obj = __i915_gem_object_create_lmem_with_ps(i915, ps, ps, 0);
-		if (IS_ERR(obj)) {
-			err = PTR_ERR(obj);
-			if (err == -ENXIO || err == -E2BIG) {
-				pr_info("%s not enough lmem for ps(%u) err=%d\n",
-					__func__, ps, err);
-				err = 0;
-			}
+	/* Switch object backing-store on create */
+	obj = i915_gem_object_create_region(src, PAGE_SIZE, 0);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
 
-			break;
-		}
+	/* Allow any and all migration [disable compression] */
+	obj->memory_mask = -1;
 
-		if (obj->base.size != ps) {
-			pr_err("%s size(%zu) != ps(%u)\n",
-			       __func__, obj->base.size, ps);
-			err = -EINVAL;
-			goto out_put;
-		}
+	for_i915_gem_ww(&ww, err, true) {
+		err = i915_gem_object_lock(obj, &ww);
+		if (err)
+			continue;
 
-		i915_gem_object_lock(obj, NULL);
+		err = i915_gem_object_migrate(obj, &ww, engine->kernel_context,
+					      dst->id, false);
+		if (err)
+			continue;
+
 		err = i915_gem_object_pin_pages(obj);
 		if (err)
-			goto out_put;
+			continue;
 
-		daddr = i915_gem_object_get_dma_address(obj, 0);
-		if (!IS_ALIGNED(daddr, ps)) {
-			pr_err("%s daddr(%pa) not aligned with ps(%u)\n",
-			       __func__, &daddr, ps);
-			err = -EINVAL;
-			goto out_unpin;
-		}
-
-out_unpin:
 		i915_gem_object_unpin_pages(obj);
-		__i915_gem_object_put_pages(obj);
-out_put:
-		i915_gem_object_unlock(obj);
-		i915_gem_object_put(obj);
-
-		if (err)
-			break;
 	}
+
+	i915_gem_object_put(obj);
 
 	return err;
 }
 
-static int igt_lmem_create_cleared_cpu(void *arg)
+static int igt_smem_create_migrate(void *arg)
+{
+	struct intel_gt *gt = arg;
+	struct drm_i915_private *i915 = gt->i915;
+	struct intel_memory_region *smem = i915->mm.regions[INTEL_REGION_SMEM];
+
+	return igt_create_migrate(gt, gt, smem, gt->lmem);
+}
+
+static int igt_lmem_create_migrate(void *arg)
+{
+	struct intel_gt *gt = arg;
+	struct drm_i915_private *i915 = gt->i915;
+	struct intel_memory_region *smem = i915->mm.regions[INTEL_REGION_SMEM];
+
+	return igt_create_migrate(gt, gt, gt->lmem, smem);
+}
+
+static int igt_smem_create_migrate_cross_tile(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
+	struct intel_memory_region *smem = i915->mm.regions[INTEL_REGION_SMEM];
+	struct intel_gt *gt, *gt2;
+	unsigned int i, j;
+	int ret;
+
+	for_each_gt(gt, i915, i) {
+		for_each_gt(gt2, i915, j) {
+			if (gt == gt2)
+				continue;
+
+			ret = igt_create_migrate(gt, gt2, smem, gt->lmem);
+			if (ret)
+				break;
+		}
+
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+static int igt_lmem_create_cleared_cpu(void *arg)
+{
+	struct intel_gt *gt = arg;
+	struct drm_i915_private *i915 = gt->i915;
 	I915_RND_STATE(prng);
 	IGT_TIMEOUT(end_time);
 	u32 size, i;
@@ -732,11 +802,11 @@ static int igt_lmem_create_cleared_cpu(void *arg)
 		 * user.
 		 */
 
-		flags = I915_BO_ALLOC_CPU_CLEAR;
+		flags = I915_BO_CPU_CLEAR;
 		if (i & 1)
 			flags = 0;
 
-		obj = i915_gem_object_create_lmem(i915, size, flags);
+		obj = intel_gt_object_create_lmem(gt, size, flags);
 		if (IS_ERR(obj))
 			return PTR_ERR(obj);
 
@@ -748,7 +818,7 @@ static int igt_lmem_create_cleared_cpu(void *arg)
 		dword = i915_prandom_u32_max_state(PAGE_SIZE / sizeof(u32),
 						   &prng);
 
-		if (flags & I915_BO_ALLOC_CPU_CLEAR) {
+		if (flags & I915_BO_CPU_CLEAR) {
 			err = igt_cpu_check(obj, dword, 0);
 			if (err) {
 				pr_err("%s failed with size=%u, flags=%u\n",
@@ -786,9 +856,37 @@ out_put:
 	return err;
 }
 
-static int igt_lmem_write_gpu(void *arg)
+static int igt_lmem_create_migrate_cross_tile(void *arg)
 {
 	struct drm_i915_private *i915 = arg;
+	struct intel_memory_region *smem = i915->mm.regions[INTEL_REGION_SMEM];
+	struct intel_gt *gt, *gt2;
+	unsigned int i, j;
+	int ret;
+
+	for_each_gt(gt, i915, i) {
+		for_each_gt(gt2, i915, j) {
+			if (gt == gt2)
+				continue;
+
+			ret = igt_create_migrate(gt, gt2, gt->lmem, smem);
+			if (ret)
+				break;
+		}
+
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+static int
+__igt_lmem_write_gpu(struct intel_gt *gt,
+		     struct intel_gt *sdw_gt,
+		     struct intel_gt *vm_gt)
+{
+	struct drm_i915_private *i915 = gt->i915;
 	struct drm_i915_gem_object *obj;
 	struct i915_gem_context *ctx;
 	struct file *file;
@@ -796,11 +894,14 @@ static int igt_lmem_write_gpu(void *arg)
 	u32 sz;
 	int err;
 
+	pr_info("%s: writting to gt%u from gt%u, ppgtt at gt%u...\n",
+		__func__, gt->info.id, sdw_gt->info.id, vm_gt->info.id);
+
 	file = mock_file(i915);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
 
-	ctx = live_context(i915, file);
+	ctx = live_gt_context(vm_gt, file);
 	if (IS_ERR(ctx)) {
 		err = PTR_ERR(ctx);
 		goto out_file;
@@ -808,7 +909,7 @@ static int igt_lmem_write_gpu(void *arg)
 
 	sz = round_up(prandom_u32_state(&prng) % SZ_32M, PAGE_SIZE);
 
-	obj = i915_gem_object_create_lmem(i915, sz, 0);
+	obj = intel_gt_object_create_lmem(gt, sz, 0);
 	if (IS_ERR(obj)) {
 		err = PTR_ERR(obj);
 		goto out_file;
@@ -818,7 +919,7 @@ static int igt_lmem_write_gpu(void *arg)
 	if (err)
 		goto out_put;
 
-	err = igt_gpu_write(ctx, obj);
+	err = igt_gpu_write(sdw_gt, ctx, obj);
 	if (err)
 		pr_err("igt_gpu_write failed(%d)\n", err);
 
@@ -830,28 +931,65 @@ out_file:
 	return err;
 }
 
-static struct intel_engine_cs *
-random_engine_class(struct drm_i915_private *i915,
-		    unsigned int class,
-		    struct rnd_state *prng)
+static int igt_lmem_write_gpu(void *arg)
 {
-	struct intel_engine_cs *engine;
-	unsigned int count;
+	struct intel_gt *gt = arg;
 
-	count = 0;
-	for (engine = intel_engine_lookup_user(i915, class, 0);
-	     engine && engine->uabi_class == class;
-	     engine = rb_entry_safe(rb_next(&engine->uabi_node),
-				    typeof(*engine), uabi_node))
-		count++;
-
-	count = i915_prandom_u32_max_state(count, prng);
-	return intel_engine_lookup_user(i915, class, count);
+	return __igt_lmem_write_gpu(gt, gt, gt);
 }
 
-static int igt_lmem_write_cpu(void *arg)
+static int igt_lmem_write_gpu_cross_tile(void *arg)
 {
+
 	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt, *gt2;
+	unsigned int i, j;
+	int ret;
+
+	for_each_gt(gt, i915, i) {
+		for_each_gt(gt2, i915, j) {
+			if (gt == gt2)
+				continue;
+
+			ret = __igt_lmem_write_gpu(gt, gt2, gt2);
+			if (ret)
+				break;
+		}
+
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+static int igt_lmem_write_gpu_cross_tile_cross_vm(void *arg)
+{
+
+	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt, *gt2;
+	unsigned int i, j;
+	int ret;
+
+	for_each_gt(gt, i915, i) {
+		for_each_gt(gt2, i915, j) {
+			if (gt == gt2)
+				continue;
+
+			ret = __igt_lmem_write_gpu(gt, gt2, gt);
+			if (ret)
+				break;
+		}
+
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+static int __igt_lmem_write_cpu(struct intel_gt *gt, struct intel_gt *bcs_gt)
+{
 	struct drm_i915_gem_object *obj;
 	I915_RND_STATE(prng);
 	IGT_TIMEOUT(end_time);
@@ -866,7 +1004,6 @@ static int igt_lmem_write_cpu(void *arg)
 		PAGE_SIZE - 64,
 	};
 	struct intel_engine_cs *engine;
-	struct i915_request *rq;
 	u32 *vaddr;
 	u32 sz;
 	u32 i;
@@ -874,16 +1011,16 @@ static int igt_lmem_write_cpu(void *arg)
 	int count;
 	int err;
 
-	engine = random_engine_class(i915, I915_ENGINE_CLASS_COPY, &prng);
+	engine = random_engine_class(bcs_gt, COPY_ENGINE_CLASS, &prng);
 	if (!engine)
 		return 0;
 
-	pr_info("%s: using %s\n", __func__, engine->name);
+	pr_info("%s: using %s on gt%u\n", __func__, engine->name, gt->info.id);
 
 	sz = round_up(prandom_u32_state(&prng) % SZ_32M, PAGE_SIZE);
 	sz = max_t(u32, 2 * PAGE_SIZE, sz);
 
-	obj = i915_gem_object_create_lmem(i915, sz, I915_BO_ALLOC_CONTIGUOUS);
+	obj = intel_gt_object_create_lmem(gt, sz, I915_BO_ALLOC_CONTIGUOUS);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
@@ -893,20 +1030,19 @@ static int igt_lmem_write_cpu(void *arg)
 		goto out_put;
 	}
 
-	i915_gem_object_lock(obj, NULL);
 	/* Put the pages into a known state -- from the gpu for added fun */
 	intel_engine_pm_get(engine);
-	err = intel_context_migrate_clear(engine->gt->migrate.context, NULL,
-					  obj->mm.pages->sgl, I915_CACHE_NONE,
-					  true, 0xdeadbeaf, &rq);
-	if (rq) {
-		dma_resv_add_excl_fence(obj->base.resv, &rq->fence);
-		i915_request_put(rq);
-	}
+	if (HAS_LINK_COPY_ENGINES(gt->i915))
+		err = i915_gem_object_fill_blt(obj, engine->kernel_context, 0xab);
+	else
+		err = i915_gem_object_fill_blt(obj, engine->kernel_context, 0xdeadbeaf);
 
 	intel_engine_pm_put(engine);
-	if (!err)
-		err = i915_gem_object_set_to_wc_domain(obj, true);
+	if (err)
+		goto out_unpin;
+
+	i915_gem_object_lock(obj, NULL);
+	err = i915_gem_object_set_to_wc_domain(obj, true);
 	i915_gem_object_unlock(obj);
 	if (err)
 		goto out_unpin;
@@ -989,7 +1125,7 @@ create_region_for_mapping(struct intel_memory_region *mr, u64 size, u32 type,
 	struct drm_i915_gem_object *obj;
 	void *addr;
 
-	obj = i915_gem_object_create_region(mr, size, 0, 0);
+	obj = i915_gem_object_create_region(mr, size, 0);
 	if (IS_ERR(obj)) {
 		if (PTR_ERR(obj) == -ENOSPC) /* Stolen memory */
 			return ERR_PTR(-ENODEV);
@@ -1015,16 +1151,6 @@ static int wrap_ktime_compare(const void *A, const void *B)
 	return ktime_compare(*a, *b);
 }
 
-static void igt_memcpy_long(void *dst, const void *src, size_t size)
-{
-	unsigned long *tmp = dst;
-	const unsigned long *s = src;
-
-	size = size / sizeof(unsigned long);
-	while (size--)
-		*tmp++ = *s++;
-}
-
 static inline void igt_memcpy(void *dst, const void *src, size_t size)
 {
 	memcpy(dst, src, size);
@@ -1048,10 +1174,6 @@ static int _perf_memcpy(struct intel_memory_region *src_mr,
 		{
 			"memcpy",
 			igt_memcpy,
-		},
-		{
-			"memcpy_long",
-			igt_memcpy_long,
 		},
 		{
 			"memcpy_from_wc",
@@ -1144,25 +1266,23 @@ static int perf_memcpy(void *arg)
 		SZ_64K,
 		SZ_4M,
 	};
-	struct intel_memory_region *src_mr, *dst_mr;
-	int src_id, dst_id;
-	int i, j, k;
+	struct intel_memory_region *smem = i915->mm.regions[INTEL_REGION_SMEM];
+	struct intel_memory_region *mr;
+	int i, j, id;
 	int ret;
 
-	for_each_memory_region(src_mr, i915, src_id) {
-		for_each_memory_region(dst_mr, i915, dst_id) {
-			for (i = 0; i < ARRAY_SIZE(sizes); ++i) {
-				for (j = 0; j < ARRAY_SIZE(types); ++j) {
-					for (k = 0; k < ARRAY_SIZE(types); ++k) {
-						ret = _perf_memcpy(src_mr,
-								   dst_mr,
-								   sizes[i],
-								   types[j],
-								   types[k]);
-						if (ret)
-							return ret;
-					}
-				}
+	for_each_memory_region(mr, i915, id) {
+		for (i = 0; i < ARRAY_SIZE(sizes); ++i) {
+			for (j = 0; j < ARRAY_SIZE(types); ++j) {
+				ret = _perf_memcpy(smem, mr, sizes[i],
+						   I915_MAP_WB, types[j]);
+				if (ret)
+					return ret;
+
+				ret = _perf_memcpy(mr, smem, sizes[i],
+						   types[j], I915_MAP_WB);
+				if (ret)
+					return ret;
 			}
 		}
 	}
@@ -1170,7 +1290,265 @@ static int perf_memcpy(void *arg)
 	return 0;
 }
 
-int intel_memory_region_mock_selftests(void)
+static int igt_lmem_write_cpu(void *arg)
+{
+	struct intel_gt *gt = arg;
+
+	return __igt_lmem_write_cpu(gt, gt);
+}
+
+static int igt_lmem_write_cpu_cross_tile(void *arg)
+{
+
+	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt, *gt2;
+	unsigned int i, j;
+	int ret;
+
+	for_each_gt(gt, i915, i) {
+		for_each_gt(gt2, i915, j) {
+			if (gt == gt2)
+				continue;
+
+			ret = __igt_lmem_write_cpu(gt, gt2);
+			if (ret)
+				break;
+		}
+
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+static void igt_mark_evictable(struct drm_i915_gem_object *obj)
+{
+	struct intel_memory_region *mem = obj->mm.region.mem;
+
+	i915_gem_object_unpin_pages(obj);
+	obj->mm.madv = I915_MADV_DONTNEED;
+
+	spin_lock(&mem->objects.lock);
+	list_move_tail(&obj->mm.region.link, &mem->objects.purgeable);
+	spin_unlock(&mem->objects.lock);
+}
+
+static int igt_mock_shrink(void *arg)
+{
+	struct intel_memory_region *mem = arg;
+	struct drm_i915_gem_object *obj;
+	unsigned long n_objects;
+	LIST_HEAD(objects);
+	resource_size_t target;
+	resource_size_t total;
+	int err = 0;
+
+	target = mem->mm.chunk_size;
+	total = mem->mm.size;
+	n_objects = total / target;
+
+	while (n_objects--) {
+		obj = i915_gem_object_create_region(mem,
+						    target,
+						    0);
+		if (IS_ERR(obj)) {
+			err = PTR_ERR(obj);
+			goto err_close_objects;
+		}
+
+		list_add(&obj->st_link, &objects);
+
+		err = i915_gem_object_pin_pages_unlocked(obj);
+		if (err)
+			goto err_close_objects;
+
+		/*
+		 * Make half of the region evictable, though do so in a
+		 * horribly fragmented fashion.
+		 */
+		if (n_objects % 2)
+			igt_mark_evictable(obj);
+	}
+
+	while (target <= total / 2) {
+		obj = i915_gem_object_create_region(mem, target, 0);
+		if (IS_ERR(obj)) {
+			err = PTR_ERR(obj);
+			goto err_close_objects;
+		}
+
+		list_add(&obj->st_link, &objects);
+
+		/* Provoke the shrinker to start violently swinging its axe! */
+		err = i915_gem_object_pin_pages_unlocked(obj);
+		if (err) {
+			pr_err("failed to shrink for target=%pa", &target);
+			goto err_close_objects;
+		}
+
+		/* Again, half of the region should remain evictable */
+		igt_mark_evictable(obj);
+
+		target <<= 1;
+	}
+
+err_close_objects:
+	close_objects(mem, &objects);
+
+	if (err == -ENOMEM)
+		err = 0;
+
+	return err;
+}
+
+static int lmem_pages_migrate_one(struct i915_gem_ww_ctx *ww,
+				  struct intel_context *ce,
+				  struct drm_i915_gem_object *obj,
+				  struct intel_gt *gt)
+{
+	int err;
+
+	err = i915_gem_object_lock(obj, ww);
+	if (err)
+		return err;
+
+	err = i915_gem_object_wait(obj,
+				   I915_WAIT_INTERRUPTIBLE |
+				   I915_WAIT_PRIORITY |
+				   I915_WAIT_ALL,
+				   MAX_SCHEDULE_TIMEOUT);
+	if (err)
+		return err;
+
+	err = i915_gem_object_prepare_move(obj, ww);
+	if (err)
+		return err;
+
+	if (i915_gem_object_is_lmem(obj)) {
+		err = i915_gem_object_migrate(obj, ww, ce, INTEL_REGION_SMEM, false);
+		if (err)
+			return err;
+
+		if (i915_gem_object_is_lmem(obj)) {
+			pr_err("object still backed by lmem\n");
+			err = -EINVAL;
+		}
+
+		if (!list_empty(&obj->mm.blocks)) {
+			pr_err("object leaking memory region\n");
+			err = -EINVAL;
+		}
+
+		if (!i915_gem_object_has_struct_page(obj)) {
+			pr_err("object not backed by struct page\n");
+			err = -EINVAL;
+		}
+
+	} else {
+		err = i915_gem_object_migrate(obj, ww, ce, gt->lmem->id, false);
+		if (err)
+			return err;
+
+		if (i915_gem_object_has_struct_page(obj)) {
+			pr_err("object still backed by struct page\n");
+			err = -EINVAL;
+		}
+
+		if (!i915_gem_object_is_lmem(obj)) {
+			pr_err("object not backed by lmem\n");
+			err = -EINVAL;
+		}
+	}
+
+	return err;
+}
+
+static int
+__igt_lmem_pages_migrate(struct intel_gt *gt, struct intel_gt *bcs_gt)
+{
+	struct drm_i915_gem_object *obj;
+	struct intel_engine_cs *engine;
+	struct intel_context *ce;
+	struct i915_gem_ww_ctx ww;
+	I915_RND_STATE(prng);
+	int err;
+	int i;
+
+	engine = random_engine_class(bcs_gt, COPY_ENGINE_CLASS, &prng);
+	ce = engine->kernel_context;
+
+	pr_info("%s: using %s on gt%u\n", __func__, engine->name, gt->info.id);
+
+	/* From LMEM to shmem and back again */
+
+	obj = intel_gt_object_create_lmem(gt, SZ_2M, 0);
+	if (IS_ERR(obj))
+		return PTR_ERR(obj);
+
+	/* Allow any and all migration [disable compression] */
+	obj->memory_mask = -1;
+
+	err = i915_gem_object_fill_blt(obj, ce, 0);
+	if (err)
+		goto out_put;
+
+	for (i = 1; i <= 4; ++i) {
+		for_i915_gem_ww(&ww, err, true)
+			err = lmem_pages_migrate_one(&ww, ce, obj, gt);
+		if (err)
+			break;
+
+		if (HAS_LINK_COPY_ENGINES(gt->i915))
+			err = i915_gem_object_fill_blt(obj, ce, 0xab);
+		else
+			err = i915_gem_object_fill_blt(obj, ce, 0xdeadbeaf);
+
+		if (err)
+			break;
+	}
+out_put:
+	i915_gem_object_put(obj);
+
+	return err;
+}
+
+static int igt_lmem_pages_migrate(void *arg)
+{
+	struct intel_gt *gt = arg;
+
+	return __igt_lmem_pages_migrate(gt, gt);
+}
+
+static int igt_lmem_pages_migrate_cross_tile(void *arg)
+{
+
+	struct drm_i915_private *i915 = arg;
+	struct intel_gt *gt, *gt2;
+	unsigned int i, j;
+	int ret;
+
+	for_each_gt(gt, i915, i) {
+		for_each_gt(gt2, i915, j) {
+			if (gt == gt2)
+				continue;
+
+			ret = __igt_lmem_pages_migrate(gt, gt2);
+			if (ret)
+				break;
+		}
+
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+static int mock_selftests(struct intel_gt *gt,
+			  u64 start, u64 end, u64 chunk,
+			  unsigned int flags,
+			  bool exact)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_mock_reserve),
@@ -1178,8 +1556,45 @@ int intel_memory_region_mock_selftests(void)
 		SUBTEST(igt_mock_contiguous),
 		SUBTEST(igt_mock_splintered_region),
 		SUBTEST(igt_mock_max_segment),
+		SUBTEST(igt_mock_shrink),
 	};
 	struct intel_memory_region *mem;
+	int err = 0;
+
+	mem = mock_region_create(gt, start, end - start, chunk, flags, 0);
+	if (IS_ERR(mem)) {
+		pr_err("failed to create memory region [%llx, %llx]\n", start, end);
+		return PTR_ERR(mem);
+	}
+
+	pr_info("mock region [%llx, %llx]: { size: %llu, max_order: %u, chunk: %llu, nroots: %u }\n",
+		start, end,
+		mem->mm.size,
+		mem->mm.max_order,
+		mem->mm.chunk_size,
+		mem->mm.n_roots);
+
+	if (exact) { /* Check that we generate an "ideal" buddy */
+		if (mem->mm.size != end - start ||
+		    mem->mm.chunk_size != chunk ||
+		    mem->mm.max_order != ilog2(mem->mm.size) - ilog2(mem->mm.chunk_size) ||
+		    mem->mm.n_roots != 1) {
+			pr_err("[%llx, %llx] exact mock region construction failed\n",
+			       start, end);
+			err = -EINVAL;
+		}
+	}
+
+	if (err == 0)
+		err = i915_subtests(tests, mem);
+
+	intel_memory_region_put(mem);
+
+	return err;
+}
+
+int intel_memory_region_mock_selftests(void)
+{
 	struct drm_i915_private *i915;
 	int err;
 
@@ -1187,17 +1602,22 @@ int intel_memory_region_mock_selftests(void)
 	if (!i915)
 		return -ENOMEM;
 
-	mem = mock_region_create(i915, 0, SZ_2G, I915_GTT_PAGE_SIZE_4K, 0);
-	if (IS_ERR(mem)) {
-		pr_err("failed to create memory region\n");
-		err = PTR_ERR(mem);
-		goto out_unref;
-	}
+	/* Ideal */
+	err = mock_selftests(to_gt(i915), 0, SZ_2G, SZ_4K, 0, true);
+	if (err)
+		goto out;
 
-	err = i915_subtests(tests, mem);
+	/* Slight misalignment */
+	err = mock_selftests(to_gt(i915), SZ_64K, SZ_2G, SZ_4K, 0, false);
+	if (err)
+		goto out;
 
-	intel_memory_region_put(mem);
-out_unref:
+	/* Second slice */
+	err = mock_selftests(to_gt(i915), SZ_2G, SZ_4G, SZ_4K, 0, true);
+	if (err)
+		goto out;
+
+out:
 	mock_destroy_device(i915);
 	return err;
 }
@@ -1206,19 +1626,56 @@ int intel_memory_region_live_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_lmem_create),
-		SUBTEST(igt_lmem_create_with_ps),
 		SUBTEST(igt_lmem_create_cleared_cpu),
 		SUBTEST(igt_lmem_write_cpu),
 		SUBTEST(igt_lmem_write_gpu),
+		SUBTEST(igt_smem_create_migrate),
+		SUBTEST(igt_lmem_create_migrate),
+		SUBTEST(igt_lmem_pages_migrate),
 	};
+	struct intel_gt *gt;
+	unsigned int i;
+	int ret = 0;
 
 	if (!HAS_LMEM(i915)) {
 		pr_info("device lacks LMEM support, skipping\n");
 		return 0;
 	}
 
-	if (intel_gt_is_wedged(&i915->gt))
+	for_each_gt(gt, i915, i) {
+		if (intel_gt_is_wedged(gt))
+			continue;
+
+		ret = intel_gt_live_subtests(tests, gt);
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+int intel_memory_region_cross_tile_live_selftests(struct drm_i915_private *i915)
+{
+	static const struct i915_subtest tests[] = {
+		SUBTEST(igt_smem_create_migrate_cross_tile),
+		SUBTEST(igt_lmem_create_migrate_cross_tile),
+		SUBTEST(igt_lmem_pages_migrate_cross_tile),
+		SUBTEST(igt_lmem_write_cpu_cross_tile),
+		SUBTEST(igt_lmem_write_gpu_cross_tile),
+		SUBTEST(igt_lmem_write_gpu_cross_tile_cross_vm),
+	};
+	struct intel_gt *gt;
+	unsigned int i;
+
+	if (!HAS_LMEM(i915)) {
+		pr_info("device lacks LMEM support, skipping\n");
 		return 0;
+	}
+
+	for_each_gt(gt, i915, i) {
+		if (intel_gt_is_wedged(gt))
+			return 0;
+	}
 
 	return i915_live_subtests(tests, i915);
 }
@@ -1229,7 +1686,7 @@ int intel_memory_region_perf_selftests(struct drm_i915_private *i915)
 		SUBTEST(perf_memcpy),
 	};
 
-	if (intel_gt_is_wedged(&i915->gt))
+	if (intel_gt_is_wedged(to_gt(i915)))
 		return 0;
 
 	return i915_live_subtests(tests, i915);

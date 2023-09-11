@@ -4,6 +4,8 @@
  * Copyright © 2016 Intel Corporation
  */
 
+#include <drm/drm_cache.h>
+
 #include "display/intel_frontbuffer.h"
 
 #include "i915_drv.h"
@@ -24,14 +26,16 @@ static void __do_clflush(struct drm_i915_gem_object *obj)
 	i915_gem_object_flush_frontbuffer(obj, ORIGIN_CPU);
 }
 
-static void clflush_work(struct dma_fence_work *base)
+static int clflush_work(struct dma_fence_work *base)
 {
 	struct clflush *clflush = container_of(base, typeof(*clflush), base);
 
 	__do_clflush(clflush->obj);
+
+	return 0;
 }
 
-static void clflush_release(struct dma_fence_work *base)
+static void clflush_complete(struct dma_fence_work *base)
 {
 	struct clflush *clflush = container_of(base, typeof(*clflush), base);
 
@@ -42,7 +46,7 @@ static void clflush_release(struct dma_fence_work *base)
 static const struct dma_fence_work_ops clflush_ops = {
 	.name = "clflush",
 	.work = clflush_work,
-	.release = clflush_release,
+	.complete = clflush_complete,
 };
 
 static struct clflush *clflush_work_create(struct drm_i915_gem_object *obj)
@@ -109,12 +113,20 @@ bool i915_gem_clflush_object(struct drm_i915_gem_object *obj,
 						I915_FENCE_GFP);
 		dma_resv_add_excl_fence(obj->base.resv, &clflush->base.dma);
 		dma_fence_work_commit(&clflush->base);
+		/*
+		 * We must have successfully populated the pages(since we are
+		 * holding a pin on the pages as per the flush worker) to reach
+		 * this point, which must mean we have already done the required
+		 * flush-on-acquire, hence resetting cache_dirty here should be
+		 * safe.
+		 */
+		obj->cache_dirty = false;
 	} else if (obj->mm.pages) {
 		__do_clflush(obj);
+		obj->cache_dirty = false;
 	} else {
 		GEM_BUG_ON(obj->write_domain != I915_GEM_DOMAIN_CPU);
 	}
 
-	obj->cache_dirty = false;
 	return true;
 }

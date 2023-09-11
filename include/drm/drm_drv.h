@@ -137,6 +137,10 @@ enum drm_driver_feature {
 	 * @DRIVER_HAVE_IRQ:
 	 *
 	 * Legacy irq support. Only for legacy drivers. Do not use.
+	 *
+	 * New drivers can either use the drm_irq_install() and
+	 * drm_irq_uninstall() helper functions, or roll their own irq support
+	 * code by calling request_irq() directly.
 	 */
 	DRIVER_HAVE_IRQ			= BIT(30),
 	/**
@@ -268,6 +272,42 @@ struct drm_driver {
 	void (*release) (struct drm_device *);
 
 	/**
+	 * @irq_handler:
+	 *
+	 * Interrupt handler called when using drm_irq_install(). Not used by
+	 * drivers which implement their own interrupt handling.
+	 */
+	irqreturn_t(*irq_handler) (int irq, void *arg);
+
+	/**
+	 * @irq_preinstall:
+	 *
+	 * Optional callback used by drm_irq_install() which is called before
+	 * the interrupt handler is registered. This should be used to clear out
+	 * any pending interrupts (from e.g. firmware based drives) and reset
+	 * the interrupt handling registers.
+	 */
+	void (*irq_preinstall) (struct drm_device *dev);
+
+	/**
+	 * @irq_postinstall:
+	 *
+	 * Optional callback used by drm_irq_install() which is called after
+	 * the interrupt handler is registered. This should be used to enable
+	 * interrupt generation in the hardware.
+	 */
+	int (*irq_postinstall) (struct drm_device *dev);
+
+	/**
+	 * @irq_uninstall:
+	 *
+	 * Optional callback used by drm_irq_uninstall() which is called before
+	 * the interrupt handler is unregistered. This should be used to disable
+	 * interrupt generation in the hardware.
+	 */
+	void (*irq_uninstall) (struct drm_device *dev);
+
+	/**
 	 * @master_set:
 	 *
 	 * Called whenever the minor master is set. Only used by vmwgfx.
@@ -345,11 +385,14 @@ struct drm_driver {
 	 * mmap hook for GEM drivers, used to implement dma-buf mmap in the
 	 * PRIME helpers.
 	 *
-	 * FIXME: There's way too much duplication going on here, and also moved
-	 * to &drm_gem_object_funcs.
+	 * This hook only exists for historical reasons. Drivers must use
+	 * drm_gem_prime_mmap() to implement it.
+	 *
+	 * FIXME: Convert all drivers to implement mmap in struct
+	 * &drm_gem_object_funcs and inline drm_gem_prime_mmap() into
+	 * its callers. This hook should be removed afterwards.
 	 */
-	int (*gem_prime_mmap)(struct drm_gem_object *obj,
-				struct vm_area_struct *vma);
+	int (*gem_prime_mmap)(struct drm_gem_object *obj, struct vm_area_struct *vma);
 
 	/**
 	 * @dumb_create:
@@ -455,19 +498,16 @@ struct drm_driver {
 	 */
 	const struct file_operations *fops;
 
+	void (*preclose) (struct drm_device *, struct drm_file *file_priv);
+
 #ifdef CONFIG_DRM_LEGACY
 	/* Everything below here is for legacy driver, never use! */
 	/* private: */
 
 	int (*firstopen) (struct drm_device *);
-	void (*preclose) (struct drm_device *, struct drm_file *file_priv);
 	int (*dma_ioctl) (struct drm_device *dev, void *data, struct drm_file *file_priv);
 	int (*dma_quiescent) (struct drm_device *);
 	int (*context_dtor) (struct drm_device *dev, int context);
-	irqreturn_t (*irq_handler)(int irq, void *arg);
-	void (*irq_preinstall)(struct drm_device *dev);
-	int (*irq_postinstall)(struct drm_device *dev);
-	void (*irq_uninstall)(struct drm_device *dev);
 	u32 (*get_vblank_counter)(struct drm_device *dev, unsigned int pipe);
 	int (*enable_vblank)(struct drm_device *dev, unsigned int pipe);
 	void (*disable_vblank)(struct drm_device *dev, unsigned int pipe);
@@ -475,6 +515,7 @@ struct drm_driver {
 #endif
 };
 
+void __devm_drm_dev_release_action(struct drm_device *dev);
 void *__devm_drm_dev_alloc(struct device *parent,
 			   const struct drm_driver *driver,
 			   size_t size, size_t offset);
@@ -508,6 +549,9 @@ void *__devm_drm_dev_alloc(struct device *parent,
 #define devm_drm_dev_alloc(parent, driver, type, member) \
 	((type *) __devm_drm_dev_alloc(parent, driver, sizeof(type), \
 				       offsetof(type, member)))
+
+#define devm_drm_release_action(drm_dev) \
+	__devm_drm_dev_release_action(drm_dev)
 
 struct drm_device *drm_dev_alloc(const struct drm_driver *driver,
 				 struct device *parent);

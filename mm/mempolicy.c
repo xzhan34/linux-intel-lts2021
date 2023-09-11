@@ -641,6 +641,33 @@ unsigned long change_prot_numa(struct vm_area_struct *vma,
 
 	return nr_updated;
 }
+
+static void rebalance_nodes(void)
+{
+	struct vm_area_struct *vma;
+
+	for (vma = current->mm->mmap; vma; vma = vma->vm_next) {
+		if (!vma_migratable(vma) || !vma_policy_mof(vma))
+			continue;
+
+		/* Similar to task_numa_work, skip inaccessible VMAs */
+		if (!vma_is_accessible(vma) ||
+		    is_vm_hugetlb_page(vma) ||
+		    vma->vm_flags & VM_MIXEDMAP)
+			continue;
+
+		change_prot_numa(vma, vma->vm_start, vma->vm_end);
+	}
+}
+
+int sysctl_numa_rebalance_handler(struct ctl_table *table, int write,
+				  void *buffer, size_t *length, loff_t *ppos)
+{
+        if (write)
+                rebalance_nodes();
+
+        return 0;
+}
 #else
 static unsigned long change_prot_numa(struct vm_area_struct *vma,
 			unsigned long addr, unsigned long end)
@@ -783,7 +810,6 @@ static int vma_replace_policy(struct vm_area_struct *vma,
 static int mbind_range(struct mm_struct *mm, unsigned long start,
 		       unsigned long end, struct mempolicy *new_pol)
 {
-	struct vm_area_struct *next;
 	struct vm_area_struct *prev;
 	struct vm_area_struct *vma;
 	int err = 0;
@@ -798,8 +824,7 @@ static int mbind_range(struct mm_struct *mm, unsigned long start,
 	if (start > vma->vm_start)
 		prev = vma;
 
-	for (; vma && vma->vm_start < end; prev = vma, vma = next) {
-		next = vma->vm_next;
+	for (; vma && vma->vm_start < end; prev = vma, vma = vma->vm_next) {
 		vmstart = max(start, vma->vm_start);
 		vmend   = min(end, vma->vm_end);
 
@@ -813,10 +838,6 @@ static int mbind_range(struct mm_struct *mm, unsigned long start,
 				 new_pol, vma->vm_userfaultfd_ctx);
 		if (prev) {
 			vma = prev;
-			next = vma->vm_next;
-			if (mpol_equal(vma_policy(vma), new_pol))
-				continue;
-			/* vma_merge() joined vma && vma->next, case 8 */
 			goto replace;
 		}
 		if (vma->vm_start != vmstart) {
@@ -2567,6 +2588,7 @@ alloc_new:
 	mpol_new = kmem_cache_alloc(policy_cache, GFP_KERNEL);
 	if (!mpol_new)
 		goto err_out;
+	atomic_set(&mpol_new->refcnt, 1);
 	goto restart;
 }
 

@@ -5,7 +5,9 @@
 #include "gem/i915_gem_mman.h"
 #include "gt/intel_engine_user.h"
 
+#include "i915_cmd_parser.h"
 #include "i915_drv.h"
+#include "i915_getparam.h"
 #include "i915_perf.h"
 
 int i915_getparam_ioctl(struct drm_device *dev, void *data,
@@ -13,9 +15,11 @@ int i915_getparam_ioctl(struct drm_device *dev, void *data,
 {
 	struct drm_i915_private *i915 = to_i915(dev);
 	struct pci_dev *pdev = to_pci_dev(dev->dev);
-	const struct sseu_dev_info *sseu = &i915->gt.info.sseu;
+	const struct sseu_dev_info *sseu = &to_gt(i915)->info.sseu;
 	drm_i915_getparam_t *param = data;
+	struct intel_memory_region *mr;
 	int value = 0;
+	int id;
 
 	switch (param->param) {
 	case I915_PARAM_IRQ_ACTIVE:
@@ -31,7 +35,7 @@ int i915_getparam_ioctl(struct drm_device *dev, void *data,
 		value = pdev->revision;
 		break;
 	case I915_PARAM_NUM_FENCES_AVAIL:
-		value = i915->ggtt.num_fences;
+		value = to_gt(i915)->ggtt->num_fences;
 		break;
 	case I915_PARAM_HAS_OVERLAY:
 		value = !!i915->overlay;
@@ -82,8 +86,8 @@ int i915_getparam_ioctl(struct drm_device *dev, void *data,
 		break;
 	case I915_PARAM_HAS_GPU_RESET:
 		value = i915->params.enable_hangcheck &&
-			intel_has_gpu_reset(&i915->gt);
-		if (value && intel_has_reset_engine(&i915->gt))
+			intel_has_gpu_reset(to_gt(i915));
+		if (value && intel_has_reset_engine(to_gt(i915)))
 			value = 2;
 		break;
 	case I915_PARAM_HAS_RESOURCE_STREAMER:
@@ -96,7 +100,11 @@ int i915_getparam_ioctl(struct drm_device *dev, void *data,
 		value = sseu->min_eu_in_pool;
 		break;
 	case I915_PARAM_HUC_STATUS:
-		value = intel_huc_check_status(&i915->gt.uc.huc);
+		/* On platform with a media GT, the HuC is on that GT */
+		if (i915->media_gt)
+			value = intel_huc_check_status(&i915->media_gt->uc.huc);
+		else
+			value = intel_huc_check_status(&to_gt(i915)->uc.huc);
 		if (value < 0)
 			return value;
 		break;
@@ -134,7 +142,6 @@ int i915_getparam_ioctl(struct drm_device *dev, void *data,
 	case I915_PARAM_HAS_EXEC_FENCE_ARRAY:
 	case I915_PARAM_HAS_EXEC_SUBMIT_FENCE:
 	case I915_PARAM_HAS_EXEC_TIMELINE_FENCES:
-	case I915_PARAM_HAS_USERPTR_PROBE:
 		/* For the time being all of these are always true;
 		 * if some supported hardware does not have one of these
 		 * features this value needs to be provided from
@@ -146,25 +153,80 @@ int i915_getparam_ioctl(struct drm_device *dev, void *data,
 		value = intel_engines_has_context_isolation(i915);
 		break;
 	case I915_PARAM_SLICE_MASK:
+		/* Not supported from Xe_HP onward; use topology queries */
+		if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
+			return -EINVAL;
+
 		value = sseu->slice_mask;
 		if (!value)
 			return -ENODEV;
 		break;
 	case I915_PARAM_SUBSLICE_MASK:
+		/* Not supported from Xe_HP onward; use topology queries */
+		if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50))
+			return -EINVAL;
+
 		/* Only copy bits from the first slice */
-		memcpy(&value, sseu->subslice_mask,
-		       min(sseu->ss_stride, (u8)sizeof(value)));
+		value = intel_sseu_get_hsw_subslices(sseu, 0);
 		if (!value)
 			return -ENODEV;
 		break;
 	case I915_PARAM_CS_TIMESTAMP_FREQUENCY:
-		value = i915->gt.clock_frequency;
+		value = to_gt(i915)->clock_frequency;
 		break;
 	case I915_PARAM_MMAP_GTT_COHERENT:
 		value = INTEL_INFO(i915)->has_coherent_ggtt;
 		break;
 	case I915_PARAM_PERF_REVISION:
 		value = i915_perf_ioctl_version();
+		break;
+	case I915_PARAM_OA_TIMESTAMP_FREQUENCY:
+		value = i915_perf_oa_timestamp_frequency(i915);
+		break;
+	case PRELIM_I915_PARAM_HAS_VM_BIND:
+		value = GRAPHICS_VER(i915) >= 12;
+		break;
+	case PRELIM_I915_PARAM_EXECBUF2_MAX_ENGINE:
+		value = 256;
+		break;
+	case PRELIM_I915_PARAM_LMEM_TOTAL_BYTES:
+		if (!HAS_LMEM(i915))
+			return -ENODEV;
+
+		value = 0; /* overflow! */
+		for_each_memory_region(mr, i915, id)
+			if (mr->type == INTEL_MEMORY_LOCAL)
+				value += mr->total;
+		break;
+	case PRELIM_I915_PARAM_LMEM_AVAIL_BYTES:
+		if (!HAS_LMEM(i915))
+			return -ENODEV;
+
+		value = 0; /* overflow! */
+		for_each_memory_region(mr, i915, id)
+			if (mr->type == INTEL_MEMORY_LOCAL)
+				value += atomic64_read(&mr->avail);
+		break;
+	case PRELIM_I915_PARAM_HAS_SVM:
+		value = i915_has_svm(i915);
+		break;
+	case PRELIM_I915_PARAM_OA_TIMESTAMP_FREQUENCY:
+		value = i915_perf_oa_timestamp_frequency(i915);
+		break;
+	case PRELIM_I915_PARAM_HAS_PAGE_FAULT:
+		value =  HAS_RECOVERABLE_PAGE_FAULT(i915);
+		break;
+	case PRELIM_I915_PARAM_HAS_SET_PAIR:
+		value = 1;
+		break;
+	case PRELIM_I915_PARAM_EU_DEBUGGER_VERSION:
+		value = IS_ENABLED(CONFIG_DRM_I915_DEBUGGER) ? PRELIM_DRM_I915_DEBUG_VERSION : 0;
+		break;
+	case PRELIM_I915_PARAM_HAS_CHUNK_SIZE:
+		/* restrict to platforms where legacy mmap is not supported */
+		if (!(IS_DGFX(i915) || GRAPHICS_VER_FULL(i915) > IP_VER(12, 0)))
+			return -EINVAL;
+		value = 1;
 		break;
 	default:
 		DRM_DEBUG("Unknown parameter %d\n", param->param);
