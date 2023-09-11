@@ -340,28 +340,26 @@ bool blk_ksm_crypto_cfg_supported(struct blk_keyslot_manager *ksm,
 		return false;
 	if (ksm->max_dun_bytes_supported < cfg->dun_bytes)
 		return false;
+	if (cfg->is_hw_wrapped) {
+		if (!(ksm->features & BLK_CRYPTO_FEATURE_WRAPPED_KEYS))
+			return false;
+	} else {
+		if (!(ksm->features & BLK_CRYPTO_FEATURE_STANDARD_KEYS))
+			return false;
+	}
 	return true;
 }
 
-/**
- * blk_ksm_evict_key() - Evict a key from the lower layer device.
- * @ksm: The keyslot manager to evict from
- * @key: The key to evict
- *
- * Find the keyslot that the specified key was programmed into, and evict that
- * slot from the lower layer device. The slot must not be in use by any
- * in-flight IO when this function is called.
- *
- * Context: Process context. Takes and releases ksm->lock.
- * Return: 0 on success or if there's no keyslot with the specified key, -EBUSY
- *	   if the keyslot is still in use, or another -errno value on other
- *	   error.
+/*
+ * This is an internal function that evicts a key from an inline encryption
+ * device that can be either a real device or the blk-crypto-fallback "device".
+ * It is used only by blk_crypto_evict_key(); see that function for details.
  */
 int blk_ksm_evict_key(struct blk_keyslot_manager *ksm,
 		      const struct blk_crypto_key *key)
 {
 	struct blk_ksm_keyslot *slot;
-	int err = 0;
+	int err;
 
 	if (blk_ksm_is_passthrough(ksm)) {
 		if (ksm->ksm_ll_ops.keyslot_evict) {
@@ -375,22 +373,30 @@ int blk_ksm_evict_key(struct blk_keyslot_manager *ksm,
 
 	blk_ksm_hw_enter(ksm);
 	slot = blk_ksm_find_keyslot(ksm, key);
-	if (!slot)
-		goto out_unlock;
+	if (!slot) {
+		/*
+		 * Not an error, since a key not in use by I/O is not guaranteed
+		 * to be in a keyslot.  There can be more keys than keyslots.
+		 */
+		err = 0;
+		goto out;
+	}
 
 	if (WARN_ON_ONCE(atomic_read(&slot->slot_refs) != 0)) {
+		/* BUG: key is still in use by I/O */
 		err = -EBUSY;
-		goto out_unlock;
+		goto out_remove;
 	}
 	err = ksm->ksm_ll_ops.keyslot_evict(ksm, key,
 					    blk_ksm_get_slot_idx(slot));
-	if (err)
-		goto out_unlock;
-
+out_remove:
+	/*
+	 * Callers free the key even on error, so unlink the key from the hash
+	 * table and clear slot->key even on error.
+	 */
 	hlist_del(&slot->hash_node);
 	slot->key = NULL;
-	err = 0;
-out_unlock:
+out:
 	blk_ksm_hw_exit(ksm);
 	return err;
 }
@@ -454,6 +460,44 @@ void blk_ksm_unregister(struct request_queue *q)
 }
 
 /**
+ * blk_ksm_derive_raw_secret() - Derive software secret from wrapped key
+ * @ksm: The keyslot manager
+ * @wrapped_key: The wrapped key
+ * @wrapped_key_size: Size of the wrapped key in bytes
+ * @secret: (output) the software secret
+ * @secret_size: (output) the number of secret bytes to derive
+ *
+ * Given a hardware-wrapped key, ask the hardware to derive a secret which
+ * software can use for cryptographic tasks other than inline encryption.  The
+ * derived secret is guaranteed to be cryptographically isolated from the key
+ * with which any inline encryption with this wrapped key would actually be
+ * done.  I.e., both will be derived from the unwrapped key.
+ *
+ * Return: 0 on success, -EOPNOTSUPP if hardware-wrapped keys are unsupported,
+ *	   or another -errno code.
+ */
+int blk_ksm_derive_raw_secret(struct blk_keyslot_manager *ksm,
+			      const u8 *wrapped_key,
+			      unsigned int wrapped_key_size,
+			      u8 *secret, unsigned int secret_size)
+{
+	int err;
+
+	if (ksm->ksm_ll_ops.derive_raw_secret) {
+		blk_ksm_hw_enter(ksm);
+		err = ksm->ksm_ll_ops.derive_raw_secret(ksm, wrapped_key,
+							wrapped_key_size,
+							secret, secret_size);
+		blk_ksm_hw_exit(ksm);
+	} else {
+		err = -EOPNOTSUPP;
+	}
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(blk_ksm_derive_raw_secret);
+
+/**
  * blk_ksm_intersect_modes() - restrict supported modes by child device
  * @parent: The keyslot manager for parent device
  * @child: The keyslot manager for child device, or NULL
@@ -478,10 +522,12 @@ void blk_ksm_intersect_modes(struct blk_keyslot_manager *parent,
 			parent->crypto_modes_supported[i] &=
 				child->crypto_modes_supported[i];
 		}
+		parent->features &= child->features;
 	} else {
 		parent->max_dun_bytes_supported = 0;
 		memset(parent->crypto_modes_supported, 0,
 		       sizeof(parent->crypto_modes_supported));
+		parent->features = 0;
 	}
 }
 EXPORT_SYMBOL_GPL(blk_ksm_intersect_modes);
@@ -521,6 +567,9 @@ bool blk_ksm_is_superset(struct blk_keyslot_manager *ksm_superset,
 		return false;
 	}
 
+	if (ksm_subset->features & ~ksm_superset->features)
+		return false;
+
 	return true;
 }
 EXPORT_SYMBOL_GPL(blk_ksm_is_superset);
@@ -557,6 +606,8 @@ void blk_ksm_update_capabilities(struct blk_keyslot_manager *target_ksm,
 
 	target_ksm->max_dun_bytes_supported =
 				reference_ksm->max_dun_bytes_supported;
+
+	target_ksm->features = reference_ksm->features;
 }
 EXPORT_SYMBOL_GPL(blk_ksm_update_capabilities);
 

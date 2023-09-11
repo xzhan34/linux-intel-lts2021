@@ -88,7 +88,7 @@ SYM_FUNC_END(caches_clean_inval_user_pou)
  *	- start   - virtual start address of region
  *	- end     - virtual end address of region
  */
-SYM_FUNC_START(icache_inval_pou)
+SYM_FUNC_START_PI(icache_inval_pou)
 alternative_if ARM64_HAS_CACHE_DIC
 	isb
 	ret
@@ -96,7 +96,7 @@ alternative_else_nop_endif
 
 	invalidate_icache_by_line x0, x1, x2, x3
 	ret
-SYM_FUNC_END(icache_inval_pou)
+SYM_FUNC_END_PI(icache_inval_pou)
 
 /*
  *	dcache_clean_inval_poc(start, end)
@@ -230,9 +230,9 @@ SYM_FUNC_END_PI(__dma_flush_area)
  *	- dir	- DMA direction
  */
 SYM_FUNC_START_PI(__dma_map_area)
-	add	x1, x0, x1
 	cmp	w2, #DMA_FROM_DEVICE
-	b.eq	__dma_inv_area
+	b.eq	__dma_flush_area
+	add	x1, x0, x1
 	b	__dma_clean_area
 SYM_FUNC_END_PI(__dma_map_area)
 

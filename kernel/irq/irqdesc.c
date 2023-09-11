@@ -288,22 +288,25 @@ static void irq_sysfs_add(int irq, struct irq_desc *desc)
 	if (irq_kobj_base) {
 		/*
 		 * Continue even in case of failure as this is nothing
-		 * crucial.
+		 * crucial and failures in the late irq_sysfs_init()
+		 * cannot be rolled back.
 		 */
 		if (kobject_add(&desc->kobj, irq_kobj_base, "%d", irq))
 			pr_warn("Failed to add kobject for irq %d\n", irq);
+		else
+			desc->istate |= IRQS_SYSFS;
 	}
 }
 
 static void irq_sysfs_del(struct irq_desc *desc)
 {
 	/*
-	 * If irq_sysfs_init() has not yet been invoked (early boot), then
-	 * irq_kobj_base is NULL and the descriptor was never added.
-	 * kobject_del() complains about a object with no parent, so make
-	 * it conditional.
+	 * Only invoke kobject_del() when kobject_add() was successfully
+	 * invoked for the descriptor. This covers both early boot, where
+	 * sysfs is not initialized yet, and the case of a failed
+	 * kobject_add() invocation.
 	 */
-	if (irq_kobj_base)
+	if (desc->istate & IRQS_SYSFS)
 		kobject_del(&desc->kobj);
 }
 
@@ -352,9 +355,7 @@ struct irq_desc *irq_to_desc(unsigned int irq)
 {
 	return radix_tree_lookup(&irq_desc_tree, irq);
 }
-#ifdef CONFIG_KVM_BOOK3S_64_HV_MODULE
 EXPORT_SYMBOL_GPL(irq_to_desc);
-#endif
 
 static void delete_irq_desc(unsigned int irq)
 {
@@ -695,16 +696,24 @@ int handle_domain_irq(struct irq_domain *domain,
 	struct irq_desc *desc;
 	int ret = 0;
 
-	irq_enter();
 
+	__irq_enter_raw();
 	/* The irqdomain code provides boundary checks */
 	desc = irq_resolve_mapping(domain, hwirq);
-	if (likely(desc))
-		handle_irq_desc(desc);
+	__irq_exit_raw();
+	if (likely(desc)) {
+		if (IS_ENABLED(CONFIG_ARCH_WANTS_IRQ_RAW) &&
+		    unlikely(irq_settings_is_raw(desc))) {
+			handle_irq_desc(desc);
+		} else {
+			irq_enter();
+			handle_irq_desc(desc);
+			irq_exit();
+		}
+	}
 	else
 		ret = -EINVAL;
 
-	irq_exit();
 	set_irq_regs(old_regs);
 	return ret;
 }
@@ -934,6 +943,7 @@ unsigned int kstat_irqs_cpu(unsigned int irq, int cpu)
 	return desc && desc->kstat_irqs ?
 			*per_cpu_ptr(desc->kstat_irqs, cpu) : 0;
 }
+EXPORT_SYMBOL_GPL(kstat_irqs_cpu);
 
 static bool irq_is_nmi(struct irq_desc *desc)
 {
@@ -991,3 +1001,4 @@ void __irq_set_lockdep_class(unsigned int irq, struct lock_class_key *lock_class
 }
 EXPORT_SYMBOL_GPL(__irq_set_lockdep_class);
 #endif
+EXPORT_SYMBOL_GPL(kstat_irqs_usr);

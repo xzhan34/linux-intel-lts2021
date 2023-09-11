@@ -55,6 +55,8 @@
 #include <asm/ptrace.h>
 #include <asm/irq_regs.h>
 
+#include <trace/hooks/sysrqcrash.h>
+
 /* Whether we react on sysrq keys or just ignore them */
 static int __read_mostly sysrq_enabled = CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE;
 static bool __read_mostly sysrq_always_enabled;
@@ -151,6 +153,8 @@ static void sysrq_handle_crash(int key)
 {
 	/* release the RCU read lock before crashing */
 	rcu_read_unlock();
+
+	trace_android_vh_sysrq_crash(current);
 
 	panic("sysrq triggered crash\n");
 }
@@ -301,7 +305,7 @@ static const struct sysrq_key_op sysrq_showregs_op = {
 static void sysrq_handle_showstate(int key)
 {
 	show_state();
-	show_workqueue_state();
+	show_all_workqueues();
 }
 static const struct sysrq_key_op sysrq_showstate_op = {
 	.handler	= sysrq_handle_showstate,
