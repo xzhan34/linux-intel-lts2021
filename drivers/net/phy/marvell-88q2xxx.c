@@ -45,7 +45,9 @@ struct mv2122_data {
 
 static int mv88q2xxx_tx_enable(struct phy_device *phydev)
 {
-	return phy_clear_bits_mmd(phydev, 3 ,0x8000, 0x8);
+	int ret = phy_clear_bits_mmd(phydev, 3 ,0x8000, 0x8);
+	msleep(10);
+	return ret;
 }
 
 static int mv88q2xxx_tx_disable(struct phy_device *phydev)
