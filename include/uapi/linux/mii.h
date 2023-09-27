@@ -174,6 +174,11 @@
 #define MII_MMD_CTRL_INCR_RDWT	0x8000	/* post increment on reads & writes */
 #define MII_MMD_CTRL_INCR_ON_WT	0xC000	/* post increment on writes only */
 
+/* MDIO PHY device test mode control register fields */
+#define MII_TESTMODE 	  	0x0904	/* Test mode setting	       */
+#define MII_PCSControl1 	0x0900	/* PCS control 1	       */
+#define MII_PCSControl2 	0xFD00	/* PCS control 2	       */
+
 /* This structure is used in all SIOCxMIIxxx ioctl calls */
 struct mii_ioctl_data {
 	__u16		phy_id;

@@ -1938,7 +1938,14 @@ static int phylink_phy_read(struct phylink *pl, unsigned int phy_id,
 		case MII_BMSR:
 		case MII_PHYSID1:
 		case MII_PHYSID2:
+		case MII_TESTMODE:
 			devad = __ffs(phydev->c45_ids.mmds_present);
+			break;
+		case MII_PCSControl1:
+		case MII_PCSControl2:
+			devad = __ffs(phydev->c45_ids.mmds_present);
+			/* subdev is 3, default subdev is 1 */
+			devad += (MDIO_MMD_PCS - MDIO_MMD_PMAPMD);
 			break;
 		case MII_ADVERTISE:
 		case MII_LPA:
@@ -1978,7 +1985,14 @@ static int phylink_phy_write(struct phylink *pl, unsigned int phy_id,
 		case MII_BMSR:
 		case MII_PHYSID1:
 		case MII_PHYSID2:
+		case MII_TESTMODE:
 			devad = __ffs(phydev->c45_ids.mmds_present);
+			break;
+		case MII_PCSControl1:
+		case MII_PCSControl2:
+			devad = __ffs(phydev->c45_ids.mmds_present);
+			/* subdev is 3, default subdev is 1 */
+			devad += (MDIO_MMD_PCS - MDIO_MMD_PMAPMD);
 			break;
 		case MII_ADVERTISE:
 		case MII_LPA:
