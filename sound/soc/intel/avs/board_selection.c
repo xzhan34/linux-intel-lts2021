@@ -365,6 +365,11 @@ static const struct avs_acpi_boards i2s_boards[] = {
 	AVS_MACH_ENTRY(0xa0c8, avs_tgl_i2s_machines), /* TGL */
 	AVS_MACH_ENTRY(0x4b55, avs_tgl_i2s_machines), /* EHL */
 	AVS_MACH_ENTRY(0x51c8, avs_tgl_i2s_machines), /* ADL-P */
+	AVS_MACH_ENTRY(0x7a50, avs_tgl_i2s_machines), /* RPL-S */
+	AVS_MACH_ENTRY(0x51ca, avs_tgl_i2s_machines), /* RPL-P */
+	AVS_MACH_ENTRY(0x51cb, avs_tgl_i2s_machines), /* RPL-P */
+	AVS_MACH_ENTRY(0x51ce, avs_tgl_i2s_machines), /* RPL-M */
+	AVS_MACH_ENTRY(0x51cf, avs_tgl_i2s_machines), /* RPL-PX */
 	{},
 };
 
