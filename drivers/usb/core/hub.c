@@ -151,6 +151,10 @@ int usb_device_supports_lpm(struct usb_device *udev)
 	if (udev->quirks & USB_QUIRK_NO_LPM)
 		return 0;
 
+	/* Skip if the device BOS descriptor couldn't be read */
+	if (!udev->bos)
+		return 0;
+
 	/* USB 2.1 (and greater) devices indicate LPM support through
 	 * their USB 2.0 Extended Capabilities BOS descriptor.
 	 */
@@ -325,6 +329,10 @@ static void usb_set_lpm_parameters(struct usb_device *udev)
 	unsigned int hub_u2_del;
 
 	if (!udev->lpm_capable || udev->speed < USB_SPEED_SUPER)
+		return;
+
+	/* Skip if the device BOS descriptor couldn't be read */
+	if (!udev->bos)
 		return;
 
 	hub = usb_hub_to_struct_hub(udev->parent);
@@ -2665,13 +2673,17 @@ out_authorized:
 static enum usb_ssp_rate get_port_ssp_rate(struct usb_device *hdev,
 					   u32 ext_portstatus)
 {
-	struct usb_ssp_cap_descriptor *ssp_cap = hdev->bos->ssp_cap;
+	struct usb_ssp_cap_descriptor *ssp_cap;
 	u32 attr;
 	u8 speed_id;
 	u8 ssac;
 	u8 lanes;
 	int i;
 
+	if (!hdev->bos)
+		goto out;
+
+	ssp_cap = hdev->bos->ssp_cap;
 	if (!ssp_cap)
 		goto out;
 
@@ -4182,8 +4194,15 @@ static void usb_enable_link_state(struct usb_hcd *hcd, struct usb_device *udev,
 		enum usb3_link_state state)
 {
 	int timeout, ret;
-	__u8 u1_mel = udev->bos->ss_cap->bU1devExitLat;
-	__le16 u2_mel = udev->bos->ss_cap->bU2DevExitLat;
+	__u8 u1_mel;
+	__le16 u2_mel;
+
+	/* Skip if the device BOS descriptor couldn't be read */
+	if (!udev->bos)
+		return;
+
+	u1_mel = udev->bos->ss_cap->bU1devExitLat;
+	u2_mel = udev->bos->ss_cap->bU2DevExitLat;
 
 	/* If the device says it doesn't have *any* exit latency to come out of
 	 * U1 or U2, it's probably lying.  Assume it doesn't implement that link
@@ -4916,34 +4935,6 @@ hub_port_init(struct usb_hub *hub, struct usb_device *udev, int port1,
 				retval = maxp0;
 				continue;
 			}
-		}
-
-		for (operations = 0; operations < SET_ADDRESS_TRIES; ++operations) {
-			retval = hub_set_address(udev, devnum);
-			if (retval >= 0)
-				break;
-			msleep(200);
-		}
-		if (retval < 0) {
-			if (retval != -ENODEV)
-				dev_err(&udev->dev, "device not accepting address %d, error %d\n",
-						devnum, retval);
-			goto fail;
-		}
-		if (udev->speed >= USB_SPEED_SUPER) {
-			devnum = udev->devnum;
-			dev_info(&udev->dev,
-					"%s SuperSpeed%s%s USB device number %d using %s\n",
-					(udev->config) ? "reset" : "new",
-				 (udev->speed == USB_SPEED_SUPER_PLUS) ?
-						" Plus" : "",
-				 (udev->ssp_rate == USB_SSP_GEN_2x2) ?
-						" Gen 2x2" :
-				 (udev->ssp_rate == USB_SSP_GEN_2x1) ?
-						" Gen 2x1" :
-				 (udev->ssp_rate == USB_SSP_GEN_1x2) ?
-						" Gen 1x2" : "",
-				 devnum, driver_name);
 		}
 
 		/*
