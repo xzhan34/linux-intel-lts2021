@@ -378,7 +378,7 @@ static inline void set_context_guc_id_invalid(struct intel_context *ce)
 	ce->guc_id.id = GUC_INVALID_CONTEXT_ID;
 }
 
-static inline struct intel_guc *ce_to_guc(const struct intel_context *ce)
+static inline struct intel_guc *ce_to_guc(struct intel_context *ce)
 {
 	return &ce->engine->gt->uc.guc;
 }
@@ -1378,16 +1378,13 @@ static void __update_guc_busyness_stats(struct intel_guc *guc)
 	spin_unlock_irqrestore(&guc->timestamp.lock, flags);
 }
 
-static void __guc_context_update_clks(struct intel_context *ce);
 static void guc_timestamp_ping(struct work_struct *wrk)
 {
 	struct intel_guc *guc = container_of(wrk, typeof(*guc),
 					     timestamp.work.work);
 	struct intel_uc *uc = container_of(guc, typeof(*uc), guc);
 	struct intel_gt *gt = guc_to_gt(guc);
-	struct intel_context *ce;
 	intel_wakeref_t wakeref;
-	unsigned long index;
 	int srcu, ret;
 
 	/*
@@ -1400,10 +1397,6 @@ static void guc_timestamp_ping(struct work_struct *wrk)
 
 	with_intel_runtime_pm(&gt->i915->runtime_pm, wakeref)
 		__update_guc_busyness_stats(guc);
-
-	/* adjust context stats for overflow */
-	xa_for_each(&guc->context_lookup, index, ce)
-		__guc_context_update_clks(ce);
 
 	intel_gt_reset_unlock(gt, srcu);
 
@@ -1487,48 +1480,6 @@ void intel_guc_busyness_unpark(struct intel_gt *gt)
 	spin_unlock_irqrestore(&guc->timestamp.lock, flags);
 	mod_delayed_work(system_highpri_wq, &guc->timestamp.work,
 			 guc->timestamp.ping_delay);
-}
-
-static void __guc_context_update_clks(struct intel_context *ce)
-{
-	struct intel_guc *guc = ce_to_guc(ce);
-	struct intel_gt *gt = ce->engine->gt;
-	u32 *pphwsp, last_switch, engine_id;
-	u64 start_gt_clk = 0, active = 0;
-	unsigned long flags;
-	ktime_t unused;
-
-	spin_lock_irqsave(&guc->timestamp.lock, flags);
-
-	pphwsp = ((void *)ce->lrc_reg_state) - LRC_STATE_OFFSET;
-	last_switch = READ_ONCE(pphwsp[PPHWSP_GUC_CONTEXT_USAGE_STAMP_LO]);
-	engine_id = READ_ONCE(pphwsp[PPHWSP_GUC_CONTEXT_USAGE_ENGINE_ID]);
-
-	guc_update_pm_timestamp(guc, &unused);
-
-	if (engine_id != 0xffffffff && last_switch) {
-		start_gt_clk = READ_ONCE(ce->stats.runtime.start_gt_clk);
-		__extend_last_switch(guc, &start_gt_clk, last_switch);
-		active = intel_gt_clock_interval_to_ns(gt, guc->timestamp.gt_stamp - start_gt_clk);
-		WRITE_ONCE(ce->stats.runtime.start_gt_clk, start_gt_clk);
-		WRITE_ONCE(ce->stats.active, active);
-	} else {
-		lrc_update_runtime(ce);
-	}
-
-	spin_unlock_irqrestore(&guc->timestamp.lock, flags);
-}
-
-static void guc_context_update_stats(struct intel_context *ce)
-{
-	if (!intel_context_pin_if_active(ce)) {
-		WRITE_ONCE(ce->stats.runtime.start_gt_clk, 0);
-		WRITE_ONCE(ce->stats.active, 0);
-		return;
-	}
-
-	__guc_context_update_clks(ce);
-	intel_context_unpin(ce);
 }
 
 static inline bool
@@ -2854,7 +2805,6 @@ static void guc_context_unpin(struct intel_context *ce)
 {
 	struct intel_guc *guc = ce_to_guc(ce);
 
-	lrc_update_runtime(ce);
 	unpin_guc_id(guc, ce);
 	lrc_unpin(ce);
 
@@ -3476,7 +3426,6 @@ static void remove_from_context(struct i915_request *rq)
 }
 
 static const struct intel_context_ops guc_context_ops = {
-	.flags = COPS_RUNTIME_CYCLES,
 	.alloc = guc_context_alloc,
 
 	.pre_pin = guc_context_pre_pin,
@@ -3492,8 +3441,6 @@ static const struct intel_context_ops guc_context_ops = {
 	.exit = intel_context_exit_engine,
 
 	.sched_disable = guc_context_sched_disable,
-
-	.update_stats = guc_context_update_stats,
 
 	.reset = lrc_reset,
 	.destroy = guc_context_destroy,

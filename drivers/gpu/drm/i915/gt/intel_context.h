@@ -58,7 +58,7 @@ static inline bool intel_context_is_parent(struct intel_context *ce)
 	return !!ce->parallel.number_children;
 }
 
-static inline bool intel_context_is_pinned(const struct intel_context *ce);
+static inline bool intel_context_is_pinned(struct intel_context *ce);
 
 static inline struct intel_context *
 intel_context_to_parent(struct intel_context *ce)
@@ -118,7 +118,7 @@ static inline int intel_context_lock_pinned(struct intel_context *ce)
  * Returns: true if the context is currently pinned for use by the GPU.
  */
 static inline bool
-intel_context_is_pinned(const struct intel_context *ce)
+intel_context_is_pinned(struct intel_context *ce)
 {
 	return atomic_read(&ce->pin_count);
 }
@@ -362,7 +362,7 @@ intel_context_clear_nopreempt(struct intel_context *ce)
 	clear_bit(CONTEXT_NOPREEMPT, &ce->flags);
 }
 
-u64 intel_context_get_total_runtime_ns(struct intel_context *ce);
+u64 intel_context_get_total_runtime_ns(const struct intel_context *ce);
 u64 intel_context_get_avg_runtime_ns(struct intel_context *ce);
 
 static inline u64 intel_context_clock(void)

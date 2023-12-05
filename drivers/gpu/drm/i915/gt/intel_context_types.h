@@ -56,8 +56,6 @@ struct intel_context_ops {
 
 	void (*sched_disable)(struct intel_context *ce);
 
-	void (*update_stats)(struct intel_context *ce);
-
 	void (*reset)(struct intel_context *ce);
 	void (*destroy)(struct kref *kref);
 
@@ -150,7 +148,6 @@ struct intel_context {
 			struct ewma_runtime avg;
 			u64 total;
 			u32 last;
-			u64 start_gt_clk;
 			I915_SELFTEST_DECLARE(u32 num_underflow);
 			I915_SELFTEST_DECLARE(u32 max_underflow);
 		} runtime;
