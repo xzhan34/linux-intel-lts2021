@@ -132,6 +132,9 @@ struct acrn_ioreq_client {
 };
 
 #define ACRN_INVALID_VMID (0xffffU)
+#define ACRN_INVALID_CPUID (0xffffU)
+
+#define ACRN_SELF_VMID (0x0)
 
 #define ACRN_VM_FLAG_DESTROYED		0U
 #define ACRN_VM_FLAG_CLEARING_IOREQ	1U
@@ -154,6 +157,9 @@ extern rwlock_t acrn_vm_list_lock;
  * @default_client:		The default I/O request client
  * @ioreq_buf:			I/O request shared buffer
  * @ioreq_page:			The page of the I/O request shared buffer
+ * @asyncio_sbuf:		Asyncio request shared buffer
+ * @asyncio_page:		The page of the asyncio request shared buffer
+ * @asyncio_lock:		Lock to protect asyncio shared buffer
  * @pci_conf_addr:		Address of a PCI configuration access emulation
  * @monitor_page:		Page of interrupt statistics of User VM
  * @ioeventfds_lock:		Lock to protect ioeventfds list
@@ -176,6 +182,9 @@ struct acrn_vm {
 	struct acrn_ioreq_client	*default_client;
 	struct acrn_io_request_buffer	*ioreq_buf;
 	struct page			*ioreq_page;
+	shared_buf_t			*asyncio_sbuf;
+	struct page			*asyncio_page;
+	struct mutex			asyncio_lock;
 	u32				pci_conf_addr;
 	struct page			*monitor_page;
 	struct mutex			ioeventfds_lock;
@@ -199,6 +208,8 @@ void acrn_vm_all_ram_unmap(struct acrn_vm *vm);
 
 int acrn_ioreq_init(struct acrn_vm *vm, u64 buf_vma);
 void acrn_ioreq_deinit(struct acrn_vm *vm);
+int acrn_asyncio_setup(struct acrn_vm *vm, u64 buf_vma);
+void acrn_asyncio_free(struct acrn_vm *vm);
 int acrn_ioreq_intr_setup(void);
 void acrn_ioreq_intr_remove(void);
 void acrn_ioreq_request_clear(struct acrn_vm *vm);
@@ -224,4 +235,8 @@ int acrn_irqfd_init(struct acrn_vm *vm);
 int acrn_irqfd_config(struct acrn_vm *vm, struct acrn_irqfd *args);
 void acrn_irqfd_deinit(struct acrn_vm *vm);
 
+int acrn_trace_init(void);
+void acrn_trace_exit(void);
+int acrn_hvlog_init(void);
+void acrn_hvlog_exit(void);
 #endif /* __ACRN_HSM_DRV_H */

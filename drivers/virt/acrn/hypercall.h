@@ -15,6 +15,7 @@
 
 #define HC_ID_GEN_BASE			0x0UL
 #define HC_SOS_REMOVE_CPU		_HC_ID(HC_ID, HC_ID_GEN_BASE + 0x01)
+#define HC_GET_CAPS			_HC_ID(HC_ID, HC_ID_GEN_BASE + 0x03)
 
 #define HC_ID_VM_BASE			0x10UL
 #define HC_CREATE_VM			_HC_ID(HC_ID, HC_ID_VM_BASE + 0x00)
@@ -23,6 +24,12 @@
 #define HC_PAUSE_VM			_HC_ID(HC_ID, HC_ID_VM_BASE + 0x03)
 #define HC_RESET_VM			_HC_ID(HC_ID, HC_ID_VM_BASE + 0x05)
 #define HC_SET_VCPU_REGS		_HC_ID(HC_ID, HC_ID_VM_BASE + 0x06)
+#ifdef __ACRN_HAVE_RESET_VM_V2
+#define HC_RESET_VM_V2			_HC_ID(HC_ID, HC_ID_VM_BASE + 0x07)
+#endif
+#ifdef __ACRN_HAVE_SET_REG
+#define HC_SET_ONE_REG			_HC_ID(HC_ID, HC_ID_VM_BASE + 0x08)
+#endif
 
 #define HC_ID_IRQ_BASE			0x20UL
 #define HC_INJECT_MSI			_HC_ID(HC_ID, HC_ID_IRQ_BASE + 0x03)
@@ -32,9 +39,12 @@
 #define HC_ID_IOREQ_BASE		0x30UL
 #define HC_SET_IOREQ_BUFFER		_HC_ID(HC_ID, HC_ID_IOREQ_BASE + 0x00)
 #define HC_NOTIFY_REQUEST_FINISH	_HC_ID(HC_ID, HC_ID_IOREQ_BASE + 0x01)
+#define HC_ASYNCIO_ASSIGN		_HC_ID(HC_ID, HC_ID_IOREQ_BASE + 0x02)
+#define HC_ASYNCIO_DEASSIGN		_HC_ID(HC_ID, HC_ID_IOREQ_BASE + 0x03)
 
 #define HC_ID_MEM_BASE			0x40UL
 #define HC_VM_SET_MEMORY_REGIONS	_HC_ID(HC_ID, HC_ID_MEM_BASE + 0x02)
+#define HC_SET_SBUF			_HC_ID(HC_ID, HC_ID_MEM_BASE + 0x04)
 
 #define HC_ID_PCI_BASE			0x50UL
 #define HC_SET_PTDEV_INTR		_HC_ID(HC_ID, HC_ID_PCI_BASE + 0x03)
@@ -45,6 +55,9 @@
 #define HC_DEASSIGN_MMIODEV		_HC_ID(HC_ID, HC_ID_PCI_BASE + 0x08)
 #define HC_CREATE_VDEV			_HC_ID(HC_ID, HC_ID_PCI_BASE + 0x09)
 #define HC_DESTROY_VDEV			_HC_ID(HC_ID, HC_ID_PCI_BASE + 0x0A)
+
+#define HC_ID_DBG_BASE              0x60UL
+#define HC_SETUP_SBUF               _HC_ID(HC_ID, HC_ID_DBG_BASE + 0x00)
 
 #define HC_ID_PM_BASE			0x80UL
 #define HC_PM_GET_CPU_STATE		_HC_ID(HC_ID, HC_ID_PM_BASE + 0x00)
@@ -116,6 +129,41 @@ static inline long hcall_reset_vm(u64 vmid)
 }
 
 /**
+ * hcall_reset_vm_v2() - Reset a User VM
+ * @vmid:	User VM ID
+ * @addr:	Service VM GPA of the reset info
+ *
+ * Return: 0 on success, <0 on failure
+ */
+static inline long hcall_reset_vm_v2(u64 vmid, u64 addr)
+{
+	return acrn_hypercall2(HC_RESET_VM_V2, vmid, addr);
+}
+
+/**
+ * hcall_get_caps() - Get supported capabilities
+ * @addr:	Service VM GPA of the capability bitmap info
+ *
+ * Return: 0 on success, <0 on failure
+ */
+static inline long hcall_get_caps(u64 addr)
+{
+	return acrn_hypercall1(HC_GET_CAPS, addr);
+}
+
+/**
+ * hcall_set_one_reg() - Set one register of a VCPU from User VM
+ * @vmid:	User VM ID
+ * @addr:	Service VM GPA of the one register info
+ *
+ * Return: 0 on success, <0 on failure
+ */
+static inline long hcall_set_one_reg(u64 vmid, u64 addr)
+{
+	return acrn_hypercall2(HC_SET_ONE_REG, vmid, addr);
+}
+
+/**
  * hcall_set_vcpu_regs() - Set up registers of virtual CPU of a User VM
  * @vmid:	User VM ID
  * @regs_state:	Service VM GPA of registers state
@@ -173,6 +221,34 @@ static inline long hcall_set_irqline(u64 vmid, u64 op)
 static inline long hcall_set_ioreq_buffer(u64 vmid, u64 buffer)
 {
 	return acrn_hypercall2(HC_SET_IOREQ_BUFFER, vmid, buffer);
+}
+
+/**
+ * hcall_set_asyncio_buffer() - Set up the shared buffer.
+ * @vmid:	User VM ID
+ * @buffer:	Service VM GPA of the shared buffer
+ *
+ * Return: 0 on success, <0 on failure
+ */
+static inline long hcall_set_sbuf(u64 vmid, u64 buffer)
+{
+	return acrn_hypercall2(HC_SET_SBUF, vmid, buffer);
+}
+
+/**
+ * hcall_asyncio_assign() - Assign asyncio requests.
+ * @vmid:	User VM ID
+ * @info_pa:	Service VM GPA of the asyncio request info
+ *
+ * Return: 0 on success, <0 on failure
+ */
+static inline long hcall_asyncio_assign(u64 vmid, u64 info_pa)
+{
+	return acrn_hypercall2(HC_ASYNCIO_ASSIGN, vmid, info_pa);
+}
+static inline long hcall_asyncio_deassign(u64 vmid, u64 info_pa)
+{
+	return acrn_hypercall2(HC_ASYNCIO_DEASSIGN, vmid, info_pa);
 }
 
 /**
@@ -301,6 +377,11 @@ static inline long hcall_reset_ptdev_intr(u64 vmid, u64 irq)
 static inline long hcall_get_cpu_state(u64 cmd, u64 state)
 {
 	return acrn_hypercall2(HC_PM_GET_CPU_STATE, cmd, state);
+}
+
+static inline long hcall_setup_sbuf(unsigned long sbuf_head)
+{
+	return acrn_hypercall1(HC_SETUP_SBUF, sbuf_head);
 }
 
 #endif /* __ACRN_HSM_HYPERCALL_H */

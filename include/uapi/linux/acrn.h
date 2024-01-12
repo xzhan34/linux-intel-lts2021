@@ -11,6 +11,7 @@
 #ifndef _UAPI_ACRN_H
 #define _UAPI_ACRN_H
 
+#include <asm/acrn.h>
 #include <linux/types.h>
 #include <linux/uuid.h>
 
@@ -418,6 +419,39 @@ struct acrn_pcidev {
 	__u32	bar[ACRN_PCI_NUM_BARS];
 };
 
+struct acrn_vm_reset_state {
+	__u32 vm_reset_mode;
+	__u32 reserved[7];
+};
+
+struct acrn_cap_bitmap {
+	__u32 index;
+	__u64 bitmap;
+};
+
+struct segment_sel {
+	__u16 selector;
+	__u64 base;
+	__u32 limit;
+	__u32 attr;
+};
+
+union acrn_reg {
+	__u16 wval;
+	__u32 dval;
+	__u64 qval;
+	/** for GDTR and IDTR */
+	struct acrn_descriptor_ptr dpt;
+	struct segment_sel seg_sel;
+};
+
+struct acrn_one_reg {
+	/** virtual CPU ID for the VCPU */
+	__u16 vcpu_id;
+	__u32 reg;
+	union acrn_reg value;
+};
+
 /**
  * struct acrn_mmiodev - Info for assigning or de-assigning a MMIO device
  * @name:			Name of the MMIO device.
@@ -478,6 +512,61 @@ struct acrn_vdev {
 	__u32	io_size[ACRN_PCI_NUM_BARS];
 	__u8	args[128];
 };
+
+#define ACRN_ASYNC_TYPE_PIO		0x01U
+#define ACRN_ASYNC_TYPE_MMIO		0x02U
+
+/*struct acrn_asyncio_reqinfo - Data for setting asyncio request of User VM
+ * @type:	IO type, ACRN_ASYNC_PIO/ACRN_ASYNC_MMIO
+ * @wildcard:	Data matching or not
+ * @addr:	IO base address
+ * @fd:		eventfd of this asynicio.
+ * @data:	Data for matching
+ */
+struct acrn_asyncio_reqinfo {
+	__u32	type;
+	__u32	wildcard;
+	__u64	addr;
+	__u64	fd;
+	__u64	data;
+};
+
+#define SBUF_MAGIC	0x5aa57aa71aa13aa3
+#define SBUF_MAX_SIZE	(1ULL << 22)
+#define SBUF_HEAD_SIZE	64
+
+/* sbuf flags */
+#define OVERRUN_CNT_EN	(1ULL << 0) /* whether overrun counting is enabled */
+#define OVERWRITE_EN	(1ULL << 1) /* whether overwrite is enabled */
+
+/**
+ * (sbuf) head + buf (store (ele_num - 1) elements at most)
+ * buffer empty: tail == head
+ * buffer full:  (tail + ele_size) % size == head
+ *
+ *             Base of memory for elements
+ *                |
+ *                |
+ * ---------------------------------------------------------------------------------------
+ * | shared_buf_t | raw data (ele_size)| raw date (ele_size) | ... | raw data (ele_size) |
+ * ---------------------------------------------------------------------------------------
+ * |
+ * |
+ * shared_buf_t *buf
+ */
+
+/* Make sure sizeof(shared_buf_t) == SBUF_HEAD_SIZE */
+typedef struct shared_buf {
+	__u64 magic;
+	__u32 ele_num;	/* number of elements */
+	__u32 ele_size;	/* sizeof of elements */
+	__u32 head;		/* offset from base, to read */
+	__u32 tail;		/* offset from base, to write */
+	__u64 flags;
+	__u32 overrun_cnt;	/* count of overrun */
+	__u32 size;		/* ele_num * ele_size */
+	__u32 padding[6];
+} __attribute__((aligned(64))) shared_buf_t;
 
 /**
  * struct acrn_msi_entry - Info for injecting a MSI interrupt to a VM
@@ -544,6 +633,7 @@ enum acrn_pm_cmd_type {
 #define ACRN_IOEVENTFD_FLAG_PIO		0x01
 #define ACRN_IOEVENTFD_FLAG_DATAMATCH	0x02
 #define ACRN_IOEVENTFD_FLAG_DEASSIGN	0x04
+#define ACRN_IOEVENTFD_FLAG_ASYNCIO	0x08
 /**
  * struct acrn_ioeventfd - Data to operate a &struct hsm_ioeventfd
  * @fd:		The fd of eventfd associated with a hsm_ioeventfd
@@ -580,8 +670,48 @@ struct acrn_irqfd {
 	struct acrn_msi_entry	msi;
 };
 
+enum sbuf_type {
+	ACRN_TRACE,
+	ACRN_HVLOG,
+	ACRN_SEP,
+	ACRN_SOCWATCH,
+	ACRN_SBUF_TYPE_MAX,
+	ACRN_ASYNCIO = 64,
+};
+
+/**
+ * struct acrn_sbuf_param - Data to register a share buffer by hypercall
+ * @vcpu_id:	Id of the vcpu which own this sbuf.
+ * 		ACRN_INVALID_CPUID means the sbuf is belong to a VM.
+ * @reserved:	Reserved field.
+ * @sbuf_id:	Type of the sbuf.
+ * @gpa:	physcial address of the sbuf.
+ */
+struct acrn_sbuf_param {
+	__u16	vcpu_id;
+	__u16	reserved;
+	__u32	sbuf_id;
+	__u64	gpa;
+};
+
+struct sbuf_setup_param {
+	__u32	pcpu_id;
+	__u32	sbuf_id;
+	__u64	gpa;
+};
+
 /* The ioctl type, documented in ioctl-number.rst */
 #define ACRN_IOCTL_TYPE			0xA2
+
+/*
+ * Extension capability list.
+ */
+#ifdef __ACRN_HAVE_RESET_VM_V2
+#define ACRN_CAP_RESET_VM_V2	0
+#endif
+#ifdef __ACRN_HAVE_SET_REG
+#define ACRN_CAP_SET_REG	1
+#endif
 
 /*
  * Common IOCTL IDs definition for ACRN userspace
@@ -598,6 +728,14 @@ struct acrn_irqfd {
 	_IO(ACRN_IOCTL_TYPE, 0x15)
 #define ACRN_IOCTL_SET_VCPU_REGS	\
 	_IOW(ACRN_IOCTL_TYPE, 0x16, struct acrn_vcpu_regs)
+#define ACRN_IOCTL_GET_CAPS		\
+	_IOWR(ACRN_IOCTL_TYPE, 0x17, __u64)
+/* Available with ACRN_CAP_RESET_VM_V2 */
+#define ACRN_IOCTL_RESET_VM_V2		\
+	_IOW(ACRN_IOCTL_TYPE, 0x18, struct acrn_vm_reset_state)
+/* Available with ACRN_CAP_SET_REG */
+#define ACRN_IOCTL_SET_ONE_REG		\
+	_IOW(ACRN_IOCTL_TYPE, 0x19, struct acrn_one_reg)
 
 #define ACRN_IOCTL_INJECT_MSI		\
 	_IOW(ACRN_IOCTL_TYPE, 0x23, struct acrn_msi_entry)
@@ -646,5 +784,8 @@ struct acrn_irqfd {
 	_IOW(ACRN_IOCTL_TYPE, 0x70, struct acrn_ioeventfd)
 #define ACRN_IOCTL_IRQFD		\
 	_IOW(ACRN_IOCTL_TYPE, 0x71, struct acrn_irqfd)
+
+#define ACRN_IOCTL_SETUP_ASYNCIO	\
+	_IOW(ACRN_IOCTL_TYPE, 0x90, __u64)
 
 #endif /* _UAPI_ACRN_H */
