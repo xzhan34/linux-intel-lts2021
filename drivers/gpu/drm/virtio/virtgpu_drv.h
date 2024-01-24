@@ -37,6 +37,7 @@
 #include <drm/drm_encoder.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_fourcc.h>
+#include <drm/drm_framebuffer.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_shmem_helper.h>
 #include <drm/drm_ioctl.h>
@@ -243,7 +244,6 @@ struct virtio_gpu_device {
 
 	bool has_virgl_3d;
 	bool has_edid;
-	bool has_modifier;
 	bool has_indirect;
 	bool has_resource_assign_uuid;
 	bool has_resource_blob;
@@ -429,9 +429,7 @@ virtio_gpu_cmd_set_scanout_blob(struct virtio_gpu_device *vgdev,
 				struct drm_framebuffer *fb,
 				uint32_t width, uint32_t height,
 				uint32_t x, uint32_t y);
-void virtio_gpu_cmd_set_modifier(struct virtio_gpu_device *vgdev,
-				 uint32_t scanout_id,
-				 struct drm_framebuffer *fb);
+
 /* virtgpu_display.c */
 int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev);
 void virtio_gpu_modeset_fini(struct virtio_gpu_device *vgdev);
@@ -465,12 +463,6 @@ bool virtio_gpu_is_shmem(struct virtio_gpu_object *bo);
 
 int virtio_gpu_resource_id_get(struct virtio_gpu_device *vgdev,
 			       uint32_t *resid);
-
-void virtio_gpu_resource_id_put(struct virtio_gpu_device *vgdev, uint32_t id);
-
-void virtio_gpu_object_save_restore_list(struct virtio_gpu_device *vgdev,
-					 struct virtio_gpu_object *bo,
-					 struct virtio_gpu_object_params *params);
 
 int virtio_gpu_object_restore_all(struct virtio_gpu_device *vgdev);
 

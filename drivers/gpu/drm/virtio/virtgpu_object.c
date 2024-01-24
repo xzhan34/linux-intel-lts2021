@@ -54,14 +54,14 @@ int virtio_gpu_resource_id_get(struct virtio_gpu_device *vgdev, uint32_t *resid)
 	return 0;
 }
 
-void virtio_gpu_resource_id_put(struct virtio_gpu_device *vgdev, uint32_t id)
+static void virtio_gpu_resource_id_put(struct virtio_gpu_device *vgdev, uint32_t id)
 {
 	if (!virtio_gpu_virglrenderer_workaround) {
 		ida_free(&vgdev->resource_ida, id - 1);
 	}
 }
 
-void virtio_gpu_object_save_restore_list(struct virtio_gpu_device *vgdev,
+static void virtio_gpu_object_save_restore_list(struct virtio_gpu_device *vgdev,
 						struct virtio_gpu_object *bo,
 						struct virtio_gpu_object_params *params)
 {
@@ -157,7 +157,7 @@ struct drm_gem_object *virtio_gpu_create_object(struct drm_device *dev,
 
 	shmem = kzalloc(sizeof(*shmem), GFP_KERNEL);
 	if (!shmem)
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 
 	dshmem = &shmem->base.base;
 	dshmem->base.funcs = &virtio_gpu_shmem_funcs;

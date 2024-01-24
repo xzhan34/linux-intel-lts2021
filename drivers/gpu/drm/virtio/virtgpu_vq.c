@@ -31,6 +31,8 @@
 #include <linux/virtio_config.h>
 #include <linux/virtio_ring.h>
 
+#include <drm/drm_edid.h>
+
 #include "virtgpu_drv.h"
 #include "virtgpu_trace.h"
 
@@ -1292,20 +1294,5 @@ void virtio_gpu_cmd_set_scanout_blob(struct virtio_gpu_device *vgdev,
 	cmd_p->r.x = cpu_to_le32(x);
 	cmd_p->r.y = cpu_to_le32(y);
 
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
-}
-
-void virtio_gpu_cmd_set_modifier(struct virtio_gpu_device *vgdev,
-				     uint32_t scanout_id,
-				     struct drm_framebuffer *fb)
-{
-	struct virtio_gpu_set_modifier *cmd_p;
-	struct virtio_gpu_vbuffer *vbuf;
-
-	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
-	memset(cmd_p, 0, sizeof(*cmd_p));
-	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_SET_MODIFIER);
-	cmd_p->modifier = cpu_to_le64(fb->modifier);
-	cmd_p->scanout_id = cpu_to_le32(scanout_id);
 	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
 }
