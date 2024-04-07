@@ -153,7 +153,7 @@ static inline unsigned int i915_sg_segment_size(void)
 	return size;
 }
 
-void i915_sg_trim(struct sg_table *sgt);
+bool i915_sg_trim(struct sg_table *orig_st);
 unsigned long i915_sg_compact(struct sg_table *st, unsigned long max);
 
 /* Wrap scatterlist.h to sanity check for integer truncation */

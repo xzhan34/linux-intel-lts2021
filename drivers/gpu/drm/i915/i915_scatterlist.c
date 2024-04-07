@@ -13,55 +13,32 @@
 #include "i915_scatterlist.h"
 #include "i915_ttm_buddy_manager.h"
 
-void i915_sg_trim(struct sg_table *sgt)
+bool i915_sg_trim(struct sg_table *orig_st)
 {
-	struct scatterlist *sg;
-	unsigned int n, end;
+	struct sg_table new_st;
+	struct scatterlist *sg, *new_sg;
+	unsigned int i;
 
-	if (sgt->nents == sgt->orig_nents)
-		return;
+	if (orig_st->nents == orig_st->orig_nents)
+		return false;
 
-	n = 0;
-	end = 0;
-	sg = sgt->sgl;
-	do {
-		struct scatterlist *chain;
+	if (sg_alloc_table(&new_st, orig_st->nents, GFP_KERNEL | __GFP_NOWARN))
+		return false;
 
-		if (sgt->orig_nents - n <= SG_MAX_SINGLE_ALLOC)
-			break;
+	new_sg = new_st.sgl;
+	for_each_sg(orig_st->sgl, sg, orig_st->nents, i) {
+		sg_set_page(new_sg, sg_page(sg), sg->length, 0);
+		sg_dma_address(new_sg) = sg_dma_address(sg);
+		sg_dma_len(new_sg) = sg_dma_len(sg);
 
-		if (end == 0 && n + SG_MAX_SINGLE_ALLOC >= sgt->nents)
-			end = n + SG_MAX_SINGLE_ALLOC;
-
-		chain = sg_chain_ptr(sg + I915_MAX_CHAIN_ALLOC);
-		if (n >= sgt->nents) {
-			kmemleak_free(sg);
-			free_page((unsigned long)sg);
-		}
-
-		n += I915_MAX_CHAIN_ALLOC;
-		if (sgt->nents == n + 1) {
-			sg[I915_MAX_CHAIN_ALLOC] = *chain;
-			GEM_BUG_ON(!sg_is_last(sg + I915_MAX_CHAIN_ALLOC));
-			GEM_BUG_ON(end != sgt->nents);
-			n++;
-		}
-
-		sg = chain;
-	} while (1);
-	if (!end)
-		return;
-
-	if (n >= sgt->nents) {
-		if (sgt->orig_nents - n == SG_MAX_SINGLE_ALLOC) {
-			kmemleak_free(sg);
-			free_page((unsigned long)sg);
-		} else {
-			kfree(sg);
-		}
+		new_sg = sg_next(new_sg);
 	}
+	GEM_BUG_ON(new_sg); /* Should walk exactly nents and hit the end */
 
-	sgt->orig_nents = end;
+	sg_free_table(orig_st);
+
+	*orig_st = new_st;
+	return true;
 }
 
 unsigned long i915_sg_compact(struct sg_table *st, unsigned long max)
