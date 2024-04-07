@@ -1208,12 +1208,12 @@ int i915_gem_object_migrate(struct drm_i915_gem_object *obj,
 	if (obj->swapto && obj->swapto->mm.madv == __I915_MADV_PURGED)
 		i915_gem_object_put(fetch_and_zero(&obj->swapto));
 
-	if (id == INTEL_REGION_SMEM) {
+	if (0 && id == INTEL_REGION_SMEM) {
 		err = __i915_gem_object_put_pages(obj);
 		if (err)
 			return err;
 	}
-
+	printk("xiaolin@%s: skip put_pages\n", __func__);
 	if (obj->swapto && id == INTEL_REGION_SMEM) {
 		donor = fetch_and_zero(&obj->swapto);
 		donor->mm.madv = I915_MADV_WILLNEED;
